@@ -1,0 +1,17 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "id": "fixture.convention.implementations 0.1.0 (path+.)",
+      "name": "fixture.convention.implementations",
+      "source": {
+        "kind": "path",
+        "manifest": "tenon.toml",
+        "path": "."
+      },
+      "version": "0.1.0"
+    }
+  ],
+  "root": "fixture.convention.implementations 0.1.0 (path+.)",
+  "version": 1
+}

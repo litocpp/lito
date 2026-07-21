@@ -1,0 +1,43 @@
+{
+  "version": 6,
+  "configurePresets": [
+    {
+      "name": "clang-base",
+      "hidden": true,
+      "generator": "Ninja",
+      "cacheVariables": {
+        "CMAKE_CXX_COMPILER": "/usr/bin/clang++"
+      }
+    },
+    {
+      "name": "debug",
+      "inherits": "clang-base",
+      "binaryDir": "${sourceDir}/build/Debug",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Debug"
+      }
+    },
+    {
+      "name": "release",
+      "inherits": "clang-base",
+      "binaryDir": "${sourceDir}/build/Release",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release"
+      }
+    }
+  ],
+  "buildPresets": [
+    {
+      "name": "debug",
+      "configurePreset": "debug",
+      "targets": ["tenon"],
+      "jobs": 2
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "targets": ["tenon"],
+      "jobs": 2
+    }
+  ]
+}

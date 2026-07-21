@@ -1,0 +1,451 @@
+export module tenon.manifest_schema;
+
+import rstd;
+import rstd.toml;
+import tenon.model;
+
+using namespace rstd::literals;
+
+namespace tenon::manifest_schema_detail
+{
+
+using Toml = rstd::toml::Value;
+using Table = rstd::toml::Table;
+
+template<typename T>
+auto failure(rstd::ref<rstd::str> message) -> Result<T> {
+    return rstd::Err(Error::make(ErrorKind::Manifest, message));
+}
+
+template<typename T>
+auto failure(String message) -> Result<T> {
+    return rstd::Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+}
+
+auto member(const Toml& value, rstd::ref<rstd::str> key) -> rstd::Option<rstd::ref<Toml>> {
+    return value.get(key);
+}
+
+auto canonical_existing(rstd::ref<rstd::path::Path> path, rstd::ref<rstd::str> context)
+    -> Result<PathBuf> {
+    auto canonical = rstd::fs::canonicalize(path);
+    if (canonical.is_err()) {
+        return failure<PathBuf>(rstd::format(
+            "{} '{}': {}", context, path, rstd::move(canonical).unwrap_err()));
+    }
+    return rstd::Ok(rstd::move(canonical).unwrap());
+}
+
+auto table_value(const Toml& value, rstd::ref<rstd::str> context)
+    -> Result<rstd::ref<Table>> {
+    auto table = value.as_table();
+    if (table.is_none()) {
+        return failure<rstd::ref<Table>>(rstd::format("{} must be a table", context));
+    }
+    return rstd::Ok(*table);
+}
+
+auto required_table(const Toml& document,
+                    rstd::ref<rstd::str> key,
+                    rstd::ref<rstd::str> context) -> Result<rstd::ref<Table>> {
+    auto value = member(document, key);
+    if (value.is_none()) {
+        return failure<rstd::ref<Table>>(rstd::format("{} is missing '{}'", context, key));
+    }
+    return table_value(**value, rstd::format("{}.{}", context, key).as_str());
+}
+
+auto string_value(const Toml& value, rstd::ref<rstd::str> context) -> Result<String> {
+    auto text = value.as_str();
+    if (text.is_none()) return failure<String>(rstd::format("{} must be a string", context));
+    return rstd::Ok(String::make(*text));
+}
+
+auto required_string(const Toml& table,
+                     rstd::ref<rstd::str> key,
+                     rstd::ref<rstd::str> context) -> Result<String> {
+    auto value = member(table, key);
+    if (value.is_none()) {
+        return failure<String>(rstd::format("{} is missing '{}'", context, key));
+    }
+    return string_value(**value, rstd::format("{}.{}", context, key).as_str());
+}
+
+auto string_array(rstd::Option<rstd::ref<Toml>> value, rstd::ref<rstd::str> context)
+    -> Result<Vec<String>> {
+    auto result = Vec<String>::make();
+    if (value.is_none()) return rstd::Ok(rstd::move(result));
+    auto array = (**value).as_array();
+    if (array.is_none()) return failure<Vec<String>>(rstd::format("{} must be an array", context));
+    for (const auto& item : **array) {
+        auto text = string_value(item, rstd::format("{} item", context).as_str());
+        if (text.is_err()) return rstd::Err(rstd::move(text).unwrap_err());
+        result.push(rstd::move(text).unwrap());
+    }
+    return rstd::Ok(rstd::move(result));
+}
+
+using KeyPredicate = bool (*)(rstd::ref<rstd::str>);
+
+auto reject_unknown(const Table& table,
+                    rstd::ref<rstd::str> context,
+                    KeyPredicate allowed) -> Result<rstd::empty> {
+    auto keys = table.keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        if (! allowed((**key).as_str())) {
+            return failure<rstd::empty>(
+                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+        }
+    }
+    return rstd::Ok(rstd::empty {});
+}
+
+auto root_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "manifest-version"_str || key == "package"_str || key == "library"_str ||
+           key == "usage"_str || key == "dependencies"_str;
+}
+
+auto package_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "name"_str || key == "version"_str || key == "module"_str;
+}
+
+auto library_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "archive"_str || key == "discovery"_str || key == "sources"_str;
+}
+
+auto usage_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "public-include-directories"_str ||
+           key == "private-include-directories"_str || key == "public-definitions"_str ||
+           key == "private-definitions"_str || key == "public-options"_str ||
+           key == "private-options"_str;
+}
+
+auto dependency_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "path"_str || key == "visibility"_str;
+}
+
+auto valid_module_name(rstd::ref<rstd::str> value) -> bool {
+    if (value.size() == rstd::usize {}) return false;
+    bool segment_start = true;
+    for (rstd::usize index {}; index < value.size(); ++index) {
+        const auto byte = value[index];
+        if (byte == rstd::u8('.')) {
+            if (segment_start) return false;
+            segment_start = true;
+            continue;
+        }
+        const bool alpha = (byte >= rstd::u8('a') && byte <= rstd::u8('z')) ||
+                           (byte >= rstd::u8('A') && byte <= rstd::u8('Z')) ||
+                           byte == rstd::u8('_');
+        const bool digit = byte >= rstd::u8('0') && byte <= rstd::u8('9');
+        if ((! alpha && ! digit) || (segment_start && digit)) return false;
+        segment_start = false;
+    }
+    return ! segment_start;
+}
+
+auto valid_archive_name(rstd::ref<rstd::str> value) -> bool {
+    if (value.size() == rstd::usize {} || value == "."_str || value == ".."_str) return false;
+    for (rstd::usize index {}; index < value.size(); ++index) {
+        const auto byte = value[index];
+        const bool accepted = (byte >= rstd::u8('a') && byte <= rstd::u8('z')) ||
+                              (byte >= rstd::u8('A') && byte <= rstd::u8('Z')) ||
+                              (byte >= rstd::u8('0') && byte <= rstd::u8('9')) ||
+                              byte == rstd::u8('_') || byte == rstd::u8('-') ||
+                              byte == rstd::u8('.');
+        if (! accepted) return false;
+    }
+    return true;
+}
+
+auto relative_path(String text, rstd::ref<rstd::str> context) -> Result<PathBuf> {
+    if (text.is_empty()) return failure<PathBuf>(rstd::format("{} must not be empty", context));
+    auto path = PathBuf::from(rstd::move(text));
+    if (! path.as_path().is_relative()) {
+        return failure<PathBuf>(rstd::format("{} must be a relative path", context));
+    }
+    return rstd::Ok(rstd::move(path));
+}
+
+auto declared_paths(rstd::Option<rstd::ref<Toml>> value,
+                    rstd::ref<rstd::str> context,
+                    bool required) -> Result<Vec<PathBuf>> {
+    if (required && value.is_none()) {
+        return failure<Vec<PathBuf>>(rstd::format("{} is required", context));
+    }
+    auto strings = string_array(value, context);
+    if (strings.is_err()) return rstd::Err(rstd::move(strings).unwrap_err());
+    auto result = Vec<PathBuf>::make();
+    auto items = rstd::move(strings).unwrap();
+    for (auto& item : items) {
+        auto path = relative_path(rstd::move(item), context);
+        if (path.is_err()) return rstd::Err(rstd::move(path).unwrap_err());
+        result.push(rstd::move(path).unwrap());
+    }
+    if (required && result.is_empty()) {
+        return failure<Vec<PathBuf>>(rstd::format("{} must not be empty", context));
+    }
+    return rstd::Ok(rstd::move(result));
+}
+
+auto resolve_directories(rstd::Option<rstd::ref<Toml>> value,
+                         rstd::ref<rstd::path::Path> root,
+                         rstd::ref<rstd::str> context) -> Result<Vec<PathBuf>> {
+    auto declared = declared_paths(value, context, false);
+    if (declared.is_err()) return rstd::Err(rstd::move(declared).unwrap_err());
+    auto result = Vec<PathBuf>::make();
+    auto paths = rstd::move(declared).unwrap();
+    for (const auto& path : paths) {
+        auto requested = PathBuf::from(root).join(path.as_path());
+        auto canonical =
+            canonical_existing(requested.as_path(), "cannot resolve include directory"_str);
+        if (canonical.is_err()) return rstd::Err(rstd::move(canonical).unwrap_err());
+        auto resolved = rstd::move(canonical).unwrap();
+        if (resolved.as_path().strip_prefix(root).is_none()) {
+            return failure<Vec<PathBuf>>(rstd::format(
+                "{} entry '{}' is outside package root", context, path.as_path()));
+        }
+        auto metadata = rstd::fs::metadata(resolved.as_path());
+        if (metadata.is_err()) {
+            return failure<Vec<PathBuf>>(rstd::format(
+                "cannot inspect include directory '{}': {}",
+                resolved.as_path(),
+                rstd::move(metadata).unwrap_err()));
+        }
+        if (! metadata->is_dir()) {
+            return failure<Vec<PathBuf>>(rstd::format("{} entry '{}' is not a directory",
+                                                       context,
+                                                       path.as_path()));
+        }
+        result.push(rstd::move(resolved));
+    }
+    return rstd::Ok(rstd::move(result));
+}
+
+auto validate_options(const Vec<String>& options, rstd::ref<rstd::str> context)
+    -> Result<rstd::empty> {
+    for (const auto& option : options) {
+        auto value = option.as_str();
+        if (value == "-frtti"_str || value == "-fexceptions"_str ||
+            value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
+            value == "-fmodules-reduced-bmi"_str ||
+            value == "-fno-modules-reduced-bmi"_str) {
+            return failure<rstd::empty>(rstd::format(
+                "{} option '{}' overrides a Tenon-owned setting", context, value));
+        }
+    }
+    return rstd::Ok(rstd::empty {});
+}
+
+auto parse_usage(rstd::Option<rstd::ref<Toml>> value, rstd::ref<rstd::path::Path> root)
+    -> Result<UsageRequirements> {
+    if (value.is_none()) return rstd::Ok(UsageRequirements {});
+    auto table = table_value(**value, "manifest.usage"_str);
+    if (table.is_err()) return rstd::Err(rstd::move(table).unwrap_err());
+    auto known = reject_unknown(**table, "manifest.usage"_str, usage_key);
+    if (known.is_err()) return rstd::Err(rstd::move(known).unwrap_err());
+
+    auto public_includes = resolve_directories(
+        member(**value, "public-include-directories"_str),
+        root,
+        "usage.public-include-directories"_str);
+    auto private_includes = resolve_directories(
+        member(**value, "private-include-directories"_str),
+        root,
+        "usage.private-include-directories"_str);
+    auto public_definitions = string_array(
+        member(**value, "public-definitions"_str), "usage.public-definitions"_str);
+    auto private_definitions = string_array(
+        member(**value, "private-definitions"_str), "usage.private-definitions"_str);
+    auto public_options =
+        string_array(member(**value, "public-options"_str), "usage.public-options"_str);
+    auto private_options =
+        string_array(member(**value, "private-options"_str), "usage.private-options"_str);
+    if (public_includes.is_err()) return rstd::Err(rstd::move(public_includes).unwrap_err());
+    if (private_includes.is_err()) return rstd::Err(rstd::move(private_includes).unwrap_err());
+    if (public_definitions.is_err()) return rstd::Err(rstd::move(public_definitions).unwrap_err());
+    if (private_definitions.is_err()) return rstd::Err(rstd::move(private_definitions).unwrap_err());
+    if (public_options.is_err()) return rstd::Err(rstd::move(public_options).unwrap_err());
+    if (private_options.is_err()) return rstd::Err(rstd::move(private_options).unwrap_err());
+    auto public_option_values = rstd::move(public_options).unwrap();
+    auto private_option_values = rstd::move(private_options).unwrap();
+    auto public_valid = validate_options(public_option_values, "usage.public-options"_str);
+    auto private_valid = validate_options(private_option_values, "usage.private-options"_str);
+    if (public_valid.is_err()) return rstd::Err(rstd::move(public_valid).unwrap_err());
+    if (private_valid.is_err()) return rstd::Err(rstd::move(private_valid).unwrap_err());
+    return rstd::Ok(UsageRequirements {
+        .public_include_directories = rstd::move(public_includes).unwrap(),
+        .private_include_directories = rstd::move(private_includes).unwrap(),
+        .public_definitions = rstd::move(public_definitions).unwrap(),
+        .private_definitions = rstd::move(private_definitions).unwrap(),
+        .public_options = rstd::move(public_option_values),
+        .private_options = rstd::move(private_option_values),
+    });
+}
+
+auto parse_visibility(rstd::ref<rstd::str> value, rstd::ref<rstd::str> context)
+    -> Result<DependencyVisibility> {
+    if (value == "public"_str) return rstd::Ok(DependencyVisibility::Public);
+    if (value == "private"_str) return rstd::Ok(DependencyVisibility::Private);
+    if (value == "runtime"_str) return rstd::Ok(DependencyVisibility::Runtime);
+    return failure<DependencyVisibility>(
+        rstd::format("{} must be public, private, or runtime", context));
+}
+
+auto parse_dependencies(rstd::Option<rstd::ref<Toml>> value)
+    -> Result<Vec<DeclaredDependency>> {
+    auto result = Vec<DeclaredDependency>::make();
+    if (value.is_none()) return rstd::Ok(rstd::move(result));
+    auto table = table_value(**value, "manifest.dependencies"_str);
+    if (table.is_err()) return rstd::Err(rstd::move(table).unwrap_err());
+
+    auto keys = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& alias = **key;
+        if (! valid_module_name(alias.as_str())) {
+            return failure<Vec<DeclaredDependency>>(rstd::format(
+                "dependency alias '{}' is not a valid logical name", alias.as_str()));
+        }
+        auto specification = (**table).get(alias.as_str());
+        auto dependency_table = table_value(
+            **specification, rstd::format("dependency '{}'", alias.as_str()).as_str());
+        if (dependency_table.is_err()) {
+            return rstd::Err(rstd::move(dependency_table).unwrap_err());
+        }
+        auto known = reject_unknown(
+            **dependency_table,
+            rstd::format("dependency '{}'", alias.as_str()).as_str(),
+            dependency_key);
+        if (known.is_err()) return rstd::Err(rstd::move(known).unwrap_err());
+        auto path_text = required_string(**specification, "path"_str, "dependency"_str);
+        auto visibility_text =
+            required_string(**specification, "visibility"_str, "dependency"_str);
+        if (path_text.is_err()) return rstd::Err(rstd::move(path_text).unwrap_err());
+        if (visibility_text.is_err()) {
+            return rstd::Err(rstd::move(visibility_text).unwrap_err());
+        }
+        auto path = relative_path(rstd::move(path_text).unwrap(), "dependency.path"_str);
+        auto visibility =
+            parse_visibility(visibility_text->as_str(), "dependency.visibility"_str);
+        if (path.is_err()) return rstd::Err(rstd::move(path).unwrap_err());
+        if (visibility.is_err()) return rstd::Err(rstd::move(visibility).unwrap_err());
+        result.push(DeclaredDependency {
+            .alias = alias.clone(),
+            .manifest = rstd::move(path).unwrap(),
+            .visibility = rstd::move(visibility).unwrap(),
+        });
+    }
+    return rstd::Ok(rstd::move(result));
+}
+
+} // namespace tenon::manifest_schema_detail
+
+export namespace tenon
+{
+
+auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
+    -> Result<PackageManifest> {
+    using namespace manifest_schema_detail;
+
+    auto canonical_path = canonical_existing(requested_path, "cannot resolve manifest"_str);
+    if (canonical_path.is_err()) return rstd::Err(rstd::move(canonical_path).unwrap_err());
+    auto path = rstd::move(canonical_path).unwrap();
+    auto contents = rstd::fs::read_to_string(path.as_path());
+    if (contents.is_err()) {
+        return failure<PackageManifest>(rstd::format(
+            "cannot read manifest '{}': {}", path.as_path(), rstd::move(contents).unwrap_err()));
+    }
+    auto parsed = rstd::toml::from_str(contents->as_str());
+    if (parsed.is_err()) {
+        return failure<PackageManifest>(rstd::format(
+            "cannot parse manifest '{}': {}", path.as_path(), rstd::move(parsed).unwrap_err()));
+    }
+    auto document = rstd::move(parsed).unwrap();
+    auto root_table = table_value(document, "manifest root"_str);
+    if (root_table.is_err()) return rstd::Err(rstd::move(root_table).unwrap_err());
+    auto root_known = reject_unknown(**root_table, "manifest root"_str, root_key);
+    if (root_known.is_err()) return rstd::Err(rstd::move(root_known).unwrap_err());
+
+    auto manifest_version = member(document, "manifest-version"_str);
+    if (manifest_version.is_none()) {
+        return failure<PackageManifest>("manifest-version is required"_str);
+    }
+    auto version_number = (**manifest_version).as_integer();
+    if (version_number.is_none() || *version_number != rstd::i64(1)) {
+        return failure<PackageManifest>("manifest-version must be integer 1"_str);
+    }
+
+    auto package_table = required_table(document, "package"_str, "manifest"_str);
+    auto library_table = required_table(document, "library"_str, "manifest"_str);
+    if (package_table.is_err()) return rstd::Err(rstd::move(package_table).unwrap_err());
+    if (library_table.is_err()) return rstd::Err(rstd::move(library_table).unwrap_err());
+    auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
+    auto library_known = reject_unknown(**library_table, "manifest.library"_str, library_key);
+    if (package_known.is_err()) return rstd::Err(rstd::move(package_known).unwrap_err());
+    if (library_known.is_err()) return rstd::Err(rstd::move(library_known).unwrap_err());
+
+    const auto& package_value = **member(document, "package"_str);
+    const auto& library_value = **member(document, "library"_str);
+    auto name = required_string(package_value, "name"_str, "package"_str);
+    auto version = required_string(package_value, "version"_str, "package"_str);
+    auto root_module = required_string(package_value, "module"_str, "package"_str);
+    auto archive = required_string(library_value, "archive"_str, "library"_str);
+    auto discovery_text = required_string(library_value, "discovery"_str, "library"_str);
+    if (name.is_err()) return rstd::Err(rstd::move(name).unwrap_err());
+    if (version.is_err()) return rstd::Err(rstd::move(version).unwrap_err());
+    if (root_module.is_err()) return rstd::Err(rstd::move(root_module).unwrap_err());
+    if (archive.is_err()) return rstd::Err(rstd::move(archive).unwrap_err());
+    if (discovery_text.is_err()) return rstd::Err(rstd::move(discovery_text).unwrap_err());
+    if (! valid_module_name(name->as_str())) {
+        return failure<PackageManifest>("package.name must be a valid logical name"_str);
+    }
+    if (version->is_empty()) {
+        return failure<PackageManifest>("package.version must not be empty"_str);
+    }
+    if (! valid_module_name(root_module->as_str())) {
+        return failure<PackageManifest>("package.module must be a valid module name"_str);
+    }
+    if (! valid_archive_name(archive->as_str())) {
+        return failure<PackageManifest>("library.archive must be a safe archive basename"_str);
+    }
+    const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
+    const auto module_discovery = discovery_text->as_str() == "module"_str;
+    if (! explicit_discovery && ! module_discovery) {
+        return failure<PackageManifest>(
+            "library.discovery must be explicit or module in manifest version 1"_str);
+    }
+    if (module_discovery && member(library_value, "sources"_str).is_some()) {
+        return failure<PackageManifest>(
+            "library.sources is not allowed when library.discovery is module"_str);
+    }
+    auto sources = declared_paths(
+        member(library_value, "sources"_str), "library.sources"_str, explicit_discovery);
+    if (sources.is_err()) return rstd::Err(rstd::move(sources).unwrap_err());
+
+    auto parent = path.as_path().parent();
+    if (parent.is_none()) {
+        return failure<PackageManifest>("manifest path has no parent directory"_str);
+    }
+    auto root = PathBuf::from(*parent);
+    auto usage = parse_usage(member(document, "usage"_str), root.as_path());
+    auto dependencies = parse_dependencies(member(document, "dependencies"_str));
+    if (usage.is_err()) return rstd::Err(rstd::move(usage).unwrap_err());
+    if (dependencies.is_err()) return rstd::Err(rstd::move(dependencies).unwrap_err());
+
+    return rstd::Ok(PackageManifest {
+        .manifest_version = rstd::u64(1),
+        .name = rstd::move(name).unwrap(),
+        .version = rstd::move(version).unwrap(),
+        .root_module = rstd::move(root_module).unwrap(),
+        .root = rstd::move(root),
+        .manifest_path = rstd::move(path),
+        .archive_name = rstd::move(archive).unwrap(),
+        .discovery = explicit_discovery ? SourceDiscoveryMode::Explicit
+                                        : SourceDiscoveryMode::Module,
+        .declared_sources = rstd::move(sources).unwrap(),
+        .usage = rstd::move(usage).unwrap(),
+        .dependencies = rstd::move(dependencies).unwrap(),
+    });
+}
+
+} // namespace tenon

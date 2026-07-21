@@ -1,0 +1,10 @@
+manifest-version = 1
+
+[package]
+name = "fixture.convention.markers"
+version = "0.1.0"
+module = "fixture.convention.markers"
+
+[library]
+archive = "fixture.convention.markers"
+discovery = "module"

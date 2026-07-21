@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "fixture.unsupported"
+version = "0.1.0"
+module = "fixture.unsupported"
+
+[library]
+archive = "fixture.unsupported"
+discovery = "explicit"
+sources = ["source.hpp"]

@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "fixture.same.dependency"
+version = "0.1.0"
+module = "fixture.same.dependency"
+
+[library]
+archive = "fixture.same.one"
+discovery = "explicit"
+sources = ["source.cppm"]

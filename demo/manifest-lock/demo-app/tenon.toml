@@ -1,0 +1,18 @@
+manifest-version = 1
+
+[package]
+name = "demo.app"
+version = "0.1.0"
+module = "demo.app"
+
+[library]
+archive = "demo.app"
+discovery = "explicit"
+sources = [
+  "src/lib.cppm",
+  "src/lib.cpp",
+]
+
+[dependencies.base]
+path = "../demo-base/tenon.toml"
+visibility = "public"

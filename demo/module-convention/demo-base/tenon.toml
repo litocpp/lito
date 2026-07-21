@@ -1,0 +1,18 @@
+manifest-version = 1
+
+[package]
+name = "demo.base"
+version = "0.1.0"
+module = "demo.base"
+
+[library]
+archive = "demo.base"
+discovery = "module"
+
+[usage]
+public-include-directories = []
+private-include-directories = []
+public-definitions = []
+private-definitions = []
+public-options = []
+private-options = []

@@ -1,0 +1,19 @@
+manifest-version = 1
+
+[package]
+name = "fixture.same.root"
+version = "0.1.0"
+module = "fixture.same.root"
+
+[library]
+archive = "fixture.same.root"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.one]
+path = "../one/tenon.toml"
+visibility = "private"
+
+[dependencies.two]
+path = "../two/tenon.toml"
+visibility = "private"

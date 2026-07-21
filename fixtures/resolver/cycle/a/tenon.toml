@@ -1,0 +1,15 @@
+manifest-version = 1
+
+[package]
+name = "fixture.cycle.a"
+version = "0.1.0"
+module = "fixture.cycle.a"
+
+[library]
+archive = "fixture.cycle.a"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.b]
+path = "../b/tenon.toml"
+visibility = "private"

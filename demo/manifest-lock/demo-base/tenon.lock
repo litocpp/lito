@@ -1,0 +1,17 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "id": "demo.base 0.1.0 (path+.)",
+      "name": "demo.base",
+      "source": {
+        "kind": "path",
+        "manifest": "tenon.toml",
+        "path": "."
+      },
+      "version": "0.1.0"
+    }
+  ],
+  "root": "demo.base 0.1.0 (path+.)",
+  "version": 1
+}

@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "fixture.missing"
+version = "0.1.0"
+module = "fixture.missing"
+
+[library]
+archive = "fixture.missing"
+discovery = "explicit"
+sources = ["missing.cppm"]

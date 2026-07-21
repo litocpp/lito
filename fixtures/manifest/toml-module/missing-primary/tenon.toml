@@ -1,0 +1,10 @@
+manifest-version = 1
+
+[package]
+name = "fixture.convention.missing"
+version = "0.1.0"
+module = "fixture.convention.missing"
+
+[library]
+archive = "fixture.convention.missing"
+discovery = "module"

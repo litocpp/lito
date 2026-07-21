@@ -1,0 +1,5 @@
+/build/
+demo/**/build/
+fixtures/**/build/
+**/tenon.lock.json.guard
+**/tenon.lock.json.tmp.*

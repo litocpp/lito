@@ -1,0 +1,10 @@
+manifest-version = 1
+
+[package]
+name = "fixture.convention.mismatch"
+version = "0.1.0"
+module = "fixture.convention.mismatch"
+
+[library]
+archive = "fixture.convention.mismatch"
+discovery = "module"

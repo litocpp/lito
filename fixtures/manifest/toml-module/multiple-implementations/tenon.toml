@@ -1,0 +1,10 @@
+manifest-version = 1
+
+[package]
+name = "fixture.convention.implementations"
+version = "0.1.0"
+module = "fixture.convention.implementations"
+
+[library]
+archive = "fixture.convention.implementations"
+discovery = "module"
