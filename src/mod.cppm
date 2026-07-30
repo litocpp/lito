@@ -1,6 +1,7 @@
 export module tenon;
 
 export import tenon.model;
+export import tenon.build_profile;
 export import tenon.manifest_locator;
 export import tenon.manifest_schema;
 export import tenon.source_discovery;

@@ -53,6 +53,12 @@ enum class BmiMode
     Full,
 };
 
+enum class BuildProfile
+{
+    Debug,
+    Release,
+};
+
 enum class DependencyVisibility
 {
     Public,
@@ -210,7 +216,7 @@ enum class LockStatus
 };
 
 struct BuildConfiguration {
-    String          profile_name;
+    BuildProfile    profile { BuildProfile::Debug };
     ToolchainSpec   toolchain;
     StandardLibrary standard_library { StandardLibrary::Libstdcxx };
     BmiMode         bmi_mode { BmiMode::Reduced };
@@ -327,7 +333,6 @@ struct BuildObserver {
 
 struct BuildRequest {
     PathBuf                    root;
-    String                     profile;
     Vec<String>                targets;
     Vec<String>                packages;
     PathBuf                    output;

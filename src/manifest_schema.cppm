@@ -4,6 +4,7 @@ import rstd;
 import rstd.toml;
 import tenon.model;
 import tenon.manifest_locator;
+import tenon.build_profile;
 
 using namespace rstd::literals;
 
@@ -294,9 +295,22 @@ auto validate_options(const Vec<String>& options, rstd::ref<rstd::str> context)
         if (value == "-frtti"_str || value == "-fexceptions"_str ||
             value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
             value == "-fmodules-reduced-bmi"_str ||
-            value == "-fno-modules-reduced-bmi"_str) {
+            value == "-fno-modules-reduced-bmi"_str || is_profile_owned_option(value)) {
             return failure<rstd::empty>(rstd::format(
                 "{} option '{}' overrides a Tenon-owned setting", context, value));
+        }
+    }
+    return rstd::Ok(rstd::empty {});
+}
+
+auto validate_definitions(const Vec<String>& definitions, rstd::ref<rstd::str> context)
+    -> Result<rstd::empty> {
+    for (const auto& definition : definitions) {
+        if (is_profile_owned_definition(definition.as_str())) {
+            return failure<rstd::empty>(rstd::format(
+                "{} definition '{}' overrides a Tenon-owned setting",
+                context,
+                definition.as_str()));
         }
     }
     return rstd::Ok(rstd::empty {});
@@ -332,17 +346,29 @@ auto parse_usage(rstd::Option<rstd::ref<Toml>> value, rstd::ref<rstd::path::Path
     if (private_definitions.is_err()) return rstd::Err(rstd::move(private_definitions).unwrap_err());
     if (public_options.is_err()) return rstd::Err(rstd::move(public_options).unwrap_err());
     if (private_options.is_err()) return rstd::Err(rstd::move(private_options).unwrap_err());
+    auto public_definition_values = rstd::move(public_definitions).unwrap();
+    auto private_definition_values = rstd::move(private_definitions).unwrap();
     auto public_option_values = rstd::move(public_options).unwrap();
     auto private_option_values = rstd::move(private_options).unwrap();
+    auto public_definitions_valid =
+        validate_definitions(public_definition_values, "usage.public-definitions"_str);
+    auto private_definitions_valid =
+        validate_definitions(private_definition_values, "usage.private-definitions"_str);
     auto public_valid = validate_options(public_option_values, "usage.public-options"_str);
     auto private_valid = validate_options(private_option_values, "usage.private-options"_str);
+    if (public_definitions_valid.is_err()) {
+        return rstd::Err(rstd::move(public_definitions_valid).unwrap_err());
+    }
+    if (private_definitions_valid.is_err()) {
+        return rstd::Err(rstd::move(private_definitions_valid).unwrap_err());
+    }
     if (public_valid.is_err()) return rstd::Err(rstd::move(public_valid).unwrap_err());
     if (private_valid.is_err()) return rstd::Err(rstd::move(private_valid).unwrap_err());
     return rstd::Ok(UsageRequirements {
         .public_include_directories = rstd::move(public_includes).unwrap(),
         .private_include_directories = rstd::move(private_includes).unwrap(),
-        .public_definitions = rstd::move(public_definitions).unwrap(),
-        .private_definitions = rstd::move(private_definitions).unwrap(),
+        .public_definitions = rstd::move(public_definition_values),
+        .private_definitions = rstd::move(private_definition_values),
         .public_options = rstd::move(public_option_values),
         .private_options = rstd::move(private_option_values),
     });

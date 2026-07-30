@@ -39,7 +39,7 @@ void print_help() {
     rstd::io::println("tenon - module-first C++ builder");
     rstd::io::println("");
     rstd::io::println(
-        "Usage: tenon build <directory> [--package <name>] [--workspace] [--profile <name>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+        "Usage: tenon build <directory> [--package <name>] [--workspace] [--profile <debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
     rstd::io::println("");
     rstd::io::println("Supported target toolchains: clang++ with libstdc++ or libc++");
     rstd::io::println("All builds use -fno-rtti -fno-exceptions");
@@ -74,7 +74,6 @@ int main() {
 
     auto request = tenon::BuildRequest {};
     request.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
-    request.configuration.profile_name = tenon::String::make("default"_str);
     request.configuration.toolchain = tenon::ToolchainSpec {
         .compiler = configured_path(TENON_DEFAULT_CLANGXX),
         .scanner = configured_path(TENON_DEFAULT_CLANG_SCAN_DEPS),
@@ -88,7 +87,13 @@ int main() {
         if (*option == "--profile"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--profile"_str);
-            request.profile = rstd::move(value).unwrap();
+            auto profile = tenon::parse_build_profile(value->as_str());
+            if (profile.is_err()) {
+                auto error = rstd::move(profile).unwrap_err();
+                rstd::io::eprintln("tenon: {}", error.message.as_str());
+                return 2;
+            }
+            request.configuration.profile = rstd::move(profile).unwrap();
         } else if (*option == "--target"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--target"_str);

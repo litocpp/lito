@@ -1,0 +1,18 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "id": "fixture.profile 0.1.0 (path+.)",
+      "name": "fixture.profile",
+      "source": {
+        "kind": "path",
+        "path": "."
+      },
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture.profile 0.1.0 (path+.)"
+  ],
+  "version": 2
+}

@@ -1,0 +1,8 @@
+[package]
+name = "fixture.profile"
+version = "0.1.0"
+
+[executable]
+name = "profile-check"
+discovery = "explicit"
+sources = ["main.cpp"]

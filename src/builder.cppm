@@ -87,7 +87,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto toolchain = rstd::move(created_toolchain).unwrap();
 
     auto resolved = resolve_package(
-        package, request.profile.as_str(), request.targets, toolchain.identity());
+        package, package.default_profile.as_str(), request.targets, toolchain.identity());
     if (resolved.is_err()) return rstd::Err(rstd::move(resolved).unwrap_err());
     auto package_plan = rstd::move(resolved).unwrap();
 

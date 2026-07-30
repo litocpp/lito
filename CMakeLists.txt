@@ -53,6 +53,7 @@ target_sources(
          CXX_MODULES
          FILES
          src/model.cppm
+         src/build_profile.cppm
          src/process.cppm
          src/manifest_locator.cppm
          src/manifest_schema.cppm

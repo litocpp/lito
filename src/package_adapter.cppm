@@ -2,6 +2,7 @@ export module tenon.package_adapter;
 
 import rstd;
 import tenon.model;
+import tenon.build_profile;
 
 using namespace rstd::literals;
 
@@ -50,10 +51,6 @@ auto adapt_single_artifact(PackageManifest manifest,
             String::make(
                 "path dependencies require the package resolver and are not yet supported"_str));
     }
-    if (configuration.profile_name.is_empty()) {
-        return failure<PackageSpec>(
-            String::make("build configuration profile name is required"_str));
-    }
     if (configuration.language_standard.as_str() != "c++20"_str) {
         return failure<PackageSpec>(
             String::make("Tenon currently requires build configuration standard c++20"_str));
@@ -65,6 +62,8 @@ auto adapt_single_artifact(PackageManifest manifest,
     }
     auto options_valid = validate_options(configuration.options);
     if (options_valid.is_err()) return rstd::Err(rstd::move(options_valid).unwrap_err());
+    auto profile = make_profile_spec(configuration);
+    if (profile.is_err()) return rstd::Err(rstd::move(profile).unwrap_err());
 
     auto sources = Vec<PathBuf>::with_capacity(source_set.sources.len());
     auto expectations = Vec<ModuleExpectation>::make();
@@ -83,13 +82,8 @@ auto adapt_single_artifact(PackageManifest manifest,
     auto default_targets = Vec<String>::make();
     default_targets.push(target_name.clone());
     auto profiles = Vec<ProfileSpec>::make();
-    profiles.push(ProfileSpec {
-        .name = configuration.profile_name.clone(),
-        .standard_library = configuration.standard_library,
-        .bmi_mode = configuration.bmi_mode,
-        .language_standard = configuration.language_standard.clone(),
-        .options = configuration.options.clone(),
-    });
+    auto default_profile = profile->name.clone();
+    profiles.push(rstd::move(profile).unwrap());
     auto targets = Vec<TargetSpec>::make();
     targets.push(TargetSpec {
         .name = rstd::move(target_name),
@@ -107,7 +101,7 @@ auto adapt_single_artifact(PackageManifest manifest,
         .name = rstd::move(manifest.name),
         .root = rstd::move(manifest.root),
         .manifest_path = rstd::move(manifest.manifest_path),
-        .default_profile = configuration.profile_name.clone(),
+        .default_profile = rstd::move(default_profile),
         .default_targets = rstd::move(default_targets),
         .toolchain = ToolchainSpec {
             .compiler = configuration.toolchain.compiler.clone(),
@@ -130,8 +124,7 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
         return failure<PackageSpec>(String::make(
             "selected package graph and source sets have different lengths"_str));
     }
-    if (configuration.profile_name.is_empty() ||
-        configuration.language_standard.as_str() != "c++20"_str ||
+    if (configuration.language_standard.as_str() != "c++20"_str ||
         configuration.toolchain.compiler.is_empty() || configuration.toolchain.scanner.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
         return failure<PackageSpec>(
@@ -139,6 +132,8 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     }
     auto options_valid = validate_options(configuration.options);
     if (options_valid.is_err()) return rstd::Err(rstd::move(options_valid).unwrap_err());
+    auto profile = make_profile_spec(configuration);
+    if (profile.is_err()) return rstd::Err(rstd::move(profile).unwrap_err());
 
     auto selected = rstd::collections::BTreeMap<String, rstd::empty>::make();
     auto roots = rstd::collections::BTreeMap<String, rstd::empty>::make();
@@ -232,18 +227,13 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
         if (name.is_some()) package_name = (**name).clone();
     }
     auto profiles = Vec<ProfileSpec>::make();
-    profiles.push(ProfileSpec {
-        .name = configuration.profile_name.clone(),
-        .standard_library = configuration.standard_library,
-        .bmi_mode = configuration.bmi_mode,
-        .language_standard = configuration.language_standard.clone(),
-        .options = configuration.options.clone(),
-    });
+    auto default_profile = profile->name.clone();
+    profiles.push(rstd::move(profile).unwrap());
     return rstd::Ok(PackageSpec {
         .name = rstd::move(package_name),
         .root = rstd::move(graph.root_directory),
         .manifest_path = rstd::move(graph.manifest_path),
-        .default_profile = configuration.profile_name.clone(),
+        .default_profile = rstd::move(default_profile),
         .default_targets = rstd::move(default_targets),
         .toolchain = ToolchainSpec {
             .compiler = configuration.toolchain.compiler.clone(),
