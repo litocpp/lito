@@ -39,7 +39,7 @@ void print_help() {
     rstd::io::println("tenon - module-first C++ builder");
     rstd::io::println("");
     rstd::io::println(
-        "Usage: tenon build <manifest> [--profile <name>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+        "Usage: tenon build <directory> [--package <name>] [--workspace] [--profile <name>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
     rstd::io::println("");
     rstd::io::println("Supported target toolchains: clang++ with libstdc++ or libc++");
     rstd::io::println("All builds use -fno-rtti -fno-exceptions");
@@ -66,14 +66,14 @@ int main() {
         return 2;
     }
 
-    auto manifest = arguments.next();
-    if (manifest.is_none()) {
-        rstd::io::eprintln("tenon: build requires a manifest path");
+    auto directory = arguments.next();
+    if (directory.is_none()) {
+        rstd::io::eprintln("tenon: build requires a package or workspace directory");
         return 2;
     }
 
     auto request = tenon::BuildRequest {};
-    request.manifest = tenon::PathBuf::from(rstd::move(manifest).unwrap());
+    request.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
     request.configuration.profile_name = tenon::String::make("default"_str);
     request.configuration.toolchain = tenon::ToolchainSpec {
         .compiler = configured_path(TENON_DEFAULT_CLANGXX),
@@ -93,6 +93,12 @@ int main() {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--target"_str);
             request.targets.push(rstd::move(value).unwrap());
+        } else if (*option == "--package"_str) {
+            auto value = arguments.next();
+            if (value.is_none()) return missing_value("--package"_str);
+            request.packages.push(rstd::move(value).unwrap());
+        } else if (*option == "--workspace"_str) {
+            request.workspace = true;
         } else if (*option == "--out"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--out"_str);

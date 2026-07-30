@@ -11,5 +11,5 @@ discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.missing]
-path = "../does-not-exist/tenon.toml"
+path = "../does-not-exist"
 visibility = "private"

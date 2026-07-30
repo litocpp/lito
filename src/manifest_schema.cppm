@@ -3,6 +3,7 @@ export module tenon.manifest_schema;
 import rstd;
 import rstd.toml;
 import tenon.model;
+import tenon.manifest_locator;
 
 using namespace rstd::literals;
 
@@ -110,9 +111,13 @@ auto reject_unknown(const Table& table,
     return rstd::Ok(rstd::empty {});
 }
 
-auto root_key(rstd::ref<rstd::str> key) -> bool {
+auto package_root_key(rstd::ref<rstd::str> key) -> bool {
     return key == "manifest-version"_str || key == "package"_str || key == "library"_str ||
            key == "executable"_str || key == "usage"_str || key == "dependencies"_str;
+}
+
+auto workspace_root_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "manifest-version"_str || key == "workspace"_str;
 }
 
 auto package_key(rstd::ref<rstd::str> key) -> bool {
@@ -136,6 +141,10 @@ auto usage_key(rstd::ref<rstd::str> key) -> bool {
 
 auto dependency_key(rstd::ref<rstd::str> key) -> bool {
     return key == "path"_str || key == "visibility"_str;
+}
+
+auto workspace_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "members"_str || key == "default-members"_str;
 }
 
 auto valid_module_name(rstd::ref<rstd::str> value) -> bool {
@@ -345,7 +354,7 @@ auto parse_dependencies(rstd::Option<rstd::ref<Toml>> value)
         if (visibility.is_err()) return rstd::Err(rstd::move(visibility).unwrap_err());
         result.push(DeclaredDependency {
             .alias = alias.clone(),
-            .manifest = rstd::move(path).unwrap(),
+            .directory = rstd::move(path).unwrap(),
             .visibility = rstd::move(visibility).unwrap(),
         });
     }
@@ -357,38 +366,77 @@ auto parse_dependencies(rstd::Option<rstd::ref<Toml>> value)
 export namespace tenon
 {
 
-auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
-    -> Result<PackageManifest> {
+auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
+    -> Result<ManifestDocument> {
     using namespace manifest_schema_detail;
 
-    auto canonical_path = canonical_existing(requested_path, "cannot resolve manifest"_str);
-    if (canonical_path.is_err()) return rstd::Err(rstd::move(canonical_path).unwrap_err());
-    auto path = rstd::move(canonical_path).unwrap();
+    auto located = locate_manifest(requested_directory);
+    if (located.is_err()) return rstd::Err(rstd::move(located).unwrap_err());
+    auto location = rstd::move(located).unwrap();
+    auto path = rstd::move(location.manifest);
+    auto root = rstd::move(location.directory);
     auto contents = rstd::fs::read_to_string(path.as_path());
     if (contents.is_err()) {
-        return failure<PackageManifest>(rstd::format(
+        return failure<ManifestDocument>(rstd::format(
             "cannot read manifest '{}': {}", path.as_path(), rstd::move(contents).unwrap_err()));
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return failure<PackageManifest>(rstd::format(
+        return failure<ManifestDocument>(rstd::format(
             "cannot parse manifest '{}': {}", path.as_path(), rstd::move(parsed).unwrap_err()));
     }
     auto document = rstd::move(parsed).unwrap();
     auto root_table = table_value(document, "manifest root"_str);
     if (root_table.is_err()) return rstd::Err(rstd::move(root_table).unwrap_err());
-    auto root_known = reject_unknown(**root_table, "manifest root"_str, root_key);
-    if (root_known.is_err()) return rstd::Err(rstd::move(root_known).unwrap_err());
 
     auto manifest_version = member(document, "manifest-version"_str);
     if (manifest_version.is_none()) {
-        return failure<PackageManifest>("manifest-version is required"_str);
+        return failure<ManifestDocument>("manifest-version is required"_str);
     }
     auto version_number = (**manifest_version).as_integer();
     if (version_number.is_none() || *version_number != rstd::i64(1)) {
-        return failure<PackageManifest>("manifest-version must be integer 1"_str);
+        return failure<ManifestDocument>("manifest-version must be integer 1"_str);
     }
 
+    auto workspace_value = member(document, "workspace"_str);
+    if (workspace_value.is_some()) {
+        auto root_known =
+            reject_unknown(**root_table, "manifest root"_str, workspace_root_key);
+        if (root_known.is_err()) return rstd::Err(rstd::move(root_known).unwrap_err());
+        auto workspace_table = table_value(**workspace_value, "manifest.workspace"_str);
+        if (workspace_table.is_err()) {
+            return rstd::Err(rstd::move(workspace_table).unwrap_err());
+        }
+        auto workspace_known =
+            reject_unknown(**workspace_table, "manifest.workspace"_str, workspace_key);
+        if (workspace_known.is_err()) {
+            return rstd::Err(rstd::move(workspace_known).unwrap_err());
+        }
+        auto members = declared_paths(
+            member(**workspace_value, "members"_str), "workspace.members"_str, true);
+        auto default_member_value = member(**workspace_value, "default-members"_str);
+        auto default_members = declared_paths(
+            default_member_value,
+            "workspace.default-members"_str,
+            default_member_value.is_some());
+        if (members.is_err()) return rstd::Err(rstd::move(members).unwrap_err());
+        if (default_members.is_err()) {
+            return rstd::Err(rstd::move(default_members).unwrap_err());
+        }
+        return rstd::Ok(ManifestDocument {
+            .kind = ManifestKind::Workspace,
+            .workspace = rstd::Some(WorkspaceManifest {
+                .manifest_version = rstd::u64(1),
+                .root = rstd::move(root),
+                .manifest_path = rstd::move(path),
+                .members = rstd::move(members).unwrap(),
+                .default_members = rstd::move(default_members).unwrap(),
+            }),
+        });
+    }
+
+    auto root_known = reject_unknown(**root_table, "manifest root"_str, package_root_key);
+    if (root_known.is_err()) return rstd::Err(rstd::move(root_known).unwrap_err());
     auto package_table = required_table(document, "package"_str, "manifest"_str);
     if (package_table.is_err()) return rstd::Err(rstd::move(package_table).unwrap_err());
     auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
@@ -397,7 +445,7 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
     auto library_value_option = member(document, "library"_str);
     auto executable_value_option = member(document, "executable"_str);
     if (library_value_option.is_some() == executable_value_option.is_some()) {
-        return failure<PackageManifest>(
+        return failure<ManifestDocument>(
             "manifest must contain exactly one of 'library' or 'executable'"_str);
     }
     const auto artifact_kind = library_value_option.is_some() ? ArtifactKind::StaticLibrary
@@ -433,19 +481,19 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
     if (artifact_name.is_err()) return rstd::Err(rstd::move(artifact_name).unwrap_err());
     if (discovery_text.is_err()) return rstd::Err(rstd::move(discovery_text).unwrap_err());
     if (! valid_module_name(name->as_str())) {
-        return failure<PackageManifest>("package.name must be a valid logical name"_str);
+        return failure<ManifestDocument>("package.name must be a valid logical name"_str);
     }
     if (version->is_empty()) {
-        return failure<PackageManifest>("package.version must not be empty"_str);
+        return failure<ManifestDocument>("package.version must not be empty"_str);
     }
     if (root_module->is_some() && ! valid_module_name((**root_module).as_str())) {
-        return failure<PackageManifest>("package.module must be a valid module name"_str);
+        return failure<ManifestDocument>("package.module must be a valid module name"_str);
     }
     if (artifact_kind == ArtifactKind::StaticLibrary && root_module->is_none()) {
-        return failure<PackageManifest>("package.module is required for a library"_str);
+        return failure<ManifestDocument>("package.module is required for a library"_str);
     }
     if (! valid_artifact_name(artifact_name->as_str())) {
-        return failure<PackageManifest>(rstd::format(
+        return failure<ManifestDocument>(rstd::format(
             "{}.{} must be a safe artifact basename",
             artifact_context,
             artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str));
@@ -453,20 +501,20 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
     const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
     const auto module_discovery = discovery_text->as_str() == "module"_str;
     if (! explicit_discovery && ! module_discovery) {
-        return failure<PackageManifest>(rstd::format(
+        return failure<ManifestDocument>(rstd::format(
             "{}.discovery must be explicit or module in manifest version 1",
             artifact_context));
     }
     if (artifact_kind == ArtifactKind::Executable && module_discovery) {
-        return failure<PackageManifest>(
+        return failure<ManifestDocument>(
             "executable.discovery must be explicit in manifest version 1"_str);
     }
     if (module_discovery && root_module->is_none()) {
-        return failure<PackageManifest>(
+        return failure<ManifestDocument>(
             "package.module is required when discovery is module"_str);
     }
     if (module_discovery && member(artifact_value, "sources"_str).is_some()) {
-        return failure<PackageManifest>(rstd::format(
+        return failure<ManifestDocument>(rstd::format(
             "{}.sources is not allowed when discovery is module", artifact_context));
     }
     auto sources = declared_paths(
@@ -476,31 +524,44 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
         explicit_discovery);
     if (sources.is_err()) return rstd::Err(rstd::move(sources).unwrap_err());
 
-    auto parent = path.as_path().parent();
-    if (parent.is_none()) {
-        return failure<PackageManifest>("manifest path has no parent directory"_str);
-    }
-    auto root = PathBuf::from(*parent);
     auto usage = parse_usage(member(document, "usage"_str), root.as_path());
     auto dependencies = parse_dependencies(member(document, "dependencies"_str));
     if (usage.is_err()) return rstd::Err(rstd::move(usage).unwrap_err());
     if (dependencies.is_err()) return rstd::Err(rstd::move(dependencies).unwrap_err());
 
-    return rstd::Ok(PackageManifest {
-        .manifest_version = rstd::u64(1),
-        .name = rstd::move(name).unwrap(),
-        .version = rstd::move(version).unwrap(),
-        .root_module = rstd::move(root_module).unwrap(),
-        .root = rstd::move(root),
-        .manifest_path = rstd::move(path),
-        .artifact_kind = artifact_kind,
-        .artifact_name = rstd::move(artifact_name).unwrap(),
-        .discovery = explicit_discovery ? SourceDiscoveryMode::Explicit
-                                        : SourceDiscoveryMode::Module,
-        .declared_sources = rstd::move(sources).unwrap(),
-        .usage = rstd::move(usage).unwrap(),
-        .dependencies = rstd::move(dependencies).unwrap(),
+    return rstd::Ok(ManifestDocument {
+        .kind = ManifestKind::Package,
+        .package = rstd::Some(PackageManifest {
+            .manifest_version = rstd::u64(1),
+            .name = rstd::move(name).unwrap(),
+            .version = rstd::move(version).unwrap(),
+            .root_module = rstd::move(root_module).unwrap(),
+            .root = rstd::move(root),
+            .manifest_path = rstd::move(path),
+            .artifact_kind = artifact_kind,
+            .artifact_name = rstd::move(artifact_name).unwrap(),
+            .discovery = explicit_discovery ? SourceDiscoveryMode::Explicit
+                                            : SourceDiscoveryMode::Module,
+            .declared_sources = rstd::move(sources).unwrap(),
+            .usage = rstd::move(usage).unwrap(),
+            .dependencies = rstd::move(dependencies).unwrap(),
+        }),
     });
+}
+
+auto load_package_manifest(rstd::ref<rstd::path::Path> requested_directory)
+    -> Result<PackageManifest> {
+    using namespace manifest_schema_detail;
+
+    auto loaded = load_manifest_document(requested_directory);
+    if (loaded.is_err()) return rstd::Err(rstd::move(loaded).unwrap_err());
+    auto document = rstd::move(loaded).unwrap();
+    if (document.kind != ManifestKind::Package || document.package.is_none()) {
+        return failure<PackageManifest>(rstd::format(
+            "directory '{}' contains a workspace manifest where a package is required",
+            requested_directory));
+    }
+    return rstd::Ok(rstd::move(document.package).unwrap());
 }
 
 } // namespace tenon

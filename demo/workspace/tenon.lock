@@ -1,0 +1,55 @@
+{
+  "packages": [
+    {
+      "dependencies": [
+        "demo.workspace.common 0.1.0 (path+common)"
+      ],
+      "id": "demo.workspace.app_one 0.1.0 (path+app-one)",
+      "name": "demo.workspace.app_one",
+      "source": {
+        "kind": "path",
+        "path": "app-one"
+      },
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [
+        "demo.workspace.common 0.1.0 (path+common)"
+      ],
+      "id": "demo.workspace.app_two 0.1.0 (path+app-two)",
+      "name": "demo.workspace.app_two",
+      "source": {
+        "kind": "path",
+        "path": "app-two"
+      },
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "id": "demo.workspace.common 0.1.0 (path+common)",
+      "name": "demo.workspace.common",
+      "source": {
+        "kind": "path",
+        "path": "common"
+      },
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "id": "demo.workspace.unused 0.1.0 (path+unused)",
+      "name": "demo.workspace.unused",
+      "source": {
+        "kind": "path",
+        "path": "unused"
+      },
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "demo.workspace.app_one 0.1.0 (path+app-one)",
+    "demo.workspace.app_two 0.1.0 (path+app-two)",
+    "demo.workspace.common 0.1.0 (path+common)",
+    "demo.workspace.unused 0.1.0 (path+unused)"
+  ],
+  "version": 2
+}

@@ -54,16 +54,19 @@ target_sources(
          FILES
          src/model.cppm
          src/process.cppm
+         src/manifest_locator.cppm
          src/manifest_schema.cppm
          src/module_convention.cppm
          src/source_discovery.cppm
          src/package_resolver.cppm
+         src/workspace_resolver.cppm
          src/lock_store.cppm
          src/package_adapter.cppm
          src/package.cppm
          src/clang_toolchain.cppm
          src/module_graph.cppm
          src/artifact_store.cppm
+         src/build_layout.cppm
          src/builder.cppm
          src/mod.cppm)
 target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)

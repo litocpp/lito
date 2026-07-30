@@ -11,5 +11,5 @@ discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.a]
-path = "../a/tenon.toml"
+path = "../a"
 visibility = "private"

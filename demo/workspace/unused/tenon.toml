@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "demo.workspace.unused"
+version = "0.1.0"
+module = "demo.workspace.unused"
+
+[library]
+archive = "common"
+discovery = "explicit"
+sources = ["unused.cppm"]

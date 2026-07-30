@@ -108,7 +108,7 @@ struct UsageRequirements {
 
 struct DeclaredDependency {
     String               alias;
-    PathBuf              manifest;
+    PathBuf              directory;
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
@@ -125,6 +125,31 @@ struct PackageManifest {
     Vec<PathBuf>          declared_sources;
     UsageRequirements     usage;
     Vec<DeclaredDependency> dependencies;
+};
+
+struct WorkspaceManifest {
+    rstd::u64    manifest_version { 1 };
+    PathBuf      root;
+    PathBuf      manifest_path;
+    Vec<PathBuf> members;
+    Vec<PathBuf> default_members;
+};
+
+enum class ManifestKind
+{
+    Package,
+    Workspace,
+};
+
+struct ManifestDocument {
+    ManifestKind                    kind { ManifestKind::Package };
+    rstd::Option<PackageManifest>   package;
+    rstd::Option<WorkspaceManifest> workspace;
+};
+
+struct ManifestLocation {
+    PathBuf directory;
+    PathBuf manifest;
 };
 
 struct ResolvedSource {
@@ -147,15 +172,21 @@ struct ResolvedDependency {
 struct ResolvedPackage {
     String                  id;
     PathBuf                 source_directory;
-    String                  source_manifest;
     PackageManifest         manifest;
     Vec<ResolvedDependency> dependencies;
 };
 
 struct ResolvedPackageGraph {
-    String               root_id;
+    Vec<String>          root_ids;
     PathBuf              root_directory;
+    PathBuf              manifest_path;
     Vec<ResolvedPackage> packages;
+};
+
+struct ResolvedBuild {
+    ResolvedPackageGraph graph;
+    Vec<String>          selected_root_ids;
+    Vec<String>          selected_package_ids;
 };
 
 enum class LockStatus
@@ -281,11 +312,13 @@ struct BuildObserver {
 };
 
 struct BuildRequest {
-    PathBuf                    manifest;
+    PathBuf                    root;
     String                     profile;
     Vec<String>                targets;
+    Vec<String>                packages;
     PathBuf                    output;
     BuildConfiguration         configuration;
+    bool                       workspace { false };
     bool                       locked { false };
     rstd::Option<BuildObserver> observer;
 };

@@ -14,5 +14,5 @@ sources = [
 ]
 
 [dependencies.base]
-path = "../demo-base/tenon.toml"
+path = "../demo-base"
 visibility = "public"

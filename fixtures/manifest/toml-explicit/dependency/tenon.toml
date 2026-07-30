@@ -11,5 +11,5 @@ discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies."fixture.base"]
-path = "../base/tenon.toml"
+path = "../base"
 visibility = "public"

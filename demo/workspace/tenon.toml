@@ -1,0 +1,5 @@
+manifest-version = 1
+
+[workspace]
+members = ["common", "app-one", "app-two", "unused"]
+default-members = ["app-one"]

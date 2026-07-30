@@ -1,0 +1,8 @@
+manifest-version = 1
+
+[workspace]
+members = ["member"]
+
+[package]
+name = "fixture.workspace.mixed"
+version = "0.1.0"

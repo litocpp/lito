@@ -1,0 +1,11 @@
+manifest-version = 1
+
+[package]
+name = "fixture.workspace.member"
+version = "0.1.0"
+module = "fixture.workspace.member"
+
+[library]
+archive = "fixture.workspace.member"
+discovery = "explicit"
+sources = ["source.cppm"]
