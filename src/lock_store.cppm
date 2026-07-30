@@ -59,7 +59,8 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
         item.insert(String::make("id"_str), string_json(package.id.as_str()));
         item.insert(String::make("name"_str), string_json(package.manifest.name.as_str()));
         item.insert(String::make("source"_str), Json::Object(rstd::move(source)));
-        item.insert(String::make("version"_str), string_json(package.manifest.version.as_str()));
+        item.insert(String::make("version"_str),
+                    string_json(package.manifest.version.value->as_str()));
         packages.push(Json::Object(rstd::move(item)));
     }
 

@@ -76,11 +76,16 @@ auto relative_directory(rstd::ref<rstd::path::Path> root,
     return rstd::Ok(relative.is_empty() ? PathBuf::from("."_str) : rstd::move(relative));
 }
 
-auto package_id(const PackageManifest& manifest, rstd::ref<rstd::path::Path> source) -> String {
-    return rstd::format("{} {} (path+{})",
-                        manifest.name.as_str(),
-                        manifest.version.as_str(),
-                        source);
+auto package_id(const PackageManifest& manifest, rstd::ref<rstd::path::Path> source)
+    -> Result<String> {
+    if (manifest.version.value.is_none()) {
+        return failure<String>(rstd::format(
+            "package '{}' has an unresolved workspace version", manifest.name.as_str()));
+    }
+    return rstd::Ok(rstd::format("{} {} (path+{})",
+                                 manifest.name.as_str(),
+                                 manifest.version.value->as_str(),
+                                 source));
 }
 
 class Resolver {
@@ -131,7 +136,11 @@ public:
             return rstd::Err(rstd::move(source_directory).unwrap_err());
         }
         auto source = rstd::move(source_directory).unwrap();
-        auto id = package_id(manifest, source.as_path());
+        auto package_identity = package_id(manifest, source.as_path());
+        if (package_identity.is_err()) {
+            return rstd::Err(rstd::move(package_identity).unwrap_err());
+        }
+        auto id = rstd::move(package_identity).unwrap();
 
         auto same_name = package_names_.get(manifest.name.as_str());
         if (same_name.is_some() && **same_name != path_key.as_str()) {

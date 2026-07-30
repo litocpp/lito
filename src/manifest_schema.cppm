@@ -144,7 +144,49 @@ auto dependency_key(rstd::ref<rstd::str> key) -> bool {
 }
 
 auto workspace_key(rstd::ref<rstd::str> key) -> bool {
-    return key == "members"_str || key == "default-members"_str;
+    return key == "members"_str || key == "default-members"_str || key == "package"_str;
+}
+
+auto package_version_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "workspace"_str;
+}
+
+auto workspace_package_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "version"_str;
+}
+
+auto parse_package_version(const Toml& package) -> Result<PackageVersion> {
+    auto declared = member(package, "version"_str);
+    if (declared.is_none()) {
+        return failure<PackageVersion>("package is missing 'version'"_str);
+    }
+
+    auto explicit_value = (**declared).as_str();
+    if (explicit_value.is_some()) {
+        if (explicit_value->is_empty()) {
+            return failure<PackageVersion>("package.version must not be empty"_str);
+        }
+        return rstd::Ok(PackageVersion {
+            .source = PackageVersionSource::Explicit,
+            .value = rstd::Some(String::make(*explicit_value)),
+        });
+    }
+
+    auto inherited = table_value(**declared, "package.version"_str);
+    if (inherited.is_err()) return rstd::Err(rstd::move(inherited).unwrap_err());
+    auto known = reject_unknown(**inherited, "package.version"_str, package_version_key);
+    if (known.is_err()) return rstd::Err(rstd::move(known).unwrap_err());
+    auto workspace = member(**declared, "workspace"_str);
+    if (workspace.is_none()) {
+        return failure<PackageVersion>("package.version is missing 'workspace'"_str);
+    }
+    auto enabled = (**workspace).as_bool();
+    if (enabled.is_none() || ! *enabled) {
+        return failure<PackageVersion>("package.version.workspace must be true"_str);
+    }
+    return rstd::Ok(PackageVersion {
+        .source = PackageVersionSource::Workspace,
+    });
 }
 
 auto valid_module_name(rstd::ref<rstd::str> value) -> bool {
@@ -414,6 +456,32 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
         if (default_members.is_err()) {
             return rstd::Err(rstd::move(default_members).unwrap_err());
         }
+        auto package_defaults = WorkspacePackageDefaults {};
+        auto workspace_package_value = member(**workspace_value, "package"_str);
+        if (workspace_package_value.is_some()) {
+            auto workspace_package_table =
+                table_value(**workspace_package_value, "manifest.workspace.package"_str);
+            if (workspace_package_table.is_err()) {
+                return rstd::Err(rstd::move(workspace_package_table).unwrap_err());
+            }
+            auto workspace_package_known = reject_unknown(
+                **workspace_package_table,
+                "manifest.workspace.package"_str,
+                workspace_package_key);
+            if (workspace_package_known.is_err()) {
+                return rstd::Err(rstd::move(workspace_package_known).unwrap_err());
+            }
+            auto workspace_version = optional_string(
+                **workspace_package_value, "version"_str, "workspace.package"_str);
+            if (workspace_version.is_err()) {
+                return rstd::Err(rstd::move(workspace_version).unwrap_err());
+            }
+            if (workspace_version->is_some() && (**workspace_version).is_empty()) {
+                return failure<ManifestDocument>(
+                    "workspace.package.version must not be empty"_str);
+            }
+            package_defaults.version = rstd::move(workspace_version).unwrap();
+        }
         return rstd::Ok(ManifestDocument {
             .kind = ManifestKind::Workspace,
             .workspace = rstd::Some(WorkspaceManifest {
@@ -421,6 +489,7 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
                 .manifest_path = rstd::move(path),
                 .members = rstd::move(members).unwrap(),
                 .default_members = rstd::move(default_members).unwrap(),
+                .package = rstd::move(package_defaults),
             }),
         });
     }
@@ -455,7 +524,7 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
 
     const auto& package_value = **member(document, "package"_str);
     auto name = required_string(package_value, "name"_str, "package"_str);
-    auto version = required_string(package_value, "version"_str, "package"_str);
+    auto version = parse_package_version(package_value);
     auto root_module = optional_string(package_value, "module"_str, "package"_str);
     auto artifact_name = required_string(
         artifact_value,
@@ -472,9 +541,6 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
     if (discovery_text.is_err()) return rstd::Err(rstd::move(discovery_text).unwrap_err());
     if (! valid_module_name(name->as_str())) {
         return failure<ManifestDocument>("package.name must be a valid logical name"_str);
-    }
-    if (version->is_empty()) {
-        return failure<ManifestDocument>("package.version must not be empty"_str);
     }
     if (root_module->is_some() && ! valid_module_name((**root_module).as_str())) {
         return failure<ManifestDocument>("package.module must be a valid module name"_str);

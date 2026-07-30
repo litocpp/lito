@@ -58,6 +58,20 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
     return result;
 }
 
+auto resolve_member_version(PackageManifest& manifest,
+                            const WorkspaceManifest& workspace) -> Result<rstd::empty> {
+    if (manifest.version.source == PackageVersionSource::Explicit) {
+        return rstd::Ok(rstd::empty {});
+    }
+    if (workspace.package.version.is_none()) {
+        return failure<rstd::empty>(rstd::format(
+            "workspace member '{}' inherits package.version but workspace.package.version is not set",
+            manifest.name.as_str()));
+    }
+    manifest.version.value = rstd::Some(workspace.package.version->clone());
+    return rstd::Ok(rstd::empty {});
+}
+
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>& selected_roots) -> Result<Vec<String>> {
     auto indices = IndexMap::make();
@@ -93,6 +107,11 @@ auto package_build(PackageManifest manifest,
     if (request.workspace || ! request.packages.is_empty()) {
         return failure<ResolvedBuild>(
             "--workspace and --package require a workspace directory"_str);
+    }
+    if (manifest.version.source == PackageVersionSource::Workspace) {
+        return failure<ResolvedBuild>(rstd::format(
+            "package '{}' inherits package.version and must be built from its workspace root",
+            manifest.name.as_str()));
     }
     auto root = manifest.root.clone();
     auto manifest_path = manifest.manifest_path.clone();
@@ -138,9 +157,12 @@ auto workspace_build(WorkspaceManifest workspace,
             return failure<ResolvedBuild>(rstd::format(
                 "workspace member '{}' must contain a package manifest", declared.as_path()));
         }
+        auto manifest = rstd::move(loaded.package).unwrap();
+        auto version = resolve_member_version(manifest, workspace);
+        if (version.is_err()) return rstd::Err(rstd::move(version).unwrap_err());
         member_keys.insert(rstd::move(key).unwrap(), rstd::empty {});
         member_directories.push(rstd::move(directory));
-        manifests.push(rstd::move(loaded.package).unwrap());
+        manifests.push(rstd::move(manifest));
     }
 
     auto resolved = resolve_loaded_package_roots(

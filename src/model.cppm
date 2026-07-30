@@ -78,6 +78,17 @@ enum class ArtifactKind
     Executable,
 };
 
+enum class PackageVersionSource
+{
+    Explicit,
+    Workspace,
+};
+
+struct PackageVersion {
+    PackageVersionSource source { PackageVersionSource::Explicit };
+    rstd::Option<String> value;
+};
+
 struct ToolchainSpec {
     PathBuf compiler;
     PathBuf scanner;
@@ -114,7 +125,7 @@ struct DeclaredDependency {
 
 struct PackageManifest {
     String                name;
-    String                version;
+    PackageVersion        version;
     rstd::Option<String>  root_module;
     PathBuf               root;
     PathBuf               manifest_path;
@@ -126,11 +137,16 @@ struct PackageManifest {
     Vec<DeclaredDependency> dependencies;
 };
 
+struct WorkspacePackageDefaults {
+    rstd::Option<String> version;
+};
+
 struct WorkspaceManifest {
-    PathBuf      root;
-    PathBuf      manifest_path;
-    Vec<PathBuf> members;
-    Vec<PathBuf> default_members;
+    PathBuf                  root;
+    PathBuf                  manifest_path;
+    Vec<PathBuf>             members;
+    Vec<PathBuf>             default_members;
+    WorkspacePackageDefaults package;
 };
 
 enum class ManifestKind

@@ -1,3 +1,6 @@
 [workspace]
 members = ["common", "app-one", "app-two", "unused"]
 default-members = ["app-one"]
+
+[workspace.package]
+version = "0.1.0"
