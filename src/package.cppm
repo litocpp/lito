@@ -100,6 +100,18 @@ auto visit_target(const PackageSpec& package,
     return rstd::Ok(rstd::empty {});
 }
 
+auto mark_link_dependencies(const PackageSpec& package,
+                            const TargetMap& target_ids,
+                            TargetId target,
+                            Vec<rstd::uint8_t>& marked) -> void {
+    for (const auto& dependency : package.targets[target].dependencies) {
+        const auto dependency_id = **target_ids.get(dependency.target.as_str());
+        if (marked[dependency_id] != rstd::uint8_t {}) continue;
+        marked[dependency_id] = rstd::uint8_t(1);
+        mark_link_dependencies(package, target_ids, dependency_id, marked);
+    }
+}
+
 auto append_context_path(String& result,
                          rstd::ref<rstd::str> prefix,
                          rstd::ref<rstd::path::Path> path) -> void {
@@ -181,11 +193,13 @@ auto resolve_package(const PackageSpec& package,
     auto public_visible = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto contexts       = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto link_dependencies = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(rstd::None());
         public_visible.emplace_back();
         contexts.emplace_back();
         visible_targets.emplace_back();
+        link_dependencies.emplace_back();
     }
 
     for (auto target : target_order) {
@@ -241,12 +255,26 @@ auto resolve_package(const PackageSpec& package,
         visible_targets[target] = rstd::move(visible);
     }
 
+    for (auto target : target_order) {
+        auto marked = Vec<rstd::uint8_t>::with_capacity(package.targets.len());
+        for (auto id = TargetId {}; id < package.targets.len(); ++id) {
+            marked.emplace_back(rstd::uint8_t {});
+        }
+        mark_link_dependencies(package, target_ids, target, marked);
+        auto& dependencies = link_dependencies[target];
+        for (auto index = target_order.len(); index > rstd::usize {}; --index) {
+            const auto candidate = target_order[index - rstd::usize(1)];
+            if (marked[candidate] != rstd::uint8_t {}) dependencies.emplace_back(candidate);
+        }
+    }
+
     return rstd::Ok(PackagePlan {
         .package = rstd::addressof(package),
         .profile = profile,
         .target_order = rstd::move(target_order),
         .contexts = rstd::move(contexts),
         .visible_targets = rstd::move(visible_targets),
+        .link_dependencies = rstd::move(link_dependencies),
     });
 }
 

@@ -27,14 +27,22 @@ auto validate_options(const Vec<String>& options) -> Result<rstd::empty> {
     return rstd::Ok(rstd::empty {});
 }
 
+auto output_name(ArtifactKind kind, rstd::ref<rstd::str> declared_name) -> String {
+    if (kind == ArtifactKind::Executable) return String::make(declared_name);
+    auto result = String::make("lib"_str);
+    result.push_str(declared_name);
+    result.push_str(".a"_str);
+    return result;
+}
+
 } // namespace tenon::package_adapter_detail
 
 export namespace tenon
 {
 
-auto adapt_single_archive(PackageManifest manifest,
-                          ResolvedSourceSet source_set,
-                          const BuildConfiguration& configuration) -> Result<PackageSpec> {
+auto adapt_single_artifact(PackageManifest manifest,
+                           ResolvedSourceSet source_set,
+                           const BuildConfiguration& configuration) -> Result<PackageSpec> {
     using namespace package_adapter_detail;
 
     if (! manifest.dependencies.is_empty()) {
@@ -71,9 +79,7 @@ auto adapt_single_archive(PackageManifest manifest,
     }
 
     auto target_name = manifest.name.clone();
-    auto archive_name = String::make("lib"_str);
-    archive_name.push_str(manifest.archive_name.as_str());
-    archive_name.push_str(".a"_str);
+    auto artifact_name = output_name(manifest.artifact_kind, manifest.artifact_name.as_str());
     auto default_targets = Vec<String>::make();
     default_targets.push(target_name.clone());
     auto profiles = Vec<ProfileSpec>::make();
@@ -87,7 +93,9 @@ auto adapt_single_archive(PackageManifest manifest,
     auto targets = Vec<TargetSpec>::make();
     targets.push(TargetSpec {
         .name = rstd::move(target_name),
-        .archive_name = rstd::move(archive_name),
+        .artifact_kind = manifest.artifact_kind,
+        .artifact_name = rstd::move(artifact_name),
+        .module_affiliation = rstd::move(manifest.root_module),
         .root = manifest.root.clone(),
         .sources = rstd::move(sources),
         .module_expectations = rstd::move(expectations),
@@ -144,6 +152,15 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     auto manifest_path = root_package->manifest.manifest_path.clone();
     auto root_target = root_package->manifest.name.clone();
 
+    for (const auto& package : graph.packages) {
+        if (package.manifest.artifact_kind == ArtifactKind::Executable &&
+            package.id != graph.root_id.as_str()) {
+            return failure<PackageSpec>(rstd::format(
+                "dependency package '{}' cannot produce an executable",
+                package.manifest.name.as_str()));
+        }
+    }
+
     auto targets = Vec<TargetSpec>::with_capacity(graph.packages.len());
     for (rstd::usize index {}; index < graph.packages.len(); ++index) {
         auto& package = graph.packages[index];
@@ -171,12 +188,13 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
                 .visibility = dependency.visibility,
             });
         }
-        auto archive_name = String::make("lib"_str);
-        archive_name.push_str(package.manifest.archive_name.as_str());
-        archive_name.push_str(".a"_str);
+        auto artifact_name = output_name(
+            package.manifest.artifact_kind, package.manifest.artifact_name.as_str());
         targets.push(TargetSpec {
             .name = rstd::move(package.manifest.name),
-            .archive_name = rstd::move(archive_name),
+            .artifact_kind = package.manifest.artifact_kind,
+            .artifact_name = rstd::move(artifact_name),
+            .module_affiliation = rstd::move(package.manifest.root_module),
             .root = rstd::move(package.manifest.root),
             .sources = rstd::move(sources),
             .module_expectations = rstd::move(expectations),

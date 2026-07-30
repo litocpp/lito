@@ -88,7 +88,7 @@ auto discover_sources(const PackageManifest& manifest) -> Result<ResolvedSourceS
         auto source_key = rstd::move(key).unwrap();
         if (seen.contains_key(source_key.as_str())) {
             return failure<ResolvedSourceSet>(rstd::format(
-                "library.sources repeats source '{}'", source_key.as_str()));
+                "artifact sources repeat source '{}'", source_key.as_str()));
         }
         seen.insert(source_key.clone(), rstd::empty {});
         entries.push(SourceEntry {

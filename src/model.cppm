@@ -72,6 +72,12 @@ enum class SourceOrigin
     Convention,
 };
 
+enum class ArtifactKind
+{
+    StaticLibrary,
+    Executable,
+};
+
 struct ToolchainSpec {
     PathBuf compiler;
     PathBuf scanner;
@@ -110,10 +116,11 @@ struct PackageManifest {
     rstd::u64             manifest_version { 1 };
     String                name;
     String                version;
-    String                root_module;
+    rstd::Option<String>  root_module;
     PathBuf               root;
     PathBuf               manifest_path;
-    String                archive_name;
+    ArtifactKind          artifact_kind { ArtifactKind::StaticLibrary };
+    String                artifact_name;
     SourceDiscoveryMode   discovery { SourceDiscoveryMode::Explicit };
     Vec<PathBuf>          declared_sources;
     UsageRequirements     usage;
@@ -173,7 +180,9 @@ struct ModuleExpectation {
 
 struct TargetSpec {
     String                  name;
-    String                  archive_name;
+    ArtifactKind            artifact_kind { ArtifactKind::StaticLibrary };
+    String                  artifact_name;
+    rstd::Option<String>    module_affiliation;
     PathBuf                 root;
     Vec<PathBuf>            sources;
     Vec<ModuleExpectation>  module_expectations;
@@ -208,6 +217,7 @@ struct PackagePlan {
     Vec<TargetId>           target_order;
     Vec<CompileContext>     contexts;
     Vec<Vec<TargetId>>      visible_targets;
+    Vec<Vec<TargetId>>      link_dependencies;
 };
 
 struct UnitSpec {
@@ -256,6 +266,7 @@ enum class BuildEventKind
     Compile,
     Reuse,
     Archive,
+    Link,
 };
 
 struct BuildEvent {
@@ -287,6 +298,7 @@ struct BuildSummary {
     rstd::usize  compiled {};
     rstd::usize  reused {};
     Vec<PathBuf> archives;
+    Vec<PathBuf> executables;
 };
 
 } // namespace tenon

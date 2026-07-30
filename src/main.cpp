@@ -16,6 +16,7 @@ auto event_name(tenon::BuildEventKind kind) -> rstd::ref<rstd::str> {
     case tenon::BuildEventKind::Compile: return "compile"_str;
     case tenon::BuildEventKind::Reuse: return "reuse"_str;
     case tenon::BuildEventKind::Archive: return "archive"_str;
+    case tenon::BuildEventKind::Link: return "link"_str;
     }
     return "unknown"_str;
 }
@@ -27,7 +28,8 @@ auto configured_path(const char* value) -> tenon::PathBuf {
 void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose && event.kind != tenon::BuildEventKind::Compile &&
-        event.kind != tenon::BuildEventKind::Archive) {
+        event.kind != tenon::BuildEventKind::Archive &&
+        event.kind != tenon::BuildEventKind::Link) {
         return;
     }
     rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
@@ -121,13 +123,14 @@ int main() {
 
     auto summary = rstd::move(result).unwrap();
     rstd::io::println(
-        "built {} ({}) in {}: {} scanned, {} compiled, {} reused, {} archives",
+        "built {} ({}) in {}: {} scanned, {} compiled, {} reused, {} archives, {} executables",
         summary.package.as_str(),
         summary.profile.as_str(),
         summary.output.as_path(),
         summary.scanned,
         summary.compiled,
         summary.reused,
-        summary.archives.len());
+        summary.archives.len(),
+        summary.executables.len());
     return 0;
 }

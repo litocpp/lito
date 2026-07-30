@@ -71,6 +71,16 @@ auto required_string(const Toml& table,
     return string_value(**value, rstd::format("{}.{}", context, key).as_str());
 }
 
+auto optional_string(const Toml& table,
+                     rstd::ref<rstd::str> key,
+                     rstd::ref<rstd::str> context) -> Result<rstd::Option<String>> {
+    auto value = member(table, key);
+    if (value.is_none()) return rstd::Ok(rstd::Option<String> {});
+    auto parsed = string_value(**value, rstd::format("{}.{}", context, key).as_str());
+    if (parsed.is_err()) return rstd::Err(rstd::move(parsed).unwrap_err());
+    return rstd::Ok(rstd::Some(rstd::move(parsed).unwrap()));
+}
+
 auto string_array(rstd::Option<rstd::ref<Toml>> value, rstd::ref<rstd::str> context)
     -> Result<Vec<String>> {
     auto result = Vec<String>::make();
@@ -102,7 +112,7 @@ auto reject_unknown(const Table& table,
 
 auto root_key(rstd::ref<rstd::str> key) -> bool {
     return key == "manifest-version"_str || key == "package"_str || key == "library"_str ||
-           key == "usage"_str || key == "dependencies"_str;
+           key == "executable"_str || key == "usage"_str || key == "dependencies"_str;
 }
 
 auto package_key(rstd::ref<rstd::str> key) -> bool {
@@ -111,6 +121,10 @@ auto package_key(rstd::ref<rstd::str> key) -> bool {
 
 auto library_key(rstd::ref<rstd::str> key) -> bool {
     return key == "archive"_str || key == "discovery"_str || key == "sources"_str;
+}
+
+auto executable_key(rstd::ref<rstd::str> key) -> bool {
+    return key == "name"_str || key == "discovery"_str || key == "sources"_str;
 }
 
 auto usage_key(rstd::ref<rstd::str> key) -> bool {
@@ -144,7 +158,7 @@ auto valid_module_name(rstd::ref<rstd::str> value) -> bool {
     return ! segment_start;
 }
 
-auto valid_archive_name(rstd::ref<rstd::str> value) -> bool {
+auto valid_artifact_name(rstd::ref<rstd::str> value) -> bool {
     if (value.size() == rstd::usize {} || value == "."_str || value == ".."_str) return false;
     for (rstd::usize index {}; index < value.size(); ++index) {
         const auto byte = value[index];
@@ -376,25 +390,47 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
     }
 
     auto package_table = required_table(document, "package"_str, "manifest"_str);
-    auto library_table = required_table(document, "library"_str, "manifest"_str);
     if (package_table.is_err()) return rstd::Err(rstd::move(package_table).unwrap_err());
-    if (library_table.is_err()) return rstd::Err(rstd::move(library_table).unwrap_err());
     auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
-    auto library_known = reject_unknown(**library_table, "manifest.library"_str, library_key);
     if (package_known.is_err()) return rstd::Err(rstd::move(package_known).unwrap_err());
-    if (library_known.is_err()) return rstd::Err(rstd::move(library_known).unwrap_err());
+
+    auto library_value_option = member(document, "library"_str);
+    auto executable_value_option = member(document, "executable"_str);
+    if (library_value_option.is_some() == executable_value_option.is_some()) {
+        return failure<PackageManifest>(
+            "manifest must contain exactly one of 'library' or 'executable'"_str);
+    }
+    const auto artifact_kind = library_value_option.is_some() ? ArtifactKind::StaticLibrary
+                                                               : ArtifactKind::Executable;
+    const auto& artifact_value = library_value_option.is_some() ? **library_value_option
+                                                                 : **executable_value_option;
+    const auto artifact_context = artifact_kind == ArtifactKind::StaticLibrary
+                                      ? "manifest.library"_str
+                                      : "manifest.executable"_str;
+    auto artifact_table = table_value(artifact_value, artifact_context);
+    if (artifact_table.is_err()) return rstd::Err(rstd::move(artifact_table).unwrap_err());
+    auto artifact_known = reject_unknown(
+        **artifact_table,
+        artifact_context,
+        artifact_kind == ArtifactKind::StaticLibrary ? library_key : executable_key);
+    if (artifact_known.is_err()) return rstd::Err(rstd::move(artifact_known).unwrap_err());
 
     const auto& package_value = **member(document, "package"_str);
-    const auto& library_value = **member(document, "library"_str);
     auto name = required_string(package_value, "name"_str, "package"_str);
     auto version = required_string(package_value, "version"_str, "package"_str);
-    auto root_module = required_string(package_value, "module"_str, "package"_str);
-    auto archive = required_string(library_value, "archive"_str, "library"_str);
-    auto discovery_text = required_string(library_value, "discovery"_str, "library"_str);
+    auto root_module = optional_string(package_value, "module"_str, "package"_str);
+    auto artifact_name = required_string(
+        artifact_value,
+        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
+        artifact_kind == ArtifactKind::StaticLibrary ? "library"_str : "executable"_str);
+    auto discovery_text = required_string(
+        artifact_value,
+        "discovery"_str,
+        artifact_kind == ArtifactKind::StaticLibrary ? "library"_str : "executable"_str);
     if (name.is_err()) return rstd::Err(rstd::move(name).unwrap_err());
     if (version.is_err()) return rstd::Err(rstd::move(version).unwrap_err());
     if (root_module.is_err()) return rstd::Err(rstd::move(root_module).unwrap_err());
-    if (archive.is_err()) return rstd::Err(rstd::move(archive).unwrap_err());
+    if (artifact_name.is_err()) return rstd::Err(rstd::move(artifact_name).unwrap_err());
     if (discovery_text.is_err()) return rstd::Err(rstd::move(discovery_text).unwrap_err());
     if (! valid_module_name(name->as_str())) {
         return failure<PackageManifest>("package.name must be a valid logical name"_str);
@@ -402,24 +438,42 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
     if (version->is_empty()) {
         return failure<PackageManifest>("package.version must not be empty"_str);
     }
-    if (! valid_module_name(root_module->as_str())) {
+    if (root_module->is_some() && ! valid_module_name((**root_module).as_str())) {
         return failure<PackageManifest>("package.module must be a valid module name"_str);
     }
-    if (! valid_archive_name(archive->as_str())) {
-        return failure<PackageManifest>("library.archive must be a safe archive basename"_str);
+    if (artifact_kind == ArtifactKind::StaticLibrary && root_module->is_none()) {
+        return failure<PackageManifest>("package.module is required for a library"_str);
+    }
+    if (! valid_artifact_name(artifact_name->as_str())) {
+        return failure<PackageManifest>(rstd::format(
+            "{}.{} must be a safe artifact basename",
+            artifact_context,
+            artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str));
     }
     const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
     const auto module_discovery = discovery_text->as_str() == "module"_str;
     if (! explicit_discovery && ! module_discovery) {
-        return failure<PackageManifest>(
-            "library.discovery must be explicit or module in manifest version 1"_str);
+        return failure<PackageManifest>(rstd::format(
+            "{}.discovery must be explicit or module in manifest version 1",
+            artifact_context));
     }
-    if (module_discovery && member(library_value, "sources"_str).is_some()) {
+    if (artifact_kind == ArtifactKind::Executable && module_discovery) {
         return failure<PackageManifest>(
-            "library.sources is not allowed when library.discovery is module"_str);
+            "executable.discovery must be explicit in manifest version 1"_str);
+    }
+    if (module_discovery && root_module->is_none()) {
+        return failure<PackageManifest>(
+            "package.module is required when discovery is module"_str);
+    }
+    if (module_discovery && member(artifact_value, "sources"_str).is_some()) {
+        return failure<PackageManifest>(rstd::format(
+            "{}.sources is not allowed when discovery is module", artifact_context));
     }
     auto sources = declared_paths(
-        member(library_value, "sources"_str), "library.sources"_str, explicit_discovery);
+        member(artifact_value, "sources"_str),
+        artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
+                                                      : "executable.sources"_str,
+        explicit_discovery);
     if (sources.is_err()) return rstd::Err(rstd::move(sources).unwrap_err());
 
     auto parent = path.as_path().parent();
@@ -439,7 +493,8 @@ auto load_package_manifest(rstd::ref<rstd::path::Path> requested_path)
         .root_module = rstd::move(root_module).unwrap(),
         .root = rstd::move(root),
         .manifest_path = rstd::move(path),
-        .archive_name = rstd::move(archive).unwrap(),
+        .artifact_kind = artifact_kind,
+        .artifact_name = rstd::move(artifact_name).unwrap(),
         .discovery = explicit_discovery ? SourceDiscoveryMode::Explicit
                                         : SourceDiscoveryMode::Module,
         .declared_sources = rstd::move(sources).unwrap(),

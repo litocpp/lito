@@ -114,9 +114,16 @@ auto resolve_modules(const PackagePlan& package,
                 provided.logical_name.as_str(),
                 primary_name));
         }
-        if (units[**primary_provider].unit.target != units[scan.unit].unit.target) {
+        const auto primary_target = units[**primary_provider].unit.target;
+        const auto partition_target = units[scan.unit].unit.target;
+        const auto& primary_affiliation =
+            package.package->targets[primary_target].module_affiliation;
+        const auto& partition_affiliation =
+            package.package->targets[partition_target].module_affiliation;
+        if (primary_affiliation.is_none() || partition_affiliation.is_none() ||
+            *primary_affiliation != (*partition_affiliation).as_str()) {
             return failure<ModulePlan>(rstd::format(
-                "partition '{}' and primary module '{}' have different target owners",
+                "partition '{}' and primary module '{}' have different named-module affiliations",
                 provided.logical_name.as_str(),
                 primary_name));
         }
@@ -168,10 +175,12 @@ auto resolve_modules(const PackagePlan& package,
     for (auto unit : compile_order) {
         auto seen = StringSet::make();
         for (const auto& input : direct_inputs[unit]) {
+            append_artifact(transitive_inputs[unit], seen, input);
+        }
+        for (const auto& input : direct_inputs[unit]) {
             for (const auto& dependency : transitive_inputs[input.provider]) {
                 append_artifact(transitive_inputs[unit], seen, dependency);
             }
-            append_artifact(transitive_inputs[unit], seen, input);
         }
     }
 

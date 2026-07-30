@@ -328,7 +328,7 @@ public:
             return rstd::Err(rstd::move(canonical_resource).unwrap_err());
         }
 
-        auto identity = String::make("tenon-clang-recipe-v1\n"_str);
+        auto identity = String::make("tenon-clang-recipe-v2\n"_str);
         auto append_identity_path = [&](rstd::ref<rstd::path::Path> value) {
             auto text = value.to_str();
             if (text.is_some()) identity.push_str(*text);
@@ -500,6 +500,45 @@ public:
         if (command_output.exit_code != rstd::i32 {}) {
             return clang_detail::failure<rstd::empty>(rstd::format(
                 "llvm-ar failed for '{}'\n{}\n{}",
+                output_path,
+                command_text(command).as_str(),
+                command_output.standard_error.as_str()));
+        }
+        return rstd::Ok(rstd::empty {});
+    }
+
+    auto link_executable(rstd::ref<rstd::path::Path> output_path,
+                         const Vec<PathBuf>& objects,
+                         const Vec<PathBuf>& archives,
+                         StandardLibrary standard_library,
+                         rstd::ref<rstd::path::Path> working_directory) const
+        -> Result<rstd::empty> {
+        using namespace rstd::literals;
+
+        auto parent = clang_detail::create_parent(output_path);
+        if (parent.is_err()) return parent;
+        auto command = Vec<String>::make();
+        auto pushed = clang_detail::push_path(command, compiler_.as_path());
+        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        command.push(clang_detail::standard_library_flag(standard_library));
+        for (const auto& object : objects) {
+            pushed = clang_detail::push_path(command, object.as_path());
+            if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        }
+        for (const auto& archive : archives) {
+            pushed = clang_detail::push_path(command, archive.as_path());
+            if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        }
+        command.push(String::make("-o"_str));
+        pushed = clang_detail::push_path(command, output_path);
+        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+
+        auto output = run_command(command, rstd::Some(working_directory));
+        if (output.is_err()) return rstd::Err(rstd::move(output).unwrap_err());
+        auto command_output = rstd::move(output).unwrap();
+        if (command_output.exit_code != rstd::i32 {}) {
+            return clang_detail::failure<rstd::empty>(rstd::format(
+                "clang++ failed to link '{}'\n{}\n{}",
                 output_path,
                 command_text(command).as_str(),
                 command_output.standard_error.as_str()));

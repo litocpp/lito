@@ -323,10 +323,16 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
 
     auto archives = Vec<PathBuf>::make();
+    auto archive_paths =
+        Vec<rstd::Option<PathBuf>>::with_capacity(package.targets.len());
+    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+        archive_paths.emplace_back(rstd::None());
+    }
     auto library_directory = join(output.as_path(), "lib"_str);
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
-        auto archive_name = PathBuf::from(target_spec.archive_name.as_str());
+        if (target_spec.artifact_kind != ArtifactKind::StaticLibrary) continue;
+        auto archive_name = PathBuf::from(target_spec.artifact_name.as_str());
         auto archive_path = library_directory.join(archive_name.as_path());
         auto objects      = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
@@ -336,7 +342,46 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
              archive_path.as_path());
         auto archived = toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
         if (archived.is_err()) return rstd::Err(rstd::move(archived).unwrap_err());
+        archive_paths[target] = rstd::Some(archive_path.clone());
         archives.push(rstd::move(archive_path));
+    }
+
+    auto executables = Vec<PathBuf>::make();
+    auto binary_directory = join(output.as_path(), "bin"_str);
+    for (auto target : package_plan.target_order) {
+        const auto& target_spec = package.targets[target];
+        if (target_spec.artifact_kind != ArtifactKind::Executable) continue;
+        auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
+        for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
+        auto linked_archives =
+            Vec<PathBuf>::with_capacity(package_plan.link_dependencies[target].len());
+        for (auto dependency : package_plan.link_dependencies[target]) {
+            const auto& dependency_spec = package.targets[dependency];
+            if (dependency_spec.artifact_kind != ArtifactKind::StaticLibrary ||
+                archive_paths[dependency].is_none()) {
+                return failure<BuildSummary>(
+                    ErrorKind::Artifact,
+                    rstd::format(
+                        "executable target '{}' depends on unavailable library target '{}'",
+                        target_spec.name.as_str(),
+                        dependency_spec.name.as_str()));
+            }
+            linked_archives.push((*archive_paths[dependency]).clone());
+        }
+        auto executable_name = PathBuf::from(target_spec.artifact_name.as_str());
+        auto executable_path = binary_directory.join(executable_name.as_path());
+        emit(request,
+             BuildEventKind::Link,
+             target_spec.name.as_str(),
+             executable_path.as_path());
+        auto linked = toolchain.link_executable(
+            executable_path.as_path(),
+            objects,
+            linked_archives,
+            package_plan.profile->standard_library,
+            target_spec.root.as_path());
+        if (linked.is_err()) return rstd::Err(rstd::move(linked).unwrap_err());
+        executables.push(rstd::move(executable_path));
     }
 
     return rstd::Ok(BuildSummary {
@@ -347,6 +392,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .compiled = compiled,
         .reused = reused,
         .archives = rstd::move(archives),
+        .executables = rstd::move(executables),
     });
 }
 

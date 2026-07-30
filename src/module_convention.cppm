@@ -81,6 +81,10 @@ auto path_segments(rstd::ref<rstd::path::Path> path) -> Result<Vec<String>> {
 
 auto expected_module(const PackageManifest& manifest,
                      rstd::ref<rstd::path::Path> relative) -> Result<String> {
+    if (manifest.root_module.is_none()) {
+        return failure<String>("module discovery requires package.module"_str);
+    }
+    const auto& root_module = *manifest.root_module;
     auto segments_result = path_segments(relative);
     if (segments_result.is_err()) return rstd::Err(rstd::move(segments_result).unwrap_err());
     auto segments = rstd::move(segments_result).unwrap();
@@ -90,11 +94,11 @@ auto expected_module(const PackageManifest& manifest,
     const auto& file = segments[segments.len() - rstd::usize(1)];
     if (segments.len() == rstd::usize(1) && file.as_str() == "main.cppm"_str) {
         return failure<String>(
-            "src/main.cppm requires an executable artifact, which Tenon does not support yet"_str);
+            "src/main.cppm is not supported by module discovery in manifest version 1"_str);
     }
     if (segments.len() == rstd::usize(1) &&
         (file.as_str() == "lib.cppm"_str || file.as_str() == "mod.cppm"_str)) {
-        return rstd::Ok(manifest.root_module.clone());
+        return rstd::Ok(root_module.clone());
     }
 
     auto partition_segments = Vec<String>::make();
@@ -122,7 +126,7 @@ auto expected_module(const PackageManifest& manifest,
             "module convention path '{}' does not identify a partition", relative));
     }
 
-    auto logical_name = manifest.root_module.clone();
+    auto logical_name = root_module.clone();
     logical_name.push_ascii(rstd::u8(':'));
     for (rstd::usize index {}; index < partition_segments.len(); ++index) {
         if (index != rstd::usize {}) logical_name.push_ascii(rstd::u8('.'));
@@ -239,6 +243,10 @@ export namespace tenon
 auto discover_module_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
     using namespace module_convention_detail;
 
+    if (manifest.root_module.is_none()) {
+        return failure<ResolvedSourceSet>("module discovery requires package.module"_str);
+    }
+    const auto& root_module = *manifest.root_module;
     auto requested_root = manifest.root.join(PathBuf::from("src"_str).as_path());
     auto canonical_root = rstd::fs::canonicalize(requested_root.as_path());
     if (canonical_root.is_err()) {
@@ -259,10 +267,10 @@ auto discover_module_sources(const PackageManifest& manifest) -> Result<Resolved
     auto walked = walk_sources(
         manifest, source_root.as_path(), source_root.as_path(), expected_paths, entries);
     if (walked.is_err()) return rstd::Err(rstd::move(walked).unwrap_err());
-    if (! expected_paths.contains_key(manifest.root_module.as_str())) {
+    if (! expected_paths.contains_key(root_module.as_str())) {
         return failure<ResolvedSourceSet>(rstd::format(
             "module discovery requires exactly one primary interface at 'src/lib.cppm' or 'src/mod.cppm' for '{}'",
-            manifest.root_module.as_str()));
+            root_module.as_str()));
     }
     rstd::slice_::sort_unstable_by(
         entries.as_mut_slice().as_mut_ref(),
