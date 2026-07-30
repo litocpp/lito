@@ -1,5 +1,5 @@
 /build/
 demo/**/build/
-fixtures/**/build/
+test/**/build/
 **/tenon.lock.guard
 **/tenon.lock.tmp.*
