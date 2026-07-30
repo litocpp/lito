@@ -113,7 +113,6 @@ struct DeclaredDependency {
 };
 
 struct PackageManifest {
-    rstd::u64             manifest_version { 1 };
     String                name;
     String                version;
     rstd::Option<String>  root_module;
@@ -128,7 +127,6 @@ struct PackageManifest {
 };
 
 struct WorkspaceManifest {
-    rstd::u64    manifest_version { 1 };
     PathBuf      root;
     PathBuf      manifest_path;
     Vec<PathBuf> members;

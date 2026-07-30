@@ -1,5 +1,3 @@
-manifest-version = 1
-
 [package]
 name = "demo.workspace.app_two"
 version = "0.1.0"

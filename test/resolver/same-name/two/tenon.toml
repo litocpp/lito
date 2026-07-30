@@ -1,5 +1,3 @@
-manifest-version = 1
-
 [package]
 name = "fixture.same.dependency"
 version = "0.2.0"

@@ -1,5 +1,3 @@
-manifest-version = 1
-
 [package]
 name = "fixture.lock.invalid"
 version = "0.1.0"

@@ -112,12 +112,12 @@ auto reject_unknown(const Table& table,
 }
 
 auto package_root_key(rstd::ref<rstd::str> key) -> bool {
-    return key == "manifest-version"_str || key == "package"_str || key == "library"_str ||
-           key == "executable"_str || key == "usage"_str || key == "dependencies"_str;
+    return key == "package"_str || key == "library"_str || key == "executable"_str ||
+           key == "usage"_str || key == "dependencies"_str;
 }
 
 auto workspace_root_key(rstd::ref<rstd::str> key) -> bool {
-    return key == "manifest-version"_str || key == "workspace"_str;
+    return key == "workspace"_str;
 }
 
 auto package_key(rstd::ref<rstd::str> key) -> bool {
@@ -389,15 +389,6 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
     auto root_table = table_value(document, "manifest root"_str);
     if (root_table.is_err()) return rstd::Err(rstd::move(root_table).unwrap_err());
 
-    auto manifest_version = member(document, "manifest-version"_str);
-    if (manifest_version.is_none()) {
-        return failure<ManifestDocument>("manifest-version is required"_str);
-    }
-    auto version_number = (**manifest_version).as_integer();
-    if (version_number.is_none() || *version_number != rstd::i64(1)) {
-        return failure<ManifestDocument>("manifest-version must be integer 1"_str);
-    }
-
     auto workspace_value = member(document, "workspace"_str);
     if (workspace_value.is_some()) {
         auto root_known =
@@ -426,7 +417,6 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
         return rstd::Ok(ManifestDocument {
             .kind = ManifestKind::Workspace,
             .workspace = rstd::Some(WorkspaceManifest {
-                .manifest_version = rstd::u64(1),
                 .root = rstd::move(root),
                 .manifest_path = rstd::move(path),
                 .members = rstd::move(members).unwrap(),
@@ -532,7 +522,6 @@ auto load_manifest_document(rstd::ref<rstd::path::Path> requested_directory)
     return rstd::Ok(ManifestDocument {
         .kind = ManifestKind::Package,
         .package = rstd::Some(PackageManifest {
-            .manifest_version = rstd::u64(1),
             .name = rstd::move(name).unwrap(),
             .version = rstd::move(version).unwrap(),
             .root_module = rstd::move(root_module).unwrap(),
