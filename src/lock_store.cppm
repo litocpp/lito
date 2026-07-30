@@ -28,10 +28,6 @@ auto lock_path(const ResolvedPackageGraph& graph) -> PathBuf {
     return graph.root_directory.join(PathBuf::from("tenon.lock"_str).as_path());
 }
 
-auto guard_path(const ResolvedPackageGraph& graph) -> PathBuf {
-    return graph.root_directory.join(PathBuf::from("tenon.lock.guard"_str).as_path());
-}
-
 auto path_string(rstd::ref<rstd::path::Path> path) -> Result<String> {
     auto text = path.to_str();
     if (text.is_none()) {
@@ -421,23 +417,6 @@ auto sync_lock(const ResolvedPackageGraph& graph, bool locked) -> Result<LockSta
                                              "--locked requires an existing tenon.lock"_str)
                                        : String::make(
                                              "--locked forbids updating stale tenon.lock"_str));
-    }
-
-    auto guard_name = guard_path(graph);
-    auto guard = rstd::fs::File::options()
-                     .read(true)
-                     .write(true)
-                     .create(true)
-                     .open(guard_name.as_path());
-    if (guard.is_err()) {
-        return failure<LockStatus>(rstd::format(
-            "cannot open lock guard '{}': {}", guard_name.as_path(), rstd::move(guard).unwrap_err()));
-    }
-    auto guard_file = rstd::move(guard).unwrap();
-    auto guarded = guard_file.lock();
-    if (guarded.is_err()) {
-        return failure<LockStatus>(rstd::format(
-            "cannot lock guard '{}': {}", guard_name.as_path(), rstd::move(guarded).unwrap_err()));
     }
 
     auto existing_result = load_existing(destination.as_path());
