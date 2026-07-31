@@ -1,9 +1,10 @@
-export module tenon.clang_toolchain;
+export module tenon.toolchain.clang;
 
 import rstd;
 import rstd.json;
 import tenon.model;
 import tenon.process;
+import tenon.toolchain.clang_options;
 
 namespace tenon::clang_detail
 {
@@ -66,6 +67,10 @@ auto push_path(Vec<String>& command, rstd::ref<rstd::path::Path> path) -> Result
     if (argument.is_err()) return rstd::Err(rstd::move(argument).unwrap_err());
     command.push(rstd::move(argument).unwrap());
     return rstd::Ok(rstd::empty {});
+}
+
+auto push_option(Vec<String>& command, rstd::ref<rstd::str> option) -> void {
+    command.push(String::make(option));
 }
 
 auto tool_output(Vec<String> command, rstd::ref<rstd::str> description) -> Result<String> {
@@ -252,16 +257,6 @@ auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanRes
     return rstd::Ok(rstd::move(result));
 }
 
-auto standard_library_flag(StandardLibrary value) -> String {
-    return String::make(value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str
-                                                             : "-stdlib=libc++"_str);
-}
-
-auto bmi_flag(BmiMode value) -> String {
-    return String::make(value == BmiMode::Reduced ? "-fmodules-reduced-bmi"_str
-                                                   : "-fno-modules-reduced-bmi"_str);
-}
-
 } // namespace tenon::clang_detail
 
 export namespace tenon
@@ -290,19 +285,19 @@ public:
         auto resource_command = Vec<String>::make();
         auto pushed = push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        compiler_command.push(String::make("--version"_str));
+        push_option(compiler_command, toolchain::clang_options::VERSION);
         pushed = push_path(scanner_command, scanner_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        scanner_command.push(String::make("--version"_str));
+        push_option(scanner_command, toolchain::clang_options::VERSION);
         pushed = push_path(archiver_command, archiver_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        archiver_command.push(String::make("--version"_str));
+        push_option(archiver_command, toolchain::clang_options::VERSION);
         pushed = push_path(target_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        target_command.push(String::make("-print-target-triple"_str));
+        push_option(target_command, toolchain::clang_options::PRINT_TARGET_TRIPLE);
         pushed = push_path(resource_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        resource_command.push(String::make("-print-resource-dir"_str));
+        push_option(resource_command, toolchain::clang_options::PRINT_RESOURCE_DIR);
 
         auto compiler_version =
             tool_output(rstd::move(compiler_command), "clang++ --version"_str);
@@ -328,7 +323,7 @@ public:
             return rstd::Err(rstd::move(canonical_resource).unwrap_err());
         }
 
-        auto identity = String::make("tenon-clang-recipe-v2\n"_str);
+        auto identity = String::make("tenon-clang-recipe-v3\n"_str);
         auto append_identity_path = [&](rstd::ref<rstd::path::Path> value) {
             auto text = value.to_str();
             if (text.is_some()) identity.push_str(*text);
@@ -380,21 +375,21 @@ public:
         auto command = Vec<String>::make();
         auto pushed = clang_detail::push_path(command, scanner_.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("-format=p1689"_str));
-        command.push(String::make("--"_str));
+        clang_detail::push_option(command, toolchain::clang_options::SCAN_FORMAT_P1689);
+        clang_detail::push_option(command, toolchain::clang_options::DRIVER_ARGUMENTS);
         auto context = append_compile_context(command, *prepared.unit.context);
         if (context.is_err()) return rstd::Err(rstd::move(context).unwrap_err());
-        command.push(String::make("-MD"_str));
-        command.push(String::make("-MT"_str));
+        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCIES);
+        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCY_TARGET);
         pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("-MF"_str));
+        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCY_FILE);
         pushed = clang_detail::push_path(command, prepared.unit.depfile.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("-c"_str));
+        clang_detail::push_option(command, toolchain::clang_options::COMPILE);
         pushed = clang_detail::push_path(command, prepared.unit.source.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("-o"_str));
+        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
 
@@ -433,18 +428,21 @@ public:
             }
             auto parent = clang_detail::create_parent((*prepared.unit.bmi).as_path());
             if (parent.is_err()) return parent;
-            command.push(String::make("-x"_str));
-            command.push(String::make("c++-module"_str));
-            command.push(rstd::format("-fmodule-output={}", (*prepared.unit.bmi).as_path()));
+            clang_detail::push_option(command, toolchain::clang_options::LANGUAGE);
+            clang_detail::push_option(command, toolchain::clang_options::CXX_MODULE);
+            command.push(rstd::format(
+                "{}{}", toolchain::clang_options::MODULE_OUTPUT, (*prepared.unit.bmi).as_path()));
         }
         for (const auto& input : module_inputs) {
-            command.push(rstd::format(
-                "-fmodule-file={}={}", input.logical_name.as_str(), input.bmi.as_path()));
+            command.push(rstd::format("{}{}={}",
+                                      toolchain::clang_options::MODULE_FILE,
+                                      input.logical_name.as_str(),
+                                      input.bmi.as_path()));
         }
-        command.push(String::make("-c"_str));
+        clang_detail::push_option(command, toolchain::clang_options::COMPILE);
         auto pushed = clang_detail::push_path(command, prepared.unit.source.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("-o"_str));
+        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
 
@@ -487,7 +485,7 @@ public:
         auto command = Vec<String>::make();
         auto pushed = clang_detail::push_path(command, archiver_.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(String::make("rcs"_str));
+        clang_detail::push_option(command, toolchain::clang_options::ARCHIVE_CREATE);
         pushed = clang_detail::push_path(command, output_path);
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         for (const auto& object : objects) {
@@ -520,7 +518,8 @@ public:
         auto command = Vec<String>::make();
         auto pushed = clang_detail::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        command.push(clang_detail::standard_library_flag(standard_library));
+        clang_detail::push_option(
+            command, toolchain::clang_options::standard_library(standard_library));
         for (const auto& object : objects) {
             pushed = clang_detail::push_path(command, object.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
@@ -529,7 +528,7 @@ public:
             pushed = clang_detail::push_path(command, archive.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         }
-        command.push(String::make("-o"_str));
+        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = clang_detail::push_path(command, output_path);
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
 
@@ -566,20 +565,23 @@ private:
 
         auto pushed = clang_detail::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
-        command.push(String::make("-resource-dir"_str));
+        clang_detail::push_option(command, toolchain::clang_options::RESOURCE_DIR);
         pushed = clang_detail::push_path(command, resource_dir_.as_path());
         if (pushed.is_err()) return pushed;
-        command.push(rstd::format("-std={}", context.language_standard.as_str()));
-        command.push(clang_detail::standard_library_flag(context.standard_library));
-        command.push(clang_detail::bmi_flag(context.bmi_mode));
+        command.push(rstd::format(
+            "{}{}", toolchain::clang_options::STANDARD, context.language_standard.as_str()));
+        clang_detail::push_option(
+            command, toolchain::clang_options::standard_library(context.standard_library));
+        clang_detail::push_option(command, toolchain::clang_options::bmi(context.bmi_mode));
         for (const auto& option : context.options) command.push(option.clone());
-        command.push(String::make("-fno-rtti"_str));
-        command.push(String::make("-fno-exceptions"_str));
+        clang_detail::push_option(command, toolchain::clang_options::NO_RTTI);
+        clang_detail::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
         for (const auto& definition : context.definitions) {
-            command.push(rstd::format("-D{}", definition.as_str()));
+            command.push(rstd::format(
+                "{}{}", toolchain::clang_options::DEFINE, definition.as_str()));
         }
         for (const auto& include : context.include_directories) {
-            command.push(String::make("-I"_str));
+            clang_detail::push_option(command, toolchain::clang_options::INCLUDE);
             pushed = clang_detail::push_path(command, include.as_path());
             if (pushed.is_err()) return pushed;
         }

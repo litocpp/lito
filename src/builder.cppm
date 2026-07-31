@@ -7,7 +7,7 @@ import tenon.workspace_resolver;
 import tenon.lock_store;
 import tenon.package_adapter;
 import tenon.package;
-import tenon.clang_toolchain;
+import tenon.toolchain.clang;
 import tenon.module_convention;
 import tenon.module_graph;
 import tenon.artifact_store;
