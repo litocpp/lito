@@ -30,7 +30,7 @@ auto contains(const Vec<TargetId>& values, TargetId value) -> bool {
 
 auto visit(UnitId unit,
            const Vec<PreparedUnit>& units,
-           const Vec<Vec<ResolvedModuleArtifact>>& direct_inputs,
+           const Vec<Vec<UnitId>>& direct_inputs,
            Vec<uint8_t>& colors,
            Vec<UnitId>& compile_order) -> Result<empty> {
     auto& color = colors[unit];
@@ -41,29 +41,13 @@ auto visit(UnitId unit,
     }
 
     color = 1;
-    for (const auto& input : direct_inputs[unit]) {
-        auto dependency = visit(input.provider, units, direct_inputs, colors, compile_order);
+    for (auto input : direct_inputs[unit]) {
+        auto dependency = visit(input, units, direct_inputs, colors, compile_order);
         if (dependency.is_err()) return dependency;
     }
     color = 2;
     compile_order.emplace_back(unit);
     return Ok(empty {});
-}
-
-auto clone_artifact(const ResolvedModuleArtifact& artifact) -> ResolvedModuleArtifact {
-    return ResolvedModuleArtifact {
-        .logical_name = artifact.logical_name.clone(),
-        .provider = artifact.provider,
-        .bmi = artifact.bmi.clone(),
-    };
-}
-
-auto append_artifact(Vec<ResolvedModuleArtifact>& output,
-                     StringSet& seen,
-                     const ResolvedModuleArtifact& artifact) -> void {
-    if (seen.contains_key(artifact.logical_name.as_str())) return;
-    seen.insert(artifact.logical_name.clone(), empty {});
-    output.push(clone_artifact(artifact));
 }
 
 } // namespace tenon
@@ -128,7 +112,7 @@ auto resolve_modules(const PackagePlan& package,
         }
     }
 
-    auto direct_inputs = Vec<Vec<ResolvedModuleArtifact>>::with_capacity(units.len());
+    auto direct_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) direct_inputs.emplace_back();
     for (const auto& scan : scans) {
         auto names = StringSet::make();
@@ -153,11 +137,7 @@ auto resolve_modules(const PackagePlan& package,
             }
             if (names.contains_key(required.as_str())) continue;
             names.insert(required.clone(), empty {});
-            direct_inputs[scan.unit].push(ResolvedModuleArtifact {
-                .logical_name = required.clone(),
-                .provider = provider_unit,
-                .bmi = (*units[provider_unit].unit.bmi).clone(),
-            });
+            direct_inputs[scan.unit].emplace_back(provider_unit);
         }
     }
 
@@ -169,24 +149,9 @@ auto resolve_modules(const PackagePlan& package,
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
     }
 
-    auto transitive_inputs = Vec<Vec<ResolvedModuleArtifact>>::with_capacity(units.len());
-    for (auto unit = UnitId {}; unit < units.len(); ++unit) transitive_inputs.emplace_back();
-    for (auto unit : compile_order) {
-        auto seen = StringSet::make();
-        for (const auto& input : direct_inputs[unit]) {
-            append_artifact(transitive_inputs[unit], seen, input);
-        }
-        for (const auto& input : direct_inputs[unit]) {
-            for (const auto& dependency : transitive_inputs[input.provider]) {
-                append_artifact(transitive_inputs[unit], seen, dependency);
-            }
-        }
-    }
-
     return Ok(ModulePlan {
         .compile_order = rstd::move(compile_order),
         .direct_inputs = rstd::move(direct_inputs),
-        .transitive_inputs = rstd::move(transitive_inputs),
     });
 }
 

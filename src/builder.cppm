@@ -148,9 +148,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
-            units[unit].unit.bmi = Some(layout.bmi(
-                package.targets[target].name.as_str(),
-                (*result.provided).logical_name.as_str()));
+            units[unit].unit.bmi = Some(
+                layout.bmi((*result.provided).logical_name.as_str()));
         }
         scans.push(rstd::move(result));
     }
@@ -169,12 +168,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto store = ArtifactStore {};
     auto keys  = Vec<String>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
-    auto compiled = usize {};
-    auto reused   = usize {};
+    auto bmi_directory = layout.bmi_directory();
+    auto compiled      = usize {};
+    auto reused        = usize {};
     for (auto unit : module_plan.compile_order) {
         auto dependency_keys = Vec<String>::make();
-        for (const auto& input : module_plan.direct_inputs[unit]) {
-            dependency_keys.push(keys[input.provider].clone());
+        for (auto input : module_plan.direct_inputs[unit]) {
+            dependency_keys.push(keys[input].clone());
         }
         auto key = store.key_for(units[unit], scans[unit], dependency_keys);
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
@@ -191,8 +191,11 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                  BuildEventKind::Compile,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
-            auto result = toolchain.compile(
-                units[unit], scans[unit], module_plan.transitive_inputs[unit]);
+            auto prebuilt_module_path = Option<ref<rstd::path::Path>> {};
+            if (! module_plan.direct_inputs[unit].is_empty()) {
+                prebuilt_module_path = Some(bmi_directory.as_path());
+            }
+            auto result = toolchain.compile(units[unit], scans[unit], prebuilt_module_path);
             if (result.is_err()) return Err(rstd::move(result).unwrap_err());
             auto committed = store.commit(units[unit], artifact_key.as_str());
             if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());

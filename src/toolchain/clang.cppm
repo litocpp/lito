@@ -154,7 +154,7 @@ public:
 
     auto compile(const PreparedUnit& prepared,
                  const ScanResult& scan_result,
-                 const Vec<ResolvedModuleArtifact>& module_inputs) const -> Result<empty> {
+                 Option<ref<rstd::path::Path>> prebuilt_module_path) const -> Result<empty> {
 
         auto command = Vec<String>::make();
         auto context = append_compile_context(command, *prepared.unit.context);
@@ -168,14 +168,18 @@ public:
             if (parent.is_err()) return parent;
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
             toolchain::command::push_option(command, toolchain::clang_options::CXX_MODULE);
-            command.push(rstd::format(
-                "{}{}", toolchain::clang_options::MODULE_OUTPUT, (*prepared.unit.bmi).as_path()));
+            auto pushed = toolchain::command::push_path_option(
+                command,
+                toolchain::clang_options::MODULE_OUTPUT,
+                (*prepared.unit.bmi).as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
-        for (const auto& input : module_inputs) {
-            command.push(rstd::format("{}{}={}",
-                                      toolchain::clang_options::MODULE_FILE,
-                                      input.logical_name.as_str(),
-                                      input.bmi.as_path()));
+        if (prebuilt_module_path.is_some()) {
+            auto pushed = toolchain::command::push_path_option(
+                command,
+                toolchain::clang_options::PREBUILT_MODULE_PATH,
+                *prebuilt_module_path);
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         toolchain::command::push_option(command, toolchain::clang_options::COMPILE);
         auto pushed = toolchain::command::push_path(command, prepared.unit.source.as_path());

@@ -52,7 +52,7 @@ auto module_filename(ref<str> logical_name) -> String {
         const auto ascii = (byte >= u8('a') && byte <= u8('z')) ||
                            (byte >= u8('A') && byte <= u8('Z')) ||
                            (byte >= u8('0') && byte <= u8('9')) ||
-                           byte == u8('_');
+                           byte == u8('_') || byte == u8('.');
         result.push_ascii(ascii ? static_cast<char>(byte.to_primitive()) : '-');
     }
     result.push_str(".pcm"_str);
@@ -138,10 +138,12 @@ public:
         return source_path("fingerprint"_str, target, source, package_root, ".txt"_str);
     }
 
-    auto bmi(ref<str> target,
-             ref<str> logical_name) const -> PathBuf {
-        auto directory = join(join(output_.as_path(), "bmi"_str).as_path(), target);
-        return directory.join(PathBuf::from(module_filename(logical_name)).as_path());
+    auto bmi_directory() const -> PathBuf {
+        return join(output_.as_path(), "bmi"_str);
+    }
+
+    auto bmi(ref<str> logical_name) const -> PathBuf {
+        return bmi_directory().join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
     auto archive(ref<str> target,

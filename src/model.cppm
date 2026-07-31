@@ -372,16 +372,9 @@ struct ScanResult {
     Vec<PathBuf>                 header_inputs;
 };
 
-struct ResolvedModuleArtifact {
-    String  logical_name;
-    UnitId  provider {};
-    PathBuf bmi;
-};
-
 struct ModulePlan {
-    Vec<UnitId>                             compile_order;
-    Vec<Vec<ResolvedModuleArtifact>>        direct_inputs;
-    Vec<Vec<ResolvedModuleArtifact>>        transitive_inputs;
+    Vec<UnitId>      compile_order;
+    Vec<Vec<UnitId>> direct_inputs;
 };
 
 enum class BuildEventKind

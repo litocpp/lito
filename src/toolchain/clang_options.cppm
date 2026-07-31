@@ -24,12 +24,12 @@ inline constexpr auto DEPENDENCIES       = "-MD"_str;
 inline constexpr auto DEPENDENCY_TARGET  = "-MT"_str;
 inline constexpr auto DEPENDENCY_FILE    = "-MF"_str;
 
-inline constexpr auto LANGUAGE      = "-x"_str;
-inline constexpr auto CXX_MODULE    = "c++-module"_str;
-inline constexpr auto MODULE_OUTPUT = "-fmodule-output="_str;
-inline constexpr auto MODULE_FILE   = "-fmodule-file="_str;
-inline constexpr auto COMPILE       = "-c"_str;
-inline constexpr auto OUTPUT        = "-o"_str;
+inline constexpr auto LANGUAGE             = "-x"_str;
+inline constexpr auto CXX_MODULE           = "c++-module"_str;
+inline constexpr auto MODULE_OUTPUT        = "-fmodule-output="_str;
+inline constexpr auto PREBUILT_MODULE_PATH = "-fprebuilt-module-path="_str;
+inline constexpr auto COMPILE              = "-c"_str;
+inline constexpr auto OUTPUT               = "-o"_str;
 inline constexpr auto ARCHIVE_CREATE = "rcs"_str;
 
 constexpr auto standard_library(StandardLibrary value) noexcept -> ref<str> {

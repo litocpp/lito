@@ -47,6 +47,18 @@ auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path)
     return Ok(empty {});
 }
 
+auto push_path_option(Vec<String>& arguments,
+                      ref<str> prefix,
+                      ref<rstd::path::Path> path) -> Result<empty> {
+    auto text = path.to_str();
+    if (text.is_none()) {
+        return failure<empty>(
+            rstd::format("tool option path '{}' is not valid UTF-8", path));
+    }
+    arguments.push(rstd::format("{}{}", prefix, *text));
+    return Ok(empty {});
+}
+
 auto push_option(Vec<String>& arguments, ref<str> option) -> void {
     arguments.push(String::make(option));
 }
