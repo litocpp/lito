@@ -19,8 +19,6 @@ inline constexpr auto NO_EXCEPTIONS = "-fno-exceptions"_str;
 inline constexpr auto DEFINE        = "-D"_str;
 inline constexpr auto INCLUDE        = "-I"_str;
 
-inline constexpr auto SCAN_FORMAT_P1689 = "-format=p1689"_str;
-inline constexpr auto DRIVER_ARGUMENTS   = "--"_str;
 inline constexpr auto DEPENDENCIES       = "-MD"_str;
 inline constexpr auto DEPENDENCY_TARGET  = "-MT"_str;
 inline constexpr auto DEPENDENCY_FILE    = "-MF"_str;

@@ -1,18 +1,16 @@
 export module tenon.toolchain.clang;
 
 import rstd;
-import rstd.json;
 import tenon.model;
 import tenon.process;
 import tenon.toolchain.clang_options;
+import tenon.toolchain.clang_scan_deps;
+import tenon.toolchain.command;
 
 namespace tenon::clang_detail
 {
 
 using namespace rstd::literals;
-
-using Json      = rstd::json::Value;
-using StringSet = rstd::collections::BTreeMap<String, rstd::empty>;
 
 template<typename T>
 auto failure(String message) -> Result<T> {
@@ -22,69 +20,6 @@ auto failure(String message) -> Result<T> {
 template<typename T>
 auto failure(rstd::ref<rstd::str> message) -> Result<T> {
     return rstd::Err(Error::make(ErrorKind::Toolchain, message));
-}
-
-auto member(const Json& value, rstd::ref<rstd::str> key) -> rstd::Option<rstd::ref<Json>> {
-    return value.get(key);
-}
-
-auto json_string(const Json& value, rstd::ref<rstd::str> context) -> Result<String> {
-    auto text = value.as_str();
-    if (text.is_none()) return failure<String>(rstd::format("{} must be a string", context));
-    return rstd::Ok(String::make(*text));
-}
-
-auto required_json_string(const Json& object,
-                          rstd::ref<rstd::str> key,
-                          rstd::ref<rstd::str> context) -> Result<String> {
-    auto value = member(object, key);
-    if (value.is_none()) {
-        return failure<String>(rstd::format("{} is missing '{}'", context, key));
-    }
-    return json_string(**value, rstd::format("{}.{}", context, key).as_str());
-}
-
-auto canonical_tool(rstd::ref<rstd::path::Path> path, rstd::ref<rstd::str> name)
-    -> Result<PathBuf> {
-    auto canonical = rstd::fs::canonicalize(path);
-    if (canonical.is_err()) {
-        return failure<PathBuf>(rstd::format(
-            "cannot resolve {} '{}': {}", name, path, rstd::move(canonical).unwrap_err()));
-    }
-    return rstd::Ok(rstd::move(canonical).unwrap());
-}
-
-auto path_argument(rstd::ref<rstd::path::Path> path) -> Result<String> {
-    auto text = path.to_str();
-    if (text.is_none()) {
-        return failure<String>(rstd::format("tool path '{}' is not valid UTF-8", path));
-    }
-    return rstd::Ok(String::make(*text));
-}
-
-auto push_path(Vec<String>& command, rstd::ref<rstd::path::Path> path) -> Result<rstd::empty> {
-    auto argument = path_argument(path);
-    if (argument.is_err()) return rstd::Err(rstd::move(argument).unwrap_err());
-    command.push(rstd::move(argument).unwrap());
-    return rstd::Ok(rstd::empty {});
-}
-
-auto push_option(Vec<String>& command, rstd::ref<rstd::str> option) -> void {
-    command.push(String::make(option));
-}
-
-auto tool_output(Vec<String> command, rstd::ref<rstd::str> description) -> Result<String> {
-    auto output = run_command(command);
-    if (output.is_err()) return rstd::Err(rstd::move(output).unwrap_err());
-    auto value = rstd::move(output).unwrap();
-    if (value.exit_code != rstd::i32 {}) {
-        return failure<String>(rstd::format(
-            "{} failed with exit code {}:\n{}",
-            description,
-            value.exit_code,
-            value.standard_error.as_str()));
-    }
-    return rstd::Ok(trim_ascii(rstd::move(value.standard_output)));
 }
 
 auto create_parent(rstd::ref<rstd::path::Path> path) -> Result<rstd::empty> {
@@ -100,163 +35,6 @@ auto create_parent(rstd::ref<rstd::path::Path> path) -> Result<rstd::empty> {
     return rstd::Ok(rstd::empty {});
 }
 
-auto read_file(rstd::ref<rstd::path::Path> path) -> Result<String> {
-    auto contents = rstd::fs::read_to_string(path);
-    if (contents.is_err()) {
-        return failure<String>(
-            rstd::format("cannot read '{}': {}", path, rstd::move(contents).unwrap_err()));
-    }
-    return rstd::Ok(rstd::move(contents).unwrap());
-}
-
-auto parse_depfile(rstd::ref<rstd::path::Path> depfile,
-                   rstd::ref<rstd::path::Path> working_directory) -> Result<Vec<PathBuf>> {
-    auto contents_result = read_file(depfile);
-    if (contents_result.is_err()) return rstd::Err(rstd::move(contents_result).unwrap_err());
-    auto contents = rstd::move(contents_result).unwrap();
-    auto bytes    = contents.as_str().as_bytes();
-
-    auto colon   = rstd::Option<rstd::usize> {};
-    auto escaped = false;
-    for (auto index = rstd::usize {}; index < contents.len(); ++index) {
-        const auto value = bytes[index];
-        if (! escaped && value == rstd::u8(':')) {
-            colon = rstd::Some(index);
-            break;
-        }
-        if (! escaped && value == rstd::u8('\\')) {
-            escaped = true;
-        } else {
-            escaped = false;
-        }
-    }
-    if (colon.is_none()) {
-        return failure<Vec<PathBuf>>(
-            rstd::format("invalid dependency file '{}': missing ':'", depfile));
-    }
-
-    auto tokens  = Vec<String>::make();
-    auto current = String::make();
-    for (auto index = *colon + rstd::usize(1); index < contents.len(); ++index) {
-        const auto value = bytes[index];
-        if (value == rstd::u8('\\') && index + rstd::usize(1) < contents.len()) {
-            const auto next = bytes[index + rstd::usize(1)];
-            if (next == rstd::u8('\n')) {
-                ++index;
-                continue;
-            }
-            if (next == rstd::u8('\r') && index + rstd::usize(2) < contents.len() &&
-                bytes[index + rstd::usize(2)] == rstd::u8('\n')) {
-                index += rstd::usize(2);
-                continue;
-            }
-            current.push_ascii(next);
-            ++index;
-            continue;
-        }
-        if (value == rstd::u8(' ') || value == rstd::u8('\t') || value == rstd::u8('\r') ||
-            value == rstd::u8('\n')) {
-            if (! current.is_empty()) {
-                tokens.push(rstd::move(current));
-                current = String::make();
-            }
-            continue;
-        }
-        current.push_ascii(value);
-    }
-    if (! current.is_empty()) tokens.push(rstd::move(current));
-
-    auto result = Vec<PathBuf>::make();
-    auto seen   = StringSet::make();
-    for (const auto& token : tokens) {
-        auto path = PathBuf::from(token.as_str());
-        if (path.as_path().is_relative()) {
-            path = PathBuf::from(working_directory).join(path.as_path());
-        }
-        auto canonical = rstd::fs::canonicalize(path.as_path());
-        if (canonical.is_err()) {
-            return failure<Vec<PathBuf>>(rstd::format(
-                "cannot resolve dependency input '{}': {}",
-                path.as_path(),
-                rstd::move(canonical).unwrap_err()));
-        }
-        auto resolved = rstd::move(canonical).unwrap();
-        auto text = resolved.as_path().to_str();
-        if (text.is_none()) {
-            return failure<Vec<PathBuf>>(
-                rstd::format("dependency input '{}' is not valid UTF-8", resolved.as_path()));
-        }
-        if (! seen.contains_key(*text)) {
-            seen.insert(String::make(*text), rstd::empty {});
-            result.push(rstd::move(resolved));
-        }
-    }
-    return rstd::Ok(rstd::move(result));
-}
-
-auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanResult> {
-    auto parsed = rstd::json::from_str(output);
-    if (parsed.is_err()) {
-        return failure<ScanResult>(rstd::format(
-            "cannot parse clang-scan-deps P1689 output: {}", rstd::move(parsed).unwrap_err()));
-    }
-    auto document = rstd::move(parsed).unwrap();
-    auto rules    = member(document, "rules"_str);
-    if (rules.is_none()) {
-        return failure<ScanResult>("P1689 output must contain exactly one rule"_str);
-    }
-    auto rules_array = (**rules).as_array();
-    if (rules_array.is_none() || (**rules_array).len() != rstd::usize(1)) {
-        return failure<ScanResult>("P1689 output must contain exactly one rule"_str);
-    }
-    const auto& rule = (**rules_array)[rstd::usize {}];
-    auto result      = ScanResult { .unit = unit };
-
-    auto provides = member(rule, "provides"_str);
-    if (provides.is_some()) {
-        auto array = (**provides).as_array();
-        if (array.is_none() || (**array).len() != rstd::usize(1)) {
-            return failure<ScanResult>("P1689 provides must contain exactly one module"_str);
-        }
-        const auto& provided = (**array)[rstd::usize {}];
-        auto logical_name =
-            required_json_string(provided, "logical-name"_str, "P1689 provides"_str);
-        if (logical_name.is_err()) return rstd::Err(rstd::move(logical_name).unwrap_err());
-        auto interface_value = member(provided, "is-interface"_str);
-        if (interface_value.is_none()) {
-            return failure<ScanResult>("P1689 provides.is-interface must be a bool"_str);
-        }
-        auto interface_flag = (**interface_value).as_bool();
-        if (interface_flag.is_none()) {
-            return failure<ScanResult>("P1689 provides.is-interface must be a bool"_str);
-        }
-        result.provided = rstd::Some(ProvidedModule {
-            .logical_name = rstd::move(logical_name).unwrap(),
-            .is_interface = *interface_flag,
-        });
-    }
-
-    auto requirements = member(rule, "requires"_str);
-    if (requirements.is_some()) {
-        auto array = (**requirements).as_array();
-        if (array.is_none()) {
-            return failure<ScanResult>("P1689 requires must be an array"_str);
-        }
-        auto names = StringSet::make();
-        for (const auto& required : **array) {
-            auto logical_name =
-                required_json_string(required, "logical-name"_str, "P1689 requires"_str);
-            if (logical_name.is_err()) return rstd::Err(rstd::move(logical_name).unwrap_err());
-            auto name = rstd::move(logical_name).unwrap();
-            if (! names.contains_key(name.as_str())) {
-                names.insert(name.clone(), rstd::empty {});
-                result.required_modules.push(rstd::move(name));
-            }
-        }
-    }
-    return rstd::Ok(rstd::move(result));
-}
-
 } // namespace tenon::clang_detail
 
 export namespace tenon
@@ -268,47 +46,46 @@ public:
         using namespace clang_detail;
         using namespace rstd::literals;
 
-        auto compiler = canonical_tool(specification.compiler.as_path(), "clang++"_str);
-        auto scanner  = canonical_tool(specification.scanner.as_path(), "clang-scan-deps"_str);
-        auto archiver = canonical_tool(specification.archiver.as_path(), "llvm-ar"_str);
+        auto compiler =
+            toolchain::command::canonical_tool(specification.compiler.as_path(), "clang++"_str);
+        auto scanner = toolchain::ClangScanDeps::create(specification.scanner.as_path());
+        auto archiver =
+            toolchain::command::canonical_tool(specification.archiver.as_path(), "llvm-ar"_str);
         if (compiler.is_err()) return rstd::Err(rstd::move(compiler).unwrap_err());
         if (scanner.is_err()) return rstd::Err(rstd::move(scanner).unwrap_err());
         if (archiver.is_err()) return rstd::Err(rstd::move(archiver).unwrap_err());
         auto compiler_path = rstd::move(compiler).unwrap();
-        auto scanner_path  = rstd::move(scanner).unwrap();
+        auto scanner_tool  = rstd::move(scanner).unwrap();
         auto archiver_path = rstd::move(archiver).unwrap();
 
         auto compiler_command = Vec<String>::make();
-        auto scanner_command  = Vec<String>::make();
         auto archiver_command = Vec<String>::make();
         auto target_command   = Vec<String>::make();
         auto resource_command = Vec<String>::make();
-        auto pushed = push_path(compiler_command, compiler_path.as_path());
+        auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        push_option(compiler_command, toolchain::clang_options::VERSION);
-        pushed = push_path(scanner_command, scanner_path.as_path());
+        toolchain::command::push_option(compiler_command, toolchain::clang_options::VERSION);
+        pushed = toolchain::command::push_path(archiver_command, archiver_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        push_option(scanner_command, toolchain::clang_options::VERSION);
-        pushed = push_path(archiver_command, archiver_path.as_path());
+        toolchain::command::push_option(archiver_command, toolchain::clang_options::VERSION);
+        pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        push_option(archiver_command, toolchain::clang_options::VERSION);
-        pushed = push_path(target_command, compiler_path.as_path());
+        toolchain::command::push_option(
+            target_command, toolchain::clang_options::PRINT_TARGET_TRIPLE);
+        pushed = toolchain::command::push_path(resource_command, compiler_path.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        push_option(target_command, toolchain::clang_options::PRINT_TARGET_TRIPLE);
-        pushed = push_path(resource_command, compiler_path.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        push_option(resource_command, toolchain::clang_options::PRINT_RESOURCE_DIR);
+        toolchain::command::push_option(
+            resource_command, toolchain::clang_options::PRINT_RESOURCE_DIR);
 
-        auto compiler_version =
-            tool_output(rstd::move(compiler_command), "clang++ --version"_str);
-        auto scanner_version =
-            tool_output(rstd::move(scanner_command), "clang-scan-deps --version"_str);
-        auto archiver_version =
-            tool_output(rstd::move(archiver_command), "llvm-ar --version"_str);
-        auto target = tool_output(rstd::move(target_command), "clang++ target query"_str);
-        auto resource = tool_output(rstd::move(resource_command), "clang++ resource query"_str);
+        auto compiler_version = toolchain::command::tool_output(
+            rstd::move(compiler_command), "clang++ --version"_str);
+        auto archiver_version = toolchain::command::tool_output(
+            rstd::move(archiver_command), "llvm-ar --version"_str);
+        auto target = toolchain::command::tool_output(
+            rstd::move(target_command), "clang++ target query"_str);
+        auto resource = toolchain::command::tool_output(
+            rstd::move(resource_command), "clang++ resource query"_str);
         if (compiler_version.is_err()) return rstd::Err(rstd::move(compiler_version).unwrap_err());
-        if (scanner_version.is_err()) return rstd::Err(rstd::move(scanner_version).unwrap_err());
         if (archiver_version.is_err()) return rstd::Err(rstd::move(archiver_version).unwrap_err());
         if (target.is_err()) return rstd::Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return rstd::Err(rstd::move(resource).unwrap_err());
@@ -317,13 +94,13 @@ public:
         }
 
         auto resource_path = PathBuf::from(resource->as_str());
-        auto canonical_resource =
-            canonical_tool(resource_path.as_path(), "Clang resource directory"_str);
+        auto canonical_resource = toolchain::command::canonical_tool(
+            resource_path.as_path(), "Clang resource directory"_str);
         if (canonical_resource.is_err()) {
             return rstd::Err(rstd::move(canonical_resource).unwrap_err());
         }
 
-        auto identity = String::make("tenon-clang-recipe-v3\n"_str);
+        auto identity = String::make("tenon-clang-recipe-v4\n"_str);
         auto append_identity_path = [&](rstd::ref<rstd::path::Path> value) {
             auto text = value.to_str();
             if (text.is_some()) identity.push_str(*text);
@@ -332,8 +109,8 @@ public:
         append_identity_path(compiler_path.as_path());
         identity.push_str(compiler_version->as_str());
         identity.push_ascii('\n');
-        append_identity_path(scanner_path.as_path());
-        identity.push_str(scanner_version->as_str());
+        append_identity_path(scanner_tool.path());
+        identity.push_str(scanner_tool.version());
         identity.push_ascii('\n');
         append_identity_path(archiver_path.as_path());
         identity.push_str(archiver_version->as_str());
@@ -345,7 +122,7 @@ public:
 
         return rstd::Ok(ClangToolchain {
             rstd::move(compiler_path),
-            rstd::move(scanner_path),
+            rstd::move(scanner_tool),
             rstd::move(archiver_path),
             rstd::move(resolved_resource),
             rstd::move(target).unwrap(),
@@ -370,47 +147,10 @@ public:
     }
 
     auto scan(const PreparedUnit& prepared) const -> Result<ScanResult> {
-        using namespace rstd::literals;
-
-        auto command = Vec<String>::make();
-        auto pushed = clang_detail::push_path(command, scanner_.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::SCAN_FORMAT_P1689);
-        clang_detail::push_option(command, toolchain::clang_options::DRIVER_ARGUMENTS);
-        auto context = append_compile_context(command, *prepared.unit.context);
+        auto compiler_arguments = Vec<String>::make();
+        auto context = append_compile_context(compiler_arguments, *prepared.unit.context);
         if (context.is_err()) return rstd::Err(rstd::move(context).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCIES);
-        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCY_TARGET);
-        pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::DEPENDENCY_FILE);
-        pushed = clang_detail::push_path(command, prepared.unit.depfile.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::COMPILE);
-        pushed = clang_detail::push_path(command, prepared.unit.source.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
-        pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-
-        auto output = run_command(command, rstd::Some(prepared.working_directory.as_path()));
-        if (output.is_err()) return rstd::Err(rstd::move(output).unwrap_err());
-        auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != rstd::i32 {}) {
-            return clang_detail::failure<ScanResult>(rstd::format(
-                "clang-scan-deps failed for '{}'\n{}\n{}",
-                prepared.unit.source.as_path(),
-                command_text(command).as_str(),
-                command_output.standard_error.as_str()));
-        }
-        auto scan_result = clang_detail::parse_scan_json(
-            command_output.standard_output.as_str(), prepared.unit.id);
-        if (scan_result.is_err()) return scan_result;
-        auto headers = clang_detail::parse_depfile(
-            prepared.unit.depfile.as_path(), prepared.working_directory.as_path());
-        if (headers.is_err()) return rstd::Err(rstd::move(headers).unwrap_err());
-        scan_result->header_inputs = rstd::move(headers).unwrap();
-        return scan_result;
+        return scanner_.scan(prepared, rstd::move(compiler_arguments));
     }
 
     auto compile(const PreparedUnit& prepared,
@@ -428,8 +168,8 @@ public:
             }
             auto parent = clang_detail::create_parent((*prepared.unit.bmi).as_path());
             if (parent.is_err()) return parent;
-            clang_detail::push_option(command, toolchain::clang_options::LANGUAGE);
-            clang_detail::push_option(command, toolchain::clang_options::CXX_MODULE);
+            toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
+            toolchain::command::push_option(command, toolchain::clang_options::CXX_MODULE);
             command.push(rstd::format(
                 "{}{}", toolchain::clang_options::MODULE_OUTPUT, (*prepared.unit.bmi).as_path()));
         }
@@ -439,11 +179,11 @@ public:
                                       input.logical_name.as_str(),
                                       input.bmi.as_path()));
         }
-        clang_detail::push_option(command, toolchain::clang_options::COMPILE);
-        auto pushed = clang_detail::push_path(command, prepared.unit.source.as_path());
+        toolchain::command::push_option(command, toolchain::clang_options::COMPILE);
+        auto pushed = toolchain::command::push_path(command, prepared.unit.source.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
-        pushed = clang_detail::push_path(command, prepared.unit.object.as_path());
+        toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
+        pushed = toolchain::command::push_path(command, prepared.unit.object.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
 
         auto output = run_command(command, rstd::Some(prepared.working_directory.as_path()));
@@ -483,13 +223,13 @@ public:
             }
         }
         auto command = Vec<String>::make();
-        auto pushed = clang_detail::push_path(command, archiver_.as_path());
+        auto pushed = toolchain::command::push_path(command, archiver_.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(command, toolchain::clang_options::ARCHIVE_CREATE);
-        pushed = clang_detail::push_path(command, output_path);
+        toolchain::command::push_option(command, toolchain::clang_options::ARCHIVE_CREATE);
+        pushed = toolchain::command::push_path(command, output_path);
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         for (const auto& object : objects) {
-            pushed = clang_detail::push_path(command, object.as_path());
+            pushed = toolchain::command::push_path(command, object.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         }
         auto output = run_command(command, rstd::Some(working_directory));
@@ -517,21 +257,21 @@ public:
         auto parent = clang_detail::create_parent(output_path);
         if (parent.is_err()) return parent;
         auto command = Vec<String>::make();
-        auto pushed = clang_detail::push_path(command, compiler_.as_path());
+        auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
-        clang_detail::push_option(
+        toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(standard_library));
         for (const auto& option : linker_options) command.push(option.clone());
         for (const auto& object : objects) {
-            pushed = clang_detail::push_path(command, object.as_path());
+            pushed = toolchain::command::push_path(command, object.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         }
         for (const auto& archive : archives) {
-            pushed = clang_detail::push_path(command, archive.as_path());
+            pushed = toolchain::command::push_path(command, archive.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         }
-        clang_detail::push_option(command, toolchain::clang_options::OUTPUT);
-        pushed = clang_detail::push_path(command, output_path);
+        toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
+        pushed = toolchain::command::push_path(command, output_path);
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
 
         auto output = run_command(command, rstd::Some(working_directory));
@@ -549,7 +289,7 @@ public:
 
 private:
     ClangToolchain(PathBuf compiler,
-                   PathBuf scanner,
+                   toolchain::ClangScanDeps scanner,
                    PathBuf archiver,
                    PathBuf resource_dir,
                    String target,
@@ -565,33 +305,33 @@ private:
         -> Result<rstd::empty> {
         using namespace rstd::literals;
 
-        auto pushed = clang_detail::push_path(command, compiler_.as_path());
+        auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
-        clang_detail::push_option(command, toolchain::clang_options::RESOURCE_DIR);
-        pushed = clang_detail::push_path(command, resource_dir_.as_path());
+        toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
+        pushed = toolchain::command::push_path(command, resource_dir_.as_path());
         if (pushed.is_err()) return pushed;
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, context.language_standard.as_str()));
-        clang_detail::push_option(
+        toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(context.standard_library));
-        clang_detail::push_option(command, toolchain::clang_options::bmi(context.bmi_mode));
+        toolchain::command::push_option(command, toolchain::clang_options::bmi(context.bmi_mode));
         for (const auto& option : context.options) command.push(option.clone());
-        clang_detail::push_option(command, toolchain::clang_options::NO_RTTI);
-        clang_detail::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
+        toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
+        toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
         for (const auto& definition : context.definitions) {
             command.push(rstd::format(
                 "{}{}", toolchain::clang_options::DEFINE, definition.as_str()));
         }
         for (const auto& include : context.include_directories) {
-            clang_detail::push_option(command, toolchain::clang_options::INCLUDE);
-            pushed = clang_detail::push_path(command, include.as_path());
+            toolchain::command::push_option(command, toolchain::clang_options::INCLUDE);
+            pushed = toolchain::command::push_path(command, include.as_path());
             if (pushed.is_err()) return pushed;
         }
         return rstd::Ok(rstd::empty {});
     }
 
     PathBuf compiler_;
-    PathBuf scanner_;
+    toolchain::ClangScanDeps scanner_;
     PathBuf archiver_;
     PathBuf resource_dir_;
     String  target_;

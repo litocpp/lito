@@ -64,7 +64,10 @@ target_sources(
          src/lock_store.cppm
          src/package_adapter.cppm
          src/package.cppm
+         src/toolchain/command.cppm
          src/toolchain/clang_options.cppm
+         src/toolchain/clang_scan_deps_options.cppm
+         src/toolchain/clang_scan_deps.cppm
          src/toolchain/clang.cppm
          src/module_graph.cppm
          src/artifact_store.cppm
