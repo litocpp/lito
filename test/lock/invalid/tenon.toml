@@ -1,5 +1,5 @@
 [package]
-name = "fixture.lock.invalid"
+name = "fixture-lock-invalid"
 version = "0.1.0"
 module = "fixture.lock.invalid"
 

@@ -46,10 +46,10 @@ class ClangToolchain {
 public:
     static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
         auto compiler =
-            toolchain::command::canonical_tool(specification.compiler.as_path(), "clang++"_str);
+            toolchain::command::resolve_tool(specification.compiler.as_path(), "clang++"_str);
         auto scanner = toolchain::ClangScanDeps::create(specification.scanner.as_path());
         auto archiver =
-            toolchain::command::canonical_tool(specification.archiver.as_path(), "llvm-ar"_str);
+            toolchain::command::resolve_tool(specification.archiver.as_path(), "llvm-ar"_str);
         if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
         if (scanner.is_err()) return Err(rstd::move(scanner).unwrap_err());
         if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
@@ -93,7 +93,7 @@ public:
         }
 
         auto resource_path = PathBuf::from(resource->as_str());
-        auto canonical_resource = toolchain::command::canonical_tool(
+        auto canonical_resource = toolchain::command::resolve_tool(
             resource_path.as_path(), "Clang resource directory"_str);
         if (canonical_resource.is_err()) {
             return Err(rstd::move(canonical_resource).unwrap_err());

@@ -1,4 +1,6 @@
 /build/
+/.tenon/
+/tenon.lock
 demo/**/build/
 test/**/build/
 **/tenon.lock.tmp.*

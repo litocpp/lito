@@ -1,5 +1,5 @@
 [package]
-name = "fixture.convention.root"
+name = "fixture-convention-root"
 version = "0.1.0"
 module = "fixture.convention.root"
 

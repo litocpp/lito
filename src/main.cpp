@@ -7,7 +7,6 @@ using namespace rstd::literals;
 namespace
 {
 
-
 struct EventContext {
     bool verbose { false };
 };
@@ -21,19 +20,6 @@ auto event_name(tenon::BuildEventKind kind) -> ref<str> {
     case tenon::BuildEventKind::Link: return "link"_str;
     }
     return "unknown"_str;
-}
-
-auto configured_path(const char* value) -> tenon::PathBuf {
-    return tenon::PathBuf::from(rstd::ffi::CStr::from_ptr(value).to_str().unwrap());
-}
-
-auto configured_toolchain() -> tenon::ToolchainSpec {
-    return tenon::ToolchainSpec {
-        .compiler = configured_path(TENON_DEFAULT_CLANGXX),
-        .scanner = configured_path(TENON_DEFAULT_CLANG_SCAN_DEPS),
-        .archiver = configured_path(TENON_DEFAULT_LLVM_AR),
-        .formatter = configured_path(TENON_DEFAULT_CLANG_FORMAT),
-    };
 }
 
 void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
@@ -83,10 +69,18 @@ int main() {
         return 2;
     }
 
+    auto loaded_config = tenon::load_project_config(working_directory.as_path());
+    if (loaded_config.is_err()) {
+        auto error = rstd::move(loaded_config).unwrap_err();
+        rstd::io::eprintln("tenon: {}", error.message.as_str());
+        return 1;
+    }
+    auto project = rstd::move(loaded_config).unwrap();
+
     if (*command == "format"_str) {
         auto request = tenon::FormatRequest {};
-        request.selection.root = rstd::move(working_directory);
-        request.toolchain = configured_toolchain();
+        request.selection.root = rstd::move(project.root);
+        request.toolchain = rstd::move(project.toolchain);
         while (auto option = arguments.next()) {
             if (*option == "--package"_str) {
                 auto value = arguments.next();
@@ -114,8 +108,8 @@ int main() {
     }
 
     auto request = tenon::BuildRequest {};
-    request.selection.root = rstd::move(working_directory);
-    request.configuration.toolchain = configured_toolchain();
+    request.selection.root = rstd::move(project.root);
+    request.configuration.toolchain = rstd::move(project.toolchain);
     request.configuration.standard_library = tenon::StandardLibrary::Libcxx;
     request.configuration.bmi_mode = tenon::BmiMode::Reduced;
     request.configuration.language_standard = tenon::String::make("c++20"_str);

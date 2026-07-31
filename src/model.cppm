@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module tenon.model;
 
 import rstd;
@@ -19,6 +22,7 @@ using UnitId   = usize;
 enum class ErrorKind
 {
     InvalidRequest,
+    Config,
     Manifest,
     Filesystem,
     Toolchain,
@@ -68,6 +72,31 @@ enum class DependencyVisibility
     Runtime,
 };
 
+enum class PackageSourceKind
+{
+    Path,
+    Git,
+};
+
+enum class GitReferenceKind
+{
+    DefaultBranch,
+    Branch,
+    Tag,
+    Rev,
+};
+
+struct GitReference {
+    GitReferenceKind kind { GitReferenceKind::DefaultBranch };
+    String           value;
+};
+
+class PackageSourceRequirement {
+    RSTD_ENUM(PackageSourceRequirement,
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference;)))
+};
+
 enum class SourceDiscoveryMode
 {
     Explicit,
@@ -104,6 +133,11 @@ struct ToolchainSpec {
     PathBuf formatter;
 };
 
+struct ProjectConfig {
+    PathBuf       root;
+    ToolchainSpec toolchain;
+};
+
 struct ProfileSpec {
     String          name;
     StandardLibrary standard_library { StandardLibrary::Libstdcxx };
@@ -125,12 +159,13 @@ struct UsageRequirements {
     Vec<String>  private_definitions;
     Vec<String>  public_options;
     Vec<String>  private_options;
+    Vec<String>  private_linker_options;
 };
 
 struct DeclaredDependency {
-    String               alias;
-    PathBuf              directory;
-    DependencyVisibility visibility { DependencyVisibility::Private };
+    String                   name;
+    PackageSourceRequirement source;
+    DependencyVisibility     visibility { DependencyVisibility::Private };
 };
 
 struct PackageManifest {
@@ -188,23 +223,48 @@ struct ResolvedSourceSet {
 };
 
 struct ResolvedDependency {
-    String               alias;
+    String               name;
     String               package_id;
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct ResolvedPackageSource {
+    String            id;
+    PackageSourceKind kind { PackageSourceKind::Path };
+    PathBuf           root_directory;
+    PathBuf           path;
+    String            git;
+    GitReference      reference;
+    String            commit;
+};
+
+struct LockedGitSource {
+    String       id;
+    String       git;
+    GitReference reference;
+    String       commit;
+};
+
+struct PackageResolutionOptions {
+    bool                 locked { false };
+    Vec<LockedGitSource> git_sources;
+};
+
 struct ResolvedPackage {
     String                  id;
-    PathBuf                 source_directory;
+    String                  source_id;
+    PathBuf                 source_manifest;
     PackageManifest         manifest;
     Vec<ResolvedDependency> dependencies;
 };
 
 struct ResolvedPackageGraph {
-    Vec<String>          root_ids;
-    PathBuf              root_directory;
-    PathBuf              manifest_path;
-    Vec<ResolvedPackage> packages;
+    Vec<String>                root_ids;
+    PathBuf                    root_directory;
+    PathBuf                    manifest_path;
+    bool                       root_is_workspace { false };
+    Vec<ResolvedPackageSource> sources;
+    Vec<ResolvedPackage>       packages;
 };
 
 struct PackageSelection {
@@ -279,6 +339,7 @@ struct PackagePlan {
     Vec<CompileContext>     contexts;
     Vec<Vec<TargetId>>      visible_targets;
     Vec<Vec<TargetId>>      link_dependencies;
+    Vec<Vec<String>>        linker_options;
 };
 
 struct UnitSpec {

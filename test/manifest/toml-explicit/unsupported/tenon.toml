@@ -1,5 +1,5 @@
 [package]
-name = "fixture.unsupported"
+name = "fixture-unsupported"
 version = "0.1.0"
 module = "fixture.unsupported"
 

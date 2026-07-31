@@ -25,7 +25,7 @@ class ClangFormat {
 public:
     static auto create(ref<rstd::path::Path> formatter_path)
         -> Result<ClangFormat> {
-        auto canonical = command::canonical_tool(formatter_path, "clang-format"_str);
+        auto canonical = command::resolve_tool(formatter_path, "clang-format"_str);
         if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
         auto path = rstd::move(canonical).unwrap();
 

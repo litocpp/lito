@@ -1,5 +1,5 @@
 [package]
-name = "demo.workspace.unused"
+name = "demo-workspace-unused"
 version.workspace = true
 module = "demo.workspace.unused"
 

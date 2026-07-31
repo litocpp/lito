@@ -4,6 +4,7 @@ import rstd;
 import tenon.model;
 import tenon.source_discovery;
 import tenon.workspace_resolver;
+import tenon.lock_store;
 import tenon.toolchain.clang_format;
 
 using namespace rstd::prelude;
@@ -33,7 +34,11 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
             ErrorKind::InvalidRequest, "clang-format path is required"_str);
     }
 
-    auto resolved = resolve_package_selection(request.selection);
+    auto lock = load_lock_session(request.selection.root.as_path(), false);
+    if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
+    auto lock_session = rstd::move(lock).unwrap();
+    auto resolved =
+        resolve_package_selection(request.selection, lock_session.take_resolution_options());
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto selection = rstd::move(resolved).unwrap();
 

@@ -1,5 +1,5 @@
 [package]
-name = "fixture.dependency"
+name = "fixture-dependency"
 version = "0.1.0"
 module = "fixture.dependency"
 

@@ -19,8 +19,15 @@ auto failure(String message) -> Result<T> {
 export namespace tenon::toolchain::command
 {
 
-auto canonical_tool(ref<rstd::path::Path> path, ref<str> name)
+auto is_searchable_tool_name(ref<rstd::path::Path> path) -> bool {
+    auto components = path.components();
+    auto first = components.next();
+    return first.is_some() && first->is_normal() && components.next().is_none();
+}
+
+auto resolve_tool(ref<rstd::path::Path> path, ref<str> name)
     -> Result<PathBuf> {
+    if (is_searchable_tool_name(path)) return Ok(PathBuf::from(path));
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
         return failure<PathBuf>(rstd::format(

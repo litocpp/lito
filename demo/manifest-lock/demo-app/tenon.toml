@@ -1,5 +1,5 @@
 [package]
-name = "demo.app"
+name = "demo-app"
 version = "0.1.0"
 module = "demo.app"
 
@@ -11,6 +11,6 @@ sources = [
   "src/lib.cpp",
 ]
 
-[dependencies.base]
+[dependencies.demo-base]
 path = "../demo-base"
 visibility = "public"

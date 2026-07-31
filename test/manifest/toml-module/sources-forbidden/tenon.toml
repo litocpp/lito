@@ -1,5 +1,5 @@
 [package]
-name = "fixture.convention.sources"
+name = "fixture-convention-sources"
 version = "0.1.0"
 module = "fixture.convention.sources"
 

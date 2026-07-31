@@ -1,5 +1,5 @@
 [package]
-name = "fixture.cycle.b"
+name = "fixture-cycle-b"
 version = "0.1.0"
 module = "fixture.cycle.b"
 
@@ -8,6 +8,6 @@ archive = "fixture.cycle.b"
 discovery = "explicit"
 sources = ["source.cppm"]
 
-[dependencies.a]
+[dependencies.fixture-cycle-a]
 path = "../a"
 visibility = "private"

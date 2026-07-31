@@ -2,17 +2,22 @@
   "packages": [
     {
       "dependencies": [],
-      "id": "fixture.profile 0.1.0 (path+.)",
-      "name": "fixture.profile",
-      "source": {
-        "kind": "path",
-        "path": "."
-      },
+      "id": "fixture-profile 0.1.0 (path+.)",
+      "manifest": "tenon.toml",
+      "name": "fixture-profile",
+      "source": "path+.",
       "version": "0.1.0"
     }
   ],
   "roots": [
-    "fixture.profile 0.1.0 (path+.)"
+    "fixture-profile 0.1.0 (path+.)"
   ],
-  "version": 2
+  "sources": [
+    {
+      "id": "path+.",
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 3
 }

@@ -1,5 +1,5 @@
 [package]
-name = "fixture.lock.stale"
+name = "fixture-lock-stale"
 version = "0.1.0"
 module = "fixture.lock.stale"
 

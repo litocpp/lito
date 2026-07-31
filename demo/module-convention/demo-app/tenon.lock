@@ -2,29 +2,37 @@
   "packages": [
     {
       "dependencies": [
-        "demo.base 0.1.0 (path+../demo-base)"
+        "demo-base 0.1.0 (path+../demo-base)"
       ],
-      "id": "demo.app 0.1.0 (path+.)",
-      "name": "demo.app",
-      "source": {
-        "kind": "path",
-        "path": "."
-      },
+      "id": "demo-app 0.1.0 (path+.)",
+      "manifest": "tenon.toml",
+      "name": "demo-app",
+      "source": "path+.",
       "version": "0.1.0"
     },
     {
       "dependencies": [],
-      "id": "demo.base 0.1.0 (path+../demo-base)",
-      "name": "demo.base",
-      "source": {
-        "kind": "path",
-        "path": "../demo-base"
-      },
+      "id": "demo-base 0.1.0 (path+../demo-base)",
+      "manifest": "tenon.toml",
+      "name": "demo-base",
+      "source": "path+../demo-base",
       "version": "0.1.0"
     }
   ],
   "roots": [
-    "demo.app 0.1.0 (path+.)"
+    "demo-app 0.1.0 (path+.)"
   ],
-  "version": 2
+  "sources": [
+    {
+      "id": "path+.",
+      "kind": "path",
+      "path": "."
+    },
+    {
+      "id": "path+../demo-base",
+      "kind": "path",
+      "path": "../demo-base"
+    }
+  ],
+  "version": 3
 }

@@ -1,5 +1,5 @@
 [package]
-name = "fixture.lock.missing"
+name = "fixture-lock-missing"
 version = "0.1.0"
 module = "fixture.lock.missing"
 

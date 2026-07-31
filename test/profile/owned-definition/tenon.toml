@@ -1,5 +1,5 @@
 [package]
-name = "fixture.profile.owned_definition"
+name = "fixture-profile-owned_definition"
 version = "0.1.0"
 
 [executable]

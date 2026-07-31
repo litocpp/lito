@@ -1,0 +1,73 @@
+[package]
+name = "tenon"
+version = "0.1.0"
+module = "tenon"
+
+[executable]
+name = "tenon"
+discovery = "explicit"
+sources = [
+  "src/model.cppm",
+  "src/build_profile.cppm",
+  "src/process.cppm",
+  "src/manifest/locator.cppm",
+  "src/manifest/schema.cppm",
+  "src/manifest/mod.cppm",
+  "src/config/schema.cppm",
+  "src/config/mod.cppm",
+  "src/module/convention.cppm",
+  "src/module/graph.cppm",
+  "src/module/mod.cppm",
+  "src/source_discovery.cppm",
+  "src/workspace/member.cppm",
+  "src/workspace/catalog.cppm",
+  "src/workspace/mod.cppm",
+  "src/package/plan.cppm",
+  "src/package/adapter.cppm",
+  "src/package/source.cppm",
+  "src/package/resolver.cppm",
+  "src/package/mod.cppm",
+  "src/workspace_resolver.cppm",
+  "src/lock_store.cppm",
+  "src/toolchain/command.cppm",
+  "src/toolchain/clang_options.cppm",
+  "src/toolchain/clang_format_options.cppm",
+  "src/toolchain/clang_format.cppm",
+  "src/toolchain/clang_scan_deps_options.cppm",
+  "src/toolchain/clang_scan_deps.cppm",
+  "src/toolchain/clang.cppm",
+  "src/artifact_store.cppm",
+  "src/build_layout.cppm",
+  "src/builder.cppm",
+  "src/formatter.cppm",
+  "src/mod.cppm",
+  "src/main.cpp",
+]
+
+[usage]
+private-options = [
+  "-fPIC",
+  "-Wall",
+  "-Wpedantic",
+  "-Wno-gnu-statement-expression",
+  "-Wno-deprecated-declarations",
+  "-Wunknown-attributes",
+  "-fsized-deallocation",
+]
+private-linker-options = ["-nostdlib++"]
+
+[dependencies.rstd-std]
+path = "../rstd"
+visibility = "private"
+
+[dependencies.rstd-json]
+path = "../rstd"
+visibility = "private"
+
+[dependencies.rstd-toml]
+path = "../rstd"
+visibility = "private"
+
+[dependencies.rstd-nostd]
+path = "../rstd"
+visibility = "runtime"

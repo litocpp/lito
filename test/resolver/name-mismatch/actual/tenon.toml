@@ -1,0 +1,9 @@
+[package]
+name = "fixture-actual"
+version = "0.1.0"
+module = "fixture.actual"
+
+[library]
+archive = "fixture.actual"
+discovery = "explicit"
+sources = ["source.cppm"]

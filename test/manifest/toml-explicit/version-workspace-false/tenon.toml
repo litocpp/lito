@@ -1,5 +1,5 @@
 [package]
-name = "fixture.version_workspace_false"
+name = "fixture-version_workspace_false"
 version.workspace = false
 module = "fixture.version_workspace_false"
 

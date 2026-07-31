@@ -1,0 +1,15 @@
+[package]
+name = "fixture-git-multiple-selectors"
+version = "0.1.0"
+module = "fixture.git.multiple_selectors"
+
+[library]
+archive = "fixture.git.multiple_selectors"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.fixture-dependency]
+git = "https://example.invalid/dependency.git"
+branch = "main"
+rev = "0123456789abcdef"
+visibility = "private"

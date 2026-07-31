@@ -39,10 +39,14 @@ auto emit(const BuildRequest& request,
 }
 
 auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
-    auto resolved = resolve_package_selection(request.selection);
+    auto lock = load_lock_session(request.selection.root.as_path(), request.locked);
+    if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
+    auto lock_session = rstd::move(lock).unwrap();
+    auto resolved =
+        resolve_package_selection(request.selection, lock_session.take_resolution_options());
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto build = rstd::move(resolved).unwrap();
-    auto locked = sync_lock(build.graph, request.locked);
+    auto locked = sync_lock(build.graph, rstd::move(lock_session));
     if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
@@ -248,7 +252,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             objects,
             linked_archives,
             package_plan.profile->standard_library,
-            package_plan.profile->linker_options,
+            package_plan.linker_options[target],
             target_spec.root.as_path());
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
         executables.push(rstd::move(executable_path));

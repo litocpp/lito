@@ -212,7 +212,7 @@ class ClangScanDeps {
 public:
     static auto create(ref<rstd::path::Path> scanner_path) -> Result<ClangScanDeps> {
 
-        auto scanner = command::canonical_tool(scanner_path, "clang-scan-deps"_str);
+        auto scanner = command::resolve_tool(scanner_path, "clang-scan-deps"_str);
         if (scanner.is_err()) return Err(rstd::move(scanner).unwrap_err());
         auto path = rstd::move(scanner).unwrap();
 

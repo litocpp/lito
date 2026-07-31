@@ -2,5 +2,5 @@
 members = ["member"]
 
 [package]
-name = "fixture.workspace.mixed"
+name = "fixture-workspace-mixed"
 version = "0.1.0"

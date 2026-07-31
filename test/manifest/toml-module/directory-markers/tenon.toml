@@ -1,5 +1,5 @@
 [package]
-name = "fixture.convention.markers"
+name = "fixture-convention-markers"
 version = "0.1.0"
 module = "fixture.convention.markers"
 

@@ -1,5 +1,5 @@
 [package]
-name = "demo.app"
+name = "demo-app"
 version = "0.1.0"
 module = "demo.app"
 
@@ -7,6 +7,6 @@ module = "demo.app"
 archive = "demo.app"
 discovery = "module"
 
-[dependencies.base]
+[dependencies.demo-base]
 path = "../demo-base"
 visibility = "public"

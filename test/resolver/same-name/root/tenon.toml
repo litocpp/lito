@@ -1,5 +1,5 @@
 [package]
-name = "fixture.same.root"
+name = "fixture-same-root"
 version = "0.1.0"
 module = "fixture.same.root"
 
@@ -8,10 +8,10 @@ archive = "fixture.same.root"
 discovery = "explicit"
 sources = ["source.cppm"]
 
-[dependencies.one]
-path = "../one"
+[dependencies.fixture-same-wrapper-one]
+path = "../wrapper-one"
 visibility = "private"
 
-[dependencies.two]
-path = "../two"
+[dependencies.fixture-same-wrapper-two]
+path = "../wrapper-two"
 visibility = "private"

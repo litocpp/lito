@@ -1,5 +1,5 @@
 [package]
-name = "demo.workspace.common"
+name = "demo-workspace-common"
 version.workspace = true
 module = "demo.workspace.common"
 

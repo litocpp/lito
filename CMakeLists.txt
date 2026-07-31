@@ -39,11 +39,6 @@ set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(RSTD_BENCHMARKS_IN_CTEST OFF CACHE BOOL "" FORCE)
 add_subdirectory("${TENON_RSTD_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/rstd")
 
-find_program(TENON_DEFAULT_CLANGXX NAMES clang++ REQUIRED)
-find_program(TENON_DEFAULT_CLANG_SCAN_DEPS NAMES clang-scan-deps REQUIRED)
-find_program(TENON_DEFAULT_LLVM_AR NAMES llvm-ar REQUIRED)
-find_program(TENON_DEFAULT_CLANG_FORMAT NAMES clang-format REQUIRED)
-
 add_library(tenon.lib STATIC)
 target_compile_features(tenon.lib PUBLIC cxx_std_20)
 target_sources(
@@ -59,12 +54,18 @@ target_sources(
          src/manifest/locator.cppm
          src/manifest/schema.cppm
          src/manifest/mod.cppm
+         src/config/schema.cppm
+         src/config/mod.cppm
          src/module/convention.cppm
          src/module/graph.cppm
          src/module/mod.cppm
          src/source_discovery.cppm
+         src/workspace/member.cppm
+         src/workspace/catalog.cppm
+         src/workspace/mod.cppm
          src/package/plan.cppm
          src/package/adapter.cppm
+         src/package/source.cppm
          src/package/resolver.cppm
          src/package/mod.cppm
          src/workspace_resolver.cppm
@@ -85,9 +86,3 @@ target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)
 
 add_executable(tenon src/main.cpp)
 target_link_libraries(tenon PRIVATE tenon.lib rstd::nostd)
-target_compile_definitions(
-  tenon
-  PRIVATE TENON_DEFAULT_CLANGXX="${TENON_DEFAULT_CLANGXX}"
-          TENON_DEFAULT_CLANG_SCAN_DEPS="${TENON_DEFAULT_CLANG_SCAN_DEPS}"
-          TENON_DEFAULT_LLVM_AR="${TENON_DEFAULT_LLVM_AR}"
-          TENON_DEFAULT_CLANG_FORMAT="${TENON_DEFAULT_CLANG_FORMAT}")

@@ -84,16 +84,20 @@ auto visit_target(const PackageSpec& package,
     }
 
     color = 1;
-    for (const auto& dependency : package.targets[target].dependencies) {
-        auto found = target_ids.get(dependency.target.as_str());
-        if (found.is_none()) {
-            return plan_failure<empty>(rstd::format(
-                "target '{}' depends on unknown target '{}'",
-                package.targets[target].name.as_str(),
-                dependency.target.as_str()));
+    for (auto pass = usize {}; pass < usize(2); ++pass) {
+        const auto runtime = pass == usize {};
+        for (const auto& dependency : package.targets[target].dependencies) {
+            if ((dependency.visibility == DependencyVisibility::Runtime) != runtime) continue;
+            auto found = target_ids.get(dependency.target.as_str());
+            if (found.is_none()) {
+                return plan_failure<empty>(rstd::format(
+                    "target '{}' depends on unknown target '{}'",
+                    package.targets[target].name.as_str(),
+                    dependency.target.as_str()));
+            }
+            auto nested = visit_target(package, target_ids, **found, colors, target_order);
+            if (nested.is_err()) return nested;
         }
-        auto nested = visit_target(package, target_ids, **found, colors, target_order);
-        if (nested.is_err()) return nested;
     }
     color = 2;
     target_order.emplace_back(target);
@@ -192,12 +196,14 @@ auto resolve_package(const PackageSpec& package,
     auto contexts       = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto link_dependencies = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto linker_options = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
         public_visible.emplace_back();
         contexts.emplace_back();
         visible_targets.emplace_back();
         link_dependencies.emplace_back();
+        linker_options.emplace_back();
     }
 
     for (auto target : target_order) {
@@ -251,6 +257,8 @@ auto resolve_package(const PackageSpec& package,
         context.id              = context_id(context, toolchain_identity);
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
+        append_unique(linker_options[target], profile->linker_options);
+        append_unique(linker_options[target], spec.usage.private_linker_options);
     }
 
     for (auto target : target_order) {
@@ -273,6 +281,7 @@ auto resolve_package(const PackageSpec& package,
         .contexts = rstd::move(contexts),
         .visible_targets = rstd::move(visible_targets),
         .link_dependencies = rstd::move(link_dependencies),
+        .linker_options = rstd::move(linker_options),
     });
 }
 

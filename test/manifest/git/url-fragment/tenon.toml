@@ -1,0 +1,13 @@
+[package]
+name = "fixture-git-url-fragment"
+version = "0.1.0"
+module = "fixture.git.url_fragment"
+
+[library]
+archive = "fixture.git.url_fragment"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.fixture-dependency]
+git = "https://example.invalid/dependency.git#main"
+visibility = "private"

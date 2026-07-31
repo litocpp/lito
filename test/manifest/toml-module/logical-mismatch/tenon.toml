@@ -1,5 +1,5 @@
 [package]
-name = "fixture.convention.mismatch"
+name = "fixture-convention-mismatch"
 version = "0.1.0"
 module = "fixture.convention.mismatch"
 

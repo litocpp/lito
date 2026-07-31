@@ -2,54 +2,53 @@
   "packages": [
     {
       "dependencies": [
-        "demo.workspace.common 0.1.0 (path+common)"
+        "demo-workspace-common 0.1.0 (path+.)"
       ],
-      "id": "demo.workspace.app_one 0.1.0 (path+app-one)",
-      "name": "demo.workspace.app_one",
-      "source": {
-        "kind": "path",
-        "path": "app-one"
-      },
+      "id": "demo-workspace-app_one 0.1.0 (path+.)",
+      "manifest": "app-one/tenon.toml",
+      "name": "demo-workspace-app_one",
+      "source": "path+.",
       "version": "0.1.0"
     },
     {
       "dependencies": [
-        "demo.workspace.common 0.1.0 (path+common)"
+        "demo-workspace-common 0.1.0 (path+.)"
       ],
-      "id": "demo.workspace.app_two 0.1.0 (path+app-two)",
-      "name": "demo.workspace.app_two",
-      "source": {
-        "kind": "path",
-        "path": "app-two"
-      },
+      "id": "demo-workspace-app_two 0.1.0 (path+.)",
+      "manifest": "app-two/tenon.toml",
+      "name": "demo-workspace-app_two",
+      "source": "path+.",
       "version": "0.1.0"
     },
     {
       "dependencies": [],
-      "id": "demo.workspace.common 0.1.0 (path+common)",
-      "name": "demo.workspace.common",
-      "source": {
-        "kind": "path",
-        "path": "common"
-      },
+      "id": "demo-workspace-common 0.1.0 (path+.)",
+      "manifest": "common/tenon.toml",
+      "name": "demo-workspace-common",
+      "source": "path+.",
       "version": "0.1.0"
     },
     {
       "dependencies": [],
-      "id": "demo.workspace.unused 0.1.0 (path+unused)",
-      "name": "demo.workspace.unused",
-      "source": {
-        "kind": "path",
-        "path": "unused"
-      },
+      "id": "demo-workspace-unused 0.1.0 (path+.)",
+      "manifest": "unused/tenon.toml",
+      "name": "demo-workspace-unused",
+      "source": "path+.",
       "version": "0.1.0"
     }
   ],
   "roots": [
-    "demo.workspace.app_one 0.1.0 (path+app-one)",
-    "demo.workspace.app_two 0.1.0 (path+app-two)",
-    "demo.workspace.common 0.1.0 (path+common)",
-    "demo.workspace.unused 0.1.0 (path+unused)"
+    "demo-workspace-app_one 0.1.0 (path+.)",
+    "demo-workspace-app_two 0.1.0 (path+.)",
+    "demo-workspace-common 0.1.0 (path+.)",
+    "demo-workspace-unused 0.1.0 (path+.)"
   ],
-  "version": 2
+  "sources": [
+    {
+      "id": "path+.",
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 3
 }
