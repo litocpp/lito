@@ -1,0 +1,9 @@
+[package]
+name = "fixture-lock-duplicate"
+version = "0.1.0"
+module = "fixture.lock.duplicate"
+
+[library]
+archive = "fixture.lock.duplicate"
+discovery = "explicit"
+sources = ["source.cppm"]

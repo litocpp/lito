@@ -3,15 +3,17 @@
     {
       "dependencies": [],
       "manifest": "tenon.toml",
-      "name": "fixture-convention-missing",
+      "name": "fixture-lock-duplicate-source",
       "source": "path+.",
       "version": "0.1.0"
     }
   ],
-  "roots": [
-    "fixture-convention-missing"
-  ],
+  "roots": ["fixture-lock-duplicate-source"],
   "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    },
     {
       "kind": "path",
       "path": "."

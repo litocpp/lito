@@ -3,6 +3,8 @@ export module tenon.lock_store;
 import rstd;
 import rstd.json;
 import tenon.model;
+import tenon.manifest;
+import tenon.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -55,7 +57,6 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
     auto sources = Array::make();
     for (const auto& source : graph.sources) {
         auto item = Map::make();
-        item.insert(String::make("id"_str), string_json(source.id.as_str()));
         if (source.kind == PackageSourceKind::Path) {
             auto path = path_string(source.path.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -79,29 +80,28 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
     for (const auto& package : graph.packages) {
         auto dependencies = Array::make();
         for (const auto& dependency : package.dependencies) {
-            dependencies.push(string_json(dependency.package_id.as_str()));
+            dependencies.push(string_json(dependency.name.as_str()));
         }
         auto manifest = path_string(package.source_manifest.as_path());
         if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
 
         auto item = Map::make();
         item.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependencies)));
-        item.insert(String::make("id"_str), string_json(package.id.as_str()));
         item.insert(String::make("manifest"_str), string_json(manifest->as_str()));
         item.insert(String::make("name"_str), string_json(package.manifest.name.as_str()));
-        item.insert(String::make("source"_str), string_json(package.source_id.as_str()));
+        item.insert(String::make("source"_str), string_json(package.source_identity.as_str()));
         item.insert(String::make("version"_str),
                     string_json(package.manifest.version.value->as_str()));
         packages.push(Json::Object(rstd::move(item)));
     }
 
     auto roots = Array::make();
-    for (const auto& id : graph.root_ids) roots.push(string_json(id.as_str()));
+    for (const auto& name : graph.root_names) roots.push(string_json(name.as_str()));
     auto root = Map::make();
     root.insert(String::make("packages"_str), Json::Array(rstd::move(packages)));
     root.insert(String::make("roots"_str), Json::Array(rstd::move(roots)));
     root.insert(String::make("sources"_str), Json::Array(rstd::move(sources)));
-    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(3))));
+    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(4))));
     return Ok(Json::Object(rstd::move(root)));
 }
 
@@ -142,6 +142,11 @@ auto package_key_v3(ref<str> key) -> bool {
     return package_key_v2(key) || key == "manifest"_str;
 }
 
+auto package_key_v4(ref<str> key) -> bool {
+    return key == "dependencies"_str || key == "manifest"_str || key == "name"_str ||
+           key == "source"_str || key == "version"_str;
+}
+
 auto source_key_v1(ref<str> key) -> bool {
     return key == "kind"_str || key == "manifest"_str || key == "path"_str;
 }
@@ -156,6 +161,15 @@ auto path_source_key_v3(ref<str> key) -> bool {
 
 auto git_source_key_v3(ref<str> key) -> bool {
     return key == "commit"_str || key == "id"_str || key == "kind"_str || key == "reference"_str ||
+           key == "url"_str;
+}
+
+auto path_source_key_v4(ref<str> key) -> bool {
+    return key == "kind"_str || key == "path"_str;
+}
+
+auto git_source_key_v4(ref<str> key) -> bool {
+    return key == "commit"_str || key == "kind"_str || key == "reference"_str ||
            key == "url"_str;
 }
 
@@ -533,6 +547,195 @@ auto validate_lock_v3(const Json& document) -> Result<empty> {
     return Ok(empty {});
 }
 
+auto validate_lock_v4(const Json& document) -> Result<empty> {
+    auto known = reject_unknown(document, "lock root"_str, root_key_v3);
+    if (known.is_err()) return known;
+    auto version        = required_member(document, "version"_str, "lock root"_str);
+    auto roots_value    = required_member(document, "roots"_str, "lock root"_str);
+    auto sources_value  = required_member(document, "sources"_str, "lock root"_str);
+    auto packages_value = required_member(document, "packages"_str, "lock root"_str);
+    if (version.is_err()) return Err(rstd::move(version).unwrap_err());
+    if (roots_value.is_err()) return Err(rstd::move(roots_value).unwrap_err());
+    if (sources_value.is_err()) return Err(rstd::move(sources_value).unwrap_err());
+    if (packages_value.is_err()) return Err(rstd::move(packages_value).unwrap_err());
+    auto version_number = (**version).as_u64();
+    if (version_number.is_none() || *version_number != u64(4)) {
+        return failure<empty>("lock.version must be integer 4"_str);
+    }
+    auto roots    = (**roots_value).as_array();
+    auto sources  = (**sources_value).as_array();
+    auto packages = (**packages_value).as_array();
+    if (roots.is_none() || (**roots).is_empty()) {
+        return failure<empty>("lock.roots must be a non-empty array"_str);
+    }
+    if (sources.is_none() || (**sources).is_empty()) {
+        return failure<empty>("lock.sources must be a non-empty array"_str);
+    }
+    if (packages.is_none()) {
+        return failure<empty>("lock.packages must be an array"_str);
+    }
+
+    auto source_identities = StringSet::make();
+    auto git_requirements  = StringSet::make();
+    for (const auto& source : **sources) {
+        auto kind = required_string(source, "kind"_str, "lock source"_str);
+        if (kind.is_err()) return Err(rstd::move(kind).unwrap_err());
+        auto identity = String::make();
+        if (*kind == "path"_str) {
+            auto source_known = reject_unknown(source, "lock path source"_str, path_source_key_v4);
+            if (source_known.is_err()) return source_known;
+            auto path = required_string(source, "path"_str, "lock path source"_str);
+            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+            if (path->is_empty()) {
+                return failure<empty>("lock path source path must not be empty"_str);
+            }
+            auto path_value = PathBuf::from(*path);
+            identity        = path_source_identity(path_value.as_path());
+        } else if (*kind == "git"_str) {
+            auto source_known = reject_unknown(source, "lock Git source"_str, git_source_key_v4);
+            if (source_known.is_err()) return source_known;
+            auto url       = required_string(source, "url"_str, "lock Git source"_str);
+            auto commit    = required_string(source, "commit"_str, "lock Git source"_str);
+            auto reference = required_member(source, "reference"_str, "lock Git source"_str);
+            if (url.is_err()) return Err(rstd::move(url).unwrap_err());
+            if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
+            if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
+            if (url->is_empty()) {
+                return failure<empty>("lock Git source URL must not be empty"_str);
+            }
+            if (! valid_commit(*commit)) {
+                return failure<empty>(
+                    "lock Git source commit must be a full hexadecimal object id"_str);
+            }
+            auto reference_known =
+                reject_unknown(**reference, "lock Git reference"_str, reference_key_v3);
+            if (reference_known.is_err()) return reference_known;
+            auto reference_kind =
+                required_string(**reference, "kind"_str, "lock Git reference"_str);
+            auto reference_value =
+                required_string(**reference, "value"_str, "lock Git reference"_str);
+            if (reference_kind.is_err()) {
+                return Err(rstd::move(reference_kind).unwrap_err());
+            }
+            if (reference_value.is_err()) {
+                return Err(rstd::move(reference_value).unwrap_err());
+            }
+            const auto default_reference = *reference_kind == "default"_str;
+            const auto named_reference   = *reference_kind == "branch"_str ||
+                                           *reference_kind == "tag"_str ||
+                                           *reference_kind == "rev"_str;
+            if (! default_reference && ! named_reference) {
+                return failure<empty>(
+                    "lock Git reference kind must be default, branch, tag, or rev"_str);
+            }
+            if (default_reference != reference_value->is_empty()) {
+                return failure<empty>(
+                    "lock Git reference value must be empty only for default"_str);
+            }
+            auto requirement = rstd::format(
+                "{}\n{}\n{}", *url, *reference_kind, *reference_value);
+            if (git_requirements.contains_key(requirement.as_str())) {
+                return failure<empty>(rstd::format(
+                    "lock repeats Git source requirement '{}', kind '{}', value '{}'",
+                    *url,
+                    *reference_kind,
+                    *reference_value));
+            }
+            git_requirements.insert(rstd::move(requirement), empty {});
+            identity = git_source_identity(*url, *commit);
+        } else {
+            return failure<empty>(rstd::format("lock source has unsupported kind '{}'", *kind));
+        }
+        if (source_identities.contains_key(identity.as_str())) {
+            return failure<empty>(
+                rstd::format("lock repeats source identity '{}'", identity.as_str()));
+        }
+        source_identities.insert(rstd::move(identity), empty {});
+    }
+
+    auto names = StringSet::make();
+    for (const auto& package : **packages) {
+        auto package_known = reject_unknown(package, "lock package"_str, package_key_v4);
+        if (package_known.is_err()) return package_known;
+        auto name            = required_string(package, "name"_str, "lock package"_str);
+        auto package_version = required_string(package, "version"_str, "lock package"_str);
+        auto source          = required_string(package, "source"_str, "lock package"_str);
+        auto manifest        = required_string(package, "manifest"_str, "lock package"_str);
+        auto dependencies    = required_member(package, "dependencies"_str, "lock package"_str);
+        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
+        if (package_version.is_err()) {
+            return Err(rstd::move(package_version).unwrap_err());
+        }
+        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+        if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
+        if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
+        if (! valid_package_name(*name)) {
+            return failure<empty>(rstd::format("lock package name '{}' is invalid", *name));
+        }
+        if (names.contains_key(*name)) {
+            return failure<empty>(rstd::format("lock repeats package name '{}'", *name));
+        }
+        if (package_version->is_empty()) {
+            return failure<empty>(
+                rstd::format("lock package '{}' version must not be empty", *name));
+        }
+        if (! source_identities.contains_key(*source)) {
+            return failure<empty>(
+                rstd::format("lock package '{}' references missing source '{}'", *name, *source));
+        }
+        if (! valid_source_manifest(*manifest)) {
+            return failure<empty>(
+                "lock package manifest must be a relative path without parent components"_str);
+        }
+        names.insert(String::make(*name), empty {});
+
+        auto dependency_array = (**dependencies).as_array();
+        if (dependency_array.is_none()) {
+            return failure<empty>("lock package dependencies must be an array"_str);
+        }
+        auto dependency_names = StringSet::make();
+        for (const auto& dependency : **dependency_array) {
+            auto dependency_name = dependency.as_str();
+            if (dependency_name.is_none()) {
+                return failure<empty>("lock dependency name must be a string"_str);
+            }
+            if (! valid_package_name(*dependency_name)) {
+                return failure<empty>(
+                    rstd::format("lock dependency name '{}' is invalid", *dependency_name));
+            }
+            if (dependency_names.contains_key(*dependency_name)) {
+                return failure<empty>(rstd::format(
+                    "lock package '{}' repeats dependency '{}'", *name, *dependency_name));
+            }
+            dependency_names.insert(String::make(*dependency_name), empty {});
+        }
+    }
+
+    auto root_names = StringSet::make();
+    for (const auto& root : **roots) {
+        auto name = root.as_str();
+        if (name.is_none()) return failure<empty>("lock root name must be a string"_str);
+        if (! names.contains_key(*name)) {
+            return failure<empty>(
+                rstd::format("lock root '{}' does not identify a package", *name));
+        }
+        if (root_names.contains_key(*name)) {
+            return failure<empty>(rstd::format("lock repeats root name '{}'", *name));
+        }
+        root_names.insert(String::make(*name), empty {});
+    }
+    for (const auto& package : **packages) {
+        auto dependencies = (**package.get("dependencies"_str)).as_array();
+        for (const auto& dependency : **dependencies) {
+            if (! names.contains_key(*dependency.as_str())) {
+                return failure<empty>(rstd::format(
+                    "lock dependency '{}' does not identify a package", *dependency.as_str()));
+            }
+        }
+    }
+    return Ok(empty {});
+}
+
 auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
@@ -564,10 +767,15 @@ auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
         return Ok(Some(rstd::move(document)));
     }
-    if (number.is_none() || *number != u64(3)) {
-        return failure<Option<Json>>("lock.version must be integer 1, 2, or 3"_str);
+    if (number.is_some() && *number == u64(3)) {
+        auto valid = validate_lock_v3(document);
+        if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
+        return Ok(Some(rstd::move(document)));
     }
-    auto valid = validate_lock_v3(document);
+    if (number.is_none() || *number != u64(4)) {
+        return failure<Option<Json>>("lock.version must be integer 1, 2, 3, or 4"_str);
+    }
+    auto valid = validate_lock_v4(document);
     if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
     return Ok(Some(rstd::move(document)));
 }
@@ -674,7 +882,7 @@ auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSe
 
     auto version_value = (*existing).get("version"_str);
     auto version       = (**version_value).as_u64();
-    if (version.is_none() || *version != u64(3)) {
+    if (version.is_none() || *version != u64(4)) {
         if (locked) {
             return failure<LockSession>(
                 "--locked requires migrating tenon.lock with a non-locked build"_str);
@@ -698,12 +906,10 @@ auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSe
         if (reference_kind == "branch"_str) parsed_kind = GitReferenceKind::Branch;
         if (reference_kind == "tag"_str) parsed_kind = GitReferenceKind::Tag;
         if (reference_kind == "rev"_str) parsed_kind = GitReferenceKind::Rev;
-        auto id              = source.get("id"_str);
         auto url             = source.get("url"_str);
         auto reference_value = reference.get("value"_str);
         auto commit          = source.get("commit"_str);
         options.git_sources.push(LockedGitSource {
-            .id  = String::make(*(**id).as_str()),
             .git = String::make(*(**url).as_str()),
             .reference =
                 GitReference {

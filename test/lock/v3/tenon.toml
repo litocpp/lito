@@ -1,0 +1,9 @@
+[package]
+name = "fixture-lock-v3"
+version = "0.1.0"
+module = "fixture.lock.v3"
+
+[library]
+archive = "fixture.lock.v3"
+discovery = "explicit"
+sources = ["source.cppm"]

@@ -50,21 +50,25 @@ auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
     if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto& id : build.selected_package_ids) {
-        selected.insert(id.clone(), empty {});
+    for (const auto& name : build.selected_package_names) {
+        selected.insert(name.clone(), empty {});
     }
-    auto source_sets = Vec<ResolvedSourceSet>::with_capacity(build.selected_package_ids.len());
+    auto source_sets =
+        Vec<ResolvedPackageSources>::with_capacity(build.selected_package_names.len());
     for (const auto& package : build.graph.packages) {
-        if (! selected.contains_key(package.id.as_str())) continue;
+        if (! selected.contains_key(package.manifest.name.as_str())) continue;
         auto discovered = discover_sources(package.manifest);
         if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
-        source_sets.push(rstd::move(discovered).unwrap());
+        source_sets.push(ResolvedPackageSources {
+            .package_name = package.manifest.name.clone(),
+            .sources      = rstd::move(discovered).unwrap(),
+        });
     }
     return adapt_package_graph(
         rstd::move(build.graph),
         rstd::move(source_sets),
-        build.selected_package_ids,
-        build.selected_root_ids,
+        build.selected_package_names,
+        build.selected_root_names,
         request.configuration);
 }
 

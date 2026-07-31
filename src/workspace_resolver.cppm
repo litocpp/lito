@@ -7,7 +7,6 @@ import tenon.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using StringMap = rstd::collections::BTreeMap<String, String>;
 using IndexMap  = rstd::collections::BTreeMap<String, usize>;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
@@ -34,7 +33,7 @@ auto selected_closure(const ResolvedPackageGraph& graph, const Vec<String>& sele
     -> Result<Vec<String>> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
-        indices.insert(graph.packages[index].id.clone(), index);
+        indices.insert(graph.packages[index].manifest.name.clone(), index);
     }
 
     auto pending  = copy_strings(selected_roots);
@@ -45,17 +44,19 @@ auto selected_closure(const ResolvedPackageGraph& graph, const Vec<String>& sele
         auto index = indices.get(current.as_str());
         if (index.is_none()) {
             return failure<Vec<String>>(rstd::format(
-                "selected package id '{}' is missing from resolved graph", current.as_str()));
+                "selected package '{}' is missing from resolved graph", current.as_str()));
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
-            pending.push(dependency.package_id.clone());
+            pending.push(dependency.name.clone());
         }
     }
 
     auto result = Vec<String>::make();
     for (const auto& package : graph.packages) {
-        if (selected.contains_key(package.id.as_str())) result.push(package.id.clone());
+        if (selected.contains_key(package.manifest.name.as_str())) {
+            result.push(package.manifest.name.clone());
+        }
     }
     return Ok(rstd::move(result));
 }
@@ -76,21 +77,11 @@ auto resolve_package_selection(const PackageSelection&  selection,
     }
 
     auto roots = StringSet::make();
-    for (const auto& id : graph.root_ids) roots.insert(id.clone(), empty {});
-    auto names = StringMap::make();
-    for (const auto& package : graph.packages) {
-        if (! roots.contains_key(package.id.as_str())) continue;
-        if (names.contains_key(package.manifest.name.as_str())) {
-            return failure<ResolvedPackageSelection>(
-                rstd::format("workspace contains more than one package named '{}'",
-                             package.manifest.name.as_str()));
-        }
-        names.insert(package.manifest.name.clone(), package.id.clone());
-    }
+    for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
 
     auto selected_roots = Vec<String>::make();
     if (selection.packages.is_empty()) {
-        selected_roots = copy_strings(graph.root_ids);
+        selected_roots = copy_strings(graph.root_names);
     } else {
         auto selected_names = StringSet::make();
         for (const auto& name : selection.packages) {
@@ -104,13 +95,12 @@ auto resolve_package_selection(const PackageSelection&  selection,
                 return failure<ResolvedPackageSelection>(rstd::format(
                     "workspace package '{}' was selected more than once", name.as_str()));
             }
-            auto id = names.get(name.as_str());
-            if (id.is_none()) {
+            if (! roots.contains_key(name.as_str())) {
                 return failure<ResolvedPackageSelection>(
                     rstd::format("workspace has no member package named '{}'", name.as_str()));
             }
             selected_names.insert(name.clone(), empty {});
-            selected_roots.push((**id).clone());
+            selected_roots.push(name.clone());
         }
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
@@ -120,9 +110,9 @@ auto resolve_package_selection(const PackageSelection&  selection,
         return Err(rstd::move(selected_packages).unwrap_err());
     }
     return Ok(ResolvedPackageSelection {
-        .graph                = rstd::move(graph),
-        .selected_root_ids    = rstd::move(selected_roots),
-        .selected_package_ids = rstd::move(selected_packages).unwrap(),
+        .graph                  = rstd::move(graph),
+        .selected_root_names    = rstd::move(selected_roots),
+        .selected_package_names = rstd::move(selected_packages).unwrap(),
     });
 }
 

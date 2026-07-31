@@ -2,20 +2,22 @@
   "packages": [
     {
       "dependencies": [],
+      "id": "fixture-lock-v3 0.1.0 (path+.)",
       "manifest": "tenon.toml",
-      "name": "fixture-convention-missing",
+      "name": "fixture-lock-v3",
       "source": "path+.",
       "version": "0.1.0"
     }
   ],
   "roots": [
-    "fixture-convention-missing"
+    "fixture-lock-v3 0.1.0 (path+.)"
   ],
   "sources": [
     {
+      "id": "path+.",
       "kind": "path",
       "path": "."
     }
   ],
-  "version": 4
+  "version": 3
 }

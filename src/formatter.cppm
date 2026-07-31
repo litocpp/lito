@@ -43,8 +43,8 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
     auto selection = rstd::move(resolved).unwrap();
 
     auto selected_roots = StringSet::make();
-    for (const auto& id : selection.selected_root_ids) {
-        selected_roots.insert(id.clone(), empty {});
+    for (const auto& name : selection.selected_root_names) {
+        selected_roots.insert(name.clone(), empty {});
     }
 
     auto created = toolchain::ClangFormat::create(
@@ -54,7 +54,7 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
 
     auto summary = FormatSummary {};
     for (const auto& package : selection.graph.packages) {
-        if (! selected_roots.contains_key(package.id.as_str())) continue;
+        if (! selected_roots.contains_key(package.manifest.name.as_str())) continue;
         auto discovered = discover_sources(package.manifest);
         if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
         auto sources = rstd::move(discovered).unwrap();
@@ -65,7 +65,7 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
         }
         ++summary.packages;
     }
-    if (summary.packages != selection.selected_root_ids.len()) {
+    if (summary.packages != selection.selected_root_names.len()) {
         return format_failure<FormatSummary>(
             ErrorKind::Manifest, "selected packages are missing from resolved graph"_str);
     }

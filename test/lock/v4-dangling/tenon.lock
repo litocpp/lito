@@ -1,16 +1,14 @@
 {
   "packages": [
     {
-      "dependencies": [],
+      "dependencies": ["fixture-lock-missing"],
       "manifest": "tenon.toml",
-      "name": "fixture-convention-missing",
+      "name": "fixture-lock-dangling",
       "source": "path+.",
       "version": "0.1.0"
     }
   ],
-  "roots": [
-    "fixture-convention-missing"
-  ],
+  "roots": ["fixture-lock-dangling"],
   "sources": [
     {
       "kind": "path",

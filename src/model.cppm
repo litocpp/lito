@@ -224,12 +224,11 @@ struct ResolvedSourceSet {
 
 struct ResolvedDependency {
     String               name;
-    String               package_id;
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
 struct ResolvedPackageSource {
-    String            id;
+    String            identity;
     PackageSourceKind kind { PackageSourceKind::Path };
     PathBuf           root_directory;
     PathBuf           path;
@@ -239,7 +238,6 @@ struct ResolvedPackageSource {
 };
 
 struct LockedGitSource {
-    String       id;
     String       git;
     GitReference reference;
     String       commit;
@@ -251,15 +249,14 @@ struct PackageResolutionOptions {
 };
 
 struct ResolvedPackage {
-    String                  id;
-    String                  source_id;
+    String                  source_identity;
     PathBuf                 source_manifest;
     PackageManifest         manifest;
     Vec<ResolvedDependency> dependencies;
 };
 
 struct ResolvedPackageGraph {
-    Vec<String>                root_ids;
+    Vec<String>                root_names;
     PathBuf                    root_directory;
     PathBuf                    manifest_path;
     bool                       root_is_workspace { false };
@@ -274,8 +271,13 @@ struct PackageSelection {
 
 struct ResolvedPackageSelection {
     ResolvedPackageGraph graph;
-    Vec<String>          selected_root_ids;
-    Vec<String>          selected_package_ids;
+    Vec<String>          selected_root_names;
+    Vec<String>          selected_package_names;
+};
+
+struct ResolvedPackageSources {
+    String            package_name;
+    ResolvedSourceSet sources;
 };
 
 enum class LockStatus

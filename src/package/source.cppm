@@ -163,8 +163,16 @@ struct SourceEntry {
 export namespace tenon
 {
 
+auto path_source_identity(ref<rstd::path::Path> path) -> String {
+    return rstd::format("path+{}", path);
+}
+
+auto git_source_identity(ref<str> url, ref<str> commit) -> String {
+    return rstd::format("git+{}#{}", url, commit);
+}
+
 struct SelectedSourcePackage {
-    String          source_id;
+    String          source_identity;
     PathBuf         manifest;
     PackageManifest package;
 };
@@ -174,7 +182,7 @@ class PackageSourceManager {
     PackageResolutionOptions options_;
     Vec<SourceEntry>         entries_;
     IndexMap                 roots_ { IndexMap::make() };
-    IndexMap                 source_ids_ { IndexMap::make() };
+    IndexMap                 source_identities_ { IndexMap::make() };
 
     auto locked_source(ref<str> url, const GitReference& reference)
         -> Result<Option<ref<LockedGitSource>>> {
@@ -445,12 +453,12 @@ class PackageSourceManager {
         auto relative = relative_path(graph_root_.as_path(), catalog.root());
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         auto normalized = rstd::move(relative).unwrap();
-        auto id         = rstd::format("path+{}", normalized.as_path());
+        auto id         = path_source_identity(normalized.as_path());
         auto index      = entries_.len();
         entries_.push(SourceEntry {
             .source =
                 ResolvedPackageSource {
-                    .id             = rstd::move(id),
+                    .identity       = rstd::move(id),
                     .kind           = PackageSourceKind::Path,
                     .root_directory = PathBuf::from(catalog.root()),
                     .path           = rstd::move(normalized),
@@ -458,7 +466,7 @@ class PackageSourceManager {
             .catalog = rstd::move(catalog),
         });
         roots_.insert(rstd::move(root_key), index);
-        source_ids_.insert(entries_[index].source.id.clone(), index);
+        source_identities_.insert(entries_[index].source.identity.clone(), index);
         return Ok(index);
     }
 
@@ -507,8 +515,8 @@ class PackageSourceManager {
         auto commit          = resolve_commit(repository_path.as_path(), reference, pin);
         if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
         auto precise_commit = rstd::move(commit).unwrap();
-        auto id             = rstd::format("git+{}#{}", url, precise_commit.as_str());
-        auto existing       = source_ids_.get(id.as_str());
+        auto id             = git_source_identity(url, precise_commit.as_str());
+        auto existing       = source_identities_.get(id.as_str());
         if (existing.is_some()) return Ok(**existing);
 
         auto local = checkout(bucket.as_path(), repository_path.as_path(), precise_commit.as_str());
@@ -545,7 +553,7 @@ class PackageSourceManager {
         entries_.push(SourceEntry {
             .source =
                 ResolvedPackageSource {
-                    .id             = id.clone(),
+                    .identity       = id.clone(),
                     .kind           = PackageSourceKind::Git,
                     .root_directory = rstd::move(checkout_root),
                     .git            = String::make(url),
@@ -555,7 +563,7 @@ class PackageSourceManager {
             .catalog = rstd::move(loaded_catalog),
         });
         roots_.insert(rstd::move(root_key), index);
-        source_ids_.insert(rstd::move(id), index);
+        source_identities_.insert(rstd::move(id), index);
         return Ok(index);
     }
 
@@ -582,8 +590,8 @@ public:
         return result;
     }
 
-    auto source_id(usize source) const noexcept -> ref<str> {
-        return entries_[source].source.id.as_str();
+    auto source_identity(usize source) const noexcept -> ref<str> {
+        return entries_[source].source.identity.as_str();
     }
 
     auto source_manifest(usize source) const -> PathBuf {
@@ -602,11 +610,11 @@ public:
                     rstd::format("dependency '{}' resolves to package '{}' from source '{}'",
                                  name,
                                  entries_[source].catalog.names()[usize {}].as_str(),
-                                 entries_[source].source.id.as_str()));
+                                 entries_[source].source.identity.as_str()));
             }
             return source_failure<SelectedSourcePackage>(
                 rstd::format("source '{}' has no package named '{}'",
-                             entries_[source].source.id.as_str(),
+                             entries_[source].source.identity.as_str(),
                              name));
         }
         auto package  = rstd::move(manifest).unwrap();
@@ -616,12 +624,12 @@ public:
             return source_failure<SelectedSourcePackage>(
                 rstd::format("package manifest '{}' is outside source '{}'",
                              package.manifest_path.as_path(),
-                             entries_[source].source.id.as_str()));
+                             entries_[source].source.identity.as_str()));
         }
         return Ok(SelectedSourcePackage {
-            .source_id = entries_[source].source.id.clone(),
-            .manifest  = PathBuf::from(*relative),
-            .package   = rstd::move(package),
+            .source_identity = entries_[source].source.identity.clone(),
+            .manifest        = PathBuf::from(*relative),
+            .package         = rstd::move(package),
         });
     }
 
@@ -631,7 +639,7 @@ public:
         rstd::slice_::sort_unstable_by(
             sources.as_mut_slice().as_mut_ref(),
             [](const ResolvedPackageSource& left, const ResolvedPackageSource& right) {
-                return left.id < right.id;
+                return left.identity < right.identity;
             });
         return sources;
     }

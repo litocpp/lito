@@ -2,7 +2,6 @@
   "packages": [
     {
       "dependencies": [],
-      "id": "demo-base 0.1.0 (path+.)",
       "manifest": "tenon.toml",
       "name": "demo-base",
       "source": "path+.",
@@ -10,14 +9,13 @@
     }
   ],
   "roots": [
-    "demo-base 0.1.0 (path+.)"
+    "demo-base"
   ],
   "sources": [
     {
-      "id": "path+.",
       "kind": "path",
       "path": "."
     }
   ],
-  "version": 3
+  "version": 4
 }

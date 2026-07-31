@@ -114,11 +114,11 @@ auto adapt_single_artifact(PackageManifest manifest,
 }
 
 auto adapt_package_graph(ResolvedPackageGraph graph,
-                         Vec<ResolvedSourceSet> source_sets,
-                         const Vec<String>& selected_package_ids,
-                         const Vec<String>& selected_root_ids,
+                         Vec<ResolvedPackageSources> source_sets,
+                         const Vec<String>& selected_package_names,
+                         const Vec<String>& selected_root_names,
                          const BuildConfiguration& configuration) -> Result<PackageSpec> {
-    if (selected_package_ids.len() != source_sets.len()) {
+    if (selected_package_names.len() != source_sets.len()) {
         return adapter_failure<PackageSpec>(String::make(
             "selected package graph and source sets have different lengths"_str));
     }
@@ -135,43 +135,55 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
     auto roots = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto& id : selected_package_ids) selected.insert(id.clone(), empty {});
-    for (const auto& id : graph.root_ids) roots.insert(id.clone(), empty {});
+    for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
+    for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
 
-    auto target_names = rstd::collections::BTreeMap<String, String>::make();
     auto artifact_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
     for (const auto& package : graph.packages) {
-        artifact_kinds.insert(package.id.clone(), package.manifest.artifact_kind);
-        if (selected.contains_key(package.id.as_str())) {
-            target_names.insert(package.id.clone(), package.manifest.name.clone());
-        }
+        artifact_kinds.insert(package.manifest.name.clone(), package.manifest.artifact_kind);
     }
 
     for (const auto& package : graph.packages) {
         if (package.manifest.artifact_kind == ArtifactKind::Executable &&
-            ! roots.contains_key(package.id.as_str())) {
+            ! roots.contains_key(package.manifest.name.as_str())) {
             return adapter_failure<PackageSpec>(rstd::format(
                 "dependency package '{}' cannot produce an executable",
                 package.manifest.name.as_str()));
         }
         for (const auto& dependency : package.dependencies) {
-            auto kind = artifact_kinds.get(dependency.package_id.as_str());
-            if (kind.is_some() && **kind == ArtifactKind::Executable) {
+            auto kind = artifact_kinds.get(dependency.name.as_str());
+            if (kind.is_none()) {
+                return adapter_failure<PackageSpec>(rstd::format(
+                    "resolved dependency '{}' is missing", dependency.name.as_str()));
+            }
+            if (**kind == ArtifactKind::Executable) {
                 return adapter_failure<PackageSpec>(rstd::format(
                     "package '{}' cannot depend on executable package '{}'",
                     package.manifest.name.as_str(),
-                    dependency.package_id.as_str()));
+                    dependency.name.as_str()));
             }
         }
     }
 
-    auto targets = Vec<TargetSpec>::with_capacity(selected_package_ids.len());
-    auto source_index = usize {};
+    auto source_indices = rstd::collections::BTreeMap<String, usize>::make();
+    for (usize index {}; index < source_sets.len(); ++index) {
+        if (source_indices.contains_key(source_sets[index].package_name.as_str())) {
+            return adapter_failure<PackageSpec>(rstd::format(
+                "source discovery repeated package '{}'", source_sets[index].package_name.as_str()));
+        }
+        source_indices.insert(source_sets[index].package_name.clone(), index);
+    }
+
+    auto targets = Vec<TargetSpec>::with_capacity(selected_package_names.len());
     for (usize index {}; index < graph.packages.len(); ++index) {
         auto& package = graph.packages[index];
-        if (! selected.contains_key(package.id.as_str())) continue;
-        auto& source_set = source_sets[source_index];
-        ++source_index;
+        if (! selected.contains_key(package.manifest.name.as_str())) continue;
+        auto source_position = source_indices.get(package.manifest.name.as_str());
+        if (source_position.is_none()) {
+            return adapter_failure<PackageSpec>(rstd::format(
+                "source discovery is missing package '{}'", package.manifest.name.as_str()));
+        }
+        auto source_set = rstd::move(source_sets[**source_position].sources);
         auto sources = Vec<PathBuf>::with_capacity(source_set.sources.len());
         auto expectations = Vec<ModuleExpectation>::make();
         for (auto& source : source_set.sources) {
@@ -185,13 +197,12 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
         }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         for (const auto& dependency : package.dependencies) {
-            auto target_name = target_names.get(dependency.package_id.as_str());
-            if (target_name.is_none()) {
+            if (! selected.contains_key(dependency.name.as_str())) {
                 return adapter_failure<PackageSpec>(rstd::format(
-                    "resolved dependency '{}' is missing", dependency.package_id.as_str()));
+                    "resolved dependency '{}' is missing", dependency.name.as_str()));
             }
             dependencies.push(DependencySpec {
-                .target = (**target_name).clone(),
+                .target = dependency.name.clone(),
                 .visibility = dependency.visibility,
             });
         }
@@ -211,18 +222,16 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     }
 
     auto default_targets = Vec<String>::make();
-    for (const auto& id : selected_root_ids) {
-        auto target_name = target_names.get(id.as_str());
-        if (target_name.is_none()) {
+    for (const auto& name : selected_root_names) {
+        if (! selected.contains_key(name.as_str())) {
             return adapter_failure<PackageSpec>(rstd::format(
-                "selected root package '{}' is missing", id.as_str()));
+                "selected root package '{}' is missing", name.as_str()));
         }
-        default_targets.push((**target_name).clone());
+        default_targets.push(name.clone());
     }
     auto package_name = String::make("workspace"_str);
-    if (graph.root_ids.len() == usize(1)) {
-        auto name = target_names.get(graph.root_ids[usize {}].as_str());
-        if (name.is_some()) package_name = (**name).clone();
+    if (graph.root_names.len() == usize(1)) {
+        package_name = graph.root_names[usize {}].clone();
     }
     auto profiles = Vec<ProfileSpec>::make();
     auto default_profile = profile->name.clone();

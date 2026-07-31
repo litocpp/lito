@@ -2,7 +2,6 @@
   "packages": [
     {
       "dependencies": [],
-      "id": "fixture-convention-mismatch 0.1.0 (path+.)",
       "manifest": "tenon.toml",
       "name": "fixture-convention-mismatch",
       "source": "path+.",
@@ -10,14 +9,13 @@
     }
   ],
   "roots": [
-    "fixture-convention-mismatch 0.1.0 (path+.)"
+    "fixture-convention-mismatch"
   ],
   "sources": [
     {
-      "id": "path+.",
       "kind": "path",
       "path": "."
     }
   ],
-  "version": 3
+  "version": 4
 }

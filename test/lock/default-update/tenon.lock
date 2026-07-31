@@ -2,7 +2,6 @@
   "packages": [
     {
       "dependencies": [],
-      "id": "fixture-lock-update 0.1.0 (path+.)",
       "manifest": "tenon.toml",
       "name": "fixture-lock-update",
       "source": "path+.",
@@ -10,14 +9,13 @@
     }
   ],
   "roots": [
-    "fixture-lock-update 0.1.0 (path+.)"
+    "fixture-lock-update"
   ],
   "sources": [
     {
-      "id": "path+.",
       "kind": "path",
       "path": "."
     }
   ],
-  "version": 3
+  "version": 4
 }
