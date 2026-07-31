@@ -105,9 +105,9 @@ auto selected_closure(const ResolvedPackageGraph& graph,
 auto package_selection(PackageManifest manifest,
                        const PackageSelection& selection)
     -> Result<ResolvedPackageSelection> {
-    if (selection.workspace || ! selection.packages.is_empty()) {
+    if (! selection.packages.is_empty()) {
         return failure<ResolvedPackageSelection>(
-            "--workspace and --package require a workspace directory"_str);
+            "--package requires a workspace directory"_str);
     }
     if (manifest.version.source == PackageVersionSource::Workspace) {
         return failure<ResolvedPackageSelection>(rstd::format(
@@ -135,11 +135,6 @@ auto package_selection(PackageManifest manifest,
 auto workspace_selection(WorkspaceManifest workspace,
                          const PackageSelection& selection)
     -> Result<ResolvedPackageSelection> {
-    if (selection.workspace && ! selection.packages.is_empty()) {
-        return failure<ResolvedPackageSelection>(
-            "--workspace cannot be combined with --package"_str);
-    }
-
     auto member_keys = StringSet::make();
     auto member_directories = Vec<PathBuf>::with_capacity(workspace.members.len());
     auto manifests = Vec<PackageManifest>::with_capacity(workspace.members.len());
@@ -189,7 +184,6 @@ auto workspace_selection(WorkspaceManifest workspace,
             "resolved workspace members are incomplete"_str);
     }
 
-    auto default_ids = Vec<String>::make();
     auto default_keys = StringSet::make();
     for (const auto& declared : workspace.default_members) {
         auto canonical = member_directory(
@@ -209,14 +203,12 @@ auto workspace_selection(WorkspaceManifest workspace,
                 declared.as_path()));
         }
         default_keys.insert(key->clone(), empty {});
-        default_ids.push((**id).clone());
     }
 
     auto selected_roots = Vec<String>::make();
-    if (selection.workspace ||
-        (selection.packages.is_empty() && default_ids.is_empty())) {
+    if (selection.packages.is_empty()) {
         selected_roots = copy_strings(graph.root_ids);
-    } else if (! selection.packages.is_empty()) {
+    } else {
         auto selected_names = StringSet::make();
         for (const auto& name : selection.packages) {
             if (selected_names.contains_key(name.as_str())) {
@@ -231,8 +223,6 @@ auto workspace_selection(WorkspaceManifest workspace,
             selected_names.insert(name.clone(), empty {});
             selected_roots.push((**id).clone());
         }
-    } else {
-        selected_roots = rstd::move(default_ids);
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 

@@ -210,7 +210,6 @@ struct ResolvedPackageGraph {
 struct PackageSelection {
     PathBuf     root;
     Vec<String> packages;
-    bool        workspace { false };
 };
 
 struct ResolvedPackageSelection {

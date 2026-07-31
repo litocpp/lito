@@ -50,12 +50,9 @@ void print_help() {
     rstd::io::println("tenon - module-first C++ builder");
     rstd::io::println("");
     rstd::io::println(
-        "Usage: tenon build <directory> [--package <name>] [--workspace] [--profile <debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+        "Usage: tenon [-C <directory>] build [--package <name>] [--profile <debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
     rstd::io::println(
-        "       tenon format <directory> [--package <name>] [--workspace]");
-    rstd::io::println("");
-    rstd::io::println("Supported target toolchains: clang++ with libstdc++ or libc++");
-    rstd::io::println("All builds use -fno-rtti -fno-exceptions");
+        "       tenon [-C <directory>] format [--package <name>]");
 }
 
 auto missing_value(ref<str> option) -> int {
@@ -68,7 +65,14 @@ auto missing_value(ref<str> option) -> int {
 int main() {
     auto arguments = rstd::env::args();
     (void)arguments.next();
+    auto working_directory = tenon::PathBuf::from("."_str);
     auto command = arguments.next();
+    while (command.is_some() && *command == "-C"_str) {
+        auto value = arguments.next();
+        if (value.is_none()) return missing_value("-C"_str);
+        working_directory = tenon::PathBuf::from(rstd::move(value).unwrap());
+        command = arguments.next();
+    }
     if (command.is_none() || (*command == "--help"_str) || (*command == "-h"_str)) {
         print_help();
         return 0;
@@ -79,28 +83,15 @@ int main() {
         return 2;
     }
 
-    auto directory = arguments.next();
-    if (directory.is_none()) {
-        rstd::io::eprintln(
-            "tenon: {} requires a package or workspace directory", command->as_str());
-        return 2;
-    }
-    if (*directory == "--help"_str || *directory == "-h"_str) {
-        print_help();
-        return 0;
-    }
-
     if (*command == "format"_str) {
         auto request = tenon::FormatRequest {};
-        request.selection.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
+        request.selection.root = rstd::move(working_directory);
         request.toolchain = configured_toolchain();
         while (auto option = arguments.next()) {
             if (*option == "--package"_str) {
                 auto value = arguments.next();
                 if (value.is_none()) return missing_value("--package"_str);
                 request.selection.packages.push(rstd::move(value).unwrap());
-            } else if (*option == "--workspace"_str) {
-                request.selection.workspace = true;
             } else if (*option == "--help"_str || *option == "-h"_str) {
                 print_help();
                 return 0;
@@ -123,7 +114,7 @@ int main() {
     }
 
     auto request = tenon::BuildRequest {};
-    request.selection.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
+    request.selection.root = rstd::move(working_directory);
     request.configuration.toolchain = configured_toolchain();
     request.configuration.standard_library = tenon::StandardLibrary::Libcxx;
     request.configuration.bmi_mode = tenon::BmiMode::Reduced;
@@ -148,8 +139,6 @@ int main() {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--package"_str);
             request.selection.packages.push(rstd::move(value).unwrap());
-        } else if (*option == "--workspace"_str) {
-            request.selection.workspace = true;
         } else if (*option == "--out"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--out"_str);
