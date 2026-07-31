@@ -3,6 +3,7 @@ export module tenon.toolchain.clang_options;
 import rstd;
 import tenon.model;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 
 export namespace tenon::toolchain::clang_options
@@ -31,12 +32,12 @@ inline constexpr auto COMPILE       = "-c"_str;
 inline constexpr auto OUTPUT        = "-o"_str;
 inline constexpr auto ARCHIVE_CREATE = "rcs"_str;
 
-constexpr auto standard_library(StandardLibrary value) noexcept -> rstd::ref<rstd::str> {
+constexpr auto standard_library(StandardLibrary value) noexcept -> ref<str> {
     return value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str
                                                 : "-stdlib=libc++"_str;
 }
 
-constexpr auto bmi(BmiMode value) noexcept -> rstd::ref<rstd::str> {
+constexpr auto bmi(BmiMode value) noexcept -> ref<str> {
     return value == BmiMode::Reduced ? "-fmodules-reduced-bmi"_str
                                      : "-fno-modules-reduced-bmi"_str;
 }

@@ -2,6 +2,8 @@ export module tenon.model;
 
 import rstd;
 
+using namespace rstd::prelude;
+
 export namespace tenon
 {
 
@@ -11,8 +13,8 @@ using PathBuf = rstd::path::PathBuf;
 template<typename T>
 using Vec = rstd::vec::Vec<T>;
 
-using TargetId = rstd::usize;
-using UnitId   = rstd::usize;
+using TargetId = usize;
+using UnitId   = usize;
 
 enum class ErrorKind
 {
@@ -29,7 +31,7 @@ struct Error {
     ErrorKind kind { ErrorKind::InvalidRequest };
     String    message;
 
-    static auto make(ErrorKind kind, rstd::ref<rstd::str> message) -> Error {
+    static auto make(ErrorKind kind, ref<str> message) -> Error {
         return Error { kind, String::make(message) };
     }
 
@@ -92,7 +94,7 @@ enum class PackageVersionSource
 
 struct PackageVersion {
     PackageVersionSource source { PackageVersionSource::Explicit };
-    rstd::Option<String> value;
+    Option<String> value;
 };
 
 struct ToolchainSpec {
@@ -133,7 +135,7 @@ struct DeclaredDependency {
 struct PackageManifest {
     String                name;
     PackageVersion        version;
-    rstd::Option<String>  root_module;
+    Option<String>  root_module;
     PathBuf               root;
     PathBuf               manifest_path;
     ArtifactKind          artifact_kind { ArtifactKind::StaticLibrary };
@@ -145,7 +147,7 @@ struct PackageManifest {
 };
 
 struct WorkspacePackageDefaults {
-    rstd::Option<String> version;
+    Option<String> version;
 };
 
 struct WorkspaceManifest {
@@ -164,8 +166,8 @@ enum class ManifestKind
 
 struct ManifestDocument {
     ManifestKind                    kind { ManifestKind::Package };
-    rstd::Option<PackageManifest>   package;
-    rstd::Option<WorkspaceManifest> workspace;
+    Option<PackageManifest>   package;
+    Option<WorkspaceManifest> workspace;
 };
 
 struct ManifestLocation {
@@ -177,7 +179,7 @@ struct ResolvedSource {
     PathBuf              relative_path;
     PathBuf              canonical_path;
     SourceOrigin         origin { SourceOrigin::Explicit };
-    rstd::Option<String> expected_module;
+    Option<String> expected_module;
 };
 
 struct ResolvedSourceSet {
@@ -235,7 +237,7 @@ struct TargetSpec {
     String                  name;
     ArtifactKind            artifact_kind { ArtifactKind::StaticLibrary };
     String                  artifact_name;
-    rstd::Option<String>    module_affiliation;
+    Option<String>    module_affiliation;
     PathBuf                 root;
     Vec<PathBuf>            sources;
     Vec<ModuleExpectation>  module_expectations;
@@ -280,7 +282,7 @@ struct UnitSpec {
     PathBuf                 object;
     PathBuf                 depfile;
     PathBuf                 fingerprint;
-    rstd::Option<PathBuf>   bmi;
+    Option<PathBuf>   bmi;
     const CompileContext*   context {};
 };
 
@@ -296,7 +298,7 @@ struct ProvidedModule {
 
 struct ScanResult {
     UnitId                       unit {};
-    rstd::Option<ProvidedModule> provided;
+    Option<ProvidedModule> provided;
     Vec<String>                  required_modules;
     Vec<PathBuf>                 header_inputs;
 };
@@ -324,8 +326,8 @@ enum class BuildEventKind
 
 struct BuildEvent {
     BuildEventKind kind { BuildEventKind::Scan };
-    rstd::ref<rstd::str> target;
-    rstd::ref<rstd::path::Path> path;
+    ref<str> target;
+    ref<rstd::path::Path> path;
 };
 
 struct BuildObserver {
@@ -341,16 +343,16 @@ struct BuildRequest {
     BuildConfiguration         configuration;
     bool                       workspace { false };
     bool                       locked { false };
-    rstd::Option<BuildObserver> observer;
+    Option<BuildObserver> observer;
 };
 
 struct BuildSummary {
     String       package;
     String       profile;
     PathBuf      output;
-    rstd::usize  scanned {};
-    rstd::usize  compiled {};
-    rstd::usize  reused {};
+    usize  scanned {};
+    usize  compiled {};
+    usize  reused {};
     Vec<PathBuf> archives;
     Vec<PathBuf> executables;
 };

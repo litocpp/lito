@@ -3,6 +3,7 @@ export module tenon.build_layout;
 import rstd;
 import tenon.model;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 
 namespace tenon::build_layout_detail
@@ -10,48 +11,48 @@ namespace tenon::build_layout_detail
 
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Artifact, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Artifact, rstd::move(message)));
 }
 
-auto join(rstd::ref<rstd::path::Path> base, rstd::ref<rstd::str> component) -> PathBuf {
+auto join(ref<rstd::path::Path> base, ref<str> component) -> PathBuf {
     return PathBuf::from(base).join(PathBuf::from(component).as_path());
 }
 
-auto hex_digit(rstd::u8 value) noexcept -> char {
-    return value < rstd::u8(10) ? static_cast<char>('0' + value.to_primitive())
-                                : static_cast<char>('A' + (value - rstd::u8(10)).to_primitive());
+auto hex_digit(u8 value) noexcept -> char {
+    return value < u8(10) ? static_cast<char>('0' + value.to_primitive())
+                                : static_cast<char>('A' + (value - u8(10)).to_primitive());
 }
 
-auto source_filename(rstd::ref<rstd::str> relative,
-                     rstd::ref<rstd::str> suffix) -> String {
+auto source_filename(ref<str> relative,
+                     ref<str> suffix) -> String {
     auto result = String::make();
-    for (rstd::usize index {}; index < relative.size(); ++index) {
+    for (usize index {}; index < relative.size(); ++index) {
         const auto byte = relative[index];
-        const bool plain = (byte >= rstd::u8('a') && byte <= rstd::u8('z')) ||
-                           (byte >= rstd::u8('A') && byte <= rstd::u8('Z')) ||
-                           (byte >= rstd::u8('0') && byte <= rstd::u8('9')) ||
-                           byte == rstd::u8('_') || byte == rstd::u8('-') ||
-                           byte == rstd::u8('.');
+        const bool plain = (byte >= u8('a') && byte <= u8('z')) ||
+                           (byte >= u8('A') && byte <= u8('Z')) ||
+                           (byte >= u8('0') && byte <= u8('9')) ||
+                           byte == u8('_') || byte == u8('-') ||
+                           byte == u8('.');
         if (plain) {
             result.push_ascii(static_cast<char>(byte.to_primitive()));
         } else {
             const auto raw = byte.to_primitive();
             result.push_ascii('%');
-            result.push_ascii(hex_digit(rstd::u8(raw >> 4u)));
-            result.push_ascii(hex_digit(rstd::u8(raw & 0x0fu)));
+            result.push_ascii(hex_digit(u8(raw >> 4u)));
+            result.push_ascii(hex_digit(u8(raw & 0x0fu)));
         }
     }
     result.push_str(suffix);
     return result;
 }
 
-auto module_filename(rstd::ref<rstd::str> logical_name) -> String {
+auto module_filename(ref<str> logical_name) -> String {
     auto result = String::make();
     for (auto byte : logical_name) {
-        const auto ascii = (byte >= rstd::u8('a') && byte <= rstd::u8('z')) ||
-                           (byte >= rstd::u8('A') && byte <= rstd::u8('Z')) ||
-                           (byte >= rstd::u8('0') && byte <= rstd::u8('9')) ||
-                           byte == rstd::u8('_');
+        const auto ascii = (byte >= u8('a') && byte <= u8('z')) ||
+                           (byte >= u8('A') && byte <= u8('Z')) ||
+                           (byte >= u8('0') && byte <= u8('9')) ||
+                           byte == u8('_');
         result.push_ascii(ascii ? static_cast<char>(byte.to_primitive()) : '-');
     }
     result.push_str(".pcm"_str);
@@ -68,11 +69,11 @@ class BuildLayout {
 
     explicit BuildLayout(PathBuf output) : output_(rstd::move(output)) {}
 
-    auto source_path(rstd::ref<rstd::str> category,
-                     rstd::ref<rstd::str> target,
-                     rstd::ref<rstd::path::Path> source,
-                     rstd::ref<rstd::path::Path> package_root,
-                     rstd::ref<rstd::str> suffix) const -> Result<PathBuf> {
+    auto source_path(ref<str> category,
+                     ref<str> target,
+                     ref<rstd::path::Path> source,
+                     ref<rstd::path::Path> package_root,
+                     ref<str> suffix) const -> Result<PathBuf> {
         using namespace build_layout_detail;
         auto relative = source.strip_prefix(package_root);
         if (relative.is_none() || (*relative).is_empty()) {
@@ -85,14 +86,14 @@ class BuildLayout {
                 rstd::format("source path '{}' is not valid UTF-8", source));
         }
         auto directory = join(join(output_.as_path(), category).as_path(), target);
-        return rstd::Ok(directory.join(
+        return Ok(directory.join(
             PathBuf::from(source_filename(*text, suffix)).as_path()));
     }
 
 public:
-    static auto create(rstd::ref<rstd::path::Path> owner_root,
-                       rstd::ref<rstd::path::Path> requested_output,
-                       rstd::ref<rstd::str> profile) -> Result<BuildLayout> {
+    static auto create(ref<rstd::path::Path> owner_root,
+                       ref<rstd::path::Path> requested_output,
+                       ref<str> profile) -> Result<BuildLayout> {
         using namespace build_layout_detail;
         auto output = PathBuf::make();
         if (requested_output.is_empty()) {
@@ -116,45 +117,45 @@ public:
                 output.as_path(),
                 rstd::move(canonical).unwrap_err()));
         }
-        return rstd::Ok(BuildLayout(rstd::move(canonical).unwrap()));
+        return Ok(BuildLayout(rstd::move(canonical).unwrap()));
     }
 
-    auto output() const -> rstd::ref<rstd::path::Path> { return output_.as_path(); }
+    auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
 
-    auto object(rstd::ref<rstd::str> target,
-                rstd::ref<rstd::path::Path> source,
-                rstd::ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
+    auto object(ref<str> target,
+                ref<rstd::path::Path> source,
+                ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
         return source_path("obj"_str, target, source, package_root, ".o"_str);
     }
 
-    auto depfile(rstd::ref<rstd::str> target,
-                 rstd::ref<rstd::path::Path> source,
-                 rstd::ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
+    auto depfile(ref<str> target,
+                 ref<rstd::path::Path> source,
+                 ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
         return source_path("dep"_str, target, source, package_root, ".d"_str);
     }
 
-    auto fingerprint(rstd::ref<rstd::str> target,
-                     rstd::ref<rstd::path::Path> source,
-                     rstd::ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
+    auto fingerprint(ref<str> target,
+                     ref<rstd::path::Path> source,
+                     ref<rstd::path::Path> package_root) const -> Result<PathBuf> {
         return source_path("fingerprint"_str, target, source, package_root, ".txt"_str);
     }
 
-    auto bmi(rstd::ref<rstd::str> target,
-             rstd::ref<rstd::str> logical_name) const -> PathBuf {
+    auto bmi(ref<str> target,
+             ref<str> logical_name) const -> PathBuf {
         using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "bmi"_str).as_path(), target);
         return directory.join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
-    auto archive(rstd::ref<rstd::str> target,
-                 rstd::ref<rstd::str> artifact_name) const -> PathBuf {
+    auto archive(ref<str> target,
+                 ref<str> artifact_name) const -> PathBuf {
         using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "lib"_str).as_path(), target);
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto executable(rstd::ref<rstd::str> target,
-                    rstd::ref<rstd::str> artifact_name) const -> PathBuf {
+    auto executable(ref<str> target,
+                    ref<str> artifact_name) const -> PathBuf {
         using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "bin"_str).as_path(), target);
         return directory.join(PathBuf::from(artifact_name).as_path());

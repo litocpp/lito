@@ -13,25 +13,27 @@ import tenon.module_graph;
 import tenon.artifact_store;
 import tenon.build_layout;
 
+using namespace rstd::prelude;
+using namespace rstd::literals;
+
 namespace tenon::builder_detail
 {
 
-using namespace rstd::literals;
 
 template<typename T>
 auto failure(ErrorKind kind, String message) -> Result<T> {
-    return rstd::Err(Error::make(kind, rstd::move(message)));
+    return Err(Error::make(kind, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ErrorKind kind, rstd::ref<rstd::str> message) -> Result<T> {
-    return rstd::Err(Error::make(kind, message));
+auto failure(ErrorKind kind, ref<str> message) -> Result<T> {
+    return Err(Error::make(kind, message));
 }
 
 auto emit(const BuildRequest& request,
           BuildEventKind kind,
-          rstd::ref<rstd::str> target,
-          rstd::ref<rstd::path::Path> path) noexcept -> void {
+          ref<str> target,
+          ref<rstd::path::Path> path) noexcept -> void {
     if (request.observer.is_none()) return;
     const auto& observer = *request.observer;
     if (observer.notify == nullptr) return;
@@ -40,20 +42,20 @@ auto emit(const BuildRequest& request,
 
 auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
     auto resolved = resolve_build_root(request);
-    if (resolved.is_err()) return rstd::Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto build = rstd::move(resolved).unwrap();
     auto locked = sync_lock(build.graph, request.locked);
-    if (locked.is_err()) return rstd::Err(rstd::move(locked).unwrap_err());
+    if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
 
-    auto selected = rstd::collections::BTreeMap<String, rstd::empty>::make();
+    auto selected = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& id : build.selected_package_ids) {
-        selected.insert(id.clone(), rstd::empty {});
+        selected.insert(id.clone(), empty {});
     }
     auto source_sets = Vec<ResolvedSourceSet>::with_capacity(build.selected_package_ids.len());
     for (const auto& package : build.graph.packages) {
         if (! selected.contains_key(package.id.as_str())) continue;
         auto discovered = discover_sources(package.manifest);
-        if (discovered.is_err()) return rstd::Err(rstd::move(discovered).unwrap_err());
+        if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
         source_sets.push(rstd::move(discovered).unwrap());
     }
     return adapt_package_graph(
@@ -71,29 +73,28 @@ export namespace tenon
 
 auto build(const BuildRequest& request) -> Result<BuildSummary> {
     using namespace builder_detail;
-    using namespace rstd::literals;
 
     if (request.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
     auto loaded = load_build_package(request);
-    if (loaded.is_err()) return rstd::Err(rstd::move(loaded).unwrap_err());
+    if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto package = rstd::move(loaded).unwrap();
 
     auto created_toolchain = ClangToolchain::create(package.toolchain);
     if (created_toolchain.is_err()) {
-        return rstd::Err(rstd::move(created_toolchain).unwrap_err());
+        return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
 
     auto resolved = resolve_package(
         package, package.default_profile.as_str(), request.targets, toolchain.identity());
-    if (resolved.is_err()) return rstd::Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto package_plan = rstd::move(resolved).unwrap();
 
     auto selected_layout = BuildLayout::create(
         package.root.as_path(), request.output.as_path(), package_plan.profile->name.as_str());
-    if (selected_layout.is_err()) return rstd::Err(rstd::move(selected_layout).unwrap_err());
+    if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
     auto layout = rstd::move(selected_layout).unwrap();
 
     auto target_units = Vec<Vec<UnitId>>::with_capacity(package.targets.len());
@@ -110,9 +111,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 target_spec.name.as_str(), source.as_path(), target_spec.root.as_path());
             auto fingerprint = layout.fingerprint(
                 target_spec.name.as_str(), source.as_path(), target_spec.root.as_path());
-            if (object.is_err()) return rstd::Err(rstd::move(object).unwrap_err());
-            if (depfile.is_err()) return rstd::Err(rstd::move(depfile).unwrap_err());
-            if (fingerprint.is_err()) return rstd::Err(rstd::move(fingerprint).unwrap_err());
+            if (object.is_err()) return Err(rstd::move(object).unwrap_err());
+            if (depfile.is_err()) return Err(rstd::move(depfile).unwrap_err());
+            if (fingerprint.is_err()) return Err(rstd::move(fingerprint).unwrap_err());
 
             auto id = units.len();
             auto prepared = toolchain.prepare(
@@ -126,7 +127,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     .context = rstd::addressof(package_plan.contexts[target]),
                 },
                 target_spec.root.as_path());
-            if (prepared.is_err()) return rstd::Err(rstd::move(prepared).unwrap_err());
+            if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
             units.push(rstd::move(prepared).unwrap());
             target_units[target].emplace_back(id);
         }
@@ -140,10 +141,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
              package.targets[target].name.as_str(),
              units[unit].unit.source.as_path());
         auto scanned = toolchain.scan(units[unit]);
-        if (scanned.is_err()) return rstd::Err(rstd::move(scanned).unwrap_err());
+        if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
-            units[unit].unit.bmi = rstd::Some(layout.bmi(
+            units[unit].unit.bmi = Some(layout.bmi(
                 package.targets[target].name.as_str(),
                 (*result.provided).logical_name.as_str()));
         }
@@ -152,27 +153,27 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
 
     auto convention_valid = validate_module_conventions(package, units, scans);
     if (convention_valid.is_err()) {
-        return rstd::Err(rstd::move(convention_valid).unwrap_err());
+        return Err(rstd::move(convention_valid).unwrap_err());
     }
 
     auto resolved_modules = resolve_modules(package_plan, units, scans);
     if (resolved_modules.is_err()) {
-        return rstd::Err(rstd::move(resolved_modules).unwrap_err());
+        return Err(rstd::move(resolved_modules).unwrap_err());
     }
     auto module_plan = rstd::move(resolved_modules).unwrap();
 
     auto store = ArtifactStore {};
     auto keys  = Vec<String>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
-    auto compiled = rstd::usize {};
-    auto reused   = rstd::usize {};
+    auto compiled = usize {};
+    auto reused   = usize {};
     for (auto unit : module_plan.compile_order) {
         auto dependency_keys = Vec<String>::make();
         for (const auto& input : module_plan.direct_inputs[unit]) {
             dependency_keys.push(keys[input.provider].clone());
         }
         auto key = store.key_for(units[unit], scans[unit], dependency_keys);
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto artifact_key = rstd::move(key).unwrap();
         const auto target = units[unit].unit.target;
         if (store.current(units[unit], scans[unit], artifact_key.as_str())) {
@@ -188,9 +189,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                  units[unit].unit.source.as_path());
             auto result = toolchain.compile(
                 units[unit], scans[unit], module_plan.transitive_inputs[unit]);
-            if (result.is_err()) return rstd::Err(rstd::move(result).unwrap_err());
+            if (result.is_err()) return Err(rstd::move(result).unwrap_err());
             auto committed = store.commit(units[unit], artifact_key.as_str());
-            if (committed.is_err()) return rstd::Err(rstd::move(committed).unwrap_err());
+            if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
             ++compiled;
         }
         keys[unit] = rstd::move(artifact_key);
@@ -198,9 +199,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
 
     auto archives = Vec<PathBuf>::make();
     auto archive_paths =
-        Vec<rstd::Option<PathBuf>>::with_capacity(package.targets.len());
+        Vec<Option<PathBuf>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
-        archive_paths.emplace_back(rstd::None());
+        archive_paths.emplace_back(None());
     }
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
@@ -214,8 +215,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
              target_spec.name.as_str(),
              archive_path.as_path());
         auto archived = toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
-        if (archived.is_err()) return rstd::Err(rstd::move(archived).unwrap_err());
-        archive_paths[target] = rstd::Some(archive_path.clone());
+        if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+        archive_paths[target] = Some(archive_path.clone());
         archives.push(rstd::move(archive_path));
     }
 
@@ -253,11 +254,11 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             package_plan.profile->standard_library,
             package_plan.profile->linker_options,
             target_spec.root.as_path());
-        if (linked.is_err()) return rstd::Err(rstd::move(linked).unwrap_err());
+        if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
         executables.push(rstd::move(executable_path));
     }
 
-    return rstd::Ok(BuildSummary {
+    return Ok(BuildSummary {
         .package = package.name.clone(),
         .profile = package_plan.profile->name.clone(),
         .output = PathBuf::from(layout.output()),

@@ -5,36 +5,36 @@ import tenon.model;
 import tenon.manifest_schema;
 import tenon.package_resolver;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
+using StringMap = rstd::collections::BTreeMap<String, String>;
+using IndexMap  = rstd::collections::BTreeMap<String, usize>;
+using StringSet = rstd::collections::BTreeMap<String, empty>;
 
 namespace tenon::workspace_resolver_detail
 {
 
-using StringMap = rstd::collections::BTreeMap<String, String>;
-using IndexMap = rstd::collections::BTreeMap<String, rstd::usize>;
-using StringSet = rstd::collections::BTreeMap<String, rstd::empty>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(rstd::ref<rstd::str> message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Manifest, message));
+auto failure(ref<str> message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Manifest, message));
 }
 
-auto path_text(rstd::ref<rstd::path::Path> path) -> Result<String> {
+auto path_text(ref<rstd::path::Path> path) -> Result<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return failure<String>(rstd::format("workspace path '{}' is not valid UTF-8", path));
     }
-    return rstd::Ok(String::make(*text));
+    return Ok(String::make(*text));
 }
 
 auto member_directory(const WorkspaceManifest& workspace,
-                      rstd::ref<rstd::path::Path> declared,
-                      rstd::ref<rstd::str> context) -> Result<PathBuf> {
+                      ref<rstd::path::Path> declared,
+                      ref<str> context) -> Result<PathBuf> {
     auto requested = workspace.root.join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
@@ -49,7 +49,7 @@ auto member_directory(const WorkspaceManifest& workspace,
         return failure<PathBuf>(rstd::format(
             "{} directory '{}' is outside workspace root", context, declared));
     }
-    return rstd::Ok(rstd::move(directory));
+    return Ok(rstd::move(directory));
 }
 
 auto copy_strings(const Vec<String>& values) -> Vec<String> {
@@ -59,23 +59,23 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
 }
 
 auto resolve_member_version(PackageManifest& manifest,
-                            const WorkspaceManifest& workspace) -> Result<rstd::empty> {
+                            const WorkspaceManifest& workspace) -> Result<empty> {
     if (manifest.version.source == PackageVersionSource::Explicit) {
-        return rstd::Ok(rstd::empty {});
+        return Ok(empty {});
     }
     if (workspace.package.version.is_none()) {
-        return failure<rstd::empty>(rstd::format(
+        return failure<empty>(rstd::format(
             "workspace member '{}' inherits package.version but workspace.package.version is not set",
             manifest.name.as_str()));
     }
-    manifest.version.value = rstd::Some(workspace.package.version->clone());
-    return rstd::Ok(rstd::empty {});
+    manifest.version.value = Some(workspace.package.version->clone());
+    return Ok(empty {});
 }
 
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>& selected_roots) -> Result<Vec<String>> {
     auto indices = IndexMap::make();
-    for (rstd::usize index {}; index < graph.packages.len(); ++index) {
+    for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].id.clone(), index);
     }
 
@@ -89,7 +89,7 @@ auto selected_closure(const ResolvedPackageGraph& graph,
             return failure<Vec<String>>(rstd::format(
                 "selected package id '{}' is missing from resolved graph", current.as_str()));
         }
-        selected.insert(current.clone(), rstd::empty {});
+        selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
             pending.push(dependency.package_id.clone());
         }
@@ -99,7 +99,7 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     for (const auto& package : graph.packages) {
         if (selected.contains_key(package.id.as_str())) result.push(package.id.clone());
     }
-    return rstd::Ok(rstd::move(result));
+    return Ok(rstd::move(result));
 }
 
 auto package_build(PackageManifest manifest,
@@ -119,12 +119,12 @@ auto package_build(PackageManifest manifest,
     manifests.push(rstd::move(manifest));
     auto resolved = resolve_loaded_package_roots(
         root.as_path(), manifest_path.as_path(), rstd::move(manifests));
-    if (resolved.is_err()) return rstd::Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph = rstd::move(resolved).unwrap();
     auto selected_roots = copy_strings(graph.root_ids);
     auto selected_packages = Vec<String>::with_capacity(graph.packages.len());
     for (const auto& package : graph.packages) selected_packages.push(package.id.clone());
-    return rstd::Ok(ResolvedBuild {
+    return Ok(ResolvedBuild {
         .graph = rstd::move(graph),
         .selected_root_ids = rstd::move(selected_roots),
         .selected_package_ids = rstd::move(selected_packages),
@@ -142,16 +142,16 @@ auto workspace_build(WorkspaceManifest workspace,
     auto manifests = Vec<PackageManifest>::with_capacity(workspace.members.len());
     for (const auto& declared : workspace.members) {
         auto canonical = member_directory(workspace, declared.as_path(), "workspace member"_str);
-        if (canonical.is_err()) return rstd::Err(rstd::move(canonical).unwrap_err());
+        if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
         auto directory = rstd::move(canonical).unwrap();
         auto key = path_text(directory.as_path());
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (member_keys.contains_key(key->as_str())) {
             return failure<ResolvedBuild>(rstd::format(
                 "workspace member directory '{}' is listed more than once", declared.as_path()));
         }
         auto document = load_manifest_document(directory.as_path());
-        if (document.is_err()) return rstd::Err(rstd::move(document).unwrap_err());
+        if (document.is_err()) return Err(rstd::move(document).unwrap_err());
         auto loaded = rstd::move(document).unwrap();
         if (loaded.kind != ManifestKind::Package || loaded.package.is_none()) {
             return failure<ResolvedBuild>(rstd::format(
@@ -159,25 +159,25 @@ auto workspace_build(WorkspaceManifest workspace,
         }
         auto manifest = rstd::move(loaded.package).unwrap();
         auto version = resolve_member_version(manifest, workspace);
-        if (version.is_err()) return rstd::Err(rstd::move(version).unwrap_err());
-        member_keys.insert(rstd::move(key).unwrap(), rstd::empty {});
+        if (version.is_err()) return Err(rstd::move(version).unwrap_err());
+        member_keys.insert(rstd::move(key).unwrap(), empty {});
         member_directories.push(rstd::move(directory));
         manifests.push(rstd::move(manifest));
     }
 
     auto resolved = resolve_loaded_package_roots(
         workspace.root.as_path(), workspace.manifest_path.as_path(), rstd::move(manifests));
-    if (resolved.is_err()) return rstd::Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph = rstd::move(resolved).unwrap();
 
     auto member_ids = StringMap::make();
     auto member_names = StringMap::make();
     auto root_ids = StringSet::make();
-    for (const auto& id : graph.root_ids) root_ids.insert(id.clone(), rstd::empty {});
+    for (const auto& id : graph.root_ids) root_ids.insert(id.clone(), empty {});
     for (const auto& package : graph.packages) {
         if (! root_ids.contains_key(package.id.as_str())) continue;
         auto key = path_text(package.manifest.root.as_path());
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         member_ids.insert(rstd::move(key).unwrap(), package.id.clone());
         member_names.insert(package.manifest.name.clone(), package.id.clone());
     }
@@ -190,9 +190,9 @@ auto workspace_build(WorkspaceManifest workspace,
     for (const auto& declared : workspace.default_members) {
         auto canonical = member_directory(
             workspace, declared.as_path(), "workspace default member"_str);
-        if (canonical.is_err()) return rstd::Err(rstd::move(canonical).unwrap_err());
+        if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
         auto key = path_text(canonical->as_path());
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (default_keys.contains_key(key->as_str())) {
             return failure<ResolvedBuild>(rstd::format(
                 "workspace default member directory '{}' is listed more than once",
@@ -204,7 +204,7 @@ auto workspace_build(WorkspaceManifest workspace,
                 "workspace default member '{}' is not listed in workspace.members",
                 declared.as_path()));
         }
-        default_keys.insert(key->clone(), rstd::empty {});
+        default_keys.insert(key->clone(), empty {});
         default_ids.push((**id).clone());
     }
 
@@ -223,7 +223,7 @@ auto workspace_build(WorkspaceManifest workspace,
                 return failure<ResolvedBuild>(rstd::format(
                     "workspace has no member package named '{}'", name.as_str()));
             }
-            selected_names.insert(name.clone(), rstd::empty {});
+            selected_names.insert(name.clone(), empty {});
             selected_roots.push((**id).clone());
         }
     } else {
@@ -233,9 +233,9 @@ auto workspace_build(WorkspaceManifest workspace,
 
     auto selected_packages = selected_closure(graph, selected_roots);
     if (selected_packages.is_err()) {
-        return rstd::Err(rstd::move(selected_packages).unwrap_err());
+        return Err(rstd::move(selected_packages).unwrap_err());
     }
-    return rstd::Ok(ResolvedBuild {
+    return Ok(ResolvedBuild {
         .graph = rstd::move(graph),
         .selected_root_ids = rstd::move(selected_roots),
         .selected_package_ids = rstd::move(selected_packages).unwrap(),
@@ -251,7 +251,7 @@ auto resolve_build_root(const BuildRequest& request) -> Result<ResolvedBuild> {
     using namespace workspace_resolver_detail;
 
     auto document = load_manifest_document(request.root.as_path());
-    if (document.is_err()) return rstd::Err(rstd::move(document).unwrap_err());
+    if (document.is_err()) return Err(rstd::move(document).unwrap_err());
     auto loaded = rstd::move(document).unwrap();
     if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
         return package_build(rstd::move(loaded.package).unwrap(), request);

@@ -3,20 +3,22 @@ export module tenon.module_graph;
 import rstd;
 import tenon.model;
 
+using namespace rstd::prelude;
+using namespace rstd::literals;
+using ProviderMap = rstd::collections::BTreeMap<String, tenon::UnitId>;
+using StringSet   = rstd::collections::BTreeMap<String, empty>;
+
 namespace tenon::module_detail
 {
 
-using ProviderMap = rstd::collections::BTreeMap<String, UnitId>;
-using StringSet   = rstd::collections::BTreeMap<String, rstd::empty>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(rstd::ref<rstd::str> message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Dependency, message));
+auto failure(ref<str> message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Dependency, message));
 }
 
 auto contains(const Vec<TargetId>& values, TargetId value) -> bool {
@@ -29,12 +31,12 @@ auto contains(const Vec<TargetId>& values, TargetId value) -> bool {
 auto visit(UnitId unit,
            const Vec<PreparedUnit>& units,
            const Vec<Vec<ResolvedModuleArtifact>>& direct_inputs,
-           Vec<rstd::uint8_t>& colors,
-           Vec<UnitId>& compile_order) -> Result<rstd::empty> {
+           Vec<uint8_t>& colors,
+           Vec<UnitId>& compile_order) -> Result<empty> {
     auto& color = colors[unit];
-    if (color == 2) return rstd::Ok(rstd::empty {});
+    if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return failure<rstd::empty>(rstd::format(
+        return failure<empty>(rstd::format(
             "module import cycle at '{}'", units[unit].unit.source.as_path()));
     }
 
@@ -45,7 +47,7 @@ auto visit(UnitId unit,
     }
     color = 2;
     compile_order.emplace_back(unit);
-    return rstd::Ok(rstd::empty {});
+    return Ok(empty {});
 }
 
 auto clone_artifact(const ResolvedModuleArtifact& artifact) -> ResolvedModuleArtifact {
@@ -60,7 +62,7 @@ auto append_artifact(Vec<ResolvedModuleArtifact>& output,
                      StringSet& seen,
                      const ResolvedModuleArtifact& artifact) -> void {
     if (seen.contains_key(artifact.logical_name.as_str())) return;
-    seen.insert(artifact.logical_name.clone(), rstd::empty {});
+    seen.insert(artifact.logical_name.clone(), empty {});
     output.push(clone_artifact(artifact));
 }
 
@@ -73,7 +75,6 @@ auto resolve_modules(const PackagePlan& package,
                      const Vec<PreparedUnit>& units,
                      const Vec<ScanResult>& scans) -> Result<ModulePlan> {
     using namespace module_detail;
-    using namespace rstd::literals;
 
     if (units.len() != scans.len()) {
         return failure<ModulePlan>("module graph received mismatched units and scans"_str);
@@ -153,7 +154,7 @@ auto resolve_modules(const PackagePlan& package,
                     package.package->targets[importer_target].name.as_str()));
             }
             if (names.contains_key(required.as_str())) continue;
-            names.insert(required.clone(), rstd::empty {});
+            names.insert(required.clone(), empty {});
             direct_inputs[scan.unit].push(ResolvedModuleArtifact {
                 .logical_name = required.clone(),
                 .provider = provider_unit,
@@ -162,12 +163,12 @@ auto resolve_modules(const PackagePlan& package,
         }
     }
 
-    auto colors = Vec<rstd::uint8_t>::with_capacity(units.len());
+    auto colors = Vec<uint8_t>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) colors.emplace_back(0);
     auto compile_order = Vec<UnitId>::make();
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         auto ordered = visit(unit, units, direct_inputs, colors, compile_order);
-        if (ordered.is_err()) return rstd::Err(rstd::move(ordered).unwrap_err());
+        if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
     }
 
     auto transitive_inputs = Vec<Vec<ResolvedModuleArtifact>>::with_capacity(units.len());
@@ -184,7 +185,7 @@ auto resolve_modules(const PackagePlan& package,
         }
     }
 
-    return rstd::Ok(ModulePlan {
+    return Ok(ModulePlan {
         .compile_order = rstd::move(compile_order),
         .direct_inputs = rstd::move(direct_inputs),
         .transitive_inputs = rstd::move(transitive_inputs),

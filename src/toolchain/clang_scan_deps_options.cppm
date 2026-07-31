@@ -2,6 +2,7 @@ export module tenon.toolchain.clang_scan_deps_options;
 
 import rstd;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 
 export namespace tenon::toolchain::clang_scan_deps_options

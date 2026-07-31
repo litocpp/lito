@@ -3,6 +3,7 @@ export module tenon.manifest_locator;
 import rstd;
 import tenon.model;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 
 namespace tenon::manifest_locator_detail
@@ -10,7 +11,7 @@ namespace tenon::manifest_locator_detail
 
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
 } // namespace tenon::manifest_locator_detail
@@ -18,7 +19,7 @@ auto failure(String message) -> Result<T> {
 export namespace tenon
 {
 
-auto locate_manifest(rstd::ref<rstd::path::Path> requested_directory)
+auto locate_manifest(ref<rstd::path::Path> requested_directory)
     -> Result<ManifestLocation> {
     using namespace manifest_locator_detail;
 
@@ -62,7 +63,7 @@ auto locate_manifest(rstd::ref<rstd::path::Path> requested_directory)
         return failure<ManifestLocation>(
             rstd::format("manifest '{}' is not a regular file", resolved_manifest.as_path()));
     }
-    return rstd::Ok(ManifestLocation {
+    return Ok(ManifestLocation {
         .directory = rstd::move(directory),
         .manifest = rstd::move(resolved_manifest),
     });

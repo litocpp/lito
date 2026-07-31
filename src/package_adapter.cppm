@@ -4,6 +4,7 @@ import rstd;
 import tenon.model;
 import tenon.build_profile;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
 
 namespace tenon::package_adapter_detail
@@ -11,24 +12,24 @@ namespace tenon::package_adapter_detail
 
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
-auto validate_options(const Vec<String>& options) -> Result<rstd::empty> {
+auto validate_options(const Vec<String>& options) -> Result<empty> {
     for (const auto& option : options) {
         auto value = option.as_str();
         if (value == "-frtti"_str || value == "-fexceptions"_str ||
             value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
             value == "-fmodules-reduced-bmi"_str ||
             value == "-fno-modules-reduced-bmi"_str) {
-            return failure<rstd::empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "build option '{}' overrides a Tenon-owned setting", value));
         }
     }
-    return rstd::Ok(rstd::empty {});
+    return Ok(empty {});
 }
 
-auto output_name(ArtifactKind kind, rstd::ref<rstd::str> declared_name) -> String {
+auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
     if (kind == ArtifactKind::Executable) return String::make(declared_name);
     auto result = String::make("lib"_str);
     result.push_str(declared_name);
@@ -61,9 +62,9 @@ auto adapt_single_artifact(PackageManifest manifest,
             String::make("build configuration requires Clang tool paths"_str));
     }
     auto options_valid = validate_options(configuration.options);
-    if (options_valid.is_err()) return rstd::Err(rstd::move(options_valid).unwrap_err());
+    if (options_valid.is_err()) return Err(rstd::move(options_valid).unwrap_err());
     auto profile = make_profile_spec(configuration);
-    if (profile.is_err()) return rstd::Err(rstd::move(profile).unwrap_err());
+    if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
 
     auto sources = Vec<PathBuf>::with_capacity(source_set.sources.len());
     auto expectations = Vec<ModuleExpectation>::make();
@@ -97,7 +98,7 @@ auto adapt_single_artifact(PackageManifest manifest,
         .usage = rstd::move(manifest.usage),
     });
 
-    return rstd::Ok(PackageSpec {
+    return Ok(PackageSpec {
         .name = rstd::move(manifest.name),
         .root = rstd::move(manifest.root),
         .manifest_path = rstd::move(manifest.manifest_path),
@@ -131,14 +132,14 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
             String::make("invalid build configuration for package graph"_str));
     }
     auto options_valid = validate_options(configuration.options);
-    if (options_valid.is_err()) return rstd::Err(rstd::move(options_valid).unwrap_err());
+    if (options_valid.is_err()) return Err(rstd::move(options_valid).unwrap_err());
     auto profile = make_profile_spec(configuration);
-    if (profile.is_err()) return rstd::Err(rstd::move(profile).unwrap_err());
+    if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
 
-    auto selected = rstd::collections::BTreeMap<String, rstd::empty>::make();
-    auto roots = rstd::collections::BTreeMap<String, rstd::empty>::make();
-    for (const auto& id : selected_package_ids) selected.insert(id.clone(), rstd::empty {});
-    for (const auto& id : graph.root_ids) roots.insert(id.clone(), rstd::empty {});
+    auto selected = rstd::collections::BTreeMap<String, empty>::make();
+    auto roots = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& id : selected_package_ids) selected.insert(id.clone(), empty {});
+    for (const auto& id : graph.root_ids) roots.insert(id.clone(), empty {});
 
     auto target_names = rstd::collections::BTreeMap<String, String>::make();
     auto artifact_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
@@ -168,8 +169,8 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     }
 
     auto targets = Vec<TargetSpec>::with_capacity(selected_package_ids.len());
-    auto source_index = rstd::usize {};
-    for (rstd::usize index {}; index < graph.packages.len(); ++index) {
+    auto source_index = usize {};
+    for (usize index {}; index < graph.packages.len(); ++index) {
         auto& package = graph.packages[index];
         if (! selected.contains_key(package.id.as_str())) continue;
         auto& source_set = source_sets[source_index];
@@ -222,14 +223,14 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
         default_targets.push((**target_name).clone());
     }
     auto package_name = String::make("workspace"_str);
-    if (graph.root_ids.len() == rstd::usize(1)) {
-        auto name = target_names.get(graph.root_ids[rstd::usize {}].as_str());
+    if (graph.root_ids.len() == usize(1)) {
+        auto name = target_names.get(graph.root_ids[usize {}].as_str());
         if (name.is_some()) package_name = (**name).clone();
     }
     auto profiles = Vec<ProfileSpec>::make();
     auto default_profile = profile->name.clone();
     profiles.push(rstd::move(profile).unwrap());
-    return rstd::Ok(PackageSpec {
+    return Ok(PackageSpec {
         .name = rstd::move(package_name),
         .root = rstd::move(graph.root_directory),
         .manifest_path = rstd::move(graph.manifest_path),

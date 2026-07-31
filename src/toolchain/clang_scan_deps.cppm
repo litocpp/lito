@@ -8,37 +8,37 @@ import tenon.toolchain.clang_options;
 import tenon.toolchain.clang_scan_deps_options;
 import tenon.toolchain.command;
 
+using namespace rstd::prelude;
+using namespace rstd::literals;
+using Json      = rstd::json::Value;
+using StringSet = rstd::collections::BTreeMap<String, empty>;
+
 namespace tenon::toolchain::clang_scan_deps_detail
 {
 
-using namespace rstd::literals;
-
-using Json      = rstd::json::Value;
-using StringSet = rstd::collections::BTreeMap<String, rstd::empty>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(rstd::ref<rstd::str> message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Toolchain, message));
+auto failure(ref<str> message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Toolchain, message));
 }
 
-auto member(const Json& value, rstd::ref<rstd::str> key) -> rstd::Option<rstd::ref<Json>> {
+auto member(const Json& value, ref<str> key) -> Option<ref<Json>> {
     return value.get(key);
 }
 
-auto json_string(const Json& value, rstd::ref<rstd::str> context) -> Result<String> {
+auto json_string(const Json& value, ref<str> context) -> Result<String> {
     auto text = value.as_str();
     if (text.is_none()) return failure<String>(rstd::format("{} must be a string", context));
-    return rstd::Ok(String::make(*text));
+    return Ok(String::make(*text));
 }
 
 auto required_json_string(const Json& object,
-                          rstd::ref<rstd::str> key,
-                          rstd::ref<rstd::str> context) -> Result<String> {
+                          ref<str> key,
+                          ref<str> context) -> Result<String> {
     auto value = member(object, key);
     if (value.is_none()) {
         return failure<String>(rstd::format("{} is missing '{}'", context, key));
@@ -46,31 +46,31 @@ auto required_json_string(const Json& object,
     return json_string(**value, rstd::format("{}.{}", context, key).as_str());
 }
 
-auto read_file(rstd::ref<rstd::path::Path> path) -> Result<String> {
+auto read_file(ref<rstd::path::Path> path) -> Result<String> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
         return failure<String>(
             rstd::format("cannot read '{}': {}", path, rstd::move(contents).unwrap_err()));
     }
-    return rstd::Ok(rstd::move(contents).unwrap());
+    return Ok(rstd::move(contents).unwrap());
 }
 
-auto parse_depfile(rstd::ref<rstd::path::Path> depfile,
-                   rstd::ref<rstd::path::Path> working_directory) -> Result<Vec<PathBuf>> {
+auto parse_depfile(ref<rstd::path::Path> depfile,
+                   ref<rstd::path::Path> working_directory) -> Result<Vec<PathBuf>> {
     auto contents_result = read_file(depfile);
-    if (contents_result.is_err()) return rstd::Err(rstd::move(contents_result).unwrap_err());
+    if (contents_result.is_err()) return Err(rstd::move(contents_result).unwrap_err());
     auto contents = rstd::move(contents_result).unwrap();
     auto bytes    = contents.as_str().as_bytes();
 
-    auto colon   = rstd::Option<rstd::usize> {};
+    auto colon   = Option<usize> {};
     auto escaped = false;
-    for (auto index = rstd::usize {}; index < contents.len(); ++index) {
+    for (auto index = usize {}; index < contents.len(); ++index) {
         const auto value = bytes[index];
-        if (! escaped && value == rstd::u8(':')) {
-            colon = rstd::Some(index);
+        if (! escaped && value == u8(':')) {
+            colon = Some(index);
             break;
         }
-        if (! escaped && value == rstd::u8('\\')) {
+        if (! escaped && value == u8('\\')) {
             escaped = true;
         } else {
             escaped = false;
@@ -83,25 +83,25 @@ auto parse_depfile(rstd::ref<rstd::path::Path> depfile,
 
     auto tokens  = Vec<String>::make();
     auto current = String::make();
-    for (auto index = *colon + rstd::usize(1); index < contents.len(); ++index) {
+    for (auto index = *colon + usize(1); index < contents.len(); ++index) {
         const auto value = bytes[index];
-        if (value == rstd::u8('\\') && index + rstd::usize(1) < contents.len()) {
-            const auto next = bytes[index + rstd::usize(1)];
-            if (next == rstd::u8('\n')) {
+        if (value == u8('\\') && index + usize(1) < contents.len()) {
+            const auto next = bytes[index + usize(1)];
+            if (next == u8('\n')) {
                 ++index;
                 continue;
             }
-            if (next == rstd::u8('\r') && index + rstd::usize(2) < contents.len() &&
-                bytes[index + rstd::usize(2)] == rstd::u8('\n')) {
-                index += rstd::usize(2);
+            if (next == u8('\r') && index + usize(2) < contents.len() &&
+                bytes[index + usize(2)] == u8('\n')) {
+                index += usize(2);
                 continue;
             }
             current.push_ascii(next);
             ++index;
             continue;
         }
-        if (value == rstd::u8(' ') || value == rstd::u8('\t') || value == rstd::u8('\r') ||
-            value == rstd::u8('\n')) {
+        if (value == u8(' ') || value == u8('\t') || value == u8('\r') ||
+            value == u8('\n')) {
             if (! current.is_empty()) {
                 tokens.push(rstd::move(current));
                 current = String::make();
@@ -133,14 +133,14 @@ auto parse_depfile(rstd::ref<rstd::path::Path> depfile,
                 rstd::format("dependency input '{}' is not valid UTF-8", resolved.as_path()));
         }
         if (! seen.contains_key(*text)) {
-            seen.insert(String::make(*text), rstd::empty {});
+            seen.insert(String::make(*text), empty {});
             result.push(rstd::move(resolved));
         }
     }
-    return rstd::Ok(rstd::move(result));
+    return Ok(rstd::move(result));
 }
 
-auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanResult> {
+auto parse_scan_json(ref<str> output, UnitId unit) -> Result<ScanResult> {
     auto parsed = rstd::json::from_str(output);
     if (parsed.is_err()) {
         return failure<ScanResult>(rstd::format(
@@ -152,22 +152,22 @@ auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanRes
         return failure<ScanResult>("P1689 output must contain exactly one rule"_str);
     }
     auto rules_array = (**rules).as_array();
-    if (rules_array.is_none() || (**rules_array).len() != rstd::usize(1)) {
+    if (rules_array.is_none() || (**rules_array).len() != usize(1)) {
         return failure<ScanResult>("P1689 output must contain exactly one rule"_str);
     }
-    const auto& rule = (**rules_array)[rstd::usize {}];
+    const auto& rule = (**rules_array)[usize {}];
     auto result      = ScanResult { .unit = unit };
 
     auto provides = member(rule, "provides"_str);
     if (provides.is_some()) {
         auto array = (**provides).as_array();
-        if (array.is_none() || (**array).len() != rstd::usize(1)) {
+        if (array.is_none() || (**array).len() != usize(1)) {
             return failure<ScanResult>("P1689 provides must contain exactly one module"_str);
         }
-        const auto& provided = (**array)[rstd::usize {}];
+        const auto& provided = (**array)[usize {}];
         auto logical_name =
             required_json_string(provided, "logical-name"_str, "P1689 provides"_str);
-        if (logical_name.is_err()) return rstd::Err(rstd::move(logical_name).unwrap_err());
+        if (logical_name.is_err()) return Err(rstd::move(logical_name).unwrap_err());
         auto interface_value = member(provided, "is-interface"_str);
         if (interface_value.is_none()) {
             return failure<ScanResult>("P1689 provides.is-interface must be a bool"_str);
@@ -176,7 +176,7 @@ auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanRes
         if (interface_flag.is_none()) {
             return failure<ScanResult>("P1689 provides.is-interface must be a bool"_str);
         }
-        result.provided = rstd::Some(ProvidedModule {
+        result.provided = Some(ProvidedModule {
             .logical_name = rstd::move(logical_name).unwrap(),
             .is_interface = *interface_flag,
         });
@@ -192,15 +192,15 @@ auto parse_scan_json(rstd::ref<rstd::str> output, UnitId unit) -> Result<ScanRes
         for (const auto& required : **array) {
             auto logical_name =
                 required_json_string(required, "logical-name"_str, "P1689 requires"_str);
-            if (logical_name.is_err()) return rstd::Err(rstd::move(logical_name).unwrap_err());
+            if (logical_name.is_err()) return Err(rstd::move(logical_name).unwrap_err());
             auto name = rstd::move(logical_name).unwrap();
             if (! names.contains_key(name.as_str())) {
-                names.insert(name.clone(), rstd::empty {});
+                names.insert(name.clone(), empty {});
                 result.required_modules.push(rstd::move(name));
             }
         }
     }
-    return rstd::Ok(rstd::move(result));
+    return Ok(rstd::move(result));
 }
 
 } // namespace tenon::toolchain::clang_scan_deps_detail
@@ -210,37 +210,35 @@ export namespace tenon::toolchain
 
 class ClangScanDeps {
 public:
-    static auto create(rstd::ref<rstd::path::Path> scanner_path) -> Result<ClangScanDeps> {
-        using namespace rstd::literals;
+    static auto create(ref<rstd::path::Path> scanner_path) -> Result<ClangScanDeps> {
 
         auto scanner = command::canonical_tool(scanner_path, "clang-scan-deps"_str);
-        if (scanner.is_err()) return rstd::Err(rstd::move(scanner).unwrap_err());
+        if (scanner.is_err()) return Err(rstd::move(scanner).unwrap_err());
         auto path = rstd::move(scanner).unwrap();
 
         auto version_command = Vec<String>::make();
         auto pushed = command::push_path(version_command, path.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(version_command, clang_scan_deps_options::VERSION);
         auto version = command::tool_output(
             rstd::move(version_command), "clang-scan-deps --version"_str);
-        if (version.is_err()) return rstd::Err(rstd::move(version).unwrap_err());
+        if (version.is_err()) return Err(rstd::move(version).unwrap_err());
 
-        return rstd::Ok(ClangScanDeps {
+        return Ok(ClangScanDeps {
             rstd::move(path),
             rstd::move(version).unwrap(),
         });
     }
 
-    auto path() const -> rstd::ref<rstd::path::Path> { return path_.as_path(); }
-    auto version() const -> rstd::ref<rstd::str> { return version_.as_str(); }
+    auto path() const -> ref<rstd::path::Path> { return path_.as_path(); }
+    auto version() const -> ref<str> { return version_.as_str(); }
 
     auto scan(const PreparedUnit& prepared, Vec<String> compiler_arguments) const
         -> Result<ScanResult> {
-        using namespace rstd::literals;
 
         auto arguments = Vec<String>::make();
         auto pushed = command::push_path(arguments, path_.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_scan_deps_options::FORMAT_P1689);
         command::push_option(arguments, clang_scan_deps_options::DRIVER_ARGUMENTS);
         for (auto& argument : compiler_arguments) {
@@ -249,21 +247,21 @@ public:
         command::push_option(arguments, clang_options::DEPENDENCIES);
         command::push_option(arguments, clang_options::DEPENDENCY_TARGET);
         pushed = command::push_path(arguments, prepared.unit.object.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_options::DEPENDENCY_FILE);
         pushed = command::push_path(arguments, prepared.unit.depfile.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_options::COMPILE);
         pushed = command::push_path(arguments, prepared.unit.source.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_options::OUTPUT);
         pushed = command::push_path(arguments, prepared.unit.object.as_path());
-        if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
-        auto output = run_command(arguments, rstd::Some(prepared.working_directory.as_path()));
-        if (output.is_err()) return rstd::Err(rstd::move(output).unwrap_err());
+        auto output = run_command(arguments, Some(prepared.working_directory.as_path()));
+        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != rstd::i32 {}) {
+        if (command_output.exit_code != i32 {}) {
             return clang_scan_deps_detail::failure<ScanResult>(rstd::format(
                 "clang-scan-deps failed for '{}'\n{}\n{}",
                 prepared.unit.source.as_path(),
@@ -275,7 +273,7 @@ public:
         if (scan_result.is_err()) return scan_result;
         auto headers = clang_scan_deps_detail::parse_depfile(
             prepared.unit.depfile.as_path(), prepared.working_directory.as_path());
-        if (headers.is_err()) return rstd::Err(rstd::move(headers).unwrap_err());
+        if (headers.is_err()) return Err(rstd::move(headers).unwrap_err());
         scan_result->header_inputs = rstd::move(headers).unwrap();
         return scan_result;
     }

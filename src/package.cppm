@@ -3,25 +3,25 @@ export module tenon.package;
 import rstd;
 import tenon.model;
 
+using namespace rstd::prelude;
+using namespace rstd::literals;
+using TargetMap = rstd::collections::BTreeMap<String, tenon::TargetId>;
+
 namespace tenon::package_detail
 {
 
-using namespace rstd::literals;
-
-using TargetMap = rstd::collections::BTreeMap<String, TargetId>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
-auto path_equal(rstd::ref<rstd::path::Path> left, rstd::ref<rstd::path::Path> right) -> bool {
+auto path_equal(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> bool {
     auto left_os     = left.as_os_str();
     auto right_os    = right.as_os_str();
     auto left_bytes  = left_os.as_encoded_bytes();
     auto right_bytes = right_os.as_encoded_bytes();
     if (left_bytes.len() != right_bytes.len()) return false;
-    for (auto index = rstd::usize {}; index < left_bytes.len(); ++index) {
+    for (auto index = usize {}; index < left_bytes.len(); ++index) {
         if (left_bytes[index] != right_bytes[index]) return false;
     }
     return true;
@@ -74,12 +74,12 @@ struct PublicUsage {
 auto visit_target(const PackageSpec& package,
                   const TargetMap& target_ids,
                   TargetId target,
-                  Vec<rstd::uint8_t>& colors,
-                  Vec<TargetId>& target_order) -> Result<rstd::empty> {
+                  Vec<uint8_t>& colors,
+                  Vec<TargetId>& target_order) -> Result<empty> {
     auto& color = colors[target];
-    if (color == 2) return rstd::Ok(rstd::empty {});
+    if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return failure<rstd::empty>(rstd::format(
+        return failure<empty>(rstd::format(
             "target dependency cycle at '{}'", package.targets[target].name.as_str()));
     }
 
@@ -87,7 +87,7 @@ auto visit_target(const PackageSpec& package,
     for (const auto& dependency : package.targets[target].dependencies) {
         auto found = target_ids.get(dependency.target.as_str());
         if (found.is_none()) {
-            return failure<rstd::empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "target '{}' depends on unknown target '{}'",
                 package.targets[target].name.as_str(),
                 dependency.target.as_str()));
@@ -97,31 +97,31 @@ auto visit_target(const PackageSpec& package,
     }
     color = 2;
     target_order.emplace_back(target);
-    return rstd::Ok(rstd::empty {});
+    return Ok(empty {});
 }
 
 auto mark_link_dependencies(const PackageSpec& package,
                             const TargetMap& target_ids,
                             TargetId target,
-                            Vec<rstd::uint8_t>& marked) -> void {
+                            Vec<uint8_t>& marked) -> void {
     for (const auto& dependency : package.targets[target].dependencies) {
         const auto dependency_id = **target_ids.get(dependency.target.as_str());
-        if (marked[dependency_id] != rstd::uint8_t {}) continue;
-        marked[dependency_id] = rstd::uint8_t(1);
+        if (marked[dependency_id] != uint8_t {}) continue;
+        marked[dependency_id] = uint8_t(1);
         mark_link_dependencies(package, target_ids, dependency_id, marked);
     }
 }
 
 auto append_context_path(String& result,
-                         rstd::ref<rstd::str> prefix,
-                         rstd::ref<rstd::path::Path> path) -> void {
+                         ref<str> prefix,
+                         ref<rstd::path::Path> path) -> void {
     result.push_str(prefix);
     auto text = path.to_str();
     if (text.is_some()) result.push_str(*text);
     result.push_ascii('\n');
 }
 
-auto context_id(const CompileContext& context, rstd::ref<rstd::str> toolchain_identity) -> String {
+auto context_id(const CompileContext& context, ref<str> toolchain_identity) -> String {
     auto result = String::make(toolchain_identity);
     result.push_ascii('\n');
     result.push_str(context.language_standard.as_str());
@@ -151,9 +151,9 @@ export namespace tenon
 {
 
 auto resolve_package(const PackageSpec& package,
-                     rstd::ref<rstd::str> requested_profile,
+                     ref<str> requested_profile,
                      const Vec<String>& requested_targets,
-                     rstd::ref<rstd::str> toolchain_identity) -> Result<PackagePlan> {
+                     ref<str> toolchain_identity) -> Result<PackagePlan> {
     using namespace package_detail;
 
     auto target_ids = TargetMap::make();
@@ -161,7 +161,7 @@ auto resolve_package(const PackageSpec& package,
         target_ids.insert(package.targets[id].name.clone(), id);
     }
 
-    auto profile_name = requested_profile.size() == rstd::usize {}
+    auto profile_name = requested_profile.size() == usize {}
                             ? package.default_profile.as_str()
                             : requested_profile;
     const ProfileSpec* profile = nullptr;
@@ -176,7 +176,7 @@ auto resolve_package(const PackageSpec& package,
     }
 
     const auto& targets = requested_targets.is_empty() ? package.default_targets : requested_targets;
-    auto colors       = Vec<rstd::uint8_t>::with_capacity(package.targets.len());
+    auto colors       = Vec<uint8_t>::with_capacity(package.targets.len());
     auto target_order = Vec<TargetId>::make();
     for (auto id = TargetId {}; id < package.targets.len(); ++id) colors.emplace_back(0);
     for (const auto& target_name : targets) {
@@ -186,16 +186,16 @@ auto resolve_package(const PackageSpec& package,
                 rstd::format("unknown target '{}'", target_name.as_str()));
         }
         auto visited = visit_target(package, target_ids, **found, colors, target_order);
-        if (visited.is_err()) return rstd::Err(rstd::move(visited).unwrap_err());
+        if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
     }
 
-    auto public_usage   = Vec<rstd::Option<PublicUsage>>::with_capacity(package.targets.len());
+    auto public_usage   = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
     auto public_visible = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto contexts       = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto link_dependencies = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
-        public_usage.emplace_back(rstd::None());
+        public_usage.emplace_back(None());
         public_visible.emplace_back();
         contexts.emplace_back();
         visible_targets.emplace_back();
@@ -220,7 +220,7 @@ auto resolve_package(const PackageSpec& package,
             append_unique(usage.options, nested_usage.options);
             append_unique(exported_targets, public_visible[dependency_id]);
         }
-        public_usage[target]   = rstd::Some(rstd::move(usage));
+        public_usage[target]   = Some(rstd::move(usage));
         public_visible[target] = rstd::move(exported_targets);
     }
 
@@ -256,19 +256,19 @@ auto resolve_package(const PackageSpec& package,
     }
 
     for (auto target : target_order) {
-        auto marked = Vec<rstd::uint8_t>::with_capacity(package.targets.len());
+        auto marked = Vec<uint8_t>::with_capacity(package.targets.len());
         for (auto id = TargetId {}; id < package.targets.len(); ++id) {
-            marked.emplace_back(rstd::uint8_t {});
+            marked.emplace_back(uint8_t {});
         }
         mark_link_dependencies(package, target_ids, target, marked);
         auto& dependencies = link_dependencies[target];
-        for (auto index = target_order.len(); index > rstd::usize {}; --index) {
-            const auto candidate = target_order[index - rstd::usize(1)];
-            if (marked[candidate] != rstd::uint8_t {}) dependencies.emplace_back(candidate);
+        for (auto index = target_order.len(); index > usize {}; --index) {
+            const auto candidate = target_order[index - usize(1)];
+            if (marked[candidate] != uint8_t {}) dependencies.emplace_back(candidate);
         }
     }
 
-    return rstd::Ok(PackagePlan {
+    return Ok(PackagePlan {
         .package = rstd::addressof(package),
         .profile = profile,
         .target_order = rstd::move(target_order),

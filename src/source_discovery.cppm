@@ -4,19 +4,19 @@ import rstd;
 import tenon.model;
 import tenon.module_convention;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
+using StringSet = rstd::collections::BTreeMap<String, empty>;
 
 namespace tenon::source_discovery_detail
 {
 
-using StringSet = rstd::collections::BTreeMap<String, rstd::empty>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
-auto supported_extension(rstd::ref<rstd::path::Path> path) -> bool {
+auto supported_extension(ref<rstd::path::Path> path) -> bool {
     auto extension = path.extension();
     if (extension.is_none()) return false;
     auto text = (*extension).to_str();
@@ -25,12 +25,12 @@ auto supported_extension(rstd::ref<rstd::path::Path> path) -> bool {
            *text == "cxx"_str;
 }
 
-auto path_text(rstd::ref<rstd::path::Path> path) -> Result<String> {
+auto path_text(ref<rstd::path::Path> path) -> Result<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return failure<String>(rstd::format("source path '{}' is not valid UTF-8", path));
     }
-    return rstd::Ok(String::make(*text));
+    return Ok(String::make(*text));
 }
 
 struct SourceEntry {
@@ -84,13 +84,13 @@ auto discover_sources(const PackageManifest& manifest) -> Result<ResolvedSourceS
                 "unsupported C++ source extension: {}", declared.as_path()));
         }
         auto key = path_text(*relative);
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto source_key = rstd::move(key).unwrap();
         if (seen.contains_key(source_key.as_str())) {
             return failure<ResolvedSourceSet>(rstd::format(
                 "artifact sources repeat source '{}'", source_key.as_str()));
         }
-        seen.insert(source_key.clone(), rstd::empty {});
+        seen.insert(source_key.clone(), empty {});
         entries.push(SourceEntry {
             .key = rstd::move(source_key),
             .source = ResolvedSource {
@@ -106,7 +106,7 @@ auto discover_sources(const PackageManifest& manifest) -> Result<ResolvedSourceS
 
     auto sources = Vec<ResolvedSource>::with_capacity(entries.len());
     for (auto& entry : entries) sources.push(rstd::move(entry.source));
-    return rstd::Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
+    return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
 } // namespace tenon

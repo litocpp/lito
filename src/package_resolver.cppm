@@ -5,35 +5,35 @@ import tenon.model;
 import tenon.manifest_locator;
 import tenon.manifest_schema;
 
+using namespace rstd::prelude;
 using namespace rstd::literals;
+using StringMap   = rstd::collections::BTreeMap<String, String>;
+using StringSet   = rstd::collections::BTreeMap<String, empty>;
+using ManifestMap = rstd::collections::BTreeMap<String, tenon::PackageManifest>;
 
 namespace tenon::package_resolver_detail
 {
 
-using StringMap = rstd::collections::BTreeMap<String, String>;
-using StringSet = rstd::collections::BTreeMap<String, rstd::empty>;
-using ManifestMap = rstd::collections::BTreeMap<String, PackageManifest>;
-
 template<typename T>
 auto failure(String message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(rstd::ref<rstd::str> message) -> Result<T> {
-    return rstd::Err(Error::make(ErrorKind::Dependency, message));
+auto failure(ref<str> message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Dependency, message));
 }
 
-auto path_text(rstd::ref<rstd::path::Path> path, rstd::ref<rstd::str> context)
+auto path_text(ref<rstd::path::Path> path, ref<str> context)
     -> Result<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return failure<String>(rstd::format("{} '{}' is not valid UTF-8", context, path));
     }
-    return rstd::Ok(String::make(*text));
+    return Ok(String::make(*text));
 }
 
-auto path_components(rstd::ref<rstd::path::Path> path) -> Result<Vec<String>> {
+auto path_components(ref<rstd::path::Path> path) -> Result<Vec<String>> {
     auto result = Vec<String>::make();
     auto components = path.components();
     for (auto component = components.next(); component.is_some(); component = components.next()) {
@@ -49,20 +49,20 @@ auto path_components(rstd::ref<rstd::path::Path> path) -> Result<Vec<String>> {
         }
         result.push(String::make(*text));
     }
-    return rstd::Ok(rstd::move(result));
+    return Ok(rstd::move(result));
 }
 
-auto relative_directory(rstd::ref<rstd::path::Path> root,
-                        rstd::ref<rstd::path::Path> target) -> Result<PathBuf> {
+auto relative_directory(ref<rstd::path::Path> root,
+                        ref<rstd::path::Path> target) -> Result<PathBuf> {
     auto root_components = path_components(root);
     auto target_components = path_components(target);
-    if (root_components.is_err()) return rstd::Err(rstd::move(root_components).unwrap_err());
+    if (root_components.is_err()) return Err(rstd::move(root_components).unwrap_err());
     if (target_components.is_err()) {
-        return rstd::Err(rstd::move(target_components).unwrap_err());
+        return Err(rstd::move(target_components).unwrap_err());
     }
     auto roots = rstd::move(root_components).unwrap();
     auto targets = rstd::move(target_components).unwrap();
-    rstd::usize common {};
+    usize common {};
     while (common < roots.len() && common < targets.len() && roots[common] == targets[common]) {
         ++common;
     }
@@ -73,16 +73,16 @@ auto relative_directory(rstd::ref<rstd::path::Path> root,
     for (auto index = common; index < targets.len(); ++index) {
         relative.push(PathBuf::from(targets[index].as_str()).as_path());
     }
-    return rstd::Ok(relative.is_empty() ? PathBuf::from("."_str) : rstd::move(relative));
+    return Ok(relative.is_empty() ? PathBuf::from("."_str) : rstd::move(relative));
 }
 
-auto package_id(const PackageManifest& manifest, rstd::ref<rstd::path::Path> source)
+auto package_id(const PackageManifest& manifest, ref<rstd::path::Path> source)
     -> Result<String> {
     if (manifest.version.value.is_none()) {
         return failure<String>(rstd::format(
             "package '{}' has an unresolved workspace version", manifest.name.as_str()));
     }
-    return rstd::Ok(rstd::format("{} {} (path+{})",
+    return Ok(rstd::format("{} {} (path+{})",
                                  manifest.name.as_str(),
                                  manifest.version.value->as_str(),
                                  source));
@@ -97,12 +97,12 @@ class Resolver {
     ManifestMap             preloaded_ { ManifestMap::make() };
 
 public:
-    explicit Resolver(rstd::ref<rstd::path::Path> root_directory,
+    explicit Resolver(ref<rstd::path::Path> root_directory,
                       ManifestMap preloaded)
         : root_directory_(PathBuf::from(root_directory)),
           preloaded_(rstd::move(preloaded)) {}
 
-    auto resolve(rstd::ref<rstd::path::Path> requested) -> Result<String> {
+    auto resolve(ref<rstd::path::Path> requested) -> Result<String> {
         auto canonical = rstd::fs::canonicalize(requested);
         if (canonical.is_err()) {
             return failure<String>(rstd::format(
@@ -112,10 +112,10 @@ public:
         }
         auto package_directory = rstd::move(canonical).unwrap();
         auto key = path_text(package_directory.as_path(), "package directory"_str);
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto path_key = rstd::move(key).unwrap();
         auto existing = resolved_.get(path_key.as_str());
-        if (existing.is_some()) return rstd::Ok((**existing).clone());
+        if (existing.is_some()) return Ok((**existing).clone());
         if (active_.contains_key(path_key.as_str())) {
             return failure<String>(rstd::format(
                 "path dependency cycle reaches '{}'", package_directory.as_path()));
@@ -127,18 +127,18 @@ public:
             manifest = rstd::move(preloaded).unwrap();
         } else {
             auto loaded = load_package_manifest(package_directory.as_path());
-            if (loaded.is_err()) return rstd::Err(rstd::move(loaded).unwrap_err());
+            if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
             manifest = rstd::move(loaded).unwrap();
         }
         auto source_directory = relative_directory(
             root_directory_.as_path(), manifest.root.as_path());
         if (source_directory.is_err()) {
-            return rstd::Err(rstd::move(source_directory).unwrap_err());
+            return Err(rstd::move(source_directory).unwrap_err());
         }
         auto source = rstd::move(source_directory).unwrap();
         auto package_identity = package_id(manifest, source.as_path());
         if (package_identity.is_err()) {
-            return rstd::Err(rstd::move(package_identity).unwrap_err());
+            return Err(rstd::move(package_identity).unwrap_err());
         }
         auto id = rstd::move(package_identity).unwrap();
 
@@ -153,14 +153,14 @@ public:
         if (same_name.is_none()) {
             package_names_.insert(manifest.name.clone(), path_key.clone());
         }
-        active_.insert(path_key.clone(), rstd::empty {});
+        active_.insert(path_key.clone(), empty {});
 
         auto dependencies = Vec<ResolvedDependency>::make();
         for (const auto& dependency : manifest.dependencies) {
             auto dependency_directory = manifest.root.join(dependency.directory.as_path());
             auto dependency_id = resolve(dependency_directory.as_path());
             if (dependency_id.is_err()) {
-                return rstd::Err(rstd::move(dependency_id).unwrap_err());
+                return Err(rstd::move(dependency_id).unwrap_err());
             }
             dependencies.push(ResolvedDependency {
                 .alias = dependency.alias.clone(),
@@ -182,7 +182,7 @@ public:
             .manifest = rstd::move(manifest),
             .dependencies = rstd::move(dependencies),
         });
-        return rstd::Ok(rstd::move(id));
+        return Ok(rstd::move(id));
     }
 
     auto finish(Vec<String> root_ids, PathBuf manifest_path) -> ResolvedPackageGraph {
@@ -206,8 +206,8 @@ public:
 export namespace tenon
 {
 
-auto resolve_loaded_package_roots(rstd::ref<rstd::path::Path> root_directory,
-                                  rstd::ref<rstd::path::Path> manifest_path,
+auto resolve_loaded_package_roots(ref<rstd::path::Path> root_directory,
+                                  ref<rstd::path::Path> manifest_path,
                                   Vec<PackageManifest> root_manifests)
     -> Result<ResolvedPackageGraph> {
     using namespace package_resolver_detail;
@@ -230,7 +230,7 @@ auto resolve_loaded_package_roots(rstd::ref<rstd::path::Path> root_directory,
     auto package_directories = Vec<PathBuf>::with_capacity(root_manifests.len());
     for (auto& manifest : root_manifests) {
         auto key = path_text(manifest.root.as_path(), "package directory"_str);
-        if (key.is_err()) return rstd::Err(rstd::move(key).unwrap_err());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (preloaded.contains_key(key->as_str())) {
             return failure<ResolvedPackageGraph>(rstd::format(
                 "package directory '{}' is listed more than once", manifest.root.as_path()));
@@ -243,31 +243,31 @@ auto resolve_loaded_package_roots(rstd::ref<rstd::path::Path> root_directory,
     auto root_ids = Vec<String>::with_capacity(package_directories.len());
     for (const auto& directory : package_directories) {
         auto root_id = resolver.resolve(directory.as_path());
-        if (root_id.is_err()) return rstd::Err(rstd::move(root_id).unwrap_err());
+        if (root_id.is_err()) return Err(rstd::move(root_id).unwrap_err());
         root_ids.push(rstd::move(root_id).unwrap());
     }
-    return rstd::Ok(resolver.finish(
+    return Ok(resolver.finish(
         rstd::move(root_ids), rstd::move(canonical_manifest).unwrap()));
 }
 
-auto resolve_package_roots(rstd::ref<rstd::path::Path> root_directory,
-                           rstd::ref<rstd::path::Path> manifest_path,
+auto resolve_package_roots(ref<rstd::path::Path> root_directory,
+                           ref<rstd::path::Path> manifest_path,
                            const Vec<PathBuf>& package_directories)
     -> Result<ResolvedPackageGraph> {
     auto manifests = Vec<PackageManifest>::with_capacity(package_directories.len());
     for (const auto& directory : package_directories) {
         auto loaded = load_package_manifest(directory.as_path());
-        if (loaded.is_err()) return rstd::Err(rstd::move(loaded).unwrap_err());
+        if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
         manifests.push(rstd::move(loaded).unwrap());
     }
     return resolve_loaded_package_roots(
         root_directory, manifest_path, rstd::move(manifests));
 }
 
-auto resolve_package_graph(rstd::ref<rstd::path::Path> requested_root)
+auto resolve_package_graph(ref<rstd::path::Path> requested_root)
     -> Result<ResolvedPackageGraph> {
     auto location = locate_manifest(requested_root);
-    if (location.is_err()) return rstd::Err(rstd::move(location).unwrap_err());
+    if (location.is_err()) return Err(rstd::move(location).unwrap_err());
     auto root = rstd::move(location).unwrap();
     auto roots = Vec<PathBuf>::make();
     roots.push(root.directory.clone());

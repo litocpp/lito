@@ -1,16 +1,18 @@
 import rstd;
 import tenon;
 
+using namespace rstd::prelude;
+using namespace rstd::literals;
+
 namespace
 {
 
-using namespace rstd::literals;
 
 struct EventContext {
     bool verbose { false };
 };
 
-auto event_name(tenon::BuildEventKind kind) -> rstd::ref<rstd::str> {
+auto event_name(tenon::BuildEventKind kind) -> ref<str> {
     switch (kind) {
     case tenon::BuildEventKind::Scan: return "scan"_str;
     case tenon::BuildEventKind::Compile: return "compile"_str;
@@ -45,7 +47,7 @@ void print_help() {
     rstd::io::println("All builds use -fno-rtti -fno-exceptions");
 }
 
-auto missing_value(rstd::ref<rstd::str> option) -> int {
+auto missing_value(ref<str> option) -> int {
     rstd::io::eprintln("tenon: {} requires a value", option);
     return 2;
 }
@@ -121,7 +123,7 @@ int main() {
         }
     }
 
-    request.observer = rstd::Some(tenon::BuildObserver {
+    request.observer = Some(tenon::BuildObserver {
         .context = rstd::addressof(event_context),
         .notify = observe,
     });
