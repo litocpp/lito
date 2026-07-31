@@ -184,6 +184,19 @@ class PackageSourceManager {
     IndexMap                 roots_ { IndexMap::make() };
     IndexMap                 source_identities_ { IndexMap::make() };
 
+    auto patched_path(ref<str> url) -> Result<Option<ref<rstd::path::Path>>> {
+        auto matched = Option<ref<rstd::path::Path>> {};
+        for (const auto& patch : options_.sources.patches) {
+            if (patch.git.as_str() != url) continue;
+            if (matched.is_some()) {
+                return source_failure<Option<ref<rstd::path::Path>>>(rstd::format(
+                    "source configuration contains more than one patch for '{}'", url));
+            }
+            matched = Some(patch.path.as_path());
+        }
+        return Ok(matched);
+    }
+
     auto locked_source(ref<str> url, const GitReference& reference)
         -> Result<Option<ref<LockedGitSource>>> {
         auto matched = Option<ref<LockedGitSource>> {};
@@ -578,6 +591,9 @@ public:
         -> Result<usize> {
         if (requirement.is_Git()) {
             const auto& git = requirement.as_Git();
+            auto patch = patched_path(git.url.as_str());
+            if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
+            if (patch->is_some()) return acquire_path(**patch);
             return acquire_git(git.url.as_str(), git.reference);
         }
         auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());

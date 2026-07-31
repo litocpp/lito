@@ -81,6 +81,7 @@ int main() {
         auto request = tenon::FormatRequest {};
         request.selection.root = rstd::move(project.root);
         request.toolchain = rstd::move(project.toolchain);
+        request.sources = rstd::move(project.sources);
         while (auto option = arguments.next()) {
             if (*option == "--package"_str) {
                 auto value = arguments.next();
@@ -113,6 +114,7 @@ int main() {
     request.configuration.standard_library = tenon::StandardLibrary::Libcxx;
     request.configuration.bmi_mode = tenon::BmiMode::Reduced;
     request.configuration.language_standard = tenon::String::make("c++20"_str);
+    request.sources = rstd::move(project.sources);
     auto event_context = EventContext {};
     while (auto option = arguments.next()) {
         if (*option == "--profile"_str) {

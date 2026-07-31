@@ -42,8 +42,9 @@ auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
     auto lock = load_lock_session(request.selection.root.as_path(), request.locked);
     if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
     auto lock_session = rstd::move(lock).unwrap();
-    auto resolved =
-        resolve_package_selection(request.selection, lock_session.take_resolution_options());
+    auto resolution = lock_session.take_resolution_options();
+    resolution.sources = request.sources.clone();
+    auto resolved = resolve_package_selection(request.selection, rstd::move(resolution));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto build = rstd::move(resolved).unwrap();
     auto locked = sync_lock(build.graph, rstd::move(lock_session));

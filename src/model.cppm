@@ -133,9 +133,30 @@ struct ToolchainSpec {
     PathBuf formatter;
 };
 
+struct GitSourcePatch {
+    String  git;
+    PathBuf path;
+};
+
+struct PackageSourceConfig {
+    Vec<GitSourcePatch> patches;
+
+    auto clone() const -> PackageSourceConfig {
+        auto copied = Vec<GitSourcePatch>::with_capacity(patches.len());
+        for (const auto& patch : patches) {
+            copied.push(GitSourcePatch {
+                .git  = patch.git.clone(),
+                .path = patch.path.clone(),
+            });
+        }
+        return PackageSourceConfig { .patches = rstd::move(copied) };
+    }
+};
+
 struct ProjectConfig {
-    PathBuf       root;
-    ToolchainSpec toolchain;
+    PathBuf             root;
+    ToolchainSpec       toolchain;
+    PackageSourceConfig sources;
 };
 
 struct ProfileSpec {
@@ -244,8 +265,9 @@ struct LockedGitSource {
 };
 
 struct PackageResolutionOptions {
-    bool                 locked { false };
-    Vec<LockedGitSource> git_sources;
+    bool                    locked { false };
+    Vec<LockedGitSource>    git_sources;
+    PackageSourceConfig     sources;
 };
 
 struct ResolvedPackage {
@@ -402,6 +424,7 @@ struct BuildRequest {
     Vec<String>                targets;
     PathBuf                    output;
     BuildConfiguration         configuration;
+    PackageSourceConfig        sources;
     bool                       locked { false };
     Option<BuildObserver> observer;
 };
@@ -418,8 +441,9 @@ struct BuildSummary {
 };
 
 struct FormatRequest {
-    PackageSelection selection;
-    ToolchainSpec    toolchain;
+    PackageSelection    selection;
+    ToolchainSpec       toolchain;
+    PackageSourceConfig sources;
 };
 
 struct FormatSummary {

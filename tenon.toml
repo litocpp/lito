@@ -57,17 +57,17 @@ private-options = [
 private-linker-options = ["-nostdlib++"]
 
 [dependencies.rstd-std]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
 [dependencies.rstd-json]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
 [dependencies.rstd-toml]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
 [dependencies.rstd-nostd]
-path = "../rstd"
+git = "https://github.com/litocpp/rstd.git"
 visibility = "runtime"
