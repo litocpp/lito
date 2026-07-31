@@ -107,6 +107,7 @@ struct ProfileSpec {
     BmiMode         bmi_mode { BmiMode::Reduced };
     String          language_standard;
     Vec<String>     options;
+    Vec<String>     linker_options;
 };
 
 struct DependencySpec {
@@ -222,6 +223,7 @@ struct BuildConfiguration {
     BmiMode         bmi_mode { BmiMode::Reduced };
     String          language_standard;
     Vec<String>     options;
+    Vec<String>     linker_options;
 };
 
 struct ModuleExpectation {

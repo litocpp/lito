@@ -251,6 +251,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             objects,
             linked_archives,
             package_plan.profile->standard_library,
+            package_plan.profile->linker_options,
             target_spec.root.as_path());
         if (linked.is_err()) return rstd::Err(rstd::move(linked).unwrap_err());
         executables.push(rstd::move(executable_path));

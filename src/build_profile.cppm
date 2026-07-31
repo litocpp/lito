@@ -83,6 +83,7 @@ auto make_profile_spec(const BuildConfiguration& configuration) -> Result<Profil
         .bmi_mode = configuration.bmi_mode,
         .language_standard = configuration.language_standard.clone(),
         .options = rstd::move(options),
+        .linker_options = configuration.linker_options.clone(),
     });
 }
 

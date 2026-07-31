@@ -509,6 +509,7 @@ public:
                          const Vec<PathBuf>& objects,
                          const Vec<PathBuf>& archives,
                          StandardLibrary standard_library,
+                         const Vec<String>& linker_options,
                          rstd::ref<rstd::path::Path> working_directory) const
         -> Result<rstd::empty> {
         using namespace rstd::literals;
@@ -520,6 +521,7 @@ public:
         if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
         clang_detail::push_option(
             command, toolchain::clang_options::standard_library(standard_library));
+        for (const auto& option : linker_options) command.push(option.clone());
         for (const auto& object : objects) {
             pushed = clang_detail::push_path(command, object.as_path());
             if (pushed.is_err()) return rstd::Err(rstd::move(pushed).unwrap_err());
