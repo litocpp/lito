@@ -1,4 +1,4 @@
-export module tenon.package;
+export module tenon.package:plan;
 
 import rstd;
 import tenon.model;
@@ -7,11 +7,11 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using TargetMap = rstd::collections::BTreeMap<String, tenon::TargetId>;
 
-namespace tenon::package_detail
+namespace tenon
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
+auto plan_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
@@ -79,7 +79,7 @@ auto visit_target(const PackageSpec& package,
     auto& color = colors[target];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return failure<empty>(rstd::format(
+        return plan_failure<empty>(rstd::format(
             "target dependency cycle at '{}'", package.targets[target].name.as_str()));
     }
 
@@ -87,7 +87,7 @@ auto visit_target(const PackageSpec& package,
     for (const auto& dependency : package.targets[target].dependencies) {
         auto found = target_ids.get(dependency.target.as_str());
         if (found.is_none()) {
-            return failure<empty>(rstd::format(
+            return plan_failure<empty>(rstd::format(
                 "target '{}' depends on unknown target '{}'",
                 package.targets[target].name.as_str(),
                 dependency.target.as_str()));
@@ -145,7 +145,7 @@ auto context_id(const CompileContext& context, ref<str> toolchain_identity) -> S
     return result;
 }
 
-} // namespace tenon::package_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -154,8 +154,6 @@ auto resolve_package(const PackageSpec& package,
                      ref<str> requested_profile,
                      const Vec<String>& requested_targets,
                      ref<str> toolchain_identity) -> Result<PackagePlan> {
-    using namespace package_detail;
-
     auto target_ids = TargetMap::make();
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         target_ids.insert(package.targets[id].name.clone(), id);
@@ -172,7 +170,7 @@ auto resolve_package(const PackageSpec& package,
         }
     }
     if (profile == nullptr) {
-        return failure<PackagePlan>(rstd::format("unknown profile '{}'", profile_name));
+        return plan_failure<PackagePlan>(rstd::format("unknown profile '{}'", profile_name));
     }
 
     const auto& targets = requested_targets.is_empty() ? package.default_targets : requested_targets;
@@ -182,7 +180,7 @@ auto resolve_package(const PackageSpec& package,
     for (const auto& target_name : targets) {
         auto found = target_ids.get(target_name.as_str());
         if (found.is_none()) {
-            return failure<PackagePlan>(
+            return plan_failure<PackagePlan>(
                 rstd::format("unknown target '{}'", target_name.as_str()));
         }
         auto visited = visit_target(package, target_ids, **found, colors, target_order);

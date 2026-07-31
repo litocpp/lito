@@ -13,7 +13,7 @@ using namespace rstd::literals;
 using Json      = rstd::json::Value;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon::toolchain::clang_scan_deps_detail
+namespace tenon::toolchain
 {
 
 template<typename T>
@@ -203,7 +203,7 @@ auto parse_scan_json(ref<str> output, UnitId unit) -> Result<ScanResult> {
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon::toolchain::clang_scan_deps_detail
+} // namespace tenon::toolchain
 
 export namespace tenon::toolchain
 {
@@ -262,16 +262,16 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return clang_scan_deps_detail::failure<ScanResult>(rstd::format(
+            return failure<ScanResult>(rstd::format(
                 "clang-scan-deps failed for '{}'\n{}\n{}",
                 prepared.unit.source.as_path(),
                 command_text(arguments).as_str(),
                 command_output.standard_error.as_str()));
         }
-        auto scan_result = clang_scan_deps_detail::parse_scan_json(
+        auto scan_result = parse_scan_json(
             command_output.standard_output.as_str(), prepared.unit.id);
         if (scan_result.is_err()) return scan_result;
-        auto headers = clang_scan_deps_detail::parse_depfile(
+        auto headers = parse_depfile(
             prepared.unit.depfile.as_path(), prepared.working_directory.as_path());
         if (headers.is_err()) return Err(rstd::move(headers).unwrap_err());
         scan_result->header_inputs = rstd::move(headers).unwrap();

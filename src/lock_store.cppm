@@ -12,7 +12,7 @@ using Array        = rstd::json::Array;
 using StringSet    = rstd::collections::BTreeMap<String, empty>;
 using KeyPredicate = bool (*)(ref<str>);
 
-namespace tenon::lock_store_detail
+namespace tenon
 {
 
 template<typename T>
@@ -391,14 +391,12 @@ auto write_lock(const ResolvedPackageGraph& graph,
     return Ok(empty {});
 }
 
-} // namespace tenon::lock_store_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto sync_lock(const ResolvedPackageGraph& graph, bool locked) -> Result<LockStatus> {
-    using namespace lock_store_detail;
-
     auto desired_result = graph_json(graph);
     if (desired_result.is_err()) return Err(rstd::move(desired_result).unwrap_err());
     auto desired = rstd::move(desired_result).unwrap();

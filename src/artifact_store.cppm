@@ -6,7 +6,7 @@ import tenon.model;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::artifact_detail
+namespace tenon
 {
 
 
@@ -53,7 +53,7 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Artifact, rstd::move(message)));
 }
 
-} // namespace tenon::artifact_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -63,8 +63,6 @@ public:
     auto key_for(const PreparedUnit& unit,
                  const ScanResult& scan,
                  const Vec<String>& direct_dependency_keys) -> Result<String> {
-        using namespace artifact_detail;
-
         auto hash = FNV_OFFSET;
         add_text(hash, "tenon-artifact-v1"_str);
         add_text(hash, unit.unit.context->id.as_str());
@@ -115,12 +113,12 @@ public:
     auto commit(const PreparedUnit& unit, ref<str> key) -> Result<empty> {
         auto parent = unit.unit.fingerprint.as_path().parent();
         if (parent.is_none()) {
-            return artifact_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "fingerprint path '{}' has no parent", unit.unit.fingerprint.as_path()));
         }
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
-            return artifact_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "cannot create fingerprint directory '{}': {}",
                 *parent,
                 rstd::move(created).unwrap_err()));
@@ -131,7 +129,7 @@ public:
         auto bytes = Vec<u8>::from(contents.as_str().as_bytes());
         auto written = rstd::fs::write(unit.unit.fingerprint.as_path(), bytes.as_slice());
         if (written.is_err()) {
-            return artifact_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "cannot write '{}': {}",
                 unit.unit.fingerprint.as_path(),
                 rstd::move(written).unwrap_err()));
@@ -143,7 +141,7 @@ private:
     auto file_identity(ref<rstd::path::Path> path) -> Result<String> {
         auto text = path.to_str();
         if (text.is_none()) {
-            return artifact_detail::failure<String>(
+            return failure<String>(
                 rstd::format("input path '{}' is not valid UTF-8", path));
         }
         auto cached = file_identities_.get(*text);
@@ -151,12 +149,12 @@ private:
 
         auto contents = rstd::fs::read(path);
         if (contents.is_err()) {
-            return artifact_detail::failure<String>(rstd::format(
+            return failure<String>(rstd::format(
                 "cannot hash input '{}': {}", path, rstd::move(contents).unwrap_err()));
         }
-        auto hash = artifact_detail::FNV_OFFSET;
-        artifact_detail::add_bytes(hash, contents->as_slice());
-        auto identity = artifact_detail::hex(hash);
+        auto hash = FNV_OFFSET;
+        add_bytes(hash, contents->as_slice());
+        auto identity = hex(hash);
         file_identities_.insert(String::make(*text), identity.clone());
         return Ok(rstd::move(identity));
     }

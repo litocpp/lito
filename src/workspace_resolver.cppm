@@ -2,8 +2,8 @@ export module tenon.workspace_resolver;
 
 import rstd;
 import tenon.model;
-import tenon.manifest_schema;
-import tenon.package_resolver;
+import tenon.manifest;
+import tenon.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -11,7 +11,7 @@ using StringMap = rstd::collections::BTreeMap<String, String>;
 using IndexMap  = rstd::collections::BTreeMap<String, usize>;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon::workspace_resolver_detail
+namespace tenon
 {
 
 template<typename T>
@@ -242,14 +242,12 @@ auto workspace_build(WorkspaceManifest workspace,
     });
 }
 
-} // namespace tenon::workspace_resolver_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto resolve_build_root(const BuildRequest& request) -> Result<ResolvedBuild> {
-    using namespace workspace_resolver_detail;
-
     auto document = load_manifest_document(request.root.as_path());
     if (document.is_err()) return Err(rstd::move(document).unwrap_err());
     auto loaded = rstd::move(document).unwrap();

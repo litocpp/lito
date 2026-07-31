@@ -1,9 +1,9 @@
-export module tenon.manifest_schema;
+export module tenon.manifest:schema;
 
 import rstd;
 import rstd.toml;
 import tenon.model;
-import tenon.manifest_locator;
+import :locator;
 import tenon.build_profile;
 
 using namespace rstd::prelude;
@@ -12,7 +12,7 @@ using Toml         = rstd::toml::Value;
 using Table        = rstd::toml::Table;
 using KeyPredicate = bool (*)(ref<str>);
 
-namespace tenon::manifest_schema_detail
+namespace tenon
 {
 
 template<typename T>
@@ -428,15 +428,13 @@ auto parse_dependencies(Option<ref<Toml>> value)
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon::manifest_schema_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto load_manifest_document(ref<rstd::path::Path> requested_directory)
     -> Result<ManifestDocument> {
-    using namespace manifest_schema_detail;
-
     auto located = locate_manifest(requested_directory);
     if (located.is_err()) return Err(rstd::move(located).unwrap_err());
     auto location = rstd::move(located).unwrap();
@@ -631,8 +629,6 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory)
 
 auto load_package_manifest(ref<rstd::path::Path> requested_directory)
     -> Result<PackageManifest> {
-    using namespace manifest_schema_detail;
-
     auto loaded = load_manifest_document(requested_directory);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto document = rstd::move(loaded).unwrap();

@@ -6,7 +6,7 @@ import tenon.model;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::build_profile_detail
+namespace tenon
 {
 
 template<typename T>
@@ -14,7 +14,7 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
 }
 
-} // namespace tenon::build_profile_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -30,7 +30,7 @@ auto build_profile_name(BuildProfile profile) -> ref<str> {
 auto parse_build_profile(ref<str> name) -> Result<BuildProfile> {
     if (name == "debug"_str) return Ok(BuildProfile::Debug);
     if (name == "release"_str) return Ok(BuildProfile::Release);
-    return build_profile_detail::failure<BuildProfile>(
+    return failure<BuildProfile>(
         rstd::format("unknown profile '{}'; expected debug or release", name));
 }
 
@@ -56,8 +56,6 @@ auto is_profile_owned_definition(ref<str> definition) -> bool {
 }
 
 auto make_profile_spec(const BuildConfiguration& configuration) -> Result<ProfileSpec> {
-    using namespace build_profile_detail;
-
     for (const auto& option : configuration.options) {
         if (is_profile_owned_option(option.as_str())) {
             return failure<ProfileSpec>(rstd::format(

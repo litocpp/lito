@@ -1,4 +1,4 @@
-export module tenon.package_adapter;
+export module tenon.package:adapter;
 
 import rstd;
 import tenon.model;
@@ -7,11 +7,11 @@ import tenon.build_profile;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::package_adapter_detail
+namespace tenon
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
+auto adapter_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
@@ -22,7 +22,7 @@ auto validate_options(const Vec<String>& options) -> Result<empty> {
             value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
             value == "-fmodules-reduced-bmi"_str ||
             value == "-fno-modules-reduced-bmi"_str) {
-            return failure<empty>(rstd::format(
+            return adapter_failure<empty>(rstd::format(
                 "build option '{}' overrides a Tenon-owned setting", value));
         }
     }
@@ -37,7 +37,7 @@ auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
     return result;
 }
 
-} // namespace tenon::package_adapter_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -45,20 +45,18 @@ export namespace tenon
 auto adapt_single_artifact(PackageManifest manifest,
                            ResolvedSourceSet source_set,
                            const BuildConfiguration& configuration) -> Result<PackageSpec> {
-    using namespace package_adapter_detail;
-
     if (! manifest.dependencies.is_empty()) {
-        return failure<PackageSpec>(
+        return adapter_failure<PackageSpec>(
             String::make(
                 "path dependencies require the package resolver and are not yet supported"_str));
     }
     if (configuration.language_standard.as_str() != "c++20"_str) {
-        return failure<PackageSpec>(
+        return adapter_failure<PackageSpec>(
             String::make("Tenon currently requires build configuration standard c++20"_str));
     }
     if (configuration.toolchain.compiler.is_empty() || configuration.toolchain.scanner.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
-        return failure<PackageSpec>(
+        return adapter_failure<PackageSpec>(
             String::make("build configuration requires Clang tool paths"_str));
     }
     auto options_valid = validate_options(configuration.options);
@@ -119,16 +117,14 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
                          const Vec<String>& selected_package_ids,
                          const Vec<String>& selected_root_ids,
                          const BuildConfiguration& configuration) -> Result<PackageSpec> {
-    using namespace package_adapter_detail;
-
     if (selected_package_ids.len() != source_sets.len()) {
-        return failure<PackageSpec>(String::make(
+        return adapter_failure<PackageSpec>(String::make(
             "selected package graph and source sets have different lengths"_str));
     }
     if (configuration.language_standard.as_str() != "c++20"_str ||
         configuration.toolchain.compiler.is_empty() || configuration.toolchain.scanner.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
-        return failure<PackageSpec>(
+        return adapter_failure<PackageSpec>(
             String::make("invalid build configuration for package graph"_str));
     }
     auto options_valid = validate_options(configuration.options);
@@ -153,14 +149,14 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     for (const auto& package : graph.packages) {
         if (package.manifest.artifact_kind == ArtifactKind::Executable &&
             ! roots.contains_key(package.id.as_str())) {
-            return failure<PackageSpec>(rstd::format(
+            return adapter_failure<PackageSpec>(rstd::format(
                 "dependency package '{}' cannot produce an executable",
                 package.manifest.name.as_str()));
         }
         for (const auto& dependency : package.dependencies) {
             auto kind = artifact_kinds.get(dependency.package_id.as_str());
             if (kind.is_some() && **kind == ArtifactKind::Executable) {
-                return failure<PackageSpec>(rstd::format(
+                return adapter_failure<PackageSpec>(rstd::format(
                     "package '{}' cannot depend on executable package '{}'",
                     package.manifest.name.as_str(),
                     dependency.package_id.as_str()));
@@ -190,7 +186,7 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
         for (const auto& dependency : package.dependencies) {
             auto target_name = target_names.get(dependency.package_id.as_str());
             if (target_name.is_none()) {
-                return failure<PackageSpec>(rstd::format(
+                return adapter_failure<PackageSpec>(rstd::format(
                     "resolved dependency '{}' is missing", dependency.package_id.as_str()));
             }
             dependencies.push(DependencySpec {
@@ -217,7 +213,7 @@ auto adapt_package_graph(ResolvedPackageGraph graph,
     for (const auto& id : selected_root_ids) {
         auto target_name = target_names.get(id.as_str());
         if (target_name.is_none()) {
-            return failure<PackageSpec>(rstd::format(
+            return adapter_failure<PackageSpec>(rstd::format(
                 "selected root package '{}' is missing", id.as_str()));
         }
         default_targets.push((**target_name).clone());

@@ -55,21 +55,24 @@ target_sources(
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm
-         src/manifest_locator.cppm
-         src/manifest_schema.cppm
-         src/module_convention.cppm
+         src/manifest/locator.cppm
+         src/manifest/schema.cppm
+         src/manifest/mod.cppm
+         src/module/convention.cppm
+         src/module/graph.cppm
+         src/module/mod.cppm
          src/source_discovery.cppm
-         src/package_resolver.cppm
+         src/package/plan.cppm
+         src/package/adapter.cppm
+         src/package/resolver.cppm
+         src/package/mod.cppm
          src/workspace_resolver.cppm
          src/lock_store.cppm
-         src/package_adapter.cppm
-         src/package.cppm
          src/toolchain/command.cppm
          src/toolchain/clang_options.cppm
          src/toolchain/clang_scan_deps_options.cppm
          src/toolchain/clang_scan_deps.cppm
          src/toolchain/clang.cppm
-         src/module_graph.cppm
          src/artifact_store.cppm
          src/build_layout.cppm
          src/builder.cppm

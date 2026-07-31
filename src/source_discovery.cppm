@@ -2,13 +2,13 @@ export module tenon.source_discovery;
 
 import rstd;
 import tenon.model;
-import tenon.module_convention;
+import tenon.modules;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon::source_discovery_detail
+namespace tenon
 {
 
 template<typename T>
@@ -38,14 +38,12 @@ struct SourceEntry {
     ResolvedSource source;
 };
 
-} // namespace tenon::source_discovery_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto discover_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
-    using namespace source_discovery_detail;
-
     if (manifest.discovery == SourceDiscoveryMode::Module) {
         return discover_module_sources(manifest);
     }

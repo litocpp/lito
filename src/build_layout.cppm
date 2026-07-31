@@ -6,7 +6,7 @@ import tenon.model;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::build_layout_detail
+namespace tenon
 {
 
 template<typename T>
@@ -59,7 +59,7 @@ auto module_filename(ref<str> logical_name) -> String {
     return result;
 }
 
-} // namespace tenon::build_layout_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -74,7 +74,6 @@ class BuildLayout {
                      ref<rstd::path::Path> source,
                      ref<rstd::path::Path> package_root,
                      ref<str> suffix) const -> Result<PathBuf> {
-        using namespace build_layout_detail;
         auto relative = source.strip_prefix(package_root);
         if (relative.is_none() || (*relative).is_empty()) {
             return failure<PathBuf>(
@@ -94,7 +93,6 @@ public:
     static auto create(ref<rstd::path::Path> owner_root,
                        ref<rstd::path::Path> requested_output,
                        ref<str> profile) -> Result<BuildLayout> {
-        using namespace build_layout_detail;
         auto output = PathBuf::make();
         if (requested_output.is_empty()) {
             output = join(join(owner_root, "build"_str).as_path(), profile);
@@ -142,21 +140,18 @@ public:
 
     auto bmi(ref<str> target,
              ref<str> logical_name) const -> PathBuf {
-        using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "bmi"_str).as_path(), target);
         return directory.join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
     auto archive(ref<str> target,
                  ref<str> artifact_name) const -> PathBuf {
-        using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "lib"_str).as_path(), target);
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
     auto executable(ref<str> target,
                     ref<str> artifact_name) const -> PathBuf {
-        using namespace build_layout_detail;
         auto directory = join(join(output_.as_path(), "bin"_str).as_path(), target);
         return directory.join(PathBuf::from(artifact_name).as_path());
     }

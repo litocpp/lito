@@ -1,4 +1,4 @@
-export module tenon.module_graph;
+export module tenon.modules:graph;
 
 import rstd;
 import tenon.model;
@@ -8,16 +8,16 @@ using namespace rstd::literals;
 using ProviderMap = rstd::collections::BTreeMap<String, tenon::UnitId>;
 using StringSet   = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon::module_detail
+namespace tenon
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
+auto graph_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ref<str> message) -> Result<T> {
+auto graph_failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, message));
 }
 
@@ -36,7 +36,7 @@ auto visit(UnitId unit,
     auto& color = colors[unit];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
-        return failure<empty>(rstd::format(
+        return graph_failure<empty>(rstd::format(
             "module import cycle at '{}'", units[unit].unit.source.as_path()));
     }
 
@@ -66,7 +66,7 @@ auto append_artifact(Vec<ResolvedModuleArtifact>& output,
     output.push(clone_artifact(artifact));
 }
 
-} // namespace tenon::module_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -74,29 +74,27 @@ export namespace tenon
 auto resolve_modules(const PackagePlan& package,
                      const Vec<PreparedUnit>& units,
                      const Vec<ScanResult>& scans) -> Result<ModulePlan> {
-    using namespace module_detail;
-
     if (units.len() != scans.len()) {
-        return failure<ModulePlan>("module graph received mismatched units and scans"_str);
+        return graph_failure<ModulePlan>("module graph received mismatched units and scans"_str);
     }
 
     auto providers = ProviderMap::make();
     for (const auto& scan : scans) {
         if (scan.unit >= units.len()) {
-            return failure<ModulePlan>("scan result has invalid unit id"_str);
+            return graph_failure<ModulePlan>("scan result has invalid unit id"_str);
         }
         if (scan.provided.is_none()) continue;
         const auto& provided = *scan.provided;
         auto existing = providers.get(provided.logical_name.as_str());
         if (existing.is_some()) {
-            return failure<ModulePlan>(rstd::format(
+            return graph_failure<ModulePlan>(rstd::format(
                 "duplicate module provider '{}': '{}' and '{}'",
                 provided.logical_name.as_str(),
                 units[**existing].unit.source.as_path(),
                 units[scan.unit].unit.source.as_path()));
         }
         if (units[scan.unit].unit.bmi.is_none()) {
-            return failure<ModulePlan>(rstd::format(
+            return graph_failure<ModulePlan>(rstd::format(
                 "module provider has no BMI artifact: {}", units[scan.unit].unit.source.as_path()));
         }
         providers.insert(provided.logical_name.clone(), scan.unit);
@@ -110,7 +108,7 @@ auto resolve_modules(const PackagePlan& package,
         auto primary_name = provided.logical_name.as_str().split_at(*separator).get<0>();
         auto primary_provider = providers.get(primary_name);
         if (primary_provider.is_none()) {
-            return failure<ModulePlan>(rstd::format(
+            return graph_failure<ModulePlan>(rstd::format(
                 "partition '{}' has no primary module provider '{}'",
                 provided.logical_name.as_str(),
                 primary_name));
@@ -123,7 +121,7 @@ auto resolve_modules(const PackagePlan& package,
             package.package->targets[partition_target].module_affiliation;
         if (primary_affiliation.is_none() || partition_affiliation.is_none() ||
             *primary_affiliation != (*partition_affiliation).as_str()) {
-            return failure<ModulePlan>(rstd::format(
+            return graph_failure<ModulePlan>(rstd::format(
                 "partition '{}' and primary module '{}' have different named-module affiliations",
                 provided.logical_name.as_str(),
                 primary_name));
@@ -137,7 +135,7 @@ auto resolve_modules(const PackagePlan& package,
         for (const auto& required : scan.required_modules) {
             auto provider = providers.get(required.as_str());
             if (provider.is_none()) {
-                return failure<ModulePlan>(rstd::format(
+                return graph_failure<ModulePlan>(rstd::format(
                     "missing module provider '{}' imported by '{}'",
                     required.as_str(),
                     units[scan.unit].unit.source.as_path()));
@@ -147,7 +145,7 @@ auto resolve_modules(const PackagePlan& package,
             const auto provider_target = units[provider_unit].unit.target;
             if (importer_target >= package.visible_targets.len() ||
                 ! contains(package.visible_targets[importer_target], provider_target)) {
-                return failure<ModulePlan>(rstd::format(
+                return graph_failure<ModulePlan>(rstd::format(
                     "module '{}' from target '{}' is not visible to target '{}'",
                     required.as_str(),
                     package.package->targets[provider_target].name.as_str(),

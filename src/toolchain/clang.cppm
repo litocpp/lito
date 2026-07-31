@@ -10,7 +10,7 @@ import tenon.toolchain.command;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::clang_detail
+namespace tenon
 {
 
 
@@ -37,7 +37,7 @@ auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
     return Ok(empty {});
 }
 
-} // namespace tenon::clang_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -45,8 +45,6 @@ export namespace tenon
 class ClangToolchain {
 public:
     static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
-        using namespace clang_detail;
-
         auto compiler =
             toolchain::command::canonical_tool(specification.compiler.as_path(), "clang++"_str);
         auto scanner = toolchain::ClangScanDeps::create(specification.scanner.as_path());
@@ -137,9 +135,9 @@ public:
 
     auto prepare(UnitSpec unit, ref<rstd::path::Path> working_directory) const
         -> Result<PreparedUnit> {
-        auto object_parent = clang_detail::create_parent(unit.object.as_path());
+        auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
-        auto dep_parent = clang_detail::create_parent(unit.depfile.as_path());
+        auto dep_parent = create_parent(unit.depfile.as_path());
         if (dep_parent.is_err()) return Err(rstd::move(dep_parent).unwrap_err());
         return Ok(PreparedUnit {
             .unit = rstd::move(unit),
@@ -163,10 +161,10 @@ public:
         if (context.is_err()) return context;
         if (scan_result.provided.is_some()) {
             if (prepared.unit.bmi.is_none()) {
-                return clang_detail::failure<empty>(rstd::format(
+                return failure<empty>(rstd::format(
                     "module unit has no BMI output: {}", prepared.unit.source.as_path()));
             }
-            auto parent = clang_detail::create_parent((*prepared.unit.bmi).as_path());
+            auto parent = create_parent((*prepared.unit.bmi).as_path());
             if (parent.is_err()) return parent;
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
             toolchain::command::push_option(command, toolchain::clang_options::CXX_MODULE);
@@ -190,7 +188,7 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return clang_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "clang++ failed for '{}'\n{}\n{}",
                 prepared.unit.source.as_path(),
                 command_text(command).as_str(),
@@ -203,11 +201,11 @@ public:
                  const Vec<PathBuf>& objects,
                  ref<rstd::path::Path> working_directory) const -> Result<empty> {
 
-        auto parent = clang_detail::create_parent(output_path);
+        auto parent = create_parent(output_path);
         if (parent.is_err()) return parent;
         auto archive_exists = rstd::fs::exists(output_path);
         if (archive_exists.is_err()) {
-            return clang_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "cannot inspect archive '{}': {}",
                 output_path,
                 rstd::move(archive_exists).unwrap_err()));
@@ -215,7 +213,7 @@ public:
         if (*archive_exists) {
             auto removed = rstd::fs::remove_file(output_path);
             if (removed.is_err()) {
-                return clang_detail::failure<empty>(rstd::format(
+                return failure<empty>(rstd::format(
                     "cannot replace archive '{}': {}",
                     output_path,
                     rstd::move(removed).unwrap_err()));
@@ -235,7 +233,7 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return clang_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "llvm-ar failed for '{}'\n{}\n{}",
                 output_path,
                 command_text(command).as_str(),
@@ -252,7 +250,7 @@ public:
                          ref<rstd::path::Path> working_directory) const
         -> Result<empty> {
 
-        auto parent = clang_detail::create_parent(output_path);
+        auto parent = create_parent(output_path);
         if (parent.is_err()) return parent;
         auto command = Vec<String>::make();
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
@@ -276,7 +274,7 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return clang_detail::failure<empty>(rstd::format(
+            return failure<empty>(rstd::format(
                 "clang++ failed to link '{}'\n{}\n{}",
                 output_path,
                 command_text(command).as_str(),

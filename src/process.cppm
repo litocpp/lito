@@ -6,7 +6,7 @@ import tenon.model;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::process_detail
+namespace tenon
 {
 
 auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
@@ -18,7 +18,7 @@ auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
     return Ok(rstd::move(decoded).unwrap());
 }
 
-} // namespace tenon::process_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -32,8 +32,6 @@ struct CommandOutput {
 auto run_command(const Vec<String>& arguments,
                  Option<ref<rstd::path::Path>> working_directory = None())
     -> Result<CommandOutput> {
-    using namespace process_detail;
-
     if (arguments.is_empty()) {
         return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
     }

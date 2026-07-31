@@ -5,18 +5,16 @@ import tenon.model;
 import tenon.source_discovery;
 import tenon.workspace_resolver;
 import tenon.lock_store;
-import tenon.package_adapter;
 import tenon.package;
 import tenon.toolchain.clang;
-import tenon.module_convention;
-import tenon.module_graph;
+import tenon.modules;
 import tenon.artifact_store;
 import tenon.build_layout;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::builder_detail
+namespace tenon
 {
 
 
@@ -66,14 +64,12 @@ auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
         request.configuration);
 }
 
-} // namespace tenon::builder_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto build(const BuildRequest& request) -> Result<BuildSummary> {
-    using namespace builder_detail;
-
     if (request.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }

@@ -1,9 +1,8 @@
-export module tenon.package_resolver;
+export module tenon.package:resolver;
 
 import rstd;
 import tenon.model;
-import tenon.manifest_locator;
-import tenon.manifest_schema;
+import tenon.manifest;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -11,7 +10,7 @@ using StringMap   = rstd::collections::BTreeMap<String, String>;
 using StringSet   = rstd::collections::BTreeMap<String, empty>;
 using ManifestMap = rstd::collections::BTreeMap<String, tenon::PackageManifest>;
 
-namespace tenon::package_resolver_detail
+namespace tenon
 {
 
 template<typename T>
@@ -201,7 +200,7 @@ public:
     }
 };
 
-} // namespace tenon::package_resolver_detail
+} // namespace tenon
 
 export namespace tenon
 {
@@ -210,8 +209,6 @@ auto resolve_loaded_package_roots(ref<rstd::path::Path> root_directory,
                                   ref<rstd::path::Path> manifest_path,
                                   Vec<PackageManifest> root_manifests)
     -> Result<ResolvedPackageGraph> {
-    using namespace package_resolver_detail;
-
     auto canonical_root = rstd::fs::canonicalize(root_directory);
     if (canonical_root.is_err()) {
         return failure<ResolvedPackageGraph>(rstd::format(

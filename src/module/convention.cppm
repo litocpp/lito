@@ -1,4 +1,4 @@
-export module tenon.module_convention;
+export module tenon.modules:convention;
 
 import rstd;
 import tenon.model;
@@ -7,7 +7,7 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringMap = rstd::collections::BTreeMap<String, String>;
 
-namespace tenon::module_convention_detail
+namespace tenon
 {
 
 template<typename T>
@@ -235,14 +235,12 @@ auto walk_sources(const PackageManifest& manifest,
     return Ok(empty {});
 }
 
-} // namespace tenon::module_convention_detail
+} // namespace tenon
 
 export namespace tenon
 {
 
 auto discover_module_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
-    using namespace module_convention_detail;
-
     if (manifest.root_module.is_none()) {
         return failure<ResolvedSourceSet>("module discovery requires package.module"_str);
     }
@@ -283,8 +281,6 @@ auto discover_module_sources(const PackageManifest& manifest) -> Result<Resolved
 auto validate_module_conventions(const PackageSpec& package,
                                  const Vec<PreparedUnit>& units,
                                  const Vec<ScanResult>& scans) -> Result<empty> {
-    using namespace module_convention_detail;
-
     if (units.len() != scans.len()) {
         return failure<empty>(
             "module convention received mismatched units and scan results"_str);
