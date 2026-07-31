@@ -102,15 +102,16 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     return Ok(rstd::move(result));
 }
 
-auto package_build(PackageManifest manifest,
-                   const BuildRequest& request) -> Result<ResolvedBuild> {
-    if (request.workspace || ! request.packages.is_empty()) {
-        return failure<ResolvedBuild>(
+auto package_selection(PackageManifest manifest,
+                       const PackageSelection& selection)
+    -> Result<ResolvedPackageSelection> {
+    if (selection.workspace || ! selection.packages.is_empty()) {
+        return failure<ResolvedPackageSelection>(
             "--workspace and --package require a workspace directory"_str);
     }
     if (manifest.version.source == PackageVersionSource::Workspace) {
-        return failure<ResolvedBuild>(rstd::format(
-            "package '{}' inherits package.version and must be built from its workspace root",
+        return failure<ResolvedPackageSelection>(rstd::format(
+            "package '{}' inherits package.version and must be selected from its workspace root",
             manifest.name.as_str()));
     }
     auto root = manifest.root.clone();
@@ -124,17 +125,19 @@ auto package_build(PackageManifest manifest,
     auto selected_roots = copy_strings(graph.root_ids);
     auto selected_packages = Vec<String>::with_capacity(graph.packages.len());
     for (const auto& package : graph.packages) selected_packages.push(package.id.clone());
-    return Ok(ResolvedBuild {
+    return Ok(ResolvedPackageSelection {
         .graph = rstd::move(graph),
         .selected_root_ids = rstd::move(selected_roots),
         .selected_package_ids = rstd::move(selected_packages),
     });
 }
 
-auto workspace_build(WorkspaceManifest workspace,
-                     const BuildRequest& request) -> Result<ResolvedBuild> {
-    if (request.workspace && ! request.packages.is_empty()) {
-        return failure<ResolvedBuild>("--workspace cannot be combined with --package"_str);
+auto workspace_selection(WorkspaceManifest workspace,
+                         const PackageSelection& selection)
+    -> Result<ResolvedPackageSelection> {
+    if (selection.workspace && ! selection.packages.is_empty()) {
+        return failure<ResolvedPackageSelection>(
+            "--workspace cannot be combined with --package"_str);
     }
 
     auto member_keys = StringSet::make();
@@ -147,14 +150,14 @@ auto workspace_build(WorkspaceManifest workspace,
         auto key = path_text(directory.as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (member_keys.contains_key(key->as_str())) {
-            return failure<ResolvedBuild>(rstd::format(
+            return failure<ResolvedPackageSelection>(rstd::format(
                 "workspace member directory '{}' is listed more than once", declared.as_path()));
         }
         auto document = load_manifest_document(directory.as_path());
         if (document.is_err()) return Err(rstd::move(document).unwrap_err());
         auto loaded = rstd::move(document).unwrap();
         if (loaded.kind != ManifestKind::Package || loaded.package.is_none()) {
-            return failure<ResolvedBuild>(rstd::format(
+            return failure<ResolvedPackageSelection>(rstd::format(
                 "workspace member '{}' must contain a package manifest", declared.as_path()));
         }
         auto manifest = rstd::move(loaded.package).unwrap();
@@ -182,7 +185,8 @@ auto workspace_build(WorkspaceManifest workspace,
         member_names.insert(package.manifest.name.clone(), package.id.clone());
     }
     if (member_ids.len() != member_directories.len()) {
-        return failure<ResolvedBuild>("resolved workspace members are incomplete"_str);
+        return failure<ResolvedPackageSelection>(
+            "resolved workspace members are incomplete"_str);
     }
 
     auto default_ids = Vec<String>::make();
@@ -194,13 +198,13 @@ auto workspace_build(WorkspaceManifest workspace,
         auto key = path_text(canonical->as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         if (default_keys.contains_key(key->as_str())) {
-            return failure<ResolvedBuild>(rstd::format(
+            return failure<ResolvedPackageSelection>(rstd::format(
                 "workspace default member directory '{}' is listed more than once",
                 declared.as_path()));
         }
         auto id = member_ids.get(key->as_str());
         if (id.is_none()) {
-            return failure<ResolvedBuild>(rstd::format(
+            return failure<ResolvedPackageSelection>(rstd::format(
                 "workspace default member '{}' is not listed in workspace.members",
                 declared.as_path()));
         }
@@ -209,18 +213,19 @@ auto workspace_build(WorkspaceManifest workspace,
     }
 
     auto selected_roots = Vec<String>::make();
-    if (request.workspace || (request.packages.is_empty() && default_ids.is_empty())) {
+    if (selection.workspace ||
+        (selection.packages.is_empty() && default_ids.is_empty())) {
         selected_roots = copy_strings(graph.root_ids);
-    } else if (! request.packages.is_empty()) {
+    } else if (! selection.packages.is_empty()) {
         auto selected_names = StringSet::make();
-        for (const auto& name : request.packages) {
+        for (const auto& name : selection.packages) {
             if (selected_names.contains_key(name.as_str())) {
-                return failure<ResolvedBuild>(rstd::format(
+                return failure<ResolvedPackageSelection>(rstd::format(
                     "workspace package '{}' was selected more than once", name.as_str()));
             }
             auto id = member_names.get(name.as_str());
             if (id.is_none()) {
-                return failure<ResolvedBuild>(rstd::format(
+                return failure<ResolvedPackageSelection>(rstd::format(
                     "workspace has no member package named '{}'", name.as_str()));
             }
             selected_names.insert(name.clone(), empty {});
@@ -235,7 +240,7 @@ auto workspace_build(WorkspaceManifest workspace,
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }
-    return Ok(ResolvedBuild {
+    return Ok(ResolvedPackageSelection {
         .graph = rstd::move(graph),
         .selected_root_ids = rstd::move(selected_roots),
         .selected_package_ids = rstd::move(selected_packages).unwrap(),
@@ -247,17 +252,19 @@ auto workspace_build(WorkspaceManifest workspace,
 export namespace tenon
 {
 
-auto resolve_build_root(const BuildRequest& request) -> Result<ResolvedBuild> {
-    auto document = load_manifest_document(request.root.as_path());
+auto resolve_package_selection(const PackageSelection& selection)
+    -> Result<ResolvedPackageSelection> {
+    auto document = load_manifest_document(selection.root.as_path());
     if (document.is_err()) return Err(rstd::move(document).unwrap_err());
     auto loaded = rstd::move(document).unwrap();
     if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-        return package_build(rstd::move(loaded.package).unwrap(), request);
+        return package_selection(rstd::move(loaded.package).unwrap(), selection);
     }
     if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
-        return workspace_build(rstd::move(loaded.workspace).unwrap(), request);
+        return workspace_selection(rstd::move(loaded.workspace).unwrap(), selection);
     }
-    return failure<ResolvedBuild>("manifest document has no package or workspace"_str);
+    return failure<ResolvedPackageSelection>(
+        "manifest document has no package or workspace"_str);
 }
 
 } // namespace tenon

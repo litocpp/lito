@@ -39,7 +39,7 @@ auto emit(const BuildRequest& request,
 }
 
 auto load_build_package(const BuildRequest& request) -> Result<PackageSpec> {
-    auto resolved = resolve_build_root(request);
+    auto resolved = resolve_package_selection(request.selection);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto build = rstd::move(resolved).unwrap();
     auto locked = sync_lock(build.graph, request.locked);
@@ -70,7 +70,7 @@ export namespace tenon
 {
 
 auto build(const BuildRequest& request) -> Result<BuildSummary> {
-    if (request.root.is_empty()) {
+    if (request.selection.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
     auto loaded = load_build_package(request);

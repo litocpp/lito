@@ -101,6 +101,7 @@ struct ToolchainSpec {
     PathBuf compiler;
     PathBuf scanner;
     PathBuf archiver;
+    PathBuf formatter;
 };
 
 struct ProfileSpec {
@@ -206,7 +207,13 @@ struct ResolvedPackageGraph {
     Vec<ResolvedPackage> packages;
 };
 
-struct ResolvedBuild {
+struct PackageSelection {
+    PathBuf     root;
+    Vec<String> packages;
+    bool        workspace { false };
+};
+
+struct ResolvedPackageSelection {
     ResolvedPackageGraph graph;
     Vec<String>          selected_root_ids;
     Vec<String>          selected_package_ids;
@@ -336,12 +343,10 @@ struct BuildObserver {
 };
 
 struct BuildRequest {
-    PathBuf                    root;
+    PackageSelection           selection;
     Vec<String>                targets;
-    Vec<String>                packages;
     PathBuf                    output;
     BuildConfiguration         configuration;
-    bool                       workspace { false };
     bool                       locked { false };
     Option<BuildObserver> observer;
 };
@@ -355,6 +360,16 @@ struct BuildSummary {
     usize  reused {};
     Vec<PathBuf> archives;
     Vec<PathBuf> executables;
+};
+
+struct FormatRequest {
+    PackageSelection selection;
+    ToolchainSpec    toolchain;
+};
+
+struct FormatSummary {
+    usize packages {};
+    usize files {};
 };
 
 } // namespace tenon

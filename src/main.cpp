@@ -27,6 +27,15 @@ auto configured_path(const char* value) -> tenon::PathBuf {
     return tenon::PathBuf::from(rstd::ffi::CStr::from_ptr(value).to_str().unwrap());
 }
 
+auto configured_toolchain() -> tenon::ToolchainSpec {
+    return tenon::ToolchainSpec {
+        .compiler = configured_path(TENON_DEFAULT_CLANGXX),
+        .scanner = configured_path(TENON_DEFAULT_CLANG_SCAN_DEPS),
+        .archiver = configured_path(TENON_DEFAULT_LLVM_AR),
+        .formatter = configured_path(TENON_DEFAULT_CLANG_FORMAT),
+    };
+}
+
 void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose && event.kind != tenon::BuildEventKind::Compile &&
@@ -42,6 +51,8 @@ void print_help() {
     rstd::io::println("");
     rstd::io::println(
         "Usage: tenon build <directory> [--package <name>] [--workspace] [--profile <debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+    rstd::io::println(
+        "       tenon format <directory> [--package <name>] [--workspace]");
     rstd::io::println("");
     rstd::io::println("Supported target toolchains: clang++ with libstdc++ or libc++");
     rstd::io::println("All builds use -fno-rtti -fno-exceptions");
@@ -62,7 +73,7 @@ int main() {
         print_help();
         return 0;
     }
-    if (*command != "build"_str) {
+    if (*command != "build"_str && *command != "format"_str) {
         rstd::io::eprintln("tenon: unknown command '{}'", command->as_str());
         print_help();
         return 2;
@@ -70,17 +81,50 @@ int main() {
 
     auto directory = arguments.next();
     if (directory.is_none()) {
-        rstd::io::eprintln("tenon: build requires a package or workspace directory");
+        rstd::io::eprintln(
+            "tenon: {} requires a package or workspace directory", command->as_str());
         return 2;
+    }
+    if (*directory == "--help"_str || *directory == "-h"_str) {
+        print_help();
+        return 0;
+    }
+
+    if (*command == "format"_str) {
+        auto request = tenon::FormatRequest {};
+        request.selection.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
+        request.toolchain = configured_toolchain();
+        while (auto option = arguments.next()) {
+            if (*option == "--package"_str) {
+                auto value = arguments.next();
+                if (value.is_none()) return missing_value("--package"_str);
+                request.selection.packages.push(rstd::move(value).unwrap());
+            } else if (*option == "--workspace"_str) {
+                request.selection.workspace = true;
+            } else if (*option == "--help"_str || *option == "-h"_str) {
+                print_help();
+                return 0;
+            } else {
+                rstd::io::eprintln("tenon: unknown format option '{}'", option->as_str());
+                return 2;
+            }
+        }
+
+        auto result = tenon::format(request);
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        rstd::io::println(
+            "formatted {} packages, {} files", summary.packages, summary.files);
+        return 0;
     }
 
     auto request = tenon::BuildRequest {};
-    request.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
-    request.configuration.toolchain = tenon::ToolchainSpec {
-        .compiler = configured_path(TENON_DEFAULT_CLANGXX),
-        .scanner = configured_path(TENON_DEFAULT_CLANG_SCAN_DEPS),
-        .archiver = configured_path(TENON_DEFAULT_LLVM_AR),
-    };
+    request.selection.root = tenon::PathBuf::from(rstd::move(directory).unwrap());
+    request.configuration.toolchain = configured_toolchain();
     request.configuration.standard_library = tenon::StandardLibrary::Libcxx;
     request.configuration.bmi_mode = tenon::BmiMode::Reduced;
     request.configuration.language_standard = tenon::String::make("c++20"_str);
@@ -103,9 +147,9 @@ int main() {
         } else if (*option == "--package"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--package"_str);
-            request.packages.push(rstd::move(value).unwrap());
+            request.selection.packages.push(rstd::move(value).unwrap());
         } else if (*option == "--workspace"_str) {
-            request.workspace = true;
+            request.selection.workspace = true;
         } else if (*option == "--out"_str) {
             auto value = arguments.next();
             if (value.is_none()) return missing_value("--out"_str);

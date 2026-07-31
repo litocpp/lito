@@ -42,6 +42,7 @@ add_subdirectory("${TENON_RSTD_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/rstd")
 find_program(TENON_DEFAULT_CLANGXX NAMES clang++ REQUIRED)
 find_program(TENON_DEFAULT_CLANG_SCAN_DEPS NAMES clang-scan-deps REQUIRED)
 find_program(TENON_DEFAULT_LLVM_AR NAMES llvm-ar REQUIRED)
+find_program(TENON_DEFAULT_CLANG_FORMAT NAMES clang-format REQUIRED)
 
 add_library(tenon.lib STATIC)
 target_compile_features(tenon.lib PUBLIC cxx_std_20)
@@ -70,12 +71,15 @@ target_sources(
          src/lock_store.cppm
          src/toolchain/command.cppm
          src/toolchain/clang_options.cppm
+         src/toolchain/clang_format_options.cppm
+         src/toolchain/clang_format.cppm
          src/toolchain/clang_scan_deps_options.cppm
          src/toolchain/clang_scan_deps.cppm
          src/toolchain/clang.cppm
          src/artifact_store.cppm
          src/build_layout.cppm
          src/builder.cppm
+         src/formatter.cppm
          src/mod.cppm)
 target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)
 
@@ -85,4 +89,5 @@ target_compile_definitions(
   tenon
   PRIVATE TENON_DEFAULT_CLANGXX="${TENON_DEFAULT_CLANGXX}"
           TENON_DEFAULT_CLANG_SCAN_DEPS="${TENON_DEFAULT_CLANG_SCAN_DEPS}"
-          TENON_DEFAULT_LLVM_AR="${TENON_DEFAULT_LLVM_AR}")
+          TENON_DEFAULT_LLVM_AR="${TENON_DEFAULT_LLVM_AR}"
+          TENON_DEFAULT_CLANG_FORMAT="${TENON_DEFAULT_CLANG_FORMAT}")
