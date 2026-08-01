@@ -4,7 +4,6 @@ import rstd;
 import tenon.model;
 import tenon.modules;
 import tenon.toolchain;
-import tenon.build_layout;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -283,7 +282,8 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
 auto discover_package_sources(const PackageMetadata&     package,
                               const SourceDiscoveryPlan& plan,
                               const ClangToolchain&      toolchain,
-                              const BuildLayout& layout) -> Result<Vec<ResolvedPackageSources>> {
+                              const Option<BuildObserver>& observer)
+    -> Result<Vec<ResolvedPackageSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -311,15 +311,13 @@ auto discover_package_sources(const PackageMetadata&     package,
     for (auto cursor = usize {}; cursor < queue.len(); ++cursor) {
         auto        candidate = rstd::move(queue[cursor]);
         const auto& target    = package.targets[candidate.target];
-        auto        object =
-            layout.object(target.manifest.name.as_str(), candidate.source.relative_path.as_path());
-        if (object.is_err()) return Err(rstd::move(object).unwrap_err());
-        auto depfile = layout.scan_depfile(target.manifest.name.as_str(),
-                                           candidate.source.relative_path.as_path());
-        if (depfile.is_err()) return Err(rstd::move(depfile).unwrap_err());
+        if (observer.is_some() && observer->notify != nullptr) {
+            observer->notify(observer->context,
+                             BuildEvent { BuildEventKind::Scan,
+                                          target.manifest.name.as_str(),
+                                          candidate.source.canonical_path.as_path() });
+        }
         auto facts = toolchain.preprocess(candidate.source.canonical_path.as_path(),
-                                          object->as_path(),
-                                          depfile->as_path(),
                                           plan.contexts[candidate.target],
                                           target.manifest.root.as_path());
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
@@ -332,7 +330,7 @@ auto discover_package_sources(const PackageMetadata&     package,
                                   : "<none>"_str;
                 return discovery_failure<Vec<ResolvedPackageSources>>(
                     rstd::format("module convention expected '{}' to provide '{}', but "
-                                 "clang++ -E reported '{}'",
+                                 "native preprocessing reported '{}'",
                                  candidate.source.canonical_path.as_path(),
                                  candidate.source.expected_module->as_str(),
                                  actual));

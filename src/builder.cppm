@@ -86,7 +86,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
     auto layout = rstd::move(selected_layout).unwrap();
 
-    auto discovered = discover_package_sources(metadata, discovery_plan, toolchain, layout);
+    auto discovered =
+        discover_package_sources(metadata, discovery_plan, toolchain, request.observer);
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
     auto finalized   = finalize_package(rstd::move(metadata), rstd::move(source_sets));
@@ -112,12 +113,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         const auto& target_spec = package.targets[target];
         for (const auto& source : target_spec.sources) {
             auto object = layout.object(target_spec.name.as_str(), source.relative_path.as_path());
-            auto depfile =
-                layout.scan_depfile(target_spec.name.as_str(), source.relative_path.as_path());
             auto cache_record =
                 layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
-            if (depfile.is_err()) return Err(rstd::move(depfile).unwrap_err());
             if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
 
             auto id       = units.len();
@@ -128,7 +126,6 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     .relative_source = source.relative_path.clone(),
                     .source          = source.path.clone(),
                     .object          = rstd::move(object).unwrap(),
-                    .scan_depfile    = rstd::move(depfile).unwrap(),
                     .cache_record    = rstd::move(cache_record).unwrap(),
                     .context         = rstd::addressof(package_plan.contexts[target]),
                 },
@@ -146,10 +143,12 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto scans = Vec<ScanResult>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         const auto target = units[unit].unit.target;
-        emit(request,
-             BuildEventKind::Scan,
-             package.targets[target].name.as_str(),
-             units[unit].unit.source.as_path());
+        if (units[unit].preprocessed == nullptr) {
+            emit(request,
+                 BuildEventKind::Scan,
+                 package.targets[target].name.as_str(),
+                 units[unit].unit.source.as_path());
+        }
         auto scanned = toolchain.scan(units[unit]);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();

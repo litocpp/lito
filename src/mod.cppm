@@ -4,6 +4,7 @@ export import tenon.model;
 export import tenon.build_profile;
 export import tenon.config;
 export import tenon.manifest;
+export import tenon.preprocessor;
 export import tenon.source_discovery;
 export import tenon.modules;
 export import tenon.package;

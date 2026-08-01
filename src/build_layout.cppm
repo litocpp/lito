@@ -104,12 +104,6 @@ public:
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
 
-    auto scan_depfile(ref<str> target, ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
-        auto scratch = join(join(output_.as_path(), ".tenon"_str).as_path(), "scan"_str);
-        return source_path(scratch.as_path(), target, relative_source, ".d"_str);
-    }
-
     auto compile_cache_directory() const -> PathBuf {
         return join(output_.as_path(), "tenon-cache"_str);
     }

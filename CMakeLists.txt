@@ -60,8 +60,18 @@ target_sources(
          src/manifest/mod.cppm
          src/config/schema.cppm
          src/config/mod.cppm
+         src/preprocessor/token.cppm
+         src/preprocessor/source.cppm
+         src/preprocessor/traits.cppm
+         src/preprocessor/lexer.cppm
+         src/preprocessor/macro.cppm
+         src/preprocessor/expression.cppm
+         src/preprocessor/session.cppm
+         src/preprocessor/directive.cppm
+         src/preprocessor/mod.cppm
          src/modules/convention.cppm
          src/modules/graph.cppm
+         src/modules/preprocessed.cppm
          src/modules/mod.cppm
          src/source_discovery.cppm
          src/workspace/member.cppm
@@ -78,8 +88,7 @@ target_sources(
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
          src/toolchain/clang_format.cppm
-         src/toolchain/clang_depfile.cppm
-         src/toolchain/clang_preprocessor.cppm
+         src/toolchain/clang_preprocessor_environment.cppm
          src/toolchain/clang.cppm
          src/toolchain/mod.cppm
          src/build_layout.cppm
@@ -100,3 +109,12 @@ target_sources(
           FILES
           src/main.cppm)
 target_link_libraries(tenon PRIVATE tenon.lib rstd::nostd)
+
+include(CTest)
+
+if(BUILD_TESTING)
+  add_executable(tenon.preprocessor.test)
+  target_sources(tenon.preprocessor.test PRIVATE test/preprocessor/core.cpp)
+  target_link_libraries(tenon.preprocessor.test PRIVATE tenon.lib rstd::nostd)
+  add_test(NAME tenon.preprocessor.core COMMAND tenon.preprocessor.test)
+endif()

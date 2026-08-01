@@ -29,6 +29,20 @@ struct CommandOutput {
     String    standard_error;
 };
 
+auto decode_command_output(rstd::process::Output value) -> Result<CommandOutput> {
+    auto stdout_text = output_text(rstd::move(value.stdout_buf), "command stdout"_str);
+    if (stdout_text.is_err()) return Err(rstd::move(stdout_text).unwrap_err());
+    auto stderr_text = output_text(rstd::move(value.stderr_buf), "command stderr"_str);
+    if (stderr_text.is_err()) return Err(rstd::move(stderr_text).unwrap_err());
+
+    auto code = value.status.code();
+    return Ok(CommandOutput {
+        .exit_code = code.is_some() ? *code : i32(-1),
+        .standard_output = rstd::move(stdout_text).unwrap(),
+        .standard_error = rstd::move(stderr_text).unwrap(),
+    });
+}
+
 auto run_command(const Vec<String>& arguments,
                  Option<ref<rstd::path::Path>> working_directory = None())
     -> Result<CommandOutput> {
@@ -54,18 +68,54 @@ auto run_command(const Vec<String>& arguments,
                          rstd::move(output).unwrap_err())));
     }
 
-    auto value  = rstd::move(output).unwrap();
-    auto stdout_text = output_text(rstd::move(value.stdout_buf), "command stdout"_str);
-    if (stdout_text.is_err()) return Err(rstd::move(stdout_text).unwrap_err());
-    auto stderr_text = output_text(rstd::move(value.stderr_buf), "command stderr"_str);
-    if (stderr_text.is_err()) return Err(rstd::move(stderr_text).unwrap_err());
+    return decode_command_output(rstd::move(output).unwrap());
+}
 
-    auto code = value.status.code();
-    return Ok(CommandOutput {
-        .exit_code = code.is_some() ? *code : i32(-1),
-        .standard_output = rstd::move(stdout_text).unwrap(),
-        .standard_error = rstd::move(stderr_text).unwrap(),
-    });
+auto run_command_with_input(const Vec<String>& arguments,
+                            ref<str>           standard_input,
+                            Option<ref<rstd::path::Path>> working_directory = None())
+    -> Result<CommandOutput> {
+    if (arguments.is_empty()) {
+        return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+    }
+
+    auto command = rstd::process::Command::make(arguments[usize {}].as_str());
+    for (auto index = usize(1); index < arguments.len(); ++index) {
+        command.arg(arguments[index].as_str());
+    }
+    if (working_directory.is_some()) command.current_dir(*working_directory);
+    command.set_stdin(rstd::process::Stdio::piped());
+    command.set_stdout(rstd::process::Stdio::piped());
+    command.set_stderr(rstd::process::Stdio::piped());
+
+    auto spawned = command.spawn();
+    if (spawned.is_err()) {
+        return Err(Error::make(
+            ErrorKind::Toolchain,
+            rstd::format("failed to execute '{}': {}",
+                         arguments[usize {}].as_str(),
+                         rstd::move(spawned).unwrap_err())));
+    }
+    auto child = rstd::move(spawned).unwrap();
+    {
+        auto input = child.take_stdin();
+        if (input.is_none()) {
+            return Err(Error::make(ErrorKind::Toolchain, "command stdin pipe is unavailable"_str));
+        }
+        auto written = rstd::io::write_all(*input, standard_input.as_bytes());
+        if (written.is_err()) {
+            return Err(Error::make(ErrorKind::Toolchain,
+                                   rstd::format("failed to write command stdin: {}",
+                                                rstd::move(written).unwrap_err())));
+        }
+    }
+    auto output = child.wait_with_output();
+    if (output.is_err()) {
+        return Err(Error::make(ErrorKind::Toolchain,
+                               rstd::format("failed to collect command output: {}",
+                                            rstd::move(output).unwrap_err())));
+    }
+    return decode_command_output(rstd::move(output).unwrap());
 }
 
 auto command_text(const Vec<String>& arguments) -> String {

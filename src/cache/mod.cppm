@@ -16,7 +16,7 @@ namespace tenon
 {
 
 inline constexpr auto CACHE_VERSION  = u64(1);
-inline constexpr auto SCAN_RECIPE    = "clang-preprocess-v1"_str;
+inline constexpr auto SCAN_RECIPE    = "tenon-native-preprocess-v1"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v1"_str;
 
 template<typename T>
@@ -396,6 +396,7 @@ public:
         cache::add_text(artifact_hash, environment_.as_str());
         cache::add_text(artifact_hash, context_key.as_str());
         cache::add_text(artifact_hash, command_key.as_str());
+        cache::add_text(artifact_hash, scan.preprocessor_environment.as_str());
 
         auto files_json = JsonArray::make();
         auto file_iter  = files.iter();
@@ -447,6 +448,8 @@ public:
 
         auto scan_json = JsonMap::make();
         scan_json.insert(String::make("implementation-module"_str), rstd::move(implementation));
+        scan_json.insert(String::make("preprocessor-environment"_str),
+                         cache_string(scan.preprocessor_environment.as_str()));
         scan_json.insert(String::make("provided"_str), rstd::move(provided));
         scan_json.insert(String::make("requires"_str), Json::Array(rstd::move(required_json)));
 

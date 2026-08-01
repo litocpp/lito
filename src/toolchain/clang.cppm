@@ -3,9 +3,10 @@ export module tenon.toolchain:clang;
 import rstd;
 import tenon.model;
 import tenon.process;
+import tenon.preprocessor;
+import tenon.modules;
 import :clang_options;
-import :clang_depfile;
-import :clang_preprocessor;
+import :clang_preprocessor_environment;
 import :command;
 
 using namespace rstd::prelude;
@@ -37,11 +38,6 @@ auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
     return Ok(empty {});
 }
 
-auto cleanup_scratch(ref<rstd::path::Path> path) noexcept -> void {
-    auto removed = rstd::fs::remove_file(path);
-    (void)removed;
-}
-
 auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> working_directory)
     -> Result<String> {
     auto working = working_directory.to_str();
@@ -55,6 +51,16 @@ auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> wor
         identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
     }
     return Ok(rstd::move(identity));
+}
+
+auto unsupported_native_preprocessor_option(ref<str> option) -> bool {
+    return option == "-include"_str || option.starts_with("-include="_str) ||
+           option == "-imacros"_str || option.starts_with("-imacros="_str) ||
+           option == "-include-pch"_str || option.starts_with("-include-pch="_str) ||
+           option == "-fmodule-map-file"_str ||
+           option.starts_with("-fmodule-map-file="_str) ||
+           option.starts_with("-fmodule-file="_str) ||
+           option.starts_with("-fmodules-cache-path="_str);
 }
 
 } // namespace tenon
@@ -168,8 +174,6 @@ public:
         -> Result<PreparedUnit> {
         auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
-        auto dep_parent = create_parent(unit.scan_depfile.as_path());
-        if (dep_parent.is_err()) return Err(rstd::move(dep_parent).unwrap_err());
         return Ok(PreparedUnit {
             .unit              = rstd::move(unit),
             .working_directory = PathBuf::from(working_directory),
@@ -178,64 +182,82 @@ public:
 
     auto scan(const PreparedUnit& prepared) const -> Result<ScanResult> {
         if (prepared.preprocessed != nullptr) {
-            return Ok(toolchain::scan_from_preprocessed(*prepared.preprocessed, prepared.unit.id));
+            return Ok(modules::scan_from_preprocessed(*prepared.preprocessed, prepared.unit.id));
         }
         auto facts = preprocess(prepared.unit.source.as_path(),
-                                prepared.unit.object.as_path(),
-                                prepared.unit.scan_depfile.as_path(),
                                 *prepared.unit.context,
                                 prepared.working_directory.as_path());
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-        return Ok(toolchain::scan_from_preprocessed(*facts, prepared.unit.id));
+        return Ok(modules::scan_from_preprocessed(*facts, prepared.unit.id));
     }
 
     auto preprocess(ref<rstd::path::Path> source,
-                    ref<rstd::path::Path> dependency_target,
-                    ref<rstd::path::Path> depfile,
                     const CompileContext& compile_context,
                     ref<rstd::path::Path> working_directory) const
         -> Result<PreprocessedModuleFacts> {
-        auto parent = create_parent(depfile);
-        if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
-        auto command = Vec<String>::make();
-        auto context = append_compile_context(command, compile_context);
-        if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-        toolchain::command::push_option(command, toolchain::clang_options::PREPROCESS);
-        toolchain::command::push_option(command, toolchain::clang_options::DEPENDENCIES);
-        toolchain::command::push_option(command, toolchain::clang_options::DEPENDENCY_TARGET);
-        auto pushed = toolchain::command::push_path(command, dependency_target);
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(command, toolchain::clang_options::DEPENDENCY_FILE);
-        pushed = toolchain::command::push_path(command, depfile);
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        pushed = toolchain::command::push_path(command, source);
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-
-        auto output = run_command(command, Some(working_directory));
-        if (output.is_err()) {
-            cleanup_scratch(depfile);
-            return Err(rstd::move(output).unwrap_err());
+        for (const auto& option : compile_context.options) {
+            if (unsupported_native_preprocessor_option(option.as_str())) {
+                return failure<PreprocessedModuleFacts>(rstd::format(
+                    "compiler option '{}' is not supported by the native preprocessor",
+                    option.as_str()));
+            }
         }
-        auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != i32 {}) {
-            cleanup_scratch(depfile);
-            return failure<PreprocessedModuleFacts>(
-                rstd::format("clang++ -E failed for '{}'\n{}\n{}",
-                             source,
-                             command_text(command).as_str(),
-                             command_output.standard_error.as_str()));
+        toolchain::PreprocessorEnvironment* environment = nullptr;
+        auto working_text = working_directory.to_str();
+        if (working_text.is_none()) {
+            return failure<PreprocessedModuleFacts>(rstd::format(
+                "preprocessor working directory '{}' is not valid UTF-8", working_directory));
         }
-        auto facts =
-            toolchain::parse_preprocessed_module(command_output.standard_output.as_str(), source);
-        if (facts.is_err()) {
-            cleanup_scratch(depfile);
-            return facts;
+        for (auto& existing : preprocessor_environments_) {
+            if (existing.context_id.as_str() == compile_context.id.as_str() &&
+                existing.working_directory.as_path() == working_directory) {
+                environment = rstd::addressof(existing);
+                break;
+            }
         }
-        auto headers = toolchain::parse_depfile(depfile, working_directory);
-        cleanup_scratch(depfile);
-        if (headers.is_err()) return Err(rstd::move(headers).unwrap_err());
-        facts->header_inputs = rstd::move(headers).unwrap();
-        return facts;
+        if (environment == nullptr) {
+            auto command = Vec<String>::make();
+            auto context = append_compile_context(command, compile_context);
+            if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+            auto queried = toolchain::query_preprocessor_environment(
+                command, compile_context.id.as_str(), working_directory);
+            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+            queried->working_directory = PathBuf::from(working_directory);
+            preprocessor_environments_.push(rstd::move(queried).unwrap());
+            environment = rstd::addressof(
+                preprocessor_environments_[preprocessor_environments_.len() - usize(1)]);
+        }
+        auto sources  = toolchain::FilesystemSourceProvider {};
+        auto includes = toolchain::ClangIncludeResolver(*environment);
+        auto builtins = toolchain::ClangBuiltinProvider(*environment, working_directory);
+        auto pragmas  = toolchain::ClangPragmaHandler {};
+        auto events   = toolchain::DependencyEvents {};
+        auto translation = preprocessor::preprocess(
+            preprocessor::PreprocessRequest {
+                .source = PathBuf::from(source),
+                .environment_identity = environment->identity.clone(),
+                .purpose = preprocessor::PreprocessPurpose::DependencyDiscovery,
+            },
+            sources,
+            includes,
+            builtins,
+            pragmas,
+            events);
+        if (translation.is_err()) {
+            auto error = rstd::move(translation).unwrap_err();
+            if (error.path.is_some() && error.location.is_some()) {
+                return failure<PreprocessedModuleFacts>(rstd::format(
+                    "native preprocessing failed at {}:{}:{}: {}",
+                    error.path->as_path(),
+                    error.location->line,
+                    error.location->column,
+                    error.message.as_str()));
+            }
+            return failure<PreprocessedModuleFacts>(rstd::format(
+                "native preprocessing failed for '{}': {}", source, error.message.as_str()));
+        }
+        translation->header_inputs = events.take_headers();
+        return modules::parse_preprocessed_module(*translation);
     }
 
     auto prepare_compile(const PreparedUnit&           prepared,
@@ -421,6 +443,7 @@ private:
     PathBuf          archiver_;
     PathBuf          resource_dir_;
     CompilerIdentity compiler_identity_;
+    mutable Vec<toolchain::PreprocessorEnvironment> preprocessor_environments_;
 };
 
 } // namespace tenon

@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "tenon.toml",
+      "name": "fixture-preprocessor-native",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-preprocessor-native"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

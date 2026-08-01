@@ -25,6 +25,10 @@ inline constexpr auto DEPENDENCIES      = "-MD"_str;
 inline constexpr auto DEPENDENCY_TARGET = "-MT"_str;
 inline constexpr auto DEPENDENCY_FILE   = "-MF"_str;
 inline constexpr auto PREPROCESS        = "-E"_str;
+inline constexpr auto DUMP_MACROS       = "-dM"_str;
+inline constexpr auto VERBOSE           = "-v"_str;
+inline constexpr auto NO_LINE_MARKERS   = "-P"_str;
+inline constexpr auto STANDARD_INPUT    = "-"_str;
 
 inline constexpr auto LANGUAGE             = "-x"_str;
 inline constexpr auto CXX_SOURCE           = "c++"_str;

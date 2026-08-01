@@ -252,7 +252,8 @@ struct PreprocessedModuleFacts {
     Option<String>         implementation_module;
     Vec<ModuleImport>      imports;
     Vec<PathBuf>           header_inputs;
-    usize                  output_bytes {};
+    String                 preprocessor_environment;
+    usize                  input_bytes {};
 };
 
 struct ResolvedSource {
@@ -439,7 +440,6 @@ struct UnitSpec {
     PathBuf               relative_source;
     PathBuf               source;
     PathBuf               object;
-    PathBuf               scan_depfile;
     PathBuf               cache_record;
     Option<PathBuf>       bmi;
     const CompileContext* context {};
@@ -457,6 +457,7 @@ struct ScanResult {
     Option<String>         implementation_module;
     Vec<String>            required_modules;
     Vec<PathBuf>           header_inputs;
+    String                 preprocessor_environment;
 };
 
 struct ModulePlan {
