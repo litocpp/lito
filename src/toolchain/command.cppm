@@ -1,4 +1,4 @@
-export module tenon.toolchain.command;
+export module tenon.toolchain:command;
 
 import rstd;
 import tenon.model;

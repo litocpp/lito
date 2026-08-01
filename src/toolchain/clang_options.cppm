@@ -1,4 +1,4 @@
-export module tenon.toolchain.clang_options;
+export module tenon.toolchain:clang_options;
 
 import rstd;
 import tenon.model;

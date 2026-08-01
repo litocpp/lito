@@ -6,7 +6,7 @@ import tenon.source_discovery;
 import tenon.workspace_resolver;
 import tenon.lock_store;
 import tenon.package;
-import tenon.toolchain.clang;
+import tenon.toolchain;
 import tenon.modules;
 import tenon.artifact_store;
 import tenon.build_layout;

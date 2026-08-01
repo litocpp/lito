@@ -3,7 +3,7 @@ export module tenon.config:schema;
 import rstd;
 import rstd.toml;
 import tenon.model;
-import tenon.toolchain.command;
+import tenon.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -11,5 +11,6 @@ export import tenon.workspace;
 export import tenon.workspace_resolver;
 export import tenon.lock_store;
 export import tenon.build_layout;
+export import tenon.toolchain;
 export import tenon.builder;
 export import tenon.formatter;

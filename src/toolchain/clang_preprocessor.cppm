@@ -1,4 +1,4 @@
-export module tenon.toolchain.clang_preprocessor;
+export module tenon.toolchain:clang_preprocessor;
 
 import rstd;
 import tenon.model;

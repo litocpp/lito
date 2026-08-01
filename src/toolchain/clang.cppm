@@ -1,12 +1,12 @@
-export module tenon.toolchain.clang;
+export module tenon.toolchain:clang;
 
 import rstd;
 import tenon.model;
 import tenon.process;
-import tenon.toolchain.clang_options;
-import tenon.toolchain.clang_depfile;
-import tenon.toolchain.clang_preprocessor;
-import tenon.toolchain.command;
+import :clang_options;
+import :clang_depfile;
+import :clang_preprocessor;
+import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -1,4 +1,4 @@
-export module tenon.toolchain.clang_format_options;
+export module tenon.toolchain:clang_format_options;
 
 import rstd;
 

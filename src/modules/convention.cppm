@@ -90,7 +90,7 @@ auto canonical_candidate(const PackageManifest& manifest,
     });
 }
 
-auto path_exists(ref<rstd::path::Path> path) -> Result<bool> {
+auto file_exists(ref<rstd::path::Path> path) -> Result<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
         return convention_failure<bool>(
@@ -98,7 +98,29 @@ auto path_exists(ref<rstd::path::Path> path) -> Result<bool> {
                          path,
                          rstd::move(exists).unwrap_err()));
     }
-    return Ok(*exists);
+    if (! *exists) return Ok(false);
+    auto metadata = rstd::fs::metadata(path);
+    if (metadata.is_err()) {
+        return convention_failure<bool>(
+            rstd::format("cannot inspect module convention source '{}': {}",
+                         path,
+                         rstd::move(metadata).unwrap_err()));
+    }
+    return Ok(metadata->is_file());
+}
+
+auto root_module_source(const PackageManifest& manifest) -> Result<ResolvedSource> {
+    if (manifest.root_module.is_none()) {
+        return convention_failure<ResolvedSource>("module discovery requires package.module"_str);
+    }
+    auto source_root_result = canonical_source_root(manifest);
+    if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
+    auto source_root = rstd::move(source_root_result).unwrap();
+    auto relative =
+        manifest.artifact_kind == ArtifactKind::Executable ? "mod.cppm"_str : "lib.cppm"_str;
+    auto requested = source_root.join(PathBuf::from(relative).as_path());
+    return canonical_candidate(
+        manifest, source_root.as_path(), requested.as_path(), Some(manifest.root_module->clone()));
 }
 
 } // namespace tenon
@@ -115,31 +137,14 @@ auto module_name_belongs(ref<str> root_module, ref<str> logical_name) -> bool {
 }
 
 auto module_entry_source(const PackageManifest& manifest) -> Result<ResolvedSource> {
-    auto source_root_result = canonical_source_root(manifest);
-    if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
-    auto source_root = rstd::move(source_root_result).unwrap();
     if (manifest.artifact_kind == ArtifactKind::Executable) {
-        auto requested = source_root.join(PathBuf::from("main.cppm"_str).as_path());
+        auto source_root_result = canonical_source_root(manifest);
+        if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
+        auto source_root = rstd::move(source_root_result).unwrap();
+        auto requested   = source_root.join(PathBuf::from("main.cppm"_str).as_path());
         return canonical_candidate(manifest, source_root.as_path(), requested.as_path(), None());
     }
-    if (manifest.root_module.is_none()) {
-        return convention_failure<ResolvedSource>("module discovery requires package.module"_str);
-    }
-    auto library     = source_root.join(PathBuf::from("lib.cppm"_str).as_path());
-    auto module      = source_root.join(PathBuf::from("mod.cppm"_str).as_path());
-    auto has_library = path_exists(library.as_path());
-    if (has_library.is_err()) return Err(rstd::move(has_library).unwrap_err());
-    auto has_module = path_exists(module.as_path());
-    if (has_module.is_err()) return Err(rstd::move(has_module).unwrap_err());
-    if (*has_library == *has_module) {
-        return convention_failure<ResolvedSource>(
-            rstd::format("module discovery requires exactly one primary interface "
-                         "at 'src/lib.cppm' or 'src/mod.cppm' for '{}'",
-                         manifest.root_module->as_str()));
-    }
-    const auto& requested = *has_library ? library : module;
-    return canonical_candidate(
-        manifest, source_root.as_path(), requested.as_path(), Some(manifest.root_module->clone()));
+    return root_module_source(manifest);
 }
 
 auto module_source(const PackageManifest& manifest, ref<str> logical_name)
@@ -149,17 +154,22 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
         return convention_failure<ResolvedSource>(rstd::format(
             "module '{}' does not belong to package '{}'", logical_name, manifest.name.as_str()));
     }
-    if (logical_name == manifest.root_module->as_str()) return module_entry_source(manifest);
+    if (logical_name == manifest.root_module->as_str()) return root_module_source(manifest);
 
     auto source_root_result = canonical_source_root(manifest);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
     auto relative    = String::make();
     auto segment     = String::make();
+    bool partition   = logical_name[manifest.root_module->size()] == u8(':');
     for (auto index = manifest.root_module->size() + usize(1); index < logical_name.size();
          ++index) {
         const auto value = logical_name[index];
         if (value == u8('.') || value == u8(':')) {
+            if (value == u8(':') && partition) {
+                return convention_failure<ResolvedSource>(rstd::format(
+                    "module '{}' contains multiple partition separators", logical_name));
+            }
             if (! valid_segment(segment.as_str())) {
                 return convention_failure<ResolvedSource>(
                     rstd::format("module '{}' contains an invalid path segment", logical_name));
@@ -167,6 +177,7 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
             if (! relative.is_empty()) relative.push_ascii('/');
             relative.push_str(segment.as_str());
             segment = String::make();
+            if (value == u8(':')) partition = true;
         } else {
             segment.push_ascii(value);
         }
@@ -177,7 +188,24 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
     }
     if (! relative.is_empty()) relative.push_ascii('/');
     relative.push_str(segment.as_str());
-    relative.push_str(".cppm"_str);
+    if (partition) {
+        relative.push_str(".cppm"_str);
+        auto requested = source_root.join(PathBuf::from(relative.as_str()).as_path());
+        return canonical_candidate(
+            manifest, source_root.as_path(), requested.as_path(), Some(String::make(logical_name)));
+    }
+
+    auto direct_relative = relative.clone();
+    direct_relative.push_str(".cppm"_str);
+    auto direct     = source_root.join(PathBuf::from(direct_relative.as_str()).as_path());
+    auto has_direct = file_exists(direct.as_path());
+    if (has_direct.is_err()) return Err(rstd::move(has_direct).unwrap_err());
+    if (*has_direct) {
+        return canonical_candidate(
+            manifest, source_root.as_path(), direct.as_path(), Some(String::make(logical_name)));
+    }
+
+    relative.push_str("/mod.cppm"_str);
     auto requested = source_root.join(PathBuf::from(relative.as_str()).as_path());
     return canonical_candidate(
         manifest, source_root.as_path(), requested.as_path(), Some(String::make(logical_name)));

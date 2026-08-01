@@ -5,7 +5,7 @@ import tenon.model;
 import tenon.source_discovery;
 import tenon.workspace_resolver;
 import tenon.lock_store;
-import tenon.toolchain.clang_format;
+import tenon.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -1,9 +1,9 @@
-export module tenon.toolchain.clang_format;
+export module tenon.toolchain:clang_format;
 
 import rstd;
 import tenon.model;
-import tenon.toolchain.clang_format_options;
-import tenon.toolchain.command;
+import :clang_format_options;
+import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -60,9 +60,9 @@ target_sources(
          src/manifest/mod.cppm
          src/config/schema.cppm
          src/config/mod.cppm
-         src/module/convention.cppm
-         src/module/graph.cppm
-         src/module/mod.cppm
+         src/modules/convention.cppm
+         src/modules/graph.cppm
+         src/modules/mod.cppm
          src/source_discovery.cppm
          src/workspace/member.cppm
          src/workspace/catalog.cppm
@@ -81,6 +81,7 @@ target_sources(
          src/toolchain/clang_depfile.cppm
          src/toolchain/clang_preprocessor.cppm
          src/toolchain/clang.cppm
+         src/toolchain/mod.cppm
          src/artifact_store.cppm
          src/build_layout.cppm
          src/builder.cppm
@@ -88,5 +89,13 @@ target_sources(
          src/mod.cppm)
 target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)
 
-add_executable(tenon src/main.cpp)
+add_executable(tenon)
+target_sources(
+  tenon
+  PRIVATE FILE_SET
+          modules
+          TYPE
+          CXX_MODULES
+          FILES
+          src/main.cppm)
 target_link_libraries(tenon PRIVATE tenon.lib rstd::nostd)

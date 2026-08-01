@@ -1,4 +1,4 @@
-export module tenon.toolchain.clang_depfile;
+export module tenon.toolchain:clang_depfile;
 
 import rstd;
 import tenon.model;

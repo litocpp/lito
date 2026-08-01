@@ -3,7 +3,7 @@ export module tenon.source_discovery;
 import rstd;
 import tenon.model;
 import tenon.modules;
-import tenon.toolchain.clang;
+import tenon.toolchain;
 import tenon.build_layout;
 
 using namespace rstd::prelude;
@@ -211,18 +211,23 @@ auto import_owner(const PackageMetadata&     package,
                   const SourceDiscoveryPlan& plan,
                   TargetId                   importer,
                   ref<str>                   logical_name) -> Result<Option<TargetId>> {
-    auto owner = Option<TargetId> {};
+    auto owner        = Option<TargetId> {};
+    auto owner_length = usize {};
     for (auto visible : plan.visible_targets[importer]) {
         const auto& module = package.targets[visible].manifest.root_module;
         if (module.is_none() || ! module_name_belongs(module->as_str(), logical_name)) continue;
-        if (owner.is_some() && *owner != visible) {
+        if (owner.is_none() || module->size() > owner_length) {
+            owner        = Some(visible);
+            owner_length = module->size();
+            continue;
+        }
+        if (module->size() == owner_length && *owner != visible) {
             return discovery_failure<Option<TargetId>>(
                 rstd::format("module import '{}' is owned by both '{}' and '{}'",
                              logical_name,
                              package.targets[*owner].manifest.name.as_str(),
                              package.targets[visible].manifest.name.as_str()));
         }
-        owner = Some(visible);
     }
     return Ok(owner);
 }
@@ -348,6 +353,9 @@ auto discover_package_sources(const PackageMetadata&     package,
                 import_owner(package, plan, candidate.target, imported.logical_name.as_str());
             if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
             if (owner->is_none()) continue;
+            if (package.targets[**owner].manifest.discovery == SourceDiscoveryMode::Explicit) {
+                continue;
+            }
             auto nested =
                 module_source(package.targets[**owner].manifest, imported.logical_name.as_str());
             if (nested.is_err()) return Err(rstd::move(nested).unwrap_err());

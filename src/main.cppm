@@ -1,3 +1,5 @@
+export module tenon.executable;
+
 import rstd;
 import tenon;
 
@@ -25,8 +27,7 @@ auto event_name(tenon::BuildEventKind kind) -> ref<str> {
 void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose && event.kind != tenon::BuildEventKind::Compile &&
-        event.kind != tenon::BuildEventKind::Archive &&
-        event.kind != tenon::BuildEventKind::Link) {
+        event.kind != tenon::BuildEventKind::Archive && event.kind != tenon::BuildEventKind::Link) {
         return;
     }
     rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
@@ -35,10 +36,9 @@ void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
 void print_help() {
     rstd::io::println("tenon - module-first C++ builder");
     rstd::io::println("");
-    rstd::io::println(
-        "Usage: tenon [-C <directory>] build [--package <name>] [--profile <debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
-    rstd::io::println(
-        "       tenon [-C <directory>] format [--package <name>]");
+    rstd::io::println("Usage: tenon [-C <directory>] build [--package <name>] [--profile "
+                      "<debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+    rstd::io::println("       tenon [-C <directory>] format [--package <name>]");
 }
 
 auto missing_value(ref<str> option) -> int {
@@ -48,16 +48,16 @@ auto missing_value(ref<str> option) -> int {
 
 } // namespace
 
-int main() {
+extern "C++" int main() {
     auto arguments = rstd::env::args();
     (void)arguments.next();
     auto working_directory = tenon::PathBuf::from("."_str);
-    auto command = arguments.next();
+    auto command           = arguments.next();
     while (command.is_some() && *command == "-C"_str) {
         auto value = arguments.next();
         if (value.is_none()) return missing_value("-C"_str);
         working_directory = tenon::PathBuf::from(rstd::move(value).unwrap());
-        command = arguments.next();
+        command           = arguments.next();
     }
     if (command.is_none() || (*command == "--help"_str) || (*command == "-h"_str)) {
         print_help();
@@ -78,10 +78,10 @@ int main() {
     auto project = rstd::move(loaded_config).unwrap();
 
     if (*command == "format"_str) {
-        auto request = tenon::FormatRequest {};
+        auto request           = tenon::FormatRequest {};
         request.selection.root = rstd::move(project.root);
-        request.toolchain = rstd::move(project.toolchain);
-        request.sources = rstd::move(project.sources);
+        request.toolchain      = rstd::move(project.toolchain);
+        request.sources        = rstd::move(project.sources);
         while (auto option = arguments.next()) {
             if (*option == "--package"_str) {
                 auto value = arguments.next();
@@ -103,19 +103,18 @@ int main() {
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
-        rstd::io::println(
-            "formatted {} packages, {} files", summary.packages, summary.files);
+        rstd::io::println("formatted {} packages, {} files", summary.packages, summary.files);
         return 0;
     }
 
-    auto request = tenon::BuildRequest {};
-    request.selection.root = rstd::move(project.root);
-    request.configuration.toolchain = rstd::move(project.toolchain);
-    request.configuration.standard_library = tenon::StandardLibrary::Libcxx;
-    request.configuration.bmi_mode = tenon::BmiMode::Reduced;
+    auto request                            = tenon::BuildRequest {};
+    request.selection.root                  = rstd::move(project.root);
+    request.configuration.toolchain         = rstd::move(project.toolchain);
+    request.configuration.standard_library  = tenon::StandardLibrary::Libcxx;
+    request.configuration.bmi_mode          = tenon::BmiMode::Reduced;
     request.configuration.language_standard = tenon::String::make("c++20"_str);
-    request.sources = rstd::move(project.sources);
-    auto event_context = EventContext {};
+    request.sources                         = rstd::move(project.sources);
+    auto event_context                      = EventContext {};
     while (auto option = arguments.next()) {
         if (*option == "--profile"_str) {
             auto value = arguments.next();
@@ -154,9 +153,9 @@ int main() {
 
     request.observer = Some(tenon::BuildObserver {
         .context = rstd::addressof(event_context),
-        .notify = observe,
+        .notify  = observe,
     });
-    auto result = tenon::build(request);
+    auto result      = tenon::build(request);
     if (result.is_err()) {
         auto error = rstd::move(result).unwrap_err();
         rstd::io::eprintln("tenon: {}", error.message.as_str());
