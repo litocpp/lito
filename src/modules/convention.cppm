@@ -188,13 +188,6 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
     }
     if (! relative.is_empty()) relative.push_ascii('/');
     relative.push_str(segment.as_str());
-    if (partition) {
-        relative.push_str(".cppm"_str);
-        auto requested = source_root.join(PathBuf::from(relative.as_str()).as_path());
-        return canonical_candidate(
-            manifest, source_root.as_path(), requested.as_path(), Some(String::make(logical_name)));
-    }
-
     auto direct_relative = relative.clone();
     direct_relative.push_str(".cppm"_str);
     auto direct     = source_root.join(PathBuf::from(direct_relative.as_str()).as_path());
@@ -209,6 +202,31 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
     auto requested = source_root.join(PathBuf::from(relative.as_str()).as_path());
     return canonical_candidate(
         manifest, source_root.as_path(), requested.as_path(), Some(String::make(logical_name)));
+}
+
+auto module_companion_source(const PackageManifest& manifest, const ResolvedSource& source)
+    -> Result<Option<ResolvedSource>> {
+    auto relative = source.relative_path.as_path().to_str();
+    if (relative.is_none()) {
+        return convention_failure<Option<ResolvedSource>>(
+            rstd::format("module source '{}' is not valid UTF-8", source.relative_path.as_path()));
+    }
+    if (! relative->ends_with(".cppm"_str)) return Ok(None());
+
+    auto companion = String::make(*relative);
+    companion.truncate(companion.len() - usize(1));
+    auto requested = manifest.root.join(PathBuf::from(companion.as_str()).as_path());
+    auto exists    = file_exists(requested.as_path());
+    if (exists.is_err()) return Err(rstd::move(exists).unwrap_err());
+    if (! *exists) return Ok(None());
+
+    auto source_root_result = canonical_source_root(manifest);
+    if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
+    auto source_root = rstd::move(source_root_result).unwrap();
+    auto resolved =
+        canonical_candidate(manifest, source_root.as_path(), requested.as_path(), None());
+    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+    return Ok(Some(rstd::move(resolved).unwrap()));
 }
 
 auto validate_module_conventions(const PackageSpec&       package,

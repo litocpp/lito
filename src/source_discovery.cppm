@@ -363,6 +363,17 @@ auto discover_package_sources(const PackageMetadata&     package,
                 **owner, rstd::move(nested).unwrap(), path_names, name_paths, queued, queue);
             if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
         }
+        auto companion = module_companion_source(target.manifest, candidate.source);
+        if (companion.is_err()) return Err(rstd::move(companion).unwrap_err());
+        if (companion->is_some()) {
+            auto enqueued = enqueue_candidate(candidate.target,
+                                              rstd::move(companion).unwrap().unwrap(),
+                                              path_names,
+                                              name_paths,
+                                              queued,
+                                              queue);
+            if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+        }
         candidate.source.preprocessed = Some(rstd::move(preprocessed));
         discovered[candidate.target].push(rstd::move(candidate.source));
     }
