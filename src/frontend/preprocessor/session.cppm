@@ -1,28 +1,22 @@
-export module tenon.preprocessor:session;
+export module tenon.frontend.preprocessor:session;
 
 import rstd;
-import :token;
-import :source;
+import tenon.frontend.lexical;
 import :traits;
-import :lexer;
 import :macro;
 import :expression;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon::preprocessor {
+using namespace tenon::frontend::lexical;
 
-enum class PreprocessPurpose {
-  Translation,
-  DependencyDiscovery,
-};
+export namespace tenon::frontend::preprocessor {
 
 struct PreprocessRequest {
   rstd::path::PathBuf source;
   String environment_identity;
   usize maximum_include_depth{usize(200)};
-  PreprocessPurpose purpose{PreprocessPurpose::Translation};
 };
 
 struct PreprocessedTranslationUnit {
@@ -35,7 +29,7 @@ struct PreprocessedTranslationUnit {
 };
 
 template <typename Sources, typename Includes, typename Builtins,
-          typename Pragmas, typename Events>
+          typename Pragmas, typename Events, typename Consumer>
 class PreprocessorSession {
   struct ConditionalFrame {
     bool parent_active{false};
@@ -53,41 +47,26 @@ class PreprocessorSession {
 public:
   PreprocessorSession(PreprocessRequest request, Sources &sources,
                       Includes &includes, Builtins &builtins, Pragmas &pragmas,
-                      Events &events)
+                      Events &events, Consumer &consumer)
       : request_(rstd::move(request)), source_provider_(sources),
         include_resolver_(includes), builtin_provider_(builtins),
-        pragma_handler_(pragmas), event_sink_(events) {}
+        pragma_handler_(pragmas), event_sink_(events), consumer_(consumer) {}
 
   auto run() -> Result<PreprocessedTranslationUnit> {
-    auto seeds =
+    auto predefined =
         rstd::as<BuiltinProvider>(builtin_provider_).predefined_macros();
-    if (seeds.is_err())
-      return Err(rstd::move(seeds).unwrap_err());
-    auto builtins_path = rstd::path::PathBuf::from("<built-in>"_str);
-    for (const auto &seed : *seeds) {
-      auto definition = String::make("#define "_str);
-      definition.push_str(seed.definition.as_str());
-      definition.push_ascii('\n');
-      auto source = sources_.add(SourceBuffer{
-          .path = builtins_path.clone(), .contents = rstd::move(definition)});
-      auto lexed = lex(sources_.file(source));
-      if (lexed.is_err())
-        return Err(rstd::move(lexed).unwrap_err());
-      auto line = without_newline(*lexed, usize(2), lexed->len());
-      if (line.is_err())
-        return Err(rstd::move(line).unwrap_err());
-      auto defined = define_macro(*line, false);
-      if (defined.is_err())
-        return Err(rstd::move(defined).unwrap_err());
-    }
+    if (predefined.is_err())
+      return Err(rstd::move(predefined).unwrap_err());
+    for (auto &definition : *predefined)
+      (void)macros_.define_shared(rstd::move(definition));
 
-    auto output = process_file(request_.source.as_path(), None());
-    if (output.is_err())
-      return Err(rstd::move(output).unwrap_err());
+    auto processed = process_file(request_.source.as_path(), None());
+    if (processed.is_err())
+      return Err(rstd::move(processed).unwrap_err());
     return Ok(PreprocessedTranslationUnit{
         .sources = rstd::move(sources_),
         .main_source = main_source_,
-        .tokens = rstd::move(output).unwrap(),
+        .tokens = Vec<Token>::make(),
         .header_inputs = Vec<rstd::path::PathBuf>::make(),
         .environment_identity = environment_identity(),
         .input_bytes = input_bytes_,
@@ -154,87 +133,6 @@ private:
         return true;
     }
     return false;
-  }
-
-  auto has_discarded_effect(ref<str> name, Vec<String> &visiting) const
-      -> bool {
-    if (name == "_Pragma"_str || name == "__COUNTER__"_str ||
-        name == "__DATE__"_str || name == "__TIME__"_str) {
-      return true;
-    }
-    if (same_name(visiting, name))
-      return false;
-    auto found = macros_.get(name);
-    if (found.is_none())
-      return false;
-    visiting.push(String::make(name));
-    for (const auto &token : (**found).replacement) {
-      if (token.kind == TokenKind::Identifier &&
-          has_discarded_effect(token.text.as_str(), visiting)) {
-        (void)visiting.pop();
-        return true;
-      }
-    }
-    (void)visiting.pop();
-    return false;
-  }
-
-  auto has_discarded_effect(const Vec<Token> &lines) const -> bool {
-    auto visiting = Vec<String>::make();
-    for (const auto &line : lines) {
-      auto text = line.text.as_str();
-      auto bytes = text.as_bytes();
-      for (auto cursor = usize{}; cursor < bytes.len();) {
-        if (!is_identifier_start(bytes[cursor])) {
-          ++cursor;
-          continue;
-        }
-        auto begin = cursor;
-        ++cursor;
-        while (cursor < bytes.len() && is_identifier_continue(bytes[cursor]))
-          ++cursor;
-        auto name = text.get(begin, cursor);
-        if (name.is_none() || has_discarded_effect(*name, visiting))
-          return true;
-      }
-    }
-    return false;
-  }
-
-  auto has_discovery_output(ref<str> name, Vec<String> &visiting) const
-      -> bool {
-    if (name == "module"_str || name == "import"_str)
-      return true;
-    if (same_name(visiting, name))
-      return false;
-    auto found = macros_.get(name);
-    if (found.is_none())
-      return false;
-    visiting.push(String::make(name));
-    for (const auto &token : (**found).replacement) {
-      if (token.kind == TokenKind::Identifier &&
-          has_discovery_output(token.text.as_str(), visiting)) {
-        (void)visiting.pop();
-        return true;
-      }
-    }
-    (void)visiting.pop();
-    return false;
-  }
-
-  auto selected_range(const Vec<Token> &tokens, usize begin, usize end)
-      const -> rstd::tuple<bool, bool> {
-    auto effects = false;
-    auto output = false;
-    auto visiting = Vec<String>::make();
-    for (auto index = begin; index < end; ++index) {
-      if (tokens[index].kind != TokenKind::Identifier)
-        continue;
-      auto name = tokens[index].text.as_str();
-      effects = effects || has_discarded_effect(name, visiting);
-      output = output || has_discovery_output(name, visiting);
-    }
-    return rstd::tuple{effects, output};
   }
 
   auto is_dynamic_builtin(ref<str> name) const -> bool {
@@ -358,10 +256,12 @@ private:
     auto name = string_contents(tokens[usize(2)], "macro stack pragma"_str);
     if (name.is_err())
       return name;
-    auto source = SourceFile{
-        .path = rstd::path::PathBuf::from("<pragma-macro-name>"_str),
-        .contents = name->clone(),
-    };
+    auto source = SourceFile::make(
+        SourceId{}, SourceBuffer{
+                        .path = rstd::path::PathBuf::from(
+                            "<pragma-macro-name>"_str),
+                        .contents = name->clone(),
+                    });
     auto lexed = lex(source);
     if (lexed.is_err() || lexed->len() != usize(1) ||
         (*lexed)[usize{}].kind != TokenKind::Identifier ||
@@ -393,13 +293,10 @@ private:
       if (name.is_err())
         return Err(rstd::move(name).unwrap_err());
       if (push) {
-        auto stored = Option<MacroDefinition>{};
-        auto current = macros_.get(name->as_str());
-        if (current.is_some())
-          stored = Some((**current).clone());
+        auto stored = macros_.get(name->as_str());
         auto stack = macro_stacks_.get_mut(name->as_str());
         if (stack.is_none()) {
-          auto values = Vec<Option<MacroDefinition>>::make();
+          auto values = Vec<Option<SharedMacroDefinition>>::make();
           values.push(rstd::move(stored));
           macro_stacks_.insert(rstd::move(name).unwrap(), rstd::move(values));
         } else {
@@ -415,7 +312,7 @@ private:
       }
       auto restored = (**stack).pop().unwrap();
       if (restored.is_some()) {
-        (void)macros_.define(rstd::move(restored).unwrap());
+        (void)macros_.define_shared(rstd::move(restored).unwrap());
       } else {
         (void)macros_.undefine(name->as_str());
       }
@@ -443,11 +340,13 @@ private:
       }
       contents.push_ascii(bytes[index]);
     }
-    auto source = SourceFile{
-        .id = token.spelling.source,
-        .path = rstd::path::PathBuf::from(sources_.path(token.spelling.source)),
-        .contents = rstd::move(contents),
-    };
+    auto source = SourceFile::make(
+        token.spelling.source,
+        SourceBuffer{
+            .path =
+                rstd::path::PathBuf::from(sources_.path(token.spelling.source)),
+            .contents = rstd::move(contents),
+        });
     auto lexed = lex(source);
     if (lexed.is_err())
       return Err(rstd::move(lexed).unwrap_err());
@@ -468,11 +367,13 @@ private:
       return Err(
           failure("token paste produced an empty token"_str, left.expansion));
     }
-    auto source = SourceFile{
-        .id = left.spelling.source,
-        .path = rstd::path::PathBuf::from(sources_.path(left.spelling.source)),
-        .contents = left.text.clone(),
-    };
+    auto source = SourceFile::make(
+        left.spelling.source,
+        SourceBuffer{
+            .path =
+                rstd::path::PathBuf::from(sources_.path(left.spelling.source)),
+            .contents = left.text.clone(),
+        });
     auto lexed = lex(source);
     if (lexed.is_err() || lexed->len() != usize(1) ||
         (*lexed)[usize{}].text.as_str() != left.text.as_str()) {
@@ -552,6 +453,21 @@ private:
                   origin.expansion));
     }
     auto variadic = variadic_argument(macro, arguments, origin);
+    auto expanded_arguments =
+        Vec<Option<Vec<Token>>>::with_capacity(fixed + usize(1));
+    for (auto index = usize{}; index <= fixed; ++index)
+      expanded_arguments.emplace_back(None());
+    auto expanded_argument = [&](usize parameter,
+                                 const Vec<Token> &argument)
+        -> Result<Vec<Token>> {
+      if (expanded_arguments[parameter].is_none()) {
+        auto expanded = expand(clone_tokens(argument), disabled);
+        if (expanded.is_err())
+          return Err(rstd::move(expanded).unwrap_err());
+        expanded_arguments[parameter] = Some(rstd::move(expanded).unwrap());
+      }
+      return Ok(clone_tokens(*expanded_arguments[parameter]));
+    };
     auto result = Vec<Token>::make();
     for (auto index = usize{}; index < macro.replacement.len(); ++index) {
       const auto &token = macro.replacement[index];
@@ -605,7 +521,7 @@ private:
         if (paste_left || paste_right) {
           piece = clone_tokens(*argument);
         } else {
-          auto expanded = expand(clone_tokens(*argument), disabled);
+          auto expanded = expanded_argument(*parameter, *argument);
           if (expanded.is_err())
             return expanded;
           piece = rstd::move(expanded).unwrap();
@@ -949,9 +865,10 @@ private:
           continue;
         }
       }
-      auto macro = (**found).clone();
+      auto macro = rstd::move(found).unwrap();
+      const auto &definition = *macro.get();
       auto replacement = Vec<Token>::make();
-      if (macro.parameters.is_some()) {
+      if (definition.parameters.is_some()) {
         auto open = next;
         while (open < input.len() && input[open].kind == TokenKind::Newline)
           ++open;
@@ -959,21 +876,23 @@ private:
         if (collected.is_err())
           return Err(rstd::move(collected).unwrap_err());
         auto substituted =
-            substitute(macro, collected->template get<0>(), token, disabled);
+            substitute(definition, collected->template get<0>(), token,
+                       disabled);
         if (substituted.is_err())
           return substituted;
         replacement = rstd::move(substituted).unwrap();
         next = collected->template get<1>();
       } else {
-        replacement = clone_tokens(macro.replacement);
+        replacement = clone_tokens(definition.replacement);
         for (auto &item : replacement)
           item.expansion = token.expansion;
       }
-      auto event = emit_name(EventKind::MacroExpanded, macro.name.as_str(),
+      auto event = emit_name(EventKind::MacroExpanded,
+                             definition.name.as_str(),
                              token.expansion);
       if (event.is_err())
         return Err(rstd::move(event).unwrap_err());
-      disabled.push(macro.name.clone());
+      disabled.push(definition.name.clone());
       auto rescanned = expand(rstd::move(replacement), disabled);
       (void)disabled.pop();
       if (rescanned.is_err())
@@ -986,62 +905,12 @@ private:
   }
 
   auto define_macro(const Vec<Token> &line, bool send_event) -> Result<empty> {
-    if (line.is_empty() || line[usize{}].kind != TokenKind::Identifier) {
-      auto location =
-          line.is_empty() ? SourceLocation{} : line[usize{}].expansion;
-      return Err(failure("#define requires an identifier"_str, location));
-    }
-    auto macro = MacroDefinition{
-        .name = line[usize{}].text.clone(),
-        .location = line[usize{}].expansion,
-    };
-    auto index = usize(1);
-    if (index < line.len() && line[index].text.as_str() == "("_str &&
-        !line[index].leading_space) {
-      auto parameters = Vec<String>::make();
-      ++index;
-      if (index < line.len() && line[index].text.as_str() == ")"_str) {
-        ++index;
-      } else {
-        while (index < line.len()) {
-          if (line[index].text.as_str() == "..."_str) {
-            macro.variadic = true;
-            macro.variadic_name = String::make("__VA_ARGS__"_str);
-            ++index;
-            break;
-          }
-          if (line[index].kind != TokenKind::Identifier) {
-            return Err(
-                failure("invalid macro parameter"_str, line[index].expansion));
-          }
-          auto name = line[index].text.clone();
-          ++index;
-          if (index < line.len() && line[index].text.as_str() == "..."_str) {
-            macro.variadic = true;
-            macro.variadic_name = rstd::move(name);
-            ++index;
-            break;
-          }
-          parameters.push(rstd::move(name));
-          if (index < line.len() && line[index].text.as_str() == ","_str) {
-            ++index;
-            continue;
-          }
-          break;
-        }
-        if (index >= line.len() || line[index].text.as_str() != ")"_str) {
-          auto location =
-              index < line.len() ? line[index].expansion : macro.location;
-          return Err(
-              failure("unterminated macro parameter list"_str, location));
-        }
-        ++index;
-      }
-      macro.parameters = Some(rstd::move(parameters));
-    }
-    macro.replacement = clone_range(line, index, line.len());
+    auto parsed = parse_macro_definition(line);
+    if (parsed.is_err())
+      return Err(rstd::move(parsed).unwrap_err());
+    auto macro = rstd::move(parsed).unwrap();
     auto current = macros_.get(macro.name.as_str());
-    if (current.is_some() && !same_macro(**current, macro)) {
+    if (current.is_some() && !same_macro(*current->get(), macro)) {
       return Err(failure(rstd::format("incompatible redefinition of macro '{}'",
                                       macro.name.as_str()),
                          macro.location));
@@ -1214,7 +1083,7 @@ private:
   }
 
   auto handle_include(const Vec<Token> &line, bool next,
-                      SourceLocation location) -> Result<Vec<Token>> {
+                      SourceLocation location) -> Result<empty> {
     auto expanded = Result<Vec<Token>>(Ok(clone_tokens(line)));
     auto direct_header = line.len() == usize(1) &&
                          line[usize{}].kind == TokenKind::StringLiteral;
@@ -1351,115 +1220,49 @@ private:
     return Ok(false);
   }
 
-  auto flush_normal(Vec<Token> &normal, Vec<Token> &output) -> Result<empty> {
+  auto flush_normal(Vec<Token> &normal) -> Result<empty> {
     if (normal.is_empty())
       return Ok(empty{});
-    if (request_.purpose == PreprocessPurpose::DependencyDiscovery) {
-      auto begin = usize{};
-      for (auto cursor = usize{}; cursor <= normal.len(); ++cursor) {
-        if (cursor < normal.len() && normal[cursor].text.as_str() != ";"_str)
-          continue;
-        auto end = cursor < normal.len() ? cursor + usize(1) : cursor;
-        auto selected = selected_range(normal, begin, end);
-        if (selected.template get<0>() || selected.template get<1>()) {
-          auto disabled = Vec<String>::make();
-          auto expanded = expand(clone_range(normal, begin, end), disabled);
-          if (expanded.is_err())
-            return Err(rstd::move(expanded).unwrap_err());
-          if (selected.template get<1>()) {
-            for (auto &token : *expanded)
-              output.push(rstd::move(token));
-          }
-        }
-        begin = end;
-      }
-      normal = Vec<Token>::make();
-      return Ok(empty{});
-    }
     auto disabled = Vec<String>::make();
     auto expanded = expand(rstd::move(normal), disabled);
     normal = Vec<Token>::make();
     if (expanded.is_err())
       return Err(rstd::move(expanded).unwrap_err());
-    for (auto &token : *expanded)
-      output.push(rstd::move(token));
-    return Ok(empty{});
-  }
-
-  auto expand_raw_lines(Vec<Token> &lines) -> Result<empty> {
-    if (lines.is_empty())
-      return Ok(empty{});
-    if (!has_discarded_effect(lines)) {
-      lines = Vec<Token>::make();
-      return Ok(empty{});
-    }
-    const auto &first = lines[usize{}];
-    auto contents = String::make();
-    for (const auto &line : lines)
-      contents.push_str(line.text.as_str());
-    auto source = SourceFile{
-        .id = first.spelling.source,
-        .path = rstd::path::PathBuf::from(sources_.path(first.spelling.source)),
-        .contents = rstd::move(contents),
-    };
-    auto lexed = lex(source);
-    if (lexed.is_err())
-      return Err(rstd::move(lexed).unwrap_err());
-    for (auto &token : *lexed) {
-      token.spelling.source = first.spelling.source;
-      token.expansion.source = first.expansion.source;
-      token.spelling.offset += first.spelling.offset;
-      token.expansion.offset += first.expansion.offset;
-      token.spelling.line += first.spelling.line - usize(1);
-      token.expansion.line += first.expansion.line - usize(1);
-      if (token.spelling.line == first.spelling.line) {
-        token.spelling.column += first.spelling.column - usize(1);
-        token.expansion.column += first.expansion.column - usize(1);
-      }
-      if (first.presumed_path.is_some()) {
-        token.presumed_path =
-            Some(rstd::path::PathBuf::from(first.presumed_path->as_path()));
-      }
-    }
-    auto disabled = Vec<String>::make();
-    auto expanded = expand(rstd::move(lexed).unwrap(), disabled);
-    if (expanded.is_err())
-      return Err(rstd::move(expanded).unwrap_err());
-    lines = Vec<Token>::make();
-    return Ok(empty{});
+    return rstd::as<PreprocessedTokenConsumer>(consumer_).consume(
+        rstd::move(expanded).unwrap());
   }
 
   auto process_file(ref<rstd::path::Path> path, Option<usize> search_index)
-      -> Result<Vec<Token>> {
+      -> Result<empty> {
     if (include_stack_.len() >= request_.maximum_include_depth) {
       return Err(Error::make(
           rstd::format("maximum include depth exceeded at '{}'", path)));
     }
     auto path_value = path.to_str();
     if (path_value.is_some() && once_files_.contains_key(*path_value)) {
-      return Ok(Vec<Token>::make());
+      return Ok(empty{});
     }
     if (path_value.is_some()) {
       auto guard = include_guards_.get(*path_value);
       if (guard.is_some() && macros_.contains((**guard).as_str())) {
-        return Ok(Vec<Token>::make());
+        return Ok(empty{});
       }
     }
     auto loaded = rstd::as<SourceProvider>(source_provider_).load(path);
     if (loaded.is_err())
       return Err(rstd::move(loaded).unwrap_err());
-    input_bytes_ += loaded->contents.len();
-    auto source = sources_.add(rstd::move(loaded).unwrap());
+    input_bytes_ += loaded->get()->snapshot.get()->contents.len();
+    auto source = sources_.add(loaded->get()->snapshot.clone());
     auto main_file = include_stack_.is_empty();
     if (main_file)
       main_source_ = source;
-    auto emit_tokens = request_.purpose == PreprocessPurpose::Translation ||
-                       main_file;
-    auto lexed = lex(sources_.file(source),
-                     emit_tokens ? LexMode::AllTokens : LexMode::Directives);
-    if (lexed.is_err())
-      return Err(rstd::move(lexed).unwrap_err());
-    auto tokens = rstd::move(lexed).unwrap();
+    auto tokens = Vec<Token>::with_capacity(loaded->get()->tokens.len());
+    for (const auto &cached : loaded->get()->tokens) {
+      auto token = cached.clone();
+      token.spelling.source = source;
+      token.expansion.source = source;
+      tokens.push(rstd::move(token));
+    }
     auto prepared_queries = prepare_queries(tokens);
     if (prepared_queries.is_err()) {
       return Err(rstd::move(prepared_queries).unwrap_err());
@@ -1481,9 +1284,7 @@ private:
     if (entered.is_err())
       return Err(rstd::move(entered).unwrap_err());
 
-    auto output = Vec<Token>::make();
     auto normal = Vec<Token>::make();
-    auto raw_normal = Vec<Token>::make();
     auto conditions = Vec<ConditionalFrame>::make();
     for (auto cursor = usize{}; cursor < tokens.len();) {
       auto end = cursor;
@@ -1492,28 +1293,19 @@ private:
       auto directive = cursor < end && tokens[cursor].start_of_line &&
                        tokens[cursor].text.as_str() == "#"_str;
       if (!directive) {
-        if (active(conditions) && emit_tokens) {
+        if (active(conditions)) {
           for (auto index = cursor; index < end; ++index)
             normal.push(tokens[index].clone());
           if (end < tokens.len())
             normal.push(tokens[end].clone());
-        } else if (active(conditions)) {
-          for (auto index = cursor; index < end; ++index) {
-            raw_normal.push(tokens[index].clone());
-          }
-          if (end < tokens.len())
-            raw_normal.push(tokens[end].clone());
         }
         cursor = end < tokens.len() ? end + usize(1) : end;
         continue;
       }
 
-      auto flushed = flush_normal(normal, output);
+      auto flushed = flush_normal(normal);
       if (flushed.is_err())
         return Err(rstd::move(flushed).unwrap_err());
-      auto raw_flushed = expand_raw_lines(raw_normal);
-      if (raw_flushed.is_err())
-        return Err(rstd::move(raw_flushed).unwrap_err());
       auto line = without_newline(tokens, cursor + usize(1), end);
       if (line.is_err())
         return Err(rstd::move(line).unwrap_err());
@@ -1561,8 +1353,6 @@ private:
             handle_include(rest, keyword == "include_next"_str, location);
         if (included.is_err())
           return Err(rstd::move(included).unwrap_err());
-        for (auto &token : *included)
-          output.push(rstd::move(token));
       } else if (keyword == "pragma"_str) {
         auto handled = handle_pragma(rstd::move(rest), location);
         if (handled.is_err())
@@ -1633,12 +1423,9 @@ private:
       }
       cursor = end < tokens.len() ? end + usize(1) : end;
     }
-    auto flushed = flush_normal(normal, output);
+    auto flushed = flush_normal(normal);
     if (flushed.is_err())
       return Err(rstd::move(flushed).unwrap_err());
-    auto raw_flushed = expand_raw_lines(raw_normal);
-    if (raw_flushed.is_err())
-      return Err(rstd::move(raw_flushed).unwrap_err());
     if (!conditions.is_empty()) {
       return Err(failure("unterminated conditional directive"_str,
                          conditions[conditions.len() - usize(1)].location));
@@ -1651,7 +1438,7 @@ private:
     if (exited.is_err())
       return Err(rstd::move(exited).unwrap_err());
     (void)include_stack_.pop();
-    return Ok(rstd::move(output));
+    return Ok(empty{});
   }
 
   PreprocessRequest request_;
@@ -1660,12 +1447,13 @@ private:
   Builtins &builtin_provider_;
   Pragmas &pragma_handler_;
   Events &event_sink_;
+  Consumer &consumer_;
   SourceManager sources_;
   MacroTable macros_;
   Vec<IncludeFrame> include_stack_;
   rstd::collections::BTreeMap<String, empty> once_files_;
   rstd::collections::BTreeMap<String, String> include_guards_;
-  rstd::collections::BTreeMap<String, Vec<Option<MacroDefinition>>>
+  rstd::collections::BTreeMap<String, Vec<Option<SharedMacroDefinition>>>
       macro_stacks_;
   usize counter_{};
   usize input_bytes_{};
@@ -1673,14 +1461,44 @@ private:
   String builtin_identity_;
 };
 
+class CollectPreprocessedTokens {
+public:
+  auto consume(Vec<Token> tokens) -> Result<empty> {
+    for (auto &token : tokens)
+      tokens_.push(rstd::move(token));
+    return Ok(empty{});
+  }
+
+  auto take() -> Vec<Token> { return rstd::move(tokens_); }
+
+private:
+  Vec<Token> tokens_;
+};
+
+template <typename Sources, typename Includes, typename Builtins,
+          typename Pragmas, typename Events, typename Consumer>
+auto preprocess_to(PreprocessRequest request, Sources &sources,
+                   Includes &includes, Builtins &builtins, Pragmas &pragmas,
+                   Events &events, Consumer &consumer)
+    -> Result<PreprocessedTranslationUnit> {
+  return PreprocessorSession<Sources, Includes, Builtins, Pragmas, Events,
+                             Consumer>(rstd::move(request), sources, includes,
+                                       builtins, pragmas, events, consumer)
+      .run();
+}
+
 template <typename Sources, typename Includes, typename Builtins,
           typename Pragmas, typename Events>
 auto preprocess(PreprocessRequest request, Sources &sources, Includes &includes,
                 Builtins &builtins, Pragmas &pragmas, Events &events)
     -> Result<PreprocessedTranslationUnit> {
-  return PreprocessorSession<Sources, Includes, Builtins, Pragmas, Events>(
-             rstd::move(request), sources, includes, builtins, pragmas, events)
-      .run();
+  auto consumer = CollectPreprocessedTokens{};
+  auto result = preprocess_to(rstd::move(request), sources, includes, builtins,
+                              pragmas, events, consumer);
+  if (result.is_err())
+    return Err(rstd::move(result).unwrap_err());
+  result->tokens = consumer.take();
+  return result;
 }
 
-} // namespace tenon::preprocessor
+} // namespace tenon::frontend::preprocessor

@@ -3,7 +3,7 @@ export module tenon.toolchain:clang;
 import rstd;
 import tenon.model;
 import tenon.process;
-import tenon.preprocessor;
+import tenon.frontend;
 import tenon.modules;
 import :clang_options;
 import :clang_preprocessor_environment;
@@ -11,6 +11,10 @@ import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+
+namespace tenon {
+namespace preprocessor = frontend::preprocessor;
+}
 
 namespace tenon
 {
@@ -180,24 +184,31 @@ public:
         });
     }
 
-    auto scan(const PreparedUnit& prepared) const -> Result<ScanResult> {
-        if (prepared.preprocessed != nullptr) {
-            return Ok(modules::scan_from_preprocessed(*prepared.preprocessed, prepared.unit.id));
+    auto scan(const PreparedUnit& prepared,
+              frontend::FrontendService& frontend_service) const
+        -> Result<ScanResult> {
+        if (prepared.frontend_result != nullptr) {
+            frontend_service.record_analysis_hit();
+            return Ok(modules::scan_from_frontend(*prepared.frontend_result,
+                                                  prepared.unit.id));
         }
         auto facts = preprocess(prepared.unit.source.as_path(),
                                 *prepared.unit.context,
-                                prepared.working_directory.as_path());
+                                prepared.working_directory.as_path(),
+                                frontend_service);
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-        return Ok(modules::scan_from_preprocessed(*facts, prepared.unit.id));
+        return Ok(modules::scan_from_frontend(*facts, prepared.unit.id));
     }
 
     auto preprocess(ref<rstd::path::Path> source,
                     const CompileContext& compile_context,
-                    ref<rstd::path::Path> working_directory) const
-        -> Result<PreprocessedModuleFacts> {
+                    ref<rstd::path::Path> working_directory,
+                    frontend::FrontendService& frontend_service) const
+        -> Result<FrontendResult> {
+        frontend_service.record_analysis_build();
         for (const auto& option : compile_context.options) {
             if (unsupported_native_preprocessor_option(option.as_str())) {
-                return failure<PreprocessedModuleFacts>(rstd::format(
+                return failure<FrontendResult>(rstd::format(
                     "compiler option '{}' is not supported by the native preprocessor",
                     option.as_str()));
             }
@@ -205,7 +216,7 @@ public:
         toolchain::PreprocessorEnvironment* environment = nullptr;
         auto working_text = working_directory.to_str();
         if (working_text.is_none()) {
-            return failure<PreprocessedModuleFacts>(rstd::format(
+            return failure<FrontendResult>(rstd::format(
                 "preprocessor working directory '{}' is not valid UTF-8", working_directory));
         }
         for (auto& existing : preprocessor_environments_) {
@@ -227,37 +238,42 @@ public:
             environment = rstd::addressof(
                 preprocessor_environments_[preprocessor_environments_.len() - usize(1)]);
         }
-        auto sources  = toolchain::FilesystemSourceProvider {};
         auto includes = toolchain::ClangIncludeResolver(*environment);
         auto builtins = toolchain::ClangBuiltinProvider(*environment, working_directory);
         auto pragmas  = toolchain::ClangPragmaHandler {};
         auto events   = toolchain::DependencyEvents {};
-        auto translation = preprocessor::preprocess(
+        auto consumer = frontend::parser::ModuleDependencyConsumer::make();
+        auto translation = preprocessor::preprocess_to(
             preprocessor::PreprocessRequest {
                 .source = PathBuf::from(source),
                 .environment_identity = environment->identity.clone(),
-                .purpose = preprocessor::PreprocessPurpose::DependencyDiscovery,
             },
-            sources,
+            frontend_service,
             includes,
             builtins,
             pragmas,
-            events);
+            events,
+            consumer);
         if (translation.is_err()) {
             auto error = rstd::move(translation).unwrap_err();
             if (error.path.is_some() && error.location.is_some()) {
-                return failure<PreprocessedModuleFacts>(rstd::format(
+                return failure<FrontendResult>(rstd::format(
                     "native preprocessing failed at {}:{}:{}: {}",
                     error.path->as_path(),
                     error.location->line,
                     error.location->column,
                     error.message.as_str()));
             }
-            return failure<PreprocessedModuleFacts>(rstd::format(
+            return failure<FrontendResult>(rstd::format(
                 "native preprocessing failed for '{}': {}", source, error.message.as_str()));
         }
         translation->header_inputs = events.take_headers();
-        return modules::parse_preprocessed_module(*translation);
+        auto parsed = consumer.finish(*translation);
+        if (parsed.is_err()) {
+            return failure<FrontendResult>(
+                rstd::move(parsed).unwrap_err().message.clone());
+        }
+        return Ok(rstd::move(parsed).unwrap());
     }
 
     auto prepare_compile(const PreparedUnit&           prepared,

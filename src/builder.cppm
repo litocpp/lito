@@ -10,6 +10,7 @@ import tenon.toolchain;
 import tenon.modules;
 import tenon.cache;
 import tenon.build_layout;
+import tenon.frontend;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -73,6 +74,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
+    auto frontend_service = frontend::FrontendService::make();
 
     auto resolved =
         resolve_source_discovery(metadata, metadata.default_profile.as_str(), request.targets);
@@ -87,7 +89,11 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto layout = rstd::move(selected_layout).unwrap();
 
     auto discovered =
-        discover_package_sources(metadata, discovery_plan, toolchain, request.observer);
+        discover_package_sources(metadata,
+                                 discovery_plan,
+                                 toolchain,
+                                 frontend_service,
+                                 request.observer);
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
     auto finalized   = finalize_package(rstd::move(metadata), rstd::move(source_sets));
@@ -132,8 +138,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 target_spec.root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
             auto unit = rstd::move(prepared).unwrap();
-            if (source.preprocessed.is_some()) {
-                unit.preprocessed = rstd::addressof(*source.preprocessed);
+            if (source.frontend_result.is_some()) {
+                unit.frontend_result = rstd::addressof(*source.frontend_result);
             }
             units.push(rstd::move(unit));
             target_units[target].emplace_back(id);
@@ -143,13 +149,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto scans = Vec<ScanResult>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         const auto target = units[unit].unit.target;
-        if (units[unit].preprocessed == nullptr) {
+        if (units[unit].frontend_result == nullptr) {
             emit(request,
                  BuildEventKind::Scan,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
         }
-        auto scanned = toolchain.scan(units[unit]);
+        auto scanned = toolchain.scan(units[unit], frontend_service);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
@@ -296,6 +302,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .reused      = reused,
         .archives    = rstd::move(archives),
         .executables = rstd::move(executables),
+        .frontend    = frontend_service.statistics(),
     });
 }
 

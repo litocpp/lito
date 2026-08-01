@@ -3,12 +3,17 @@ export module tenon.toolchain:clang_preprocessor_environment;
 import rstd;
 import tenon.model;
 import tenon.process;
-import tenon.preprocessor;
+import tenon.frontend;
 import :clang_options;
 import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+
+namespace tenon {
+namespace lexical = frontend::lexical;
+namespace preprocessor = frontend::preprocessor;
+}
 
 export namespace tenon::toolchain {
 
@@ -20,6 +25,8 @@ struct IncludeSearchEntry {
 struct PreprocessorEnvironment {
   String context_id;
   Vec<preprocessor::MacroSeed> macros;
+  Vec<preprocessor::SharedMacroDefinition> macro_definitions;
+  Option<lexical::SharedSourceSnapshot> macro_source;
   Vec<IncludeSearchEntry> include_search;
   Vec<String> query_command;
   String identity;
@@ -250,28 +257,6 @@ auto query_preprocessor_environment(const Vec<String> &base_command,
   });
 }
 
-class FilesystemSourceProvider {
-public:
-  auto load(ref<rstd::path::Path> path)
-      -> preprocessor::Result<preprocessor::SourceBuffer> {
-    auto canonical = rstd::fs::canonicalize(path);
-    if (canonical.is_err()) {
-      return Err(preprocessor::Error::make(
-          rstd::format("cannot resolve source '{}': {}", path,
-                       rstd::move(canonical).unwrap_err())));
-    }
-    auto contents = rstd::fs::read_to_string(canonical->as_path());
-    if (contents.is_err()) {
-      return Err(preprocessor::Error::make(
-          rstd::format("cannot read source '{}': {}", canonical->as_path(),
-                       rstd::move(contents).unwrap_err())));
-    }
-    return Ok(
-        preprocessor::SourceBuffer{.path = rstd::move(canonical).unwrap(),
-                                   .contents = rstd::move(contents).unwrap()});
-  }
-};
-
 class ClangIncludeResolver {
 public:
   explicit ClangIncludeResolver(const PreprocessorEnvironment &environment)
@@ -347,13 +332,54 @@ public:
         working_directory_(PathBuf::from(working_directory)) {}
 
   auto predefined_macros()
-      -> preprocessor::Result<Vec<preprocessor::MacroSeed>> {
-    auto result =
-        Vec<preprocessor::MacroSeed>::with_capacity(environment_.macros.len());
-    for (const auto &macro : environment_.macros) {
-      result.push(
-          preprocessor::MacroSeed{.definition = macro.definition.clone()});
+      -> preprocessor::Result<Vec<preprocessor::SharedMacroDefinition>> {
+    if (environment_.macro_definitions.is_empty()) {
+      auto text = String::make();
+      for (const auto &seed : environment_.macros) {
+        text.push_str("#define "_str);
+        text.push_str(seed.definition.as_str());
+        text.push_ascii('\n');
+      }
+      auto snapshot = lexical::make_source_snapshot(
+          lexical::SourceBuffer{
+              .path = PathBuf::from("<built-in>"_str),
+              .contents = rstd::move(text),
+          });
+      auto source = lexical::SourceFile{
+          .snapshot = snapshot.clone(),
+      };
+      auto tokens = lexical::lex(source, true);
+      if (tokens.is_err())
+        return Err(rstd::move(tokens).unwrap_err());
+      environment_.macro_source = Some(rstd::move(snapshot));
+      for (auto cursor = usize{}; cursor < tokens->len();) {
+        auto end = cursor;
+        while (end < tokens->len() &&
+               (*tokens)[end].kind != preprocessor::TokenKind::Newline) {
+          ++end;
+        }
+        if (cursor + usize(2) > end ||
+            (*tokens)[cursor].text.as_str() != "#"_str ||
+            (*tokens)[cursor + usize(1)].text.as_str() != "define"_str) {
+          return Err(preprocessor::Error::make(
+              "invalid cached Clang predefined macro line"_str));
+        }
+        auto line = Vec<preprocessor::Token>::make();
+        for (auto index = cursor + usize(2); index < end; ++index)
+          line.push((*tokens)[index].clone());
+        auto definition = preprocessor::parse_macro_definition(line);
+        if (definition.is_err())
+          return Err(rstd::move(definition).unwrap_err());
+        environment_.macro_definitions.push(
+            preprocessor::share_macro_definition(
+                rstd::move(definition).unwrap()));
+        cursor = end < tokens->len() ? end + usize(1) : end;
+      }
     }
+    auto result = Vec<preprocessor::SharedMacroDefinition>::with_capacity(
+        environment_.macro_definitions.len());
+    for (const auto &definition : environment_.macro_definitions)
+      result.push(definition.clone());
     return Ok(rstd::move(result));
   }
 
@@ -423,10 +449,12 @@ public:
             return environment_failure<empty>(
                 "clang builtin query emitted no value"_str);
           }
-          auto probe_source = preprocessor::SourceFile{
-              .path = PathBuf::from("<clang-builtin-query>"_str),
-              .contents = String::make(*value_text),
-          };
+          auto probe_source = preprocessor::SourceFile::make(
+              preprocessor::SourceId{},
+              preprocessor::SourceBuffer{
+                  .path = PathBuf::from("<clang-builtin-query>"_str),
+                  .contents = String::make(*value_text),
+              });
           auto tokens = preprocessor::lex(probe_source);
           if (tokens.is_err()) {
             return environment_failure<empty>(

@@ -4,6 +4,7 @@ module;
 export module tenon.model;
 
 import rstd;
+import tenon.frontend;
 
 using namespace rstd::prelude;
 
@@ -231,37 +232,17 @@ struct ManifestLocation {
     PathBuf manifest;
 };
 
-struct ProvidedModule {
-    String logical_name;
-    bool   is_interface { false };
-};
-
-struct SourceLocation {
-    PathBuf path;
-    usize   line {};
-};
-
-struct ModuleImport {
-    String         logical_name;
-    SourceLocation location;
-};
-
-struct PreprocessedModuleFacts {
-    PathBuf                source;
-    Option<ProvidedModule> provided;
-    Option<String>         implementation_module;
-    Vec<ModuleImport>      imports;
-    Vec<PathBuf>           header_inputs;
-    String                 preprocessor_environment;
-    usize                  input_bytes {};
-};
+using ProvidedModule = frontend::ProvidedModule;
+using SourceLocation = frontend::DependencyLocation;
+using ModuleImport = frontend::ModuleImport;
+using FrontendResult = frontend::FrontendResult;
 
 struct ResolvedSource {
     PathBuf                         relative_path;
     PathBuf                         canonical_path;
     SourceOrigin                    origin { SourceOrigin::Explicit };
     Option<String>                  expected_module;
-    Option<PreprocessedModuleFacts> preprocessed;
+    Option<FrontendResult>          frontend_result;
 };
 
 struct ResolvedSourceSet {
@@ -347,7 +328,7 @@ struct TargetSource {
     PathBuf                         relative_path;
     PathBuf                         path;
     Option<String>                  expected_module;
-    Option<PreprocessedModuleFacts> preprocessed;
+    Option<FrontendResult> frontend_result;
 };
 
 struct TargetMetadata {
@@ -448,7 +429,7 @@ struct UnitSpec {
 struct PreparedUnit {
     UnitSpec                       unit;
     PathBuf                        working_directory;
-    const PreprocessedModuleFacts* preprocessed {};
+    const FrontendResult* frontend_result {};
 };
 
 struct ScanResult {
@@ -504,6 +485,7 @@ struct BuildSummary {
     usize        reused {};
     Vec<PathBuf> archives;
     Vec<PathBuf> executables;
+    frontend::FrontendStatistics frontend;
 };
 
 struct FormatRequest {

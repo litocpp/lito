@@ -173,5 +173,17 @@ extern "C++" int main() {
         summary.reused,
         summary.archives.len(),
         summary.executables.len());
+    if (event_context.verbose) {
+        rstd::io::println(
+            "frontend: {} source requests, {} hits, {} stats, {} reads, {} bytes, {} lexed, {} analyzed, {} analysis hits",
+            summary.frontend.source_requests,
+            summary.frontend.source_hits,
+            summary.frontend.source_stats,
+            summary.frontend.source_reads,
+            summary.frontend.source_bytes,
+            summary.frontend.lex_builds,
+            summary.frontend.analyze_builds,
+            summary.frontend.analyze_hits);
+    }
     return 0;
 }

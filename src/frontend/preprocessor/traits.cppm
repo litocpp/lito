@@ -1,32 +1,26 @@
-export module tenon.preprocessor:traits;
+export module tenon.frontend.preprocessor:traits;
 
 import rstd;
-import :token;
-import :source;
+import tenon.frontend.lexical;
+import :macro;
 
 using namespace rstd::prelude;
 
-export namespace tenon::preprocessor {
+export namespace tenon::frontend::preprocessor {
 
-struct Error {
-  String message;
-  Option<SourceLocation> location;
-  Option<rstd::path::PathBuf> path;
-
-  static auto make(ref<str> message) -> Error {
-    return Error{.message = String::make(message)};
-  }
-
-  static auto make(String message) -> Error {
-    return Error{.message = rstd::move(message)};
-  }
-
-  static auto at(String message, SourceLocation location) -> Error {
-    return Error{.message = rstd::move(message), .location = Some(location)};
-  }
-};
-
-template <typename T> using Result = rstd::Result<T, Error>;
+using lexical::Error;
+using lexical::SourceBuffer;
+using lexical::SourceFile;
+using lexical::SourceId;
+using lexical::SourceLocation;
+using lexical::SourceManager;
+using lexical::LexedSource;
+using lexical::SharedLexedSource;
+using lexical::make_source_snapshot;
+using lexical::Token;
+using lexical::TokenKind;
+using lexical::lex;
+template <typename T> using Result = lexical::Result<T>;
 
 enum class IncludeKind {
   Quoted,
@@ -116,7 +110,7 @@ struct SourceProvider {
   template <typename Self, typename = void> struct Api {
     using Trait = SourceProvider;
 
-    auto load(ref<rstd::path::Path> path) -> Result<SourceBuffer> {
+    auto load(ref<rstd::path::Path> path) -> Result<SharedLexedSource> {
       return rstd::trait_call<0>(this, path);
     }
   };
@@ -141,7 +135,7 @@ struct BuiltinProvider {
   template <typename Self, typename = void> struct Api {
     using Trait = BuiltinProvider;
 
-    auto predefined_macros() -> Result<Vec<MacroSeed>> {
+    auto predefined_macros() -> Result<Vec<SharedMacroDefinition>> {
       return rstd::trait_call<0>(this);
     }
 
@@ -187,6 +181,18 @@ struct PreprocessorEventSink {
   template <typename T> using Funcs = TraitFuncs<&T::on_event>;
 };
 
+struct PreprocessedTokenConsumer {
+  template <typename Self, typename = void> struct Api {
+    using Trait = PreprocessedTokenConsumer;
+
+    auto consume(Vec<Token> tokens) -> Result<empty> {
+      return rstd::trait_call<0>(this, rstd::move(tokens));
+    }
+  };
+
+  template <typename T> using Funcs = TraitFuncs<&T::consume>;
+};
+
 struct IgnorePragmas {
   auto handle(const PragmaRequest &) -> Result<PragmaOutcome> {
     return Ok(PragmaOutcome::Ignored);
@@ -197,4 +203,4 @@ struct IgnoreEvents {
   auto on_event(const Event &) -> Result<empty> { return Ok(empty{}); }
 };
 
-} // namespace tenon::preprocessor
+} // namespace tenon::frontend::preprocessor

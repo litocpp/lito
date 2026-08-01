@@ -52,6 +52,22 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
+         src/frontend/result.cppm
+         src/frontend/lexical/token.cppm
+         src/frontend/lexical/source.cppm
+         src/frontend/lexical/error.cppm
+         src/frontend/lexical/lexer.cppm
+         src/frontend/lexical/mod.cppm
+         src/frontend/preprocessor/traits.cppm
+         src/frontend/preprocessor/macro.cppm
+         src/frontend/preprocessor/expression.cppm
+         src/frontend/preprocessor/session.cppm
+         src/frontend/preprocessor/directive.cppm
+         src/frontend/preprocessor/mod.cppm
+         src/frontend/parser/module_dependency.cppm
+         src/frontend/parser/mod.cppm
+         src/frontend/service.cppm
+         src/frontend/mod.cppm
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm
@@ -60,18 +76,9 @@ target_sources(
          src/manifest/mod.cppm
          src/config/schema.cppm
          src/config/mod.cppm
-         src/preprocessor/token.cppm
-         src/preprocessor/source.cppm
-         src/preprocessor/traits.cppm
-         src/preprocessor/lexer.cppm
-         src/preprocessor/macro.cppm
-         src/preprocessor/expression.cppm
-         src/preprocessor/session.cppm
-         src/preprocessor/directive.cppm
-         src/preprocessor/mod.cppm
          src/modules/convention.cppm
          src/modules/graph.cppm
-         src/modules/preprocessed.cppm
+         src/modules/frontend.cppm
          src/modules/mod.cppm
          src/source_discovery.cppm
          src/workspace/member.cppm

@@ -4,6 +4,7 @@ import rstd;
 import tenon.model;
 import tenon.modules;
 import tenon.toolchain;
+import tenon.frontend;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -282,6 +283,7 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
 auto discover_package_sources(const PackageMetadata&     package,
                               const SourceDiscoveryPlan& plan,
                               const ClangToolchain&      toolchain,
+                              frontend::FrontendService& frontend_service,
                               const Option<BuildObserver>& observer)
     -> Result<Vec<ResolvedPackageSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
@@ -319,14 +321,16 @@ auto discover_package_sources(const PackageMetadata&     package,
         }
         auto facts = toolchain.preprocess(candidate.source.canonical_path.as_path(),
                                           plan.contexts[candidate.target],
-                                          target.manifest.root.as_path());
+                                          target.manifest.root.as_path(),
+                                          frontend_service);
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-        auto preprocessed = rstd::move(facts).unwrap();
+        auto frontend_result = rstd::move(facts).unwrap();
         if (candidate.source.expected_module.is_some()) {
-            if (preprocessed.provided.is_none() || preprocessed.provided->logical_name.as_str() !=
-                                                       candidate.source.expected_module->as_str()) {
-                auto actual = preprocessed.provided.is_some()
-                                  ? preprocessed.provided->logical_name.as_str()
+            if (frontend_result.provided.is_none() ||
+                frontend_result.provided->logical_name.as_str() !=
+                    candidate.source.expected_module->as_str()) {
+                auto actual = frontend_result.provided.is_some()
+                                  ? frontend_result.provided->logical_name.as_str()
                                   : "<none>"_str;
                 return discovery_failure<Vec<ResolvedPackageSources>>(
                     rstd::format("module convention expected '{}' to provide '{}', but "
@@ -337,14 +341,14 @@ auto discover_package_sources(const PackageMetadata&     package,
             }
             if (candidate.source.expected_module->as_str() ==
                     target.manifest.root_module->as_str() &&
-                ! preprocessed.provided->is_interface) {
+                ! frontend_result.provided->is_interface) {
                 return discovery_failure<Vec<ResolvedPackageSources>>(
                     rstd::format("primary module source '{}' is not an interface",
                                  candidate.source.canonical_path.as_path()));
             }
         }
 
-        for (const auto& imported : preprocessed.imports) {
+        for (const auto& imported : frontend_result.imports) {
             auto owner =
                 import_owner(package, plan, candidate.target, imported.logical_name.as_str());
             if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
@@ -370,7 +374,7 @@ auto discover_package_sources(const PackageMetadata&     package,
                                               queue);
             if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
         }
-        candidate.source.preprocessed = Some(rstd::move(preprocessed));
+        candidate.source.frontend_result = Some(rstd::move(frontend_result));
         discovered[candidate.target].push(rstd::move(candidate.source));
     }
 

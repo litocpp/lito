@@ -1,21 +1,21 @@
-export module tenon.preprocessor:lexer;
+export module tenon.frontend.lexical:lexer;
 
 import rstd;
 import :token;
 import :source;
-import :traits;
+import :error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::preprocessor {
+namespace tenon::frontend::lexical {
 
 auto lex_failure(ref<str> message, SourceLocation location)
     -> Result<Vec<Token>> {
   return Err(Error::at(String::make(message), location));
 }
 
-auto append_token(Vec<Token> &tokens, TokenKind kind, String text,
+auto append_token(Vec<Token> &tokens, TokenKind kind, TokenText text,
                   SourceLocation location, bool start_of_line,
                   bool leading_space) -> void {
   tokens.push(Token{
@@ -123,19 +123,18 @@ auto ucn_length(slice<u8> bytes, usize index) -> usize {
   return length;
 }
 
-} // namespace tenon::preprocessor
+} // namespace tenon::frontend::lexical
 
-export namespace tenon::preprocessor {
+export namespace tenon::frontend::lexical {
 
-enum class LexMode {
-  AllTokens,
-  Directives,
-};
-
-auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
+auto lex(const SourceFile &source, bool borrow_spelling = false)
     -> Result<Vec<Token>> {
   auto tokens = Vec<Token>::make();
-  auto bytes = source.contents.as_str().as_bytes();
+  auto bytes = source.contents().as_bytes();
+  auto token_text = [borrow_spelling](ref<str> text) -> TokenText {
+    return borrow_spelling ? TokenText::borrowed(text)
+                           : TokenText{String::make(text)};
+  };
   auto index = usize{};
   auto line = usize(1);
   auto column = usize(1);
@@ -163,7 +162,12 @@ auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
           bytes[index + usize(1)] == u8('\n')) {
         ++index;
       }
-      append_token(tokens, TokenKind::Newline, String::make("\n"_str), location,
+      append_token(tokens, TokenKind::Newline,
+                   token_text(source.contents()
+                                  .get(location.offset,
+                                       location.offset + usize(1))
+                                  .unwrap()),
+                   location,
                    line_start, false);
       ++index;
       ++line;
@@ -216,7 +220,11 @@ auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
               bytes[index + usize(1)] == u8('\n')) {
             ++index;
           }
-          append_token(tokens, TokenKind::Newline, String::make("\n"_str),
+          append_token(tokens, TokenKind::Newline,
+                       token_text(source.contents()
+                                      .get(location.offset,
+                                           location.offset + usize(1))
+                                      .unwrap()),
                        location, line_start, false);
           ++index;
           ++line;
@@ -229,38 +237,6 @@ auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
       }
       if (!closed)
         return lex_failure("unterminated block comment"_str, start);
-      continue;
-    }
-
-    if (mode == LexMode::Directives && line_start && value != u8('#')) {
-      auto raw_start = index;
-      auto location = SourceLocation{
-          .source = source.id, .offset = index, .line = line, .column = column};
-      while (index < bytes.len()) {
-        if (bytes[index] == u8('\\') && index + usize(1) < bytes.len() &&
-            (bytes[index + usize(1)] == u8('\n') ||
-             bytes[index + usize(1)] == u8('\r'))) {
-          index += usize(2);
-          if (index < bytes.len() && bytes[index - usize(1)] == u8('\r') &&
-              bytes[index] == u8('\n')) {
-            ++index;
-          }
-          ++line;
-          column = usize(1);
-          continue;
-        }
-        if (bytes[index] == u8('\n') || bytes[index] == u8('\r'))
-          break;
-        ++index;
-        ++column;
-      }
-      auto text = source.contents.as_str().get(raw_start, index);
-      if (text.is_none())
-        return lex_failure("invalid raw line boundary"_str, location);
-      append_token(tokens, TokenKind::RawLine, String::make(*text), location,
-                   true, pending_space);
-      line_start = false;
-      pending_space = false;
       continue;
     }
 
@@ -398,10 +374,10 @@ auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
       column += length;
     }
 
-    auto spelling = source.contents.as_str().get(token_start, index);
+    auto spelling = source.contents().get(token_start, index);
     if (spelling.is_none())
       return lex_failure("invalid UTF-8 token boundary"_str, location);
-    append_token(tokens, kind, String::make(*spelling), location, line_start,
+    append_token(tokens, kind, token_text(*spelling), location, line_start,
                  pending_space);
     line_start = false;
     pending_space = false;
@@ -409,4 +385,4 @@ auto lex(const SourceFile &source, LexMode mode = LexMode::AllTokens)
   return Ok(rstd::move(tokens));
 }
 
-} // namespace tenon::preprocessor
+} // namespace tenon::frontend::lexical
