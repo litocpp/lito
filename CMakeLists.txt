@@ -1,10 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
 
-set(TENON_RSTD_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../rstd" CACHE PATH
-    "Path to the rstd source tree")
-
-set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
-
 project(
   tenon
   VERSION 0.1.0
@@ -37,7 +32,16 @@ add_link_options(
 set(RSTD_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 set(RSTD_BENCHMARKS_IN_CTEST OFF CACHE BOOL "" FORCE)
-add_subdirectory("${TENON_RSTD_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}/rstd")
+
+include(FetchContent)
+
+FetchContent_Declare(
+  rstd
+  GIT_REPOSITORY https://github.com/litocpp/rstd.git
+  GIT_TAG 81b41d90fd3ec1fc3f720b3c59dc830d5686c042)
+
+set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
+FetchContent_MakeAvailable(rstd)
 
 add_library(tenon.lib STATIC)
 target_compile_features(tenon.lib PUBLIC cxx_std_20)
