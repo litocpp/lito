@@ -38,7 +38,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 81b41d90fd3ec1fc3f720b3c59dc830d5686c042)
+  GIT_TAG f4ce109b9f74babdbbf708b8c42c33d1d7eceb19)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
@@ -82,8 +82,9 @@ target_sources(
          src/toolchain/clang_preprocessor.cppm
          src/toolchain/clang.cppm
          src/toolchain/mod.cppm
-         src/artifact_store.cppm
          src/build_layout.cppm
+         src/cache/hash.cppm
+         src/cache/mod.cppm
          src/builder.cppm
          src/formatter.cppm
          src/mod.cppm)

@@ -169,6 +169,7 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
         auto sources    = Vec<TargetSource>::with_capacity(source_set.sources.len());
         for (auto& source : source_set.sources) {
             sources.push(TargetSource {
+                .relative_path   = rstd::move(source.relative_path),
                 .path            = rstd::move(source.canonical_path),
                 .expected_module = rstd::move(source.expected_module),
                 .preprocessed    = rstd::move(source.preprocessed),

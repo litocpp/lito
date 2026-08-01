@@ -37,6 +37,26 @@ auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
     return Ok(empty {});
 }
 
+auto cleanup_scratch(ref<rstd::path::Path> path) noexcept -> void {
+    auto removed = rstd::fs::remove_file(path);
+    (void)removed;
+}
+
+auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> working_directory)
+    -> Result<String> {
+    auto working = working_directory.to_str();
+    if (working.is_none()) {
+        return failure<String>(
+            rstd::format("compile working directory '{}' is not valid UTF-8", working_directory));
+    }
+    auto identity = String::make("tenon-clang-compile-invocation-v1\n"_str);
+    identity.push_str(rstd::format("{}:{}\n", working->size(), *working).as_str());
+    for (const auto& argument : arguments) {
+        identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
+    }
+    return Ok(rstd::move(identity));
+}
+
 } // namespace tenon
 
 export namespace tenon
@@ -45,25 +65,38 @@ export namespace tenon
 class ClangToolchain {
 public:
     static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
-        auto compiler =
+        auto configured_compiler =
             toolchain::command::resolve_tool(specification.compiler.as_path(), "clang++"_str);
         auto archiver =
             toolchain::command::resolve_tool(specification.archiver.as_path(), "llvm-ar"_str);
-        if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
+        if (configured_compiler.is_err()) {
+            return Err(rstd::move(configured_compiler).unwrap_err());
+        }
         if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
-        auto compiler_path = rstd::move(compiler).unwrap();
+        auto compiler_path = rstd::move(configured_compiler).unwrap();
         auto archiver_path = rstd::move(archiver).unwrap();
 
+        if (toolchain::command::is_searchable_tool_name(specification.compiler.as_path())) {
+            auto path_command = Vec<String>::make();
+            auto pushed = toolchain::command::push_path(path_command, compiler_path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            toolchain::command::push_option(path_command,
+                                            toolchain::clang_options::PRINT_COMPILER_PATH);
+            auto queried = toolchain::command::tool_output(rstd::move(path_command),
+                                                           "clang++ executable query"_str);
+            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+            auto queried_path = PathBuf::from(queried->as_str());
+            auto resolved = toolchain::command::resolve_tool(queried_path.as_path(), "clang++"_str);
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            compiler_path = rstd::move(resolved).unwrap();
+        }
+
         auto compiler_command = Vec<String>::make();
-        auto archiver_command = Vec<String>::make();
         auto target_command   = Vec<String>::make();
         auto resource_command = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(compiler_command, toolchain::clang_options::VERSION);
-        pushed = toolchain::command::push_path(archiver_command, archiver_path.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(archiver_command, toolchain::clang_options::VERSION);
         pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(target_command,
@@ -75,14 +108,11 @@ public:
 
         auto compiler_version =
             toolchain::command::tool_output(rstd::move(compiler_command), "clang++ --version"_str);
-        auto archiver_version =
-            toolchain::command::tool_output(rstd::move(archiver_command), "llvm-ar --version"_str);
         auto target =
             toolchain::command::tool_output(rstd::move(target_command), "clang++ target query"_str);
         auto resource = toolchain::command::tool_output(rstd::move(resource_command),
                                                         "clang++ resource query"_str);
         if (compiler_version.is_err()) return Err(rstd::move(compiler_version).unwrap_err());
-        if (archiver_version.is_err()) return Err(rstd::move(archiver_version).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
@@ -96,41 +126,49 @@ public:
             return Err(rstd::move(canonical_resource).unwrap_err());
         }
 
-        auto identity             = String::make("tenon-clang-preprocess-recipe-v1\n"_str);
-        auto append_identity_path = [&](ref<rstd::path::Path> value) {
-            auto text = value.to_str();
-            if (text.is_some()) identity.push_str(*text);
-            identity.push_ascii('\n');
-        };
-        append_identity_path(compiler_path.as_path());
-        identity.push_str(compiler_version->as_str());
-        identity.push_ascii('\n');
-        append_identity_path(archiver_path.as_path());
-        identity.push_str(archiver_version->as_str());
-        identity.push_ascii('\n');
-        identity.push_str(target->as_str());
-        identity.push_ascii('\n');
         auto resolved_resource = rstd::move(canonical_resource).unwrap();
-        append_identity_path(resolved_resource.as_path());
+        auto compiler_metadata = rstd::fs::metadata(compiler_path.as_path());
+        if (compiler_metadata.is_err()) {
+            return failure<ClangToolchain>(
+                rstd::format("cannot inspect compiler '{}': {}",
+                             compiler_path.as_path(),
+                             rstd::move(compiler_metadata).unwrap_err()));
+        }
+        auto modified = compiler_metadata->modified();
+        if (modified.is_err()) {
+            return failure<ClangToolchain>(
+                rstd::format("cannot read compiler modification time '{}': {}",
+                             compiler_path.as_path(),
+                             rstd::move(modified).unwrap_err()));
+        }
+        auto timestamp = modified->as_unix_time();
+        auto identity  = CompilerIdentity {
+            .path                 = compiler_path.clone(),
+            .version              = rstd::move(compiler_version).unwrap(),
+            .target               = rstd::move(target).unwrap(),
+            .resource_directory   = resolved_resource.clone(),
+            .size                 = compiler_metadata->size(),
+            .modified_seconds     = timestamp.seconds,
+            .modified_nanoseconds = timestamp.nanoseconds,
+        };
 
         return Ok(ClangToolchain {
             rstd::move(compiler_path),
             rstd::move(archiver_path),
             rstd::move(resolved_resource),
-            rstd::move(target).unwrap(),
             rstd::move(identity),
         });
     }
 
-    auto identity() const -> ref<str> { return identity_.as_str(); }
-    auto target() const -> ref<str> { return target_.as_str(); }
+    auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
+    auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
 
     auto prepare(UnitSpec unit, ref<rstd::path::Path> working_directory) const
         -> Result<PreparedUnit> {
         auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
-        auto dep_parent = create_parent(unit.depfile.as_path());
+        auto dep_parent = create_parent(unit.scan_depfile.as_path());
         if (dep_parent.is_err()) return Err(rstd::move(dep_parent).unwrap_err());
         return Ok(PreparedUnit {
             .unit              = rstd::move(unit),
@@ -144,7 +182,7 @@ public:
         }
         auto facts = preprocess(prepared.unit.source.as_path(),
                                 prepared.unit.object.as_path(),
-                                prepared.unit.depfile.as_path(),
+                                prepared.unit.scan_depfile.as_path(),
                                 *prepared.unit.context,
                                 prepared.working_directory.as_path());
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
@@ -174,9 +212,13 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
         auto output = run_command(command, Some(working_directory));
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            cleanup_scratch(depfile);
+            return Err(rstd::move(output).unwrap_err());
+        }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
+            cleanup_scratch(depfile);
             return failure<PreprocessedModuleFacts>(
                 rstd::format("clang++ -E failed for '{}'\n{}\n{}",
                              source,
@@ -185,26 +227,31 @@ public:
         }
         auto facts =
             toolchain::parse_preprocessed_module(command_output.standard_output.as_str(), source);
-        if (facts.is_err()) return facts;
+        if (facts.is_err()) {
+            cleanup_scratch(depfile);
+            return facts;
+        }
         auto headers = toolchain::parse_depfile(depfile, working_directory);
+        cleanup_scratch(depfile);
         if (headers.is_err()) return Err(rstd::move(headers).unwrap_err());
         facts->header_inputs = rstd::move(headers).unwrap();
         return facts;
     }
 
-    auto compile(const PreparedUnit&           prepared,
-                 const ScanResult&             scan_result,
-                 Option<ref<rstd::path::Path>> prebuilt_module_path) const -> Result<empty> {
+    auto prepare_compile(const PreparedUnit&           prepared,
+                         const ScanResult&             scan_result,
+                         Option<ref<rstd::path::Path>> prebuilt_module_path) const
+        -> Result<CompileInvocation> {
         auto command = Vec<String>::make();
         auto context = append_compile_context(command, *prepared.unit.context);
-        if (context.is_err()) return context;
+        if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         if (scan_result.provided.is_some()) {
             if (prepared.unit.bmi.is_none()) {
-                return failure<empty>(rstd::format("module unit has no BMI output: {}",
-                                                   prepared.unit.source.as_path()));
+                return failure<CompileInvocation>(rstd::format("module unit has no BMI output: {}",
+                                                               prepared.unit.source.as_path()));
             }
             auto parent = create_parent((*prepared.unit.bmi).as_path());
-            if (parent.is_err()) return parent;
+            if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
             toolchain::command::push_option(command, toolchain::clang_options::CXX_MODULE);
             auto pushed = toolchain::command::push_path_option(
@@ -230,13 +277,25 @@ public:
         pushed = toolchain::command::push_path(command, prepared.unit.object.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
-        auto output = run_command(command, Some(prepared.working_directory.as_path()));
+        auto identity = invocation_identity(command, prepared.working_directory.as_path());
+        if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
+        return Ok(CompileInvocation {
+            .arguments         = rstd::move(command),
+            .working_directory = prepared.working_directory.clone(),
+            .identity          = rstd::move(identity).unwrap(),
+        });
+    }
+
+    auto execute_compile(const CompileInvocation& invocation, ref<rstd::path::Path> source) const
+        -> Result<empty> {
+        auto output =
+            run_command(invocation.arguments, Some(invocation.working_directory.as_path()));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
             return failure<empty>(rstd::format("clang++ failed for '{}'\n{}\n{}",
-                                               prepared.unit.source.as_path(),
-                                               command_text(command).as_str(),
+                                               source,
+                                               command_text(invocation.arguments).as_str(),
                                                command_output.standard_error.as_str()));
         }
         return Ok(empty {});
@@ -322,16 +381,14 @@ public:
     }
 
 private:
-    ClangToolchain(PathBuf compiler,
-                   PathBuf archiver,
-                   PathBuf resource_dir,
-                   String  target,
-                   String  identity)
+    ClangToolchain(PathBuf          compiler,
+                   PathBuf          archiver,
+                   PathBuf          resource_dir,
+                   CompilerIdentity identity)
         : compiler_(rstd::move(compiler)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
-          target_(rstd::move(target)),
-          identity_(rstd::move(identity)) {}
+          compiler_identity_(rstd::move(identity)) {}
 
     auto append_compile_context(Vec<String>& command, const CompileContext& context) const
         -> Result<empty> {
@@ -360,11 +417,10 @@ private:
         return Ok(empty {});
     }
 
-    PathBuf compiler_;
-    PathBuf archiver_;
-    PathBuf resource_dir_;
-    String  target_;
-    String  identity_;
+    PathBuf          compiler_;
+    PathBuf          archiver_;
+    PathBuf          resource_dir_;
+    CompilerIdentity compiler_identity_;
 };
 
 } // namespace tenon

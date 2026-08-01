@@ -8,7 +8,7 @@ import tenon.lock_store;
 import tenon.package;
 import tenon.toolchain;
 import tenon.modules;
-import tenon.artifact_store;
+import tenon.cache;
 import tenon.build_layout;
 
 using namespace rstd::prelude;
@@ -74,8 +74,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
 
-    auto resolved = resolve_source_discovery(
-        metadata, metadata.default_profile.as_str(), request.targets, toolchain.identity());
+    auto resolved =
+        resolve_source_discovery(metadata, metadata.default_profile.as_str(), request.targets);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto discovery_plan = rstd::move(resolved).unwrap();
 
@@ -96,6 +96,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (resolved_package.is_err()) return Err(rstd::move(resolved_package).unwrap_err());
     auto package_plan = rstd::move(resolved_package).unwrap();
 
+    auto created_cache = CompileCacheSession::create(layout,
+                                                     package.root.as_path(),
+                                                     package_plan.profile->name.as_str(),
+                                                     toolchain.compiler_identity());
+    if (created_cache.is_err()) return Err(rstd::move(created_cache).unwrap_err());
+    auto cache = rstd::move(created_cache).unwrap();
+
     auto target_units = Vec<Vec<UnitId>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         target_units.emplace_back();
@@ -104,26 +111,26 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         for (const auto& source : target_spec.sources) {
-            auto object = layout.object(
-                target_spec.name.as_str(), source.path.as_path(), target_spec.root.as_path());
-            auto depfile = layout.depfile(
-                target_spec.name.as_str(), source.path.as_path(), target_spec.root.as_path());
-            auto fingerprint = layout.fingerprint(
-                target_spec.name.as_str(), source.path.as_path(), target_spec.root.as_path());
+            auto object = layout.object(target_spec.name.as_str(), source.relative_path.as_path());
+            auto depfile =
+                layout.scan_depfile(target_spec.name.as_str(), source.relative_path.as_path());
+            auto cache_record =
+                layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
             if (depfile.is_err()) return Err(rstd::move(depfile).unwrap_err());
-            if (fingerprint.is_err()) return Err(rstd::move(fingerprint).unwrap_err());
+            if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
 
             auto id       = units.len();
             auto prepared = toolchain.prepare(
                 UnitSpec {
-                    .id          = id,
-                    .target      = target,
-                    .source      = source.path.clone(),
-                    .object      = rstd::move(object).unwrap(),
-                    .depfile     = rstd::move(depfile).unwrap(),
-                    .fingerprint = rstd::move(fingerprint).unwrap(),
-                    .context     = rstd::addressof(package_plan.contexts[target]),
+                    .id              = id,
+                    .target          = target,
+                    .relative_source = source.relative_path.clone(),
+                    .source          = source.path.clone(),
+                    .object          = rstd::move(object).unwrap(),
+                    .scan_depfile    = rstd::move(depfile).unwrap(),
+                    .cache_record    = rstd::move(cache_record).unwrap(),
+                    .context         = rstd::addressof(package_plan.contexts[target]),
                 },
                 target_spec.root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
@@ -163,43 +170,68 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
     auto module_plan = rstd::move(resolved_modules).unwrap();
 
-    auto store = ArtifactStore {};
-    auto keys  = Vec<String>::with_capacity(units.len());
+    auto keys = Vec<String>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
     auto bmi_directory = layout.bmi_directory();
     auto compiled      = usize {};
     auto reused        = usize {};
     for (auto unit : module_plan.compile_order) {
-        auto dependency_keys = Vec<String>::make();
+        auto dependencies = Vec<DependencyArtifact>::make();
         for (auto input : module_plan.direct_inputs[unit]) {
-            dependency_keys.push(keys[input].clone());
+            if (scans[input].provided.is_none()) {
+                return failure<BuildSummary>(
+                    ErrorKind::Dependency,
+                    rstd::format("module dependency '{}' has no provided module",
+                                 units[input].unit.source.as_path()));
+            }
+            dependencies.push(DependencyArtifact {
+                .logical_name = scans[input].provided->logical_name.clone(),
+                .artifact     = keys[input].clone(),
+            });
         }
-        auto key = store.key_for(units[unit], scans[unit], dependency_keys);
-        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
-        auto       artifact_key = rstd::move(key).unwrap();
-        const auto target       = units[unit].unit.target;
-        if (store.current(units[unit], scans[unit], artifact_key.as_str())) {
+        const auto target               = units[unit].unit.target;
+        auto       prebuilt_module_path = Option<ref<rstd::path::Path>> {};
+        if (! module_plan.direct_inputs[unit].is_empty()) {
+            prebuilt_module_path = Some(bmi_directory.as_path());
+        }
+        auto invocation = toolchain.prepare_compile(units[unit], scans[unit], prebuilt_module_path);
+        if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
+        auto decision = cache.evaluate(package.targets[target].name.as_str(),
+                                       units[unit],
+                                       scans[unit],
+                                       *invocation,
+                                       dependencies);
+        if (decision.is_err()) return Err(rstd::move(decision).unwrap_err());
+        auto cache_decision = rstd::move(decision).unwrap();
+        if (cache_decision.current()) {
             ++reused;
             emit(request,
                  BuildEventKind::Reuse,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
         } else {
+            auto begun = cache.begin_compile(cache_decision);
+            if (begun.is_err()) return Err(rstd::move(begun).unwrap_err());
             emit(request,
                  BuildEventKind::Compile,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
-            auto prebuilt_module_path = Option<ref<rstd::path::Path>> {};
-            if (! module_plan.direct_inputs[unit].is_empty()) {
-                prebuilt_module_path = Some(bmi_directory.as_path());
-            }
-            auto result = toolchain.compile(units[unit], scans[unit], prebuilt_module_path);
+            auto result = toolchain.execute_compile(*invocation, units[unit].unit.source.as_path());
             if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-            auto committed = store.commit(units[unit], artifact_key.as_str());
+            auto committed = cache.commit_success(units[unit], cache_decision);
             if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
             ++compiled;
         }
-        keys[unit] = rstd::move(artifact_key);
+        keys[unit] = String::make(cache_decision.artifact());
+    }
+
+    for (auto target : package_plan.target_order) {
+        auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
+        for (auto unit : target_units[target]) {
+            records.push(units[unit].unit.cache_record.clone());
+        }
+        auto finished = cache.finish_target(layout, package.targets[target].name.as_str(), records);
+        if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
     }
 
     auto archives      = Vec<PathBuf>::make();

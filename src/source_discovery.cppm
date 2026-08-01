@@ -311,13 +311,11 @@ auto discover_package_sources(const PackageMetadata&     package,
     for (auto cursor = usize {}; cursor < queue.len(); ++cursor) {
         auto        candidate = rstd::move(queue[cursor]);
         const auto& target    = package.targets[candidate.target];
-        auto        object    = layout.object(target.manifest.name.as_str(),
-                                              candidate.source.canonical_path.as_path(),
-                                              target.manifest.root.as_path());
+        auto        object =
+            layout.object(target.manifest.name.as_str(), candidate.source.relative_path.as_path());
         if (object.is_err()) return Err(rstd::move(object).unwrap_err());
-        auto depfile = layout.depfile(target.manifest.name.as_str(),
-                                      candidate.source.canonical_path.as_path(),
-                                      target.manifest.root.as_path());
+        auto depfile = layout.scan_depfile(target.manifest.name.as_str(),
+                                           candidate.source.relative_path.as_path());
         if (depfile.is_err()) return Err(rstd::move(depfile).unwrap_err());
         auto facts = toolchain.preprocess(candidate.source.canonical_path.as_path(),
                                           object->as_path(),

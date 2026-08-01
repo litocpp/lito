@@ -408,6 +408,7 @@ auto scan_from_preprocessed(const PreprocessedModuleFacts& facts, UnitId unit) -
         });
     }
     if (facts.implementation_module.is_some()) {
+        result.implementation_module = Some(facts.implementation_module->clone());
         result.required_modules.push(facts.implementation_module->clone());
     }
     for (const auto& imported : facts.imports) {

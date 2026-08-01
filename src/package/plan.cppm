@@ -128,9 +128,8 @@ auto append_context_path(String& result, ref<str> prefix, ref<rstd::path::Path> 
     result.push_ascii('\n');
 }
 
-auto context_id(const CompileContext& context, ref<str> toolchain_identity) -> String {
-    auto result = String::make(toolchain_identity);
-    result.push_ascii('\n');
+auto context_id(const CompileContext& context) -> String {
+    auto result = String::make("tenon-compile-context-v1\n"_str);
     result.push_str(context.language_standard.as_str());
     result.push_ascii('\n');
     result.push_str(context.standard_library == StandardLibrary::Libstdcxx ? "libstdc++\n"_str
@@ -159,8 +158,7 @@ export namespace tenon
 
 auto resolve_source_discovery(const PackageMetadata& package,
                               ref<str>               requested_profile,
-                              const Vec<String>&     requested_targets,
-                              ref<str> toolchain_identity) -> Result<SourceDiscoveryPlan> {
+                              const Vec<String>& requested_targets) -> Result<SourceDiscoveryPlan> {
     auto target_ids = TargetMap::make();
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         target_ids.insert(package.targets[id].manifest.name.clone(), id);
@@ -259,7 +257,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             append_unique(context.definitions, usage.definitions);
             append_unique(context.options, usage.options);
         }
-        context.id              = context_id(context, toolchain_identity);
+        context.id              = context_id(context);
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);

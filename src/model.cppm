@@ -343,6 +343,7 @@ struct BuildConfiguration {
 };
 
 struct TargetSource {
+    PathBuf                         relative_path;
     PathBuf                         path;
     Option<String>                  expected_module;
     Option<PreprocessedModuleFacts> preprocessed;
@@ -396,6 +397,22 @@ struct CompileContext {
     Vec<String>     options;
 };
 
+struct CompilerIdentity {
+    PathBuf path;
+    String  version;
+    String  target;
+    PathBuf resource_directory;
+    u64     size {};
+    i64     modified_seconds {};
+    u32     modified_nanoseconds {};
+};
+
+struct CompileInvocation {
+    Vec<String> arguments;
+    PathBuf     working_directory;
+    String      identity;
+};
+
 struct SourceDiscoveryPlan {
     usize               profile {};
     Vec<String>         target_names;
@@ -419,10 +436,11 @@ struct PackagePlan {
 struct UnitSpec {
     UnitId                id {};
     TargetId              target {};
+    PathBuf               relative_source;
     PathBuf               source;
     PathBuf               object;
-    PathBuf               depfile;
-    PathBuf               fingerprint;
+    PathBuf               scan_depfile;
+    PathBuf               cache_record;
     Option<PathBuf>       bmi;
     const CompileContext* context {};
 };
@@ -436,6 +454,7 @@ struct PreparedUnit {
 struct ScanResult {
     UnitId                 unit {};
     Option<ProvidedModule> provided;
+    Option<String>         implementation_module;
     Vec<String>            required_modules;
     Vec<PathBuf>           header_inputs;
 };

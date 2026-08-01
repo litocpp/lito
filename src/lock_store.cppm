@@ -780,67 +780,16 @@ auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
     return Ok(Some(rstd::move(document)));
 }
 
-auto cleanup_temp(ref<rstd::path::Path> path) noexcept -> void {
-    auto removed = rstd::fs::remove_file(path);
-    (void)removed;
-}
-
-auto write_lock(const ResolvedPackageGraph& graph,
-                ref<rstd::path::Path>       destination,
-                const Json&                 desired) -> Result<empty> {
+auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> Result<empty> {
     auto text = rstd::json::to_string(
         desired, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii(u8('\n'));
 
-    auto temp_file = Option<rstd::fs::File> {};
-    auto temp_path = PathBuf::make();
-    for (usize index {}; index < usize(64); ++index) {
-        auto name      = rstd::format("tenon.lock.tmp.{}", index);
-        auto candidate = graph.root_directory.join(PathBuf::from(name.as_str()).as_path());
-        auto created   = rstd::fs::File::create_new(candidate.as_path());
-        if (created.is_ok()) {
-            temp_path = rstd::move(candidate);
-            temp_file = Some(rstd::move(created).unwrap());
-            break;
-        }
-        auto cause = rstd::move(created).unwrap_err();
-        if (cause.kind() !=
-            rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::AlreadyExists }) {
-            return failure<empty>(
-                rstd::format("cannot create lock temp '{}': {}", candidate.as_path(), cause));
-        }
-    }
-    if (temp_file.is_none()) {
-        return failure<empty>("cannot allocate a sibling lock temp file"_str);
-    }
-    auto bytes   = text.as_str().as_bytes();
-    auto written = rstd::io::write_all(*temp_file, bytes);
+    auto written = rstd::fs::write_atomic(destination, text.as_str().as_bytes());
     if (written.is_err()) {
-        cleanup_temp(temp_path.as_path());
-        return failure<empty>(rstd::format("cannot write lock temp '{}': {}",
-                                           temp_path.as_path(),
+        return failure<empty>(rstd::format("cannot atomically write lock '{}': {}",
+                                           destination,
                                            rstd::move(written).unwrap_err()));
-    }
-    auto flushed = (*temp_file).flush();
-    if (flushed.is_err()) {
-        cleanup_temp(temp_path.as_path());
-        return failure<empty>(rstd::format("cannot flush lock temp '{}': {}",
-                                           temp_path.as_path(),
-                                           rstd::move(flushed).unwrap_err()));
-    }
-    auto synced = (*temp_file).sync_all();
-    if (synced.is_err()) {
-        cleanup_temp(temp_path.as_path());
-        return failure<empty>(rstd::format("cannot sync lock temp '{}': {}",
-                                           temp_path.as_path(),
-                                           rstd::move(synced).unwrap_err()));
-    }
-    temp_file    = None();
-    auto renamed = rstd::fs::rename(temp_path.as_path(), destination);
-    if (renamed.is_err()) {
-        cleanup_temp(temp_path.as_path());
-        return failure<empty>(rstd::format(
-            "cannot replace lock '{}': {}", destination, rstd::move(renamed).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -946,7 +895,7 @@ auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> Result
     if (session.existing_.is_some() && *session.existing_ == desired) {
         return Ok(LockStatus::Unchanged);
     }
-    auto written = write_lock(graph, session.destination_.as_path(), desired);
+    auto written = write_lock(session.destination_.as_path(), desired);
     if (written.is_err()) return Err(rstd::move(written).unwrap_err());
     return Ok(LockStatus::Updated);
 }
