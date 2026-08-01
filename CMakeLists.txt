@@ -78,8 +78,8 @@ target_sources(
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
          src/toolchain/clang_format.cppm
-         src/toolchain/clang_scan_deps_options.cppm
-         src/toolchain/clang_scan_deps.cppm
+         src/toolchain/clang_depfile.cppm
+         src/toolchain/clang_preprocessor.cppm
          src/toolchain/clang.cppm
          src/artifact_store.cppm
          src/build_layout.cppm

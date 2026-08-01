@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "tenon.toml",
+      "name": "fixture-scanner-module-kinds",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-scanner-module-kinds"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

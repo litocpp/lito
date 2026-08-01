@@ -1,0 +1,8 @@
+[package]
+name = "fixture-removed-scanner"
+version = "0.1.0"
+
+[executable]
+name = "fixture-removed-scanner"
+discovery = "explicit"
+sources = ["main.cpp"]

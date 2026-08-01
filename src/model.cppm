@@ -123,12 +123,11 @@ enum class PackageVersionSource
 
 struct PackageVersion {
     PackageVersionSource source { PackageVersionSource::Explicit };
-    Option<String> value;
+    Option<String>       value;
 };
 
 struct ToolchainSpec {
     PathBuf compiler;
-    PathBuf scanner;
     PathBuf archiver;
     PathBuf formatter;
 };
@@ -190,16 +189,16 @@ struct DeclaredDependency {
 };
 
 struct PackageManifest {
-    String                name;
-    PackageVersion        version;
-    Option<String>  root_module;
-    PathBuf               root;
-    PathBuf               manifest_path;
-    ArtifactKind          artifact_kind { ArtifactKind::StaticLibrary };
-    String                artifact_name;
-    SourceDiscoveryMode   discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>          declared_sources;
-    UsageRequirements     usage;
+    String                  name;
+    PackageVersion          version;
+    Option<String>          root_module;
+    PathBuf                 root;
+    PathBuf                 manifest_path;
+    ArtifactKind            artifact_kind { ArtifactKind::StaticLibrary };
+    String                  artifact_name;
+    SourceDiscoveryMode     discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>            declared_sources;
+    UsageRequirements       usage;
     Vec<DeclaredDependency> dependencies;
 };
 
@@ -222,7 +221,7 @@ enum class ManifestKind
 };
 
 struct ManifestDocument {
-    ManifestKind                    kind { ManifestKind::Package };
+    ManifestKind              kind { ManifestKind::Package };
     Option<PackageManifest>   package;
     Option<WorkspaceManifest> workspace;
 };
@@ -232,11 +231,36 @@ struct ManifestLocation {
     PathBuf manifest;
 };
 
+struct ProvidedModule {
+    String logical_name;
+    bool   is_interface { false };
+};
+
+struct SourceLocation {
+    PathBuf path;
+    usize   line {};
+};
+
+struct ModuleImport {
+    String         logical_name;
+    SourceLocation location;
+};
+
+struct PreprocessedModuleFacts {
+    PathBuf                source;
+    Option<ProvidedModule> provided;
+    Option<String>         implementation_module;
+    Vec<ModuleImport>      imports;
+    Vec<PathBuf>           header_inputs;
+    usize                  output_bytes {};
+};
+
 struct ResolvedSource {
-    PathBuf              relative_path;
-    PathBuf              canonical_path;
-    SourceOrigin         origin { SourceOrigin::Explicit };
-    Option<String> expected_module;
+    PathBuf                         relative_path;
+    PathBuf                         canonical_path;
+    SourceOrigin                    origin { SourceOrigin::Explicit };
+    Option<String>                  expected_module;
+    Option<PreprocessedModuleFacts> preprocessed;
 };
 
 struct ResolvedSourceSet {
@@ -265,9 +289,9 @@ struct LockedGitSource {
 };
 
 struct PackageResolutionOptions {
-    bool                    locked { false };
-    Vec<LockedGitSource>    git_sources;
-    PackageSourceConfig     sources;
+    bool                 locked { false };
+    Vec<LockedGitSource> git_sources;
+    PackageSourceConfig  sources;
 };
 
 struct ResolvedPackage {
@@ -318,21 +342,37 @@ struct BuildConfiguration {
     Vec<String>     linker_options;
 };
 
-struct ModuleExpectation {
-    PathBuf source;
-    String  logical_name;
+struct TargetSource {
+    PathBuf                         path;
+    Option<String>                  expected_module;
+    Option<PreprocessedModuleFacts> preprocessed;
+};
+
+struct TargetMetadata {
+    PackageManifest     manifest;
+    Vec<DependencySpec> dependencies;
+};
+
+struct PackageMetadata {
+    String              name;
+    PathBuf             root;
+    PathBuf             manifest_path;
+    String              default_profile;
+    Vec<String>         default_targets;
+    ToolchainSpec       toolchain;
+    Vec<ProfileSpec>    profiles;
+    Vec<TargetMetadata> targets;
 };
 
 struct TargetSpec {
-    String                  name;
-    ArtifactKind            artifact_kind { ArtifactKind::StaticLibrary };
-    String                  artifact_name;
-    Option<String>    module_affiliation;
-    PathBuf                 root;
-    Vec<PathBuf>            sources;
-    Vec<ModuleExpectation>  module_expectations;
-    Vec<DependencySpec>     dependencies;
-    UsageRequirements       usage;
+    String              name;
+    ArtifactKind        artifact_kind { ArtifactKind::StaticLibrary };
+    String              artifact_name;
+    Option<String>      module_affiliation;
+    PathBuf             root;
+    Vec<TargetSource>   sources;
+    Vec<DependencySpec> dependencies;
+    UsageRequirements   usage;
 };
 
 struct PackageSpec {
@@ -356,42 +396,48 @@ struct CompileContext {
     Vec<String>     options;
 };
 
+struct SourceDiscoveryPlan {
+    usize               profile {};
+    Vec<String>         target_names;
+    Vec<TargetId>       target_order;
+    Vec<CompileContext> contexts;
+    Vec<Vec<TargetId>>  visible_targets;
+    Vec<Vec<TargetId>>  link_dependencies;
+    Vec<Vec<String>>    linker_options;
+};
+
 struct PackagePlan {
-    const PackageSpec*      package {};
-    const ProfileSpec*      profile {};
-    Vec<TargetId>           target_order;
-    Vec<CompileContext>     contexts;
-    Vec<Vec<TargetId>>      visible_targets;
-    Vec<Vec<TargetId>>      link_dependencies;
-    Vec<Vec<String>>        linker_options;
+    const PackageSpec*  package {};
+    const ProfileSpec*  profile {};
+    Vec<TargetId>       target_order;
+    Vec<CompileContext> contexts;
+    Vec<Vec<TargetId>>  visible_targets;
+    Vec<Vec<TargetId>>  link_dependencies;
+    Vec<Vec<String>>    linker_options;
 };
 
 struct UnitSpec {
-    UnitId                  id {};
-    TargetId                target {};
-    PathBuf                 source;
-    PathBuf                 object;
-    PathBuf                 depfile;
-    PathBuf                 fingerprint;
-    Option<PathBuf>   bmi;
-    const CompileContext*   context {};
+    UnitId                id {};
+    TargetId              target {};
+    PathBuf               source;
+    PathBuf               object;
+    PathBuf               depfile;
+    PathBuf               fingerprint;
+    Option<PathBuf>       bmi;
+    const CompileContext* context {};
 };
 
 struct PreparedUnit {
-    UnitSpec unit;
-    PathBuf  working_directory;
-};
-
-struct ProvidedModule {
-    String logical_name;
-    bool   is_interface { false };
+    UnitSpec                       unit;
+    PathBuf                        working_directory;
+    const PreprocessedModuleFacts* preprocessed {};
 };
 
 struct ScanResult {
-    UnitId                       unit {};
+    UnitId                 unit {};
     Option<ProvidedModule> provided;
-    Vec<String>                  required_modules;
-    Vec<PathBuf>                 header_inputs;
+    Vec<String>            required_modules;
+    Vec<PathBuf>           header_inputs;
 };
 
 struct ModulePlan {
@@ -409,8 +455,8 @@ enum class BuildEventKind
 };
 
 struct BuildEvent {
-    BuildEventKind kind { BuildEventKind::Scan };
-    ref<str> target;
+    BuildEventKind        kind { BuildEventKind::Scan };
+    ref<str>              target;
     ref<rstd::path::Path> path;
 };
 
@@ -420,12 +466,12 @@ struct BuildObserver {
 };
 
 struct BuildRequest {
-    PackageSelection           selection;
-    Vec<String>                targets;
-    PathBuf                    output;
-    BuildConfiguration         configuration;
-    PackageSourceConfig        sources;
-    bool                       locked { false };
+    PackageSelection      selection;
+    Vec<String>           targets;
+    PathBuf               output;
+    BuildConfiguration    configuration;
+    PackageSourceConfig   sources;
+    bool                  locked { false };
     Option<BuildObserver> observer;
 };
 
@@ -433,9 +479,9 @@ struct BuildSummary {
     String       package;
     String       profile;
     PathBuf      output;
-    usize  scanned {};
-    usize  compiled {};
-    usize  reused {};
+    usize        scanned {};
+    usize        compiled {};
+    usize        reused {};
     Vec<PathBuf> archives;
     Vec<PathBuf> executables;
 };

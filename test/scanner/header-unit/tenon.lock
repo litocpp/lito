@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "tenon.toml",
+      "name": "fixture-scanner-header-unit",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-scanner-header-unit"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

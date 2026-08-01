@@ -38,8 +38,7 @@ auto root_config_key(ref<str> key) -> bool {
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
-  return key == "compiler"_str || key == "scanner"_str ||
-         key == "archiver"_str || key == "formatter"_str;
+  return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool { return key == "path"_str; }
@@ -84,7 +83,6 @@ auto configured_tool(const Toml &toolchain_value, ref<str> key,
 auto default_toolchain() -> ToolchainSpec {
   return ToolchainSpec{
       .compiler = PathBuf::from("clang++"_str),
-      .scanner = PathBuf::from("clang-scan-deps"_str),
       .archiver = PathBuf::from("llvm-ar"_str),
       .formatter = PathBuf::from("clang-format"_str),
   };
@@ -243,23 +241,18 @@ auto load_project_config(ref<rstd::path::Path> requested_root)
       return Err(rstd::move(known).unwrap_err());
     auto compiler =
         configured_tool(**toolchain_value, "compiler"_str, "clang++"_str);
-    auto scanner = configured_tool(**toolchain_value, "scanner"_str,
-                                   "clang-scan-deps"_str);
     auto archiver =
         configured_tool(**toolchain_value, "archiver"_str, "llvm-ar"_str);
     auto formatter =
         configured_tool(**toolchain_value, "formatter"_str, "clang-format"_str);
     if (compiler.is_err())
       return Err(rstd::move(compiler).unwrap_err());
-    if (scanner.is_err())
-      return Err(rstd::move(scanner).unwrap_err());
     if (archiver.is_err())
       return Err(rstd::move(archiver).unwrap_err());
     if (formatter.is_err())
       return Err(rstd::move(formatter).unwrap_err());
     toolchain = ToolchainSpec{
         .compiler = rstd::move(compiler).unwrap(),
-        .scanner = rstd::move(scanner).unwrap(),
         .archiver = rstd::move(archiver).unwrap(),
         .formatter = rstd::move(formatter).unwrap(),
     };

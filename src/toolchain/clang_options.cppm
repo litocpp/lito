@@ -18,28 +18,28 @@ inline constexpr auto STANDARD      = "-std="_str;
 inline constexpr auto NO_RTTI       = "-fno-rtti"_str;
 inline constexpr auto NO_EXCEPTIONS = "-fno-exceptions"_str;
 inline constexpr auto DEFINE        = "-D"_str;
-inline constexpr auto INCLUDE        = "-I"_str;
+inline constexpr auto INCLUDE       = "-I"_str;
 
-inline constexpr auto DEPENDENCIES       = "-MD"_str;
-inline constexpr auto DEPENDENCY_TARGET  = "-MT"_str;
-inline constexpr auto DEPENDENCY_FILE    = "-MF"_str;
+inline constexpr auto DEPENDENCIES      = "-MD"_str;
+inline constexpr auto DEPENDENCY_TARGET = "-MT"_str;
+inline constexpr auto DEPENDENCY_FILE   = "-MF"_str;
+inline constexpr auto PREPROCESS        = "-E"_str;
 
 inline constexpr auto LANGUAGE             = "-x"_str;
+inline constexpr auto CXX_SOURCE           = "c++"_str;
 inline constexpr auto CXX_MODULE           = "c++-module"_str;
 inline constexpr auto MODULE_OUTPUT        = "-fmodule-output="_str;
 inline constexpr auto PREBUILT_MODULE_PATH = "-fprebuilt-module-path="_str;
 inline constexpr auto COMPILE              = "-c"_str;
 inline constexpr auto OUTPUT               = "-o"_str;
-inline constexpr auto ARCHIVE_CREATE = "rcs"_str;
+inline constexpr auto ARCHIVE_CREATE       = "rcs"_str;
 
 constexpr auto standard_library(StandardLibrary value) noexcept -> ref<str> {
-    return value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str
-                                                : "-stdlib=libc++"_str;
+    return value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str : "-stdlib=libc++"_str;
 }
 
 constexpr auto bmi(BmiMode value) noexcept -> ref<str> {
-    return value == BmiMode::Reduced ? "-fmodules-reduced-bmi"_str
-                                     : "-fno-modules-reduced-bmi"_str;
+    return value == BmiMode::Reduced ? "-fmodules-reduced-bmi"_str : "-fno-modules-reduced-bmi"_str;
 }
 
 } // namespace tenon::toolchain::clang_options

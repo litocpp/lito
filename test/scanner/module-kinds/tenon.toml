@@ -1,0 +1,14 @@
+[package]
+name = "fixture-scanner-module-kinds"
+version = "0.1.0"
+module = "fixture.scanner.kinds"
+
+[library]
+archive = "fixture.scanner.kinds"
+discovery = "explicit"
+sources = [
+  "src/lib.cppm",
+  "src/iface.cppm",
+  "src/internal.cppm",
+  "src/impl.cpp",
+]

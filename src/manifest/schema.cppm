@@ -654,15 +654,8 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
     const auto module_discovery   = discovery_text->as_str() == "module"_str;
     if (! explicit_discovery && ! module_discovery) {
-        return failure<ManifestDocument>(rstd::format(
-            "{}.discovery must be explicit or module in manifest version 1", artifact_context));
-    }
-    if (artifact_kind == ArtifactKind::Executable && module_discovery) {
         return failure<ManifestDocument>(
-            "executable.discovery must be explicit in manifest version 1"_str);
-    }
-    if (module_discovery && root_module->is_none()) {
-        return failure<ManifestDocument>("package.module is required when discovery is module"_str);
+            rstd::format("{}.discovery must be explicit or module", artifact_context));
     }
     if (module_discovery && member(artifact_value, "sources"_str).is_some()) {
         return failure<ManifestDocument>(

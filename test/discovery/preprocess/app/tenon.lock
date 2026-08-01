@@ -1,0 +1,34 @@
+{
+  "packages": [
+    {
+      "dependencies": [
+        "fixture-discovery-lib"
+      ],
+      "manifest": "tenon.toml",
+      "name": "fixture-discovery-app",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "tenon.toml",
+      "name": "fixture-discovery-lib",
+      "source": "path+../lib",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-discovery-app"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    },
+    {
+      "kind": "path",
+      "path": "../lib"
+    }
+  ],
+  "version": 4
+}
