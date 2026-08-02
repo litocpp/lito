@@ -3,6 +3,7 @@ export module tenon.frontend.lexical:token;
 import rstd;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace tenon::frontend::lexical {
 
@@ -106,6 +107,125 @@ auto is_identifier_start(u8 value) noexcept -> bool {
 
 auto is_identifier_continue(u8 value) noexcept -> bool {
   return is_identifier_start(value) || (value >= u8('0') && value <= u8('9'));
+}
+
+inline constexpr auto CPP_IDENTIFIER_RULE_ID =
+    "tenon-cpp20-clang-standard-library-identifiers-v1"_str;
+
+inline constexpr auto CPP_RESERVED_IDENTIFIERS = R"TENON(_Atomic
+__datasizeof
+alignas
+alignof
+and
+and_eq
+asm
+auto
+bitand
+bitor
+bool
+break
+case
+catch
+char
+char16_t
+char32_t
+char8_t
+class
+co_await
+co_return
+co_yield
+compl
+concept
+const
+const_cast
+consteval
+constexpr
+constinit
+continue
+decltype
+default
+delete
+do
+double
+dynamic_cast
+else
+enum
+explicit
+export
+extern
+false
+float
+for
+friend
+goto
+if
+int
+long
+mutable
+namespace
+new
+noexcept
+not
+not_eq
+nullptr
+operator
+or
+or_eq
+private
+protected
+public
+register
+reinterpret_cast
+requires
+return
+short
+signed
+sizeof
+static
+static_assert
+static_cast
+struct
+switch
+template
+this
+thread_local
+throw
+true
+try
+typedef
+typeid
+typename
+union
+unsigned
+using
+virtual
+void
+volatile
+wchar_t
+while
+xor
+xor_eq
+)TENON"_str;
+
+auto is_cpp_reserved_identifier(ref<str> value) -> bool {
+  auto begin = usize{};
+  while (begin < CPP_RESERVED_IDENTIFIERS.len()) {
+    auto end = begin;
+    while (end < CPP_RESERVED_IDENTIFIERS.len() &&
+           CPP_RESERVED_IDENTIFIERS.as_bytes()[end] != u8('\n')) {
+      ++end;
+    }
+    auto keyword = CPP_RESERVED_IDENTIFIERS.get(begin, end);
+    if (keyword.is_some() && *keyword == value)
+      return true;
+    begin = end + usize(1);
+  }
+  return false;
+}
+
+auto is_cpp_identifier_token(const Token &token, ref<str>) -> bool {
+  return token.kind == TokenKind::Identifier &&
+         !is_cpp_reserved_identifier(token.text.as_str());
 }
 
 } // namespace tenon::frontend::lexical

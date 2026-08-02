@@ -15,6 +15,7 @@ export namespace tenon::frontend::preprocessor {
 
 struct PreprocessRequest {
   rstd::path::PathBuf source;
+  String language_standard{String::make("c++20"_str)};
   String environment_identity;
   usize maximum_include_depth{usize(200)};
 };
@@ -57,8 +58,17 @@ public:
         rstd::as<BuiltinProvider>(builtin_provider_).predefined_macros();
     if (predefined.is_err())
       return Err(rstd::move(predefined).unwrap_err());
-    for (auto &definition : *predefined)
-      (void)macros_.define_shared(rstd::move(definition));
+    for (auto &operation : *predefined) {
+      if (operation.kind == PredefinedMacroOperationKind::Define) {
+        if (operation.definition.is_none()) {
+          return Err(Error::make(
+              "predefined macro define operation has no definition"_str));
+        }
+        (void)macros_.define_shared(rstd::move(operation.definition).unwrap());
+      } else {
+        (void)macros_.undefine(operation.name.as_str());
+      }
+    }
 
     auto processed = process_file(request_.source.as_path(), None());
     if (processed.is_err())
@@ -146,8 +156,13 @@ private:
            name == "__has_cpp_attribute"_str || name == "__has_attribute"_str ||
            name == "__has_declspec_attribute"_str ||
            name == "__has_embed"_str || name == "__has_warning"_str ||
-           name == "__is_identifier"_str || name == "__has_include"_str ||
-           name == "__has_include_next"_str;
+           name == "__is_identifier"_str || name == "__is_target_arch"_str ||
+           name == "__is_target_vendor"_str ||
+           name == "__is_target_os"_str ||
+           name == "__is_target_environment"_str ||
+           name == "__is_target_variant_os"_str ||
+           name == "__is_target_variant_environment"_str ||
+           name == "__has_include"_str || name == "__has_include_next"_str;
   }
 
   auto number_token(i64 value, const Token &origin) -> Token {
@@ -560,30 +575,6 @@ private:
     return Ok(rstd::move(result));
   }
 
-  auto query_kind(ref<str> name) const -> Option<BuiltinQueryKind> {
-    if (name == "__has_builtin"_str)
-      return Some(BuiltinQueryKind::HasBuiltin);
-    if (name == "__has_constexpr_builtin"_str) {
-      return Some(BuiltinQueryKind::HasConstexprBuiltin);
-    }
-    if (name == "__has_feature"_str)
-      return Some(BuiltinQueryKind::HasFeature);
-    if (name == "__has_extension"_str)
-      return Some(BuiltinQueryKind::HasExtension);
-    if (name == "__has_cpp_attribute"_str)
-      return Some(BuiltinQueryKind::HasCppAttribute);
-    if (name == "__has_attribute"_str)
-      return Some(BuiltinQueryKind::HasAttribute);
-    if (name == "__has_declspec_attribute"_str) {
-      return Some(BuiltinQueryKind::HasDeclspecAttribute);
-    }
-    if (name == "__has_warning"_str)
-      return Some(BuiltinQueryKind::HasWarning);
-    if (name == "__is_identifier"_str)
-      return Some(BuiltinQueryKind::IsIdentifier);
-    return None();
-  }
-
   auto joined_argument(const Vec<Token> &tokens) -> String {
     auto result = String::make();
     for (const auto &token : tokens) {
@@ -651,48 +642,7 @@ private:
     return Ok(resolved->is_some());
   }
 
-  auto prepare_queries(const Vec<Token> &input) -> Result<empty> {
-    auto queries = Vec<BuiltinQuery>::make();
-    for (auto cursor = usize{}; cursor < input.len(); ++cursor) {
-      if (input[cursor].kind != TokenKind::Identifier)
-        continue;
-      auto kind = query_kind(input[cursor].text.as_str());
-      if (kind.is_none())
-        continue;
-      auto open = cursor + usize(1);
-      while (open < input.len() && input[open].kind == TokenKind::Newline)
-        ++open;
-      if (open >= input.len() || input[open].text.as_str() != "("_str)
-        continue;
-      auto collected = collect_arguments(input, open);
-      if (collected.is_err() || collected->template get<0>().len() != usize(1))
-        continue;
-      const auto &argument = collected->template get<0>()[usize{}];
-      if (*kind == BuiltinQueryKind::HasWarning &&
-          (argument.len() != usize(1) ||
-           argument[usize{}].kind != TokenKind::StringLiteral)) {
-        continue;
-      }
-      queries.push(BuiltinQuery{
-          .kind = *kind,
-          .argument = joined_argument(argument),
-          .location = input[cursor].expansion,
-      });
-      cursor = collected->template get<1>() - usize(1);
-    }
-    if (!queries.is_empty()) {
-      auto prepared =
-          rstd::as<BuiltinProvider>(builtin_provider_).prepare(queries);
-      if (prepared.is_err())
-        return prepared;
-    }
-    return Ok(empty{});
-  }
-
   auto expand(Vec<Token> input, Vec<String> &disabled) -> Result<Vec<Token>> {
-    auto prepared = prepare_queries(input);
-    if (prepared.is_err())
-      return Err(rstd::move(prepared).unwrap_err());
     auto output = Vec<Token>::make();
     for (auto index = usize{}; index < input.len();) {
       auto token = input[index].clone();
@@ -806,10 +756,11 @@ private:
                            token.expansion));
       }
 
-      auto query = query_kind(name);
+      auto query = builtin_query_kind(name);
       auto include_builtin =
           name == "__has_include"_str || name == "__has_include_next"_str;
-      if (query.is_some() || include_builtin) {
+      auto identifier_builtin = name == "__is_identifier"_str;
+      if (query.is_some() || include_builtin || identifier_builtin) {
         auto open = index + usize(1);
         while (open < input.len() && input[open].kind == TokenKind::Newline)
           ++open;
@@ -833,12 +784,37 @@ private:
           if (included.is_err())
             return Err(rstd::move(included).unwrap_err());
           value = Ok(i64(*included));
+        } else if (identifier_builtin) {
+          if (arguments[usize{}].len() != usize(1) ||
+              arguments[usize{}][usize{}].kind != TokenKind::Identifier) {
+            return Err(failure(
+                "builtin '__is_identifier' requires one identifier token"_str,
+                token.expansion));
+          }
+          value = Ok(i64(lexical::is_cpp_identifier_token(
+              arguments[usize{}][usize{}],
+              request_.language_standard.as_str())));
         } else {
+          auto argument = String::make();
+          if (*query == BuiltinQueryKind::HasWarning) {
+            if (arguments[usize{}].len() != usize(1)) {
+              return Err(failure(
+                  "builtin '__has_warning' requires one string literal"_str,
+                  token.expansion));
+            }
+            auto contents = string_contents(arguments[usize{}][usize{}],
+                                            "builtin '__has_warning'"_str);
+            if (contents.is_err())
+              return Err(rstd::move(contents).unwrap_err());
+            argument = rstd::move(contents).unwrap();
+          } else {
+            argument = joined_argument(arguments[usize{}]);
+          }
           value = rstd::as<BuiltinProvider>(builtin_provider_)
-                      .evaluate(BuiltinQuery{
+                      .evaluate(BuiltinQueryKey{
                           .kind = *query,
-                          .argument = joined_argument(arguments[usize{}]),
-                          .location = token.expansion,
+                          .argument = normalize_builtin_query_argument(
+                              *query, argument.as_str()),
                       });
         }
         if (value.is_err())
@@ -1262,10 +1238,6 @@ private:
       token.spelling.source = source;
       token.expansion.source = source;
       tokens.push(rstd::move(token));
-    }
-    auto prepared_queries = prepare_queries(tokens);
-    if (prepared_queries.is_err()) {
-      return Err(rstd::move(prepared_queries).unwrap_err());
     }
     if (path_value.is_some()) {
       auto guard = detected_include_guard(tokens);

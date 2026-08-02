@@ -19,6 +19,12 @@ auto failure(String message) -> Result<T> {
 export namespace tenon
 {
 
+auto is_supported_cpp_standard(ref<str> standard) -> bool {
+    return standard == "c++20"_str || standard == "c++23"_str ||
+           standard == "c++26"_str || standard == "c++2b"_str ||
+           standard == "c++2c"_str;
+}
+
 auto build_profile_name(BuildProfile profile) -> ref<str> {
     switch (profile) {
     case BuildProfile::Debug: return "debug"_str;

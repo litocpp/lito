@@ -127,6 +127,11 @@ if(BUILD_TESTING)
   target_sources(tenon.preprocessor.test PRIVATE test/preprocessor/core.cpp)
   target_link_libraries(tenon.preprocessor.test PRIVATE tenon.lib rstd::nostd)
   add_test(NAME tenon.preprocessor.core COMMAND tenon.preprocessor.test)
+  add_executable(tenon.clang-builtin-context.test)
+  target_sources(tenon.clang-builtin-context.test
+                 PRIVATE test/toolchain/clang_builtin_context.cpp)
+  target_link_libraries(tenon.clang-builtin-context.test PRIVATE tenon.lib rstd::nostd)
+  add_test(NAME tenon.clang-builtin-context COMMAND tenon.clang-builtin-context.test)
   add_test(
     NAME tenon.scan.native
     COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/preprocessor/native scan
@@ -135,7 +140,8 @@ if(BUILD_TESTING)
     tenon.scan.native
     PROPERTIES PASS_REGULAR_EXPRESSION
                "\"logical-name\": \"fixture.preprocessor.native:dependency\""
-               FAIL_REGULAR_EXPRESSION "pragma_operator_failure")
+               FAIL_REGULAR_EXPRESSION
+               "pragma_operator_failure;builtin_catalog_failure;native_builtin_failure")
   add_test(
     NAME tenon.scan.definitions
     COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/scan/definitions scan
@@ -144,5 +150,6 @@ if(BUILD_TESTING)
     tenon.scan.definitions
     PROPERTIES PASS_REGULAR_EXPRESSION
                "\"logical-name\": \"fixture.scan.definitions:defined\""
-               FAIL_REGULAR_EXPRESSION "fixture.scan.definitions:missing")
+               FAIL_REGULAR_EXPRESSION
+               "fixture.scan.definitions:missing;command_line_undef_failure")
 endif()

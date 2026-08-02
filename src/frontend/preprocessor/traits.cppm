@@ -5,6 +5,7 @@ import tenon.frontend.lexical;
 import :macro;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace tenon::frontend::preprocessor {
 
@@ -52,7 +53,12 @@ enum class BuiltinQueryKind {
   HasAttribute,
   HasDeclspecAttribute,
   HasWarning,
-  IsIdentifier,
+  IsTargetArch,
+  IsTargetVendor,
+  IsTargetOs,
+  IsTargetEnvironment,
+  IsTargetVariantOs,
+  IsTargetVariantEnvironment,
 };
 
 enum class BuiltinTextKind {
@@ -60,19 +66,154 @@ enum class BuiltinTextKind {
   Time,
 };
 
-struct BuiltinQuery {
+struct BuiltinQueryKey {
   BuiltinQueryKind kind{BuiltinQueryKind::HasBuiltin};
   String argument;
-  SourceLocation location;
 
-  auto clone() const -> BuiltinQuery {
-    return BuiltinQuery{
-        .kind = kind, .argument = argument.clone(), .location = location};
+  auto clone() const -> BuiltinQueryKey {
+    return BuiltinQueryKey{.kind = kind, .argument = argument.clone()};
   }
 };
 
+auto builtin_query_kind(ref<str> name) -> Option<BuiltinQueryKind> {
+  if (name == "__has_builtin"_str)
+    return Some(BuiltinQueryKind::HasBuiltin);
+  if (name == "__has_constexpr_builtin"_str)
+    return Some(BuiltinQueryKind::HasConstexprBuiltin);
+  if (name == "__has_feature"_str)
+    return Some(BuiltinQueryKind::HasFeature);
+  if (name == "__has_extension"_str)
+    return Some(BuiltinQueryKind::HasExtension);
+  if (name == "__has_cpp_attribute"_str)
+    return Some(BuiltinQueryKind::HasCppAttribute);
+  if (name == "__has_attribute"_str)
+    return Some(BuiltinQueryKind::HasAttribute);
+  if (name == "__has_declspec_attribute"_str)
+    return Some(BuiltinQueryKind::HasDeclspecAttribute);
+  if (name == "__has_warning"_str)
+    return Some(BuiltinQueryKind::HasWarning);
+  if (name == "__is_target_arch"_str)
+    return Some(BuiltinQueryKind::IsTargetArch);
+  if (name == "__is_target_vendor"_str)
+    return Some(BuiltinQueryKind::IsTargetVendor);
+  if (name == "__is_target_os"_str)
+    return Some(BuiltinQueryKind::IsTargetOs);
+  if (name == "__is_target_environment"_str)
+    return Some(BuiltinQueryKind::IsTargetEnvironment);
+  if (name == "__is_target_variant_os"_str)
+    return Some(BuiltinQueryKind::IsTargetVariantOs);
+  if (name == "__is_target_variant_environment"_str)
+    return Some(BuiltinQueryKind::IsTargetVariantEnvironment);
+  return None();
+}
+
+auto builtin_query_name(BuiltinQueryKind kind) -> ref<str> {
+  switch (kind) {
+  case BuiltinQueryKind::HasBuiltin:
+    return "__has_builtin"_str;
+  case BuiltinQueryKind::HasConstexprBuiltin:
+    return "__has_constexpr_builtin"_str;
+  case BuiltinQueryKind::HasFeature:
+    return "__has_feature"_str;
+  case BuiltinQueryKind::HasExtension:
+    return "__has_extension"_str;
+  case BuiltinQueryKind::HasCppAttribute:
+    return "__has_cpp_attribute"_str;
+  case BuiltinQueryKind::HasAttribute:
+    return "__has_attribute"_str;
+  case BuiltinQueryKind::HasDeclspecAttribute:
+    return "__has_declspec_attribute"_str;
+  case BuiltinQueryKind::HasWarning:
+    return "__has_warning"_str;
+  case BuiltinQueryKind::IsTargetArch:
+    return "__is_target_arch"_str;
+  case BuiltinQueryKind::IsTargetVendor:
+    return "__is_target_vendor"_str;
+  case BuiltinQueryKind::IsTargetOs:
+    return "__is_target_os"_str;
+  case BuiltinQueryKind::IsTargetEnvironment:
+    return "__is_target_environment"_str;
+  case BuiltinQueryKind::IsTargetVariantOs:
+    return "__is_target_variant_os"_str;
+  case BuiltinQueryKind::IsTargetVariantEnvironment:
+    return "__is_target_variant_environment"_str;
+  }
+  __builtin_unreachable();
+}
+
+auto normalize_attribute_component(ref<str> value) -> ref<str> {
+  if (value.len() >= usize(4) && value.starts_with("__"_str) &&
+      value.ends_with("__"_str)) {
+    auto inner = value.get(usize(2), value.len() - usize(2));
+    if (inner.is_some())
+      return *inner;
+  }
+  return value;
+}
+
+auto normalize_builtin_query_argument(BuiltinQueryKind kind, ref<str> value)
+    -> String {
+  if (kind == BuiltinQueryKind::HasAttribute ||
+      kind == BuiltinQueryKind::HasDeclspecAttribute) {
+    return String::make(normalize_attribute_component(value));
+  }
+  if (kind == BuiltinQueryKind::HasCppAttribute) {
+    auto separator = value.split_once("::"_str);
+    if (separator.is_none())
+      return String::make(normalize_attribute_component(value));
+    auto result = String::make(
+        normalize_attribute_component(separator->template get<0>()));
+    result.push_str("::"_str);
+    result.push_str(
+        normalize_attribute_component(separator->template get<1>()));
+    return result;
+  }
+  if (kind == BuiltinQueryKind::IsTargetArch ||
+      kind == BuiltinQueryKind::IsTargetVendor ||
+      kind == BuiltinQueryKind::IsTargetOs ||
+      kind == BuiltinQueryKind::IsTargetEnvironment ||
+      kind == BuiltinQueryKind::IsTargetVariantOs ||
+      kind == BuiltinQueryKind::IsTargetVariantEnvironment) {
+    auto result = String::make();
+    for (auto character : value) {
+      if (character >= u8('A') && character <= u8('Z'))
+        character = u8(character.to_primitive() + u8('a').to_primitive() -
+                       u8('A').to_primitive());
+      result.push_ascii(character);
+    }
+    return result;
+  }
+  return String::make(value);
+}
+
 struct MacroSeed {
   String definition;
+};
+
+enum class PredefinedMacroOperationKind {
+  Define,
+  Undefine,
+};
+
+struct PredefinedMacroOperation {
+  PredefinedMacroOperationKind kind{PredefinedMacroOperationKind::Define};
+  String name;
+  Option<SharedMacroDefinition> definition;
+
+  static auto define(SharedMacroDefinition value)
+      -> PredefinedMacroOperation {
+    return PredefinedMacroOperation{
+        .kind = PredefinedMacroOperationKind::Define,
+        .definition = Some(rstd::move(value)),
+    };
+  }
+
+  static auto undefine(String name) -> PredefinedMacroOperation {
+    return PredefinedMacroOperation{
+        .kind = PredefinedMacroOperationKind::Undefine,
+        .name = rstd::move(name),
+    };
+  }
 };
 
 enum class PragmaOutcome {
@@ -135,26 +276,21 @@ struct BuiltinProvider {
   template <typename Self, typename = void> struct Api {
     using Trait = BuiltinProvider;
 
-    auto predefined_macros() -> Result<Vec<SharedMacroDefinition>> {
+    auto predefined_macros() -> Result<Vec<PredefinedMacroOperation>> {
       return rstd::trait_call<0>(this);
     }
 
-    auto prepare(const Vec<BuiltinQuery> &queries) -> Result<empty> {
-      return rstd::trait_call<1>(this, queries);
-    }
-
-    auto evaluate(const BuiltinQuery &query) -> Result<i64> {
-      return rstd::trait_call<2>(this, query);
+    auto evaluate(const BuiltinQueryKey &query) -> Result<i64> {
+      return rstd::trait_call<1>(this, query);
     }
 
     auto text(BuiltinTextKind kind) -> Result<String> {
-      return rstd::trait_call<3>(this, kind);
+      return rstd::trait_call<2>(this, kind);
     }
   };
 
   template <typename T>
-  using Funcs =
-      TraitFuncs<&T::predefined_macros, &T::prepare, &T::evaluate, &T::text>;
+  using Funcs = TraitFuncs<&T::predefined_macros, &T::evaluate, &T::text>;
 };
 
 struct PragmaHandler {

@@ -46,7 +46,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                                   const Vec<String>&        selected_root_names,
                                   const BuildConfiguration& configuration)
     -> Result<PackageMetadata> {
-    if (configuration.language_standard.as_str() != "c++20"_str ||
+    if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
         return adapter_failure<PackageMetadata>(

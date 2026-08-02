@@ -9,3 +9,4 @@ discovery = "module"
 
 [usage]
 private-definitions = ["TENON_SCAN_DEFINITION=7"]
+private-options = ["-DTENON_SCAN_REMOVED=1", "-UTENON_SCAN_REMOVED", "-U__clang__"]

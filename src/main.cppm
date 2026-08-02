@@ -156,6 +156,26 @@ extern "C++" int main() {
                           summary.frontend.lex_builds,
                           summary.frontend.analyze_builds,
                           summary.frontend.analyze_hits);
+        rstd::io::println(
+            "clang builtins: key v3, stdlib catalog {}, {} snapshots, {} refreshes, {} hits, "
+            "{} macro processes, "
+            "{} capability processes, {} clang macros, {} native macro owners, "
+            "{} clang capabilities, {} native capabilities, {} macro bytes, "
+            "{} capability input bytes, {} capability output bytes, {} ignored options",
+            tenon::toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID,
+            summary.toolchain.builtin_snapshots,
+            summary.toolchain.builtin_refreshes,
+            summary.toolchain.builtin_hits,
+            summary.toolchain.builtin_macro_processes,
+            summary.toolchain.builtin_capability_processes,
+            summary.toolchain.clang_macros,
+            summary.toolchain.native_macro_owners,
+            summary.toolchain.clang_capabilities,
+            summary.toolchain.native_capabilities,
+            summary.toolchain.builtin_macro_output_bytes,
+            summary.toolchain.builtin_capability_input_bytes,
+            summary.toolchain.builtin_capability_output_bytes,
+            summary.toolchain.ignored_builtin_options);
     }
     return 0;
 }

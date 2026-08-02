@@ -287,6 +287,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .archives    = rstd::move(archives),
         .executables = rstd::move(executables),
         .frontend    = frontend_service.statistics(),
+        .toolchain   = toolchain.statistics(),
     });
 }
 

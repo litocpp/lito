@@ -5,6 +5,7 @@ import tenon.model;
 import tenon.process;
 import tenon.frontend;
 import tenon.modules;
+import tenon.build_profile;
 import :clang_options;
 import :clang_preprocessor_environment;
 import :command;
@@ -76,10 +77,174 @@ auto unsupported_native_preprocessor_option(ref<str> option) -> bool {
            option.starts_with("-fmodules-cache-path="_str);
 }
 
+auto optimization_option(ref<str> option) -> bool {
+    return option == "-O"_str || option == "-O0"_str || option == "-O1"_str ||
+           option == "-O2"_str || option == "-O3"_str || option == "-O4"_str ||
+           option == "-Og"_str || option == "-Os"_str || option == "-Oz"_str ||
+           option == "-Ofast"_str;
+}
+
+struct ClangBuiltinOptionSet {
+    Option<String> target;
+    Option<String> sysroot;
+    Option<String> optimization;
+    rstd::collections::BTreeMap<String, String> last_options;
+    Vec<String> ordered_options;
+    usize ignored_options {};
+};
+
+auto attached_option(ref<str> option, ref<str> prefix) -> Option<ref<str>> {
+    if (! option.starts_with(prefix) || option.len() <= prefix.len()) return None();
+    return option.get(prefix.len(), option.len());
+}
+
+auto toggle_family(ref<str> option) -> Option<ref<str>> {
+    if (option == "-fPIC"_str || option == "-fpic"_str || option == "-fPIE"_str ||
+        option == "-fpie"_str || option == "-fno-PIC"_str || option == "-fno-pic"_str ||
+        option == "-fno-PIE"_str || option == "-fno-pie"_str) {
+        return Some("pic"_str);
+    }
+    if (option == "-fblocks"_str || option == "-fno-blocks"_str) {
+        return Some("blocks"_str);
+    }
+    if (option == "-fcoroutines"_str || option == "-fno-coroutines"_str) {
+        return Some("coroutines"_str);
+    }
+    if (option == "-fsized-deallocation"_str || option == "-fno-sized-deallocation"_str) {
+        return Some("sized-deallocation"_str);
+    }
+    if (option == "-ffreestanding"_str || option == "-fhosted"_str) {
+        return Some("hosted"_str);
+    }
+    if (option == "-fsigned-char"_str || option == "-funsigned-char"_str) {
+        return Some("char-signedness"_str);
+    }
+    if (option == "-fshort-enums"_str || option == "-fno-short-enums"_str) {
+        return Some("short-enums"_str);
+    }
+    if (option == "-fshort-wchar"_str || option == "-fno-short-wchar"_str) {
+        return Some("short-wchar"_str);
+    }
+    if (option == "-fchar8_t"_str || option == "-fno-char8_t"_str) {
+        return Some("char8-t"_str);
+    }
+    return None();
+}
+
+auto target_option_family(ref<str> option) -> String {
+    auto begin = option.starts_with("-mno-"_str) ? usize(5) : usize(2);
+    auto end = begin;
+    while (end < option.len() && option.as_bytes()[end] != u8('=')) ++end;
+    auto name = option.get(begin, end);
+    return name.is_some() ? String::make(*name) : String::make(option);
+}
+
+auto normalize_builtin_options(const Vec<String>& options) -> Result<ClangBuiltinOptionSet> {
+    auto result = ClangBuiltinOptionSet {};
+    for (auto index = usize {}; index < options.len(); ++index) {
+        auto option = options[index].as_str();
+        auto take_value = [&](ref<str> canonical) -> Result<String> {
+            if (index + usize(1) >= options.len()) {
+                return failure<String>(
+                    rstd::format("compiler option '{}' requires a value", option));
+            }
+            ++index;
+            return Ok(rstd::format("{}{}", canonical, options[index].as_str()));
+        };
+        if (option == "-D"_str || option == "-U"_str || option == "-mllvm"_str) {
+            if (index + usize(1) >= options.len()) {
+                return failure<ClangBuiltinOptionSet>(
+                    rstd::format("compiler option '{}' requires a value", option));
+            }
+            ++index;
+            result.ignored_options += usize(2);
+            continue;
+        }
+        if (option.starts_with("-D"_str) || option.starts_with("-U"_str)) {
+            ++result.ignored_options;
+            continue;
+        }
+        if (option.starts_with("-mllvm="_str)) {
+            ++result.ignored_options;
+            continue;
+        }
+        if (option == "-target"_str || option == "--target"_str) {
+            auto value = take_value("--target="_str);
+            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+            result.target = Some(rstd::move(value).unwrap());
+            continue;
+        }
+        auto target = attached_option(option, "--target="_str);
+        if (target.is_none()) target = attached_option(option, "-target="_str);
+        if (target.is_some()) {
+            result.target = Some(rstd::format("--target={}", *target));
+            continue;
+        }
+        if (option == "--sysroot"_str || option == "-isysroot"_str) {
+            auto value = take_value("--sysroot="_str);
+            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+            result.sysroot = Some(rstd::move(value).unwrap());
+            continue;
+        }
+        auto sysroot = attached_option(option, "--sysroot="_str);
+        if (sysroot.is_none()) sysroot = attached_option(option, "-isysroot="_str);
+        if (sysroot.is_some()) {
+            result.sysroot = Some(rstd::format("--sysroot={}", *sysroot));
+            continue;
+        }
+        if (option == "-march"_str || option == "-mcpu"_str ||
+            option == "-mtune"_str || option == "-mabi"_str) {
+            auto canonical = rstd::format("{}=", option);
+            auto value = take_value(canonical.as_str());
+            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+            auto normalized = rstd::move(value).unwrap();
+            result.last_options.insert(target_option_family(normalized.as_str()),
+                                       rstd::move(normalized));
+            continue;
+        }
+        if (optimization_option(option)) {
+            result.optimization = Some(options[index].clone());
+            continue;
+        }
+        auto toggle = toggle_family(option);
+        if (toggle.is_some()) {
+            result.last_options.insert(String::make(*toggle), options[index].clone());
+            continue;
+        }
+        if (option.starts_with("-m"_str)) {
+            result.last_options.insert(target_option_family(option), options[index].clone());
+            continue;
+        }
+        if (option.starts_with("-fsanitize="_str) ||
+            option.starts_with("-fno-sanitize="_str) ||
+            option.starts_with("-fsanitize-trap="_str) ||
+            option.starts_with("-fno-sanitize-trap="_str) ||
+            option.starts_with("-fms-"_str) || option.starts_with("-fno-ms-"_str) ||
+            option.starts_with("-fptrauth"_str) ||
+            option.starts_with("-fno-ptrauth"_str) ||
+            option.starts_with("-fopenmp"_str) ||
+            option.starts_with("-fno-openmp"_str) || option == "-pedantic-errors"_str ||
+            option == "-Werror"_str || option.starts_with("-Werror="_str) ||
+            option == "-Wno-error"_str || option.starts_with("-Wno-error="_str)) {
+            result.ordered_options.push(options[index].clone());
+            continue;
+        }
+        ++result.ignored_options;
+    }
+    return Ok(rstd::move(result));
+}
+
 } // namespace tenon
 
 export namespace tenon
 {
+
+struct ClangBuiltinContext {
+    Vec<String>                       query_command;
+    toolchain::BuiltinSemanticContext semantic;
+    String                            key;
+    usize                             ignored_options {};
+};
 
 class ClangToolchain {
 public:
@@ -183,6 +348,16 @@ public:
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
 
+    auto builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
+        return make_builtin_context(context);
+    }
+
+    auto statistics() const -> ToolchainStatistics {
+        auto result                   = toolchain_statistics_;
+        result.builtin_snapshots      = builtin_environment_snapshots_.len();
+        return result;
+    }
+
     auto prepare(UnitSpec unit, ref<rstd::path::Path> working_directory) const
         -> Result<PreparedUnit> {
         auto object_parent = create_parent(unit.object.as_path());
@@ -236,26 +411,49 @@ public:
             }
         }
         if (environment == nullptr) {
-            auto builtin_command = Vec<String>::make();
-            auto builtin_context = append_builtin_context(builtin_command, compile_context);
+            auto builtin_context = make_builtin_context(compile_context);
             if (builtin_context.is_err()) {
                 return Err(rstd::move(builtin_context).unwrap_err());
             }
-            auto builtin_key =
-                argument_identity("tenon-clang-builtin-context-v1"_str, builtin_command);
-            auto builtin_macros = Option<toolchain::SharedBuiltinMacroSnapshot> {};
-            for (const auto& existing : builtin_macro_snapshots_) {
+            auto builtin_values  = rstd::move(builtin_context).unwrap();
+            auto builtin_command = rstd::move(builtin_values.query_command);
+            auto builtin_key     = rstd::move(builtin_values.key);
+            toolchain_statistics_.ignored_builtin_options +=
+                builtin_values.ignored_options;
+            auto builtin_environment =
+                Option<toolchain::SharedClangBuiltinEnvironmentSnapshot> {};
+            for (const auto& existing : builtin_environment_snapshots_) {
                 if (existing.get()->key.as_str() == builtin_key.as_str()) {
-                    builtin_macros = Some(existing.clone());
+                    builtin_environment = Some(existing.clone());
+                    ++toolchain_statistics_.builtin_hits;
                     break;
                 }
             }
-            if (builtin_macros.is_none()) {
-                auto queried = toolchain::query_builtin_macro_snapshot(
-                    builtin_command, builtin_key.as_str(), working_directory);
+            if (builtin_environment.is_none()) {
+                auto queried = toolchain::query_clang_builtin_environment_snapshot(
+                    builtin_command,
+                    builtin_key.as_str(),
+                    builtin_values.semantic,
+                    working_directory);
                 if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-                builtin_macro_snapshots_.push(queried->clone());
-                builtin_macros = Some(rstd::move(queried).unwrap());
+                ++toolchain_statistics_.builtin_refreshes;
+                ++toolchain_statistics_.builtin_macro_processes;
+                ++toolchain_statistics_.builtin_capability_processes;
+                toolchain_statistics_.clang_macros += queried->get()->clang_macro_count;
+                toolchain_statistics_.native_macro_owners +=
+                    queried->get()->native_macro_count;
+                toolchain_statistics_.clang_capabilities +=
+                    queried->get()->clang_capability_count;
+                toolchain_statistics_.native_capabilities +=
+                    queried->get()->native_capability_count;
+                toolchain_statistics_.builtin_macro_output_bytes +=
+                    queried->get()->macro_output_bytes;
+                toolchain_statistics_.builtin_capability_input_bytes +=
+                    queried->get()->capability_input_bytes;
+                toolchain_statistics_.builtin_capability_output_bytes +=
+                    queried->get()->capability_output_bytes;
+                builtin_environment_snapshots_.push(queried->clone());
+                builtin_environment = Some(rstd::move(queried).unwrap());
             }
             auto command = Vec<String>::make();
             auto context = append_compile_context(command, compile_context);
@@ -264,7 +462,9 @@ public:
                 command,
                 compile_context.id.as_str(),
                 working_directory,
-                rstd::move(builtin_macros).unwrap(),
+                rstd::move(builtin_environment).unwrap(),
+                rstd::move(builtin_values.semantic),
+                compile_context.options,
                 compile_context.definitions);
             if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
             queried->working_directory = PathBuf::from(working_directory);
@@ -280,6 +480,7 @@ public:
         auto translation = preprocessor::preprocess_to(
             preprocessor::PreprocessRequest {
                 .source = PathBuf::from(source),
+                .language_standard = compile_context.language_standard.clone(),
                 .environment_identity = environment->identity.clone(),
             },
             frontend_service,
@@ -462,7 +663,63 @@ private:
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)) {}
 
-    auto append_builtin_context(Vec<String>& command, const CompileContext& context) const
+    auto make_builtin_context(const CompileContext& context) const
+        -> Result<ClangBuiltinContext> {
+        if (!is_supported_cpp_standard(context.language_standard.as_str())) {
+            return failure<ClangBuiltinContext>(rstd::format(
+                "unsupported C++ language standard '{}'; expected C++20 or later",
+                context.language_standard.as_str()));
+        }
+        auto command = Vec<String>::make();
+        auto pushed = toolchain::command::push_path(command, compiler_.as_path());
+        if (pushed.is_err()) {
+            return Err(rstd::move(pushed).unwrap_err());
+        }
+        toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
+        pushed = toolchain::command::push_path(command, resource_dir_.as_path());
+        if (pushed.is_err()) {
+            return Err(rstd::move(pushed).unwrap_err());
+        }
+        command.push(rstd::format(
+            "{}{}", toolchain::clang_options::STANDARD, context.language_standard.as_str()));
+        auto normalized = normalize_builtin_options(context.options);
+        if (normalized.is_err()) return Err(rstd::move(normalized).unwrap_err());
+        auto options = rstd::move(normalized).unwrap();
+        auto ignored_options = options.ignored_options;
+        if (options.target.is_some()) command.push(rstd::move(options.target).unwrap());
+        if (options.sysroot.is_some()) command.push(rstd::move(options.sysroot).unwrap());
+        if (options.optimization.is_some()) {
+            command.push(rstd::move(options.optimization).unwrap());
+        }
+        auto last_options = options.last_options.into_iter();
+        while (auto option = last_options.next()) {
+            command.push(rstd::move((*option).template get<1>()));
+        }
+        for (auto& option : options.ordered_options) command.push(rstd::move(option));
+        toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
+        toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
+        auto key = argument_identity("tenon-clang-builtin-context-v3"_str, command);
+        key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
+        key.push_ascii('\n');
+        key.push_str(compiler_identity_.version.as_str());
+        key.push_ascii('\n');
+        key.push_str(rstd::format("{}:{}:{}", compiler_identity_.size,
+                                  compiler_identity_.modified_seconds,
+                                  compiler_identity_.modified_nanoseconds)
+                         .as_str());
+        return Ok(ClangBuiltinContext {
+            .query_command  = rstd::move(command),
+            .semantic       = toolchain::BuiltinSemanticContext {
+                .language_standard = context.language_standard.clone(),
+                .rtti              = false,
+                .exceptions        = false,
+            },
+            .key             = rstd::move(key),
+            .ignored_options = ignored_options,
+        });
+    }
+
+    auto append_compile_context(Vec<String>& command, const CompileContext& context) const
         -> Result<empty> {
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
@@ -477,13 +734,6 @@ private:
         for (const auto& option : context.options) command.push(option.clone());
         toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
         toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
-        return Ok(empty {});
-    }
-
-    auto append_compile_context(Vec<String>& command, const CompileContext& context) const
-        -> Result<empty> {
-        auto pushed = append_builtin_context(command, context);
-        if (pushed.is_err()) return pushed;
         for (const auto& definition : context.definitions) {
             command.push(
                 rstd::format("{}{}", toolchain::clang_options::DEFINE, definition.as_str()));
@@ -500,7 +750,9 @@ private:
     PathBuf          archiver_;
     PathBuf          resource_dir_;
     CompilerIdentity compiler_identity_;
-    mutable Vec<toolchain::SharedBuiltinMacroSnapshot> builtin_macro_snapshots_;
+    mutable ToolchainStatistics toolchain_statistics_;
+    mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot>
+        builtin_environment_snapshots_;
     mutable Vec<toolchain::PreprocessorEnvironment> preprocessor_environments_;
 };
 

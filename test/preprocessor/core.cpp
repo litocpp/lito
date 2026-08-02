@@ -64,13 +64,11 @@ private:
 
 class TestBuiltins {
 public:
-    auto predefined_macros() -> PpResult<Vec<SharedMacroDefinition>> {
-        return Ok(Vec<SharedMacroDefinition>::make());
+    auto predefined_macros() -> PpResult<Vec<PredefinedMacroOperation>> {
+        return Ok(Vec<PredefinedMacroOperation>::make());
     }
 
-    auto prepare(const Vec<BuiltinQuery>&) -> PpResult<empty> { return Ok(empty {}); }
-
-    auto evaluate(const BuiltinQuery&) -> PpResult<i64> { return Ok(i64(1)); }
+    auto evaluate(const BuiltinQueryKey&) -> PpResult<i64> { return Ok(i64(1)); }
 
     auto text(BuiltinTextKind kind) -> PpResult<String> {
         ++text_queries;

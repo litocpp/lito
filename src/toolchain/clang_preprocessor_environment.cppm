@@ -22,25 +22,45 @@ struct IncludeSearchEntry {
   bool system{true};
 };
 
-struct BuiltinMacroSnapshot {
+struct BuiltinSemanticContext {
+  String language_standard;
+  bool rtti{false};
+  bool exceptions{false};
+};
+
+inline constexpr auto CLANG_STANDARD_LIBRARY_CAPABILITY_ID =
+    "tenon-clang-standard-library-capabilities-v1"_str;
+
+struct ClangBuiltinEnvironmentSnapshot {
   String key;
   String identity;
   lexical::SharedSourceSnapshot source;
   Vec<preprocessor::SharedMacroDefinition> definitions;
+  rstd::collections::HashMap<String, i64> capabilities;
+  usize clang_macro_count{};
+  usize native_macro_count{};
+  usize clang_capability_count{};
+  usize native_capability_count{};
+  usize macro_output_bytes{};
+  usize capability_input_bytes{};
+  usize capability_output_bytes{};
 };
 
-using SharedBuiltinMacroSnapshot = rstd::rc::Rc<const BuiltinMacroSnapshot>;
+using SharedClangBuiltinEnvironmentSnapshot =
+    rstd::rc::Rc<const ClangBuiltinEnvironmentSnapshot>;
 
 struct PreprocessorEnvironment {
   String context_id;
-  SharedBuiltinMacroSnapshot builtin_macros;
+  SharedClangBuiltinEnvironmentSnapshot builtin_environment;
+  lexical::SharedSourceSnapshot native_source;
+  Vec<preprocessor::SharedMacroDefinition> native_definitions;
   lexical::SharedSourceSnapshot command_line_source;
-  Vec<preprocessor::SharedMacroDefinition> command_line_definitions;
+  Vec<preprocessor::PredefinedMacroOperation> command_line_macros;
+  BuiltinSemanticContext semantic_context;
   Vec<IncludeSearchEntry> include_search;
   Vec<String> query_command;
   String identity;
   PathBuf working_directory;
-  rstd::collections::BTreeMap<String, i64> builtin_results;
   Option<String> date;
   Option<String> time;
 };
@@ -173,30 +193,127 @@ auto parse_macro_seeds(const Vec<preprocessor::MacroSeed> &seeds,
   });
 }
 
-auto command_line_macro_seeds(const Vec<String> &definitions)
-    -> Vec<preprocessor::MacroSeed> {
-  auto seeds = Vec<preprocessor::MacroSeed>::with_capacity(definitions.len());
-  for (const auto &definition : definitions) {
-    auto bytes = definition.as_str().as_bytes();
+auto macro_name(ref<str> definition) -> Option<ref<str>> {
+  auto bytes = definition.as_bytes();
+  auto end = usize{};
+  while (end < bytes.len() && bytes[end] != u8('=') && bytes[end] != u8('('))
+    ++end;
+  if (end == usize{})
+    return None();
+  return definition.get(usize{}, end);
+}
+
+auto command_line_macro_seed(ref<str> definition)
+    -> preprocessor::MacroSeed {
+    auto bytes = definition.as_bytes();
     auto equal = usize{};
     while (equal < bytes.len() && bytes[equal] != u8('='))
       ++equal;
     auto value = String::make();
-    auto name = definition.as_str().get(usize{}, equal);
+    auto name = definition.get(usize{}, equal);
     if (name.is_some())
       value.push_str(*name);
     value.push_ascii(' ');
     if (equal < bytes.len()) {
       auto replacement =
-          definition.as_str().get(equal + usize(1), bytes.len());
+          definition.get(equal + usize(1), bytes.len());
       if (replacement.is_some())
         value.push_str(*replacement);
     } else {
       value.push_ascii('1');
     }
-    seeds.push(preprocessor::MacroSeed{.definition = rstd::move(value)});
+    return preprocessor::MacroSeed{.definition = rstd::move(value)};
+}
+
+auto command_line_macro_states(const Vec<String> &options,
+                               const Vec<String> &definitions)
+    -> rstd::collections::BTreeMap<String,
+                                   Option<preprocessor::MacroSeed>> {
+  auto values = rstd::collections::BTreeMap<
+      String, Option<preprocessor::MacroSeed>>::make();
+  auto apply_define = [&values](ref<str> definition) {
+    auto name = macro_name(definition);
+    if (name.is_some()) {
+      values.insert(String::make(*name),
+                    Some(command_line_macro_seed(definition)));
+    }
+  };
+  auto apply_undefine = [&values](ref<str> name) {
+    if (!name.is_empty())
+      values.insert(String::make(name), None());
+  };
+  for (auto index = usize{}; index < options.len(); ++index) {
+    auto option = options[index].as_str();
+    if (option == "-D"_str && index + usize(1) < options.len()) {
+      ++index;
+      apply_define(options[index].as_str());
+    } else if (option.starts_with("-D"_str) && option.len() > usize(2)) {
+      auto value = option.get(usize(2), option.len());
+      if (value.is_some())
+        apply_define(*value);
+    } else if (option == "-U"_str && index + usize(1) < options.len()) {
+      ++index;
+      apply_undefine(options[index].as_str());
+    } else if (option.starts_with("-U"_str) && option.len() > usize(2)) {
+      auto value = option.get(usize(2), option.len());
+      if (value.is_some())
+        apply_undefine(*value);
+    }
   }
-  return seeds;
+  for (const auto &definition : definitions)
+    apply_define(definition.as_str());
+  return values;
+}
+
+struct CommandLineMacroEntry {
+  String name;
+  bool defined{false};
+};
+
+struct ParsedCommandLineMacros {
+  lexical::SharedSourceSnapshot source;
+  Vec<preprocessor::PredefinedMacroOperation> operations;
+};
+
+auto parse_command_line_macros(const Vec<String> &options,
+                               const Vec<String> &definitions)
+    -> Result<ParsedCommandLineMacros> {
+  auto states = command_line_macro_states(options, definitions);
+  auto seeds = Vec<preprocessor::MacroSeed>::make();
+  auto entries = Vec<CommandLineMacroEntry>::with_capacity(states.len());
+  auto values = states.into_iter();
+  while (auto value = values.next()) {
+    auto name = rstd::move((*value).template get<0>());
+    auto state = rstd::move((*value).template get<1>());
+    auto defined = state.is_some();
+    if (defined)
+      seeds.push(rstd::move(state).unwrap());
+    entries.push(CommandLineMacroEntry{
+        .name = rstd::move(name),
+        .defined = defined,
+    });
+  }
+  auto parsed = parse_macro_seeds(seeds, "<command-line>"_str);
+  if (parsed.is_err())
+    return Err(rstd::move(parsed).unwrap_err());
+  auto parsed_values = rstd::move(parsed).unwrap();
+  auto operations =
+      Vec<preprocessor::PredefinedMacroOperation>::with_capacity(entries.len());
+  auto definition_index = usize{};
+  for (auto &entry : entries) {
+    if (entry.defined) {
+      operations.push(preprocessor::PredefinedMacroOperation::define(
+          parsed_values.definitions[definition_index].clone()));
+      ++definition_index;
+    } else {
+      operations.push(preprocessor::PredefinedMacroOperation::undefine(
+          rstd::move(entry.name)));
+    }
+  }
+  return Ok(ParsedCommandLineMacros{
+      .source = rstd::move(parsed_values.source),
+      .operations = rstd::move(operations),
+  });
 }
 
 auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
@@ -251,8 +368,69 @@ auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
   return Ok(rstd::move(entries));
 }
 
-auto macro_snapshot_identity(const Vec<preprocessor::MacroSeed> &macros,
-                             ref<str> key) -> String {
+auto capability_key(const preprocessor::BuiltinQueryKey &query) -> String {
+  return rstd::format("{}:{}", preprocessor::builtin_query_name(query.kind),
+                      query.argument.as_str());
+}
+
+auto native_capability(const preprocessor::BuiltinQueryKey &query,
+                       const BuiltinSemanticContext &context)
+    -> Option<i64> {
+  if ((query.kind == preprocessor::BuiltinQueryKind::HasFeature ||
+       query.kind == preprocessor::BuiltinQueryKind::HasExtension) &&
+      query.argument.as_str() == "cxx_exceptions"_str) {
+    return Some(i64(context.exceptions));
+  }
+  if ((query.kind == preprocessor::BuiltinQueryKind::HasFeature ||
+       query.kind == preprocessor::BuiltinQueryKind::HasExtension) &&
+      query.argument.as_str() == "cxx_rtti"_str) {
+    return Some(i64(context.rtti));
+  }
+  return None();
+}
+
+auto native_predefined_macro(ref<str> name) -> bool {
+  return name == "__EXCEPTIONS"_str || name == "__cpp_exceptions"_str ||
+         name == "__GXX_RTTI"_str || name == "__cpp_rtti"_str;
+}
+
+auto clang_owned_macro_seeds(const Vec<preprocessor::MacroSeed> &macros)
+    -> Vec<preprocessor::MacroSeed> {
+  auto result = Vec<preprocessor::MacroSeed>::with_capacity(macros.len());
+  for (const auto &macro : macros) {
+    auto name = macro_name(macro.definition.as_str());
+    if (name.is_none() || !native_predefined_macro(*name))
+      result.push(preprocessor::MacroSeed{
+          .definition = macro.definition.clone(),
+      });
+  }
+  return result;
+}
+
+auto native_predefined_macro_seeds(const BuiltinSemanticContext &context)
+    -> Vec<preprocessor::MacroSeed> {
+  auto result = Vec<preprocessor::MacroSeed>::make();
+  if (context.exceptions) {
+    result.push(preprocessor::MacroSeed{
+        .definition = String::make("__EXCEPTIONS 1"_str),
+    });
+    result.push(preprocessor::MacroSeed{
+        .definition = String::make("__cpp_exceptions 199711L"_str),
+    });
+  }
+  if (context.rtti) {
+    result.push(preprocessor::MacroSeed{
+        .definition = String::make("__GXX_RTTI 1"_str),
+    });
+    result.push(preprocessor::MacroSeed{
+        .definition = String::make("__cpp_rtti 199711L"_str),
+    });
+  }
+  return result;
+}
+
+auto builtin_snapshot_identity(
+    const Vec<preprocessor::MacroSeed> &macros, ref<str> key) -> String {
   constexpr rstd::uint64_t offset = 14695981039346656037ull;
   constexpr rstd::uint64_t prime = 1099511628211ull;
   auto hash = offset;
@@ -264,7 +442,7 @@ auto macro_snapshot_identity(const Vec<preprocessor::MacroSeed> &macros,
     hash ^= 0;
     hash *= prime;
   };
-  add("tenon-clang-builtin-macros-v1"_str);
+  add("tenon-clang-builtin-environment-v2"_str);
   add(key);
   for (const auto &macro : macros)
     add(macro.definition.as_str());
@@ -292,9 +470,10 @@ auto environment_identity(ref<str> builtin_identity,
     hash ^= 0;
     hash *= prime;
   };
-  add("tenon-clang-preprocessor-environment-v1"_str);
+  add("tenon-clang-preprocessor-environment-v2"_str);
   add(context_id);
   add(builtin_identity);
+  add(lexical::CPP_IDENTIFIER_RULE_ID);
   for (const auto &include : includes) {
     auto text = include.directory.as_path().to_str();
     if (text.is_none()) {
@@ -321,12 +500,347 @@ auto preprocessor_error(const Error &error) -> preprocessor::Error {
 
 } // namespace tenon::toolchain
 
+namespace tenon::toolchain {
+
+inline constexpr auto STANDARD_LIBRARY_HAS_BUILTIN = R"TENON(__add_pointer
+__array_extent
+__array_rank
+__atomic_fetch_max
+__atomic_fetch_min
+__builtin_assume
+__builtin_bswap128
+__builtin_bswapg
+__builtin_char_memchr
+__builtin_clear_padding
+__builtin_common_type
+__builtin_complex
+__builtin_coro_noop
+__builtin_invoke
+__builtin_is_constant_evaluated
+__builtin_is_implicit_lifetime
+__builtin_is_virtual_base_of
+__builtin_is_within_lifetime
+__builtin_isinf
+__builtin_lt_synthesizes_from_spaceship
+__builtin_readcyclecounter
+__builtin_va_copy
+__builtin_verbose_trap
+__builtin_wcslen
+__builtin_wmemchr
+__builtin_wmemcmp
+__has_trivial_destructor
+__is_compound
+__is_const
+__is_destructible
+__is_fundamental
+__is_integral
+__is_lvalue_reference
+__is_nothrow_destructible
+__is_pointer
+__is_rvalue_reference
+__is_scalar
+__is_signed
+__is_trivially_destructible
+__is_trivially_equality_comparable
+__is_trivially_relocatable
+__is_unbounded_array
+__is_unsigned
+__make_integer_seq
+__make_signed
+__make_unsigned
+__remove_const
+__remove_extent
+__remove_pointer
+__remove_reference
+__remove_reference_t
+__remove_volatile
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_FEATURE = R"TENON(address_sanitizer
+cxx_atomic
+experimental_library
+modules
+nullability
+objc_arc
+objc_arc_weak
+ptrauth_calls
+ptrauth_type_info_vtable_pointer_discrimination
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_EXTENSION = R"TENON(blocks
+c_atomic
+datasizeof
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_CPP_ATTRIBUTE =
+    R"TENON(_Clang::acquire_shared_capability
+_Clang::capability
+_Clang::lifetimebound
+_Clang::no_destroy
+_Clang::no_field_protection
+_Clang::no_specializations
+_Clang::no_thread_safety_analysis
+_Clang::noescape
+_Clang::preferred_name
+_Clang::ptrauth_vtable_pointer
+_Clang::release_capability
+_Clang::release_shared_capability
+_Clang::scoped_lockable
+_Clang::try_acquire_capability
+_Clang::try_acquire_shared_capability
+clang::coro_await_elidable
+clang::coro_await_elidable_argument
+msvc::no_unique_address
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_ATTRIBUTE =
+    R"TENON(acquire_capability
+deprecated
+diagnose_if
+enable_if
+exclude_from_explicit_instantiation
+no_sanitize
+noinline
+release_capability
+require_constant_initialization
+requires_capability
+type_visibility
+using_if_exists
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE = R"TENON(empty_bases
+)TENON"_str;
+
+inline constexpr auto STANDARD_LIBRARY_HAS_WARNING = R"TENON(-Winvalid-specialization
+)TENON"_str;
+
+auto append_standard_library_capabilities(
+    Vec<preprocessor::BuiltinQueryKey> &result,
+    preprocessor::BuiltinQueryKind kind, ref<str> values) -> void {
+  auto begin = usize{};
+  while (begin < values.len()) {
+    auto end = begin;
+    while (end < values.len() && values.as_bytes()[end] != u8('\n'))
+      ++end;
+    auto value = values.get(begin, end);
+    if (value.is_some() && !value->is_empty()) {
+      result.push(preprocessor::BuiltinQueryKey{
+          .kind = kind,
+          .argument = String::make(*value),
+      });
+    }
+    begin = end + usize(1);
+  }
+}
+
+auto standard_library_capabilities()
+    -> Vec<preprocessor::BuiltinQueryKey> {
+  auto result = Vec<preprocessor::BuiltinQueryKey>::with_capacity(usize(96));
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasBuiltin,
+      STANDARD_LIBRARY_HAS_BUILTIN);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasFeature,
+      STANDARD_LIBRARY_HAS_FEATURE);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasExtension,
+      STANDARD_LIBRARY_HAS_EXTENSION);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasCppAttribute,
+      STANDARD_LIBRARY_HAS_CPP_ATTRIBUTE);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasAttribute,
+      STANDARD_LIBRARY_HAS_ATTRIBUTE);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasDeclspecAttribute,
+      STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE);
+  append_standard_library_capabilities(
+      result, preprocessor::BuiltinQueryKind::HasWarning,
+      STANDARD_LIBRARY_HAS_WARNING);
+  return result;
+}
+
+struct QueriedCapabilities {
+  rstd::collections::HashMap<String, i64> values;
+  usize clang_count{};
+  usize native_count{};
+  usize input_bytes{};
+  usize output_bytes{};
+};
+
+auto parse_capability_value(ref<str> raw) -> Result<i64> {
+  auto value = raw.trim_ascii();
+  while (value.len() >= usize(2) && value.as_bytes()[usize{}] == u8('(') &&
+         value.as_bytes()[value.len() - usize(1)] == u8(')')) {
+    auto inner = value.get(usize(1), value.len() - usize(1));
+    if (inner.is_none())
+      break;
+    value = inner->trim_ascii();
+  }
+  auto cursor = usize{};
+  auto negative = false;
+  if (cursor < value.len() &&
+      (value.as_bytes()[cursor] == u8('+') ||
+       value.as_bytes()[cursor] == u8('-'))) {
+    negative = value.as_bytes()[cursor] == u8('-');
+    ++cursor;
+  }
+  auto digits = usize{};
+  auto result = i64{};
+  while (cursor < value.len() && value.as_bytes()[cursor] >= u8('0') &&
+         value.as_bytes()[cursor] <= u8('9')) {
+    result = result * i64(10) +
+             i64(value.as_bytes()[cursor].to_primitive() -
+                 u8('0').to_primitive());
+    ++cursor;
+    ++digits;
+  }
+  while (cursor < value.len() &&
+         (value.as_bytes()[cursor] == u8('u') ||
+          value.as_bytes()[cursor] == u8('U') ||
+          value.as_bytes()[cursor] == u8('l') ||
+          value.as_bytes()[cursor] == u8('L'))) {
+    ++cursor;
+  }
+  if (digits == usize{} || cursor != value.len()) {
+    return environment_failure<i64>(
+        rstd::format("invalid clang builtin query value: {}", raw));
+  }
+  return Ok(negative ? -result : result);
+}
+
+auto render_capability_argument(const preprocessor::BuiltinQueryKey &query)
+    -> String {
+  if (query.kind == preprocessor::BuiltinQueryKind::HasWarning)
+    return rstd::format("\"{}\"", query.argument.as_str());
+  return query.argument.clone();
+}
+
+auto query_clang_capabilities(const Vec<String> &base_command,
+                              const BuiltinSemanticContext &semantic_context,
+                              ref<rstd::path::Path> working_directory)
+    -> Result<QueriedCapabilities> {
+  auto catalog = standard_library_capabilities();
+  auto pending = Vec<preprocessor::BuiltinQueryKey>::make();
+  auto source = String::make();
+  auto native_count = usize{};
+  auto cursor = usize{};
+  while (cursor < catalog.len()) {
+    auto kind = catalog[cursor].kind;
+    auto builtin = preprocessor::builtin_query_name(kind);
+    source.push_str(rstd::format("#if !defined({})\n", builtin).as_str());
+    source.push_str(rstd::format("#define {}(...) 0\n", builtin).as_str());
+    source.push_str("#define TENON_DEFINED_QUERY_BUILTIN 1\n"_str);
+    source.push_str("#endif\n"_str);
+    while (cursor < catalog.len() && catalog[cursor].kind == kind) {
+      if (native_capability(catalog[cursor], semantic_context).is_some()) {
+        ++native_count;
+        ++cursor;
+        continue;
+      }
+      auto argument = render_capability_argument(catalog[cursor]);
+      auto index = pending.len();
+      source.push_str(
+          rstd::format("TENON_BUILTIN_QUERY_{} {}({})\n", index, builtin,
+                       argument.as_str())
+              .as_str());
+      pending.push(catalog[cursor].clone());
+      ++cursor;
+    }
+    source.push_str("#if defined(TENON_DEFINED_QUERY_BUILTIN)\n"_str);
+    source.push_str(rstd::format("#undef {}\n", builtin).as_str());
+    source.push_str("#undef TENON_DEFINED_QUERY_BUILTIN\n"_str);
+    source.push_str("#endif\n"_str);
+  }
+
+  auto command_line = clone_command(base_command);
+  command::push_option(command_line, clang_options::PREPROCESS);
+  command::push_option(command_line, clang_options::NO_LINE_MARKERS);
+  command::push_option(command_line, clang_options::LANGUAGE);
+  command::push_option(command_line, clang_options::CXX_SOURCE);
+  command::push_option(command_line, clang_options::STANDARD_INPUT);
+  auto output = run_command_with_input(command_line, source.as_str(),
+                                       Some(working_directory));
+  if (output.is_err())
+    return Err(rstd::move(output).unwrap_err());
+  if (output->exit_code != i32{}) {
+    return environment_failure<QueriedCapabilities>(rstd::format(
+        "clang builtin capability query failed\n{}\n{}",
+        command_text(command_line).as_str(),
+        output->standard_error.as_str()));
+  }
+
+  auto values = Vec<i64>::make();
+  auto parsed = each_line(
+      output->standard_output.as_str(),
+      [&values](ref<str> raw) -> Result<empty> {
+        auto line = raw.trim_ascii();
+        if (line.is_empty())
+          return Ok(empty{});
+        constexpr auto prefix = "TENON_BUILTIN_QUERY_"_str;
+        if (!line.starts_with(prefix)) {
+          return environment_failure<empty>(
+              rstd::format("unexpected clang builtin query output: {}", line));
+        }
+        auto cursor = prefix.len();
+        auto index = usize{};
+        auto digits = usize{};
+        while (cursor < line.len() && line.as_bytes()[cursor] >= u8('0') &&
+               line.as_bytes()[cursor] <= u8('9')) {
+          index = index * usize(10) +
+                  usize(line.as_bytes()[cursor].to_primitive() -
+                        u8('0').to_primitive());
+          ++cursor;
+          ++digits;
+        }
+        if (digits == usize{} || index != values.len()) {
+          return environment_failure<empty>(
+              "clang builtin query output index is invalid"_str);
+        }
+        while (cursor < line.len() && line.as_bytes()[cursor] == u8(' '))
+          ++cursor;
+        auto value_text = line.get(cursor, line.len());
+        if (value_text.is_none() || value_text->is_empty()) {
+          return environment_failure<empty>(
+              "clang builtin query emitted no value"_str);
+        }
+        auto value = parse_capability_value(*value_text);
+        if (value.is_err()) {
+          return environment_failure<empty>(
+              rstd::move(value).unwrap_err().message);
+        }
+        values.push(i64(*value));
+        return Ok(empty{});
+      });
+  if (parsed.is_err())
+    return Err(rstd::move(parsed).unwrap_err());
+  if (values.len() != pending.len()) {
+    return environment_failure<QueriedCapabilities>(rstd::format(
+        "clang builtin query returned {} values for {} catalog entries",
+        values.len(), pending.len()));
+  }
+  auto result = rstd::collections::HashMap<String, i64>::with_capacity(
+      pending.len());
+  for (auto index = usize{}; index < pending.len(); ++index)
+    result.insert(capability_key(pending[index]), values[index]);
+  return Ok(QueriedCapabilities{
+      .values = rstd::move(result),
+      .clang_count = pending.len(),
+      .native_count = native_count,
+      .input_bytes = source.len(),
+      .output_bytes = output->standard_output.len(),
+  });
+}
+
+} // namespace tenon::toolchain
+
 export namespace tenon::toolchain {
 
-auto query_builtin_macro_snapshot(const Vec<String> &base_command,
-                                  ref<str> key,
-                                  ref<rstd::path::Path> working_directory)
-    -> Result<SharedBuiltinMacroSnapshot> {
+auto query_clang_builtin_environment_snapshot(
+    const Vec<String> &base_command, ref<str> key,
+    const BuiltinSemanticContext &semantic_context,
+    ref<rstd::path::Path> working_directory)
+    -> Result<SharedClangBuiltinEnvironmentSnapshot> {
   auto macro_command = clone_command(base_command);
   command::push_option(macro_command, clang_options::DUMP_MACROS);
   command::push_option(macro_command, clang_options::PREPROCESS);
@@ -338,22 +852,38 @@ auto query_builtin_macro_snapshot(const Vec<String> &base_command,
   if (macro_output.is_err())
     return Err(rstd::move(macro_output).unwrap_err());
   if (macro_output->exit_code != i32{}) {
-    return environment_failure<SharedBuiltinMacroSnapshot>(rstd::format(
+    return environment_failure<SharedClangBuiltinEnvironmentSnapshot>(rstd::format(
         "clang++ -dM failed\n{}\n{}", command_text(macro_command).as_str(),
         macro_output->standard_error.as_str()));
   }
   auto macros = parse_macro_dump(macro_output->standard_output.as_str());
   if (macros.is_err())
     return Err(rstd::move(macros).unwrap_err());
-  auto parsed = parse_macro_seeds(*macros, "<built-in>"_str);
+  auto clang_macros = clang_owned_macro_seeds(*macros);
+  auto parsed = parse_macro_seeds(clang_macros, "<built-in>"_str);
   if (parsed.is_err())
     return Err(rstd::move(parsed).unwrap_err());
+  auto capabilities = query_clang_capabilities(base_command, semantic_context,
+                                                working_directory);
+  if (capabilities.is_err())
+    return Err(rstd::move(capabilities).unwrap_err());
   auto values = rstd::move(parsed).unwrap();
-  return Ok(rstd::rc::make_rc<BuiltinMacroSnapshot>(BuiltinMacroSnapshot{
+  auto capability_values = rstd::move(capabilities).unwrap();
+  auto identity = builtin_snapshot_identity(clang_macros, key);
+  return Ok(rstd::rc::make_rc<ClangBuiltinEnvironmentSnapshot>(
+                ClangBuiltinEnvironmentSnapshot{
                 .key = String::make(key),
-                .identity = macro_snapshot_identity(*macros, key),
+                .identity = rstd::move(identity),
                 .source = rstd::move(values.source),
                 .definitions = rstd::move(values.definitions),
+                .capabilities = rstd::move(capability_values.values),
+                .clang_macro_count = clang_macros.len(),
+                .native_macro_count = usize(4),
+                .clang_capability_count = capability_values.clang_count,
+                .native_capability_count = capability_values.native_count,
+                .macro_output_bytes = macro_output->standard_output.len(),
+                .capability_input_bytes = capability_values.input_bytes,
+                .capability_output_bytes = capability_values.output_bytes,
             })
                 .to_const());
 }
@@ -361,14 +891,20 @@ auto query_builtin_macro_snapshot(const Vec<String> &base_command,
 auto query_preprocessor_environment(const Vec<String> &base_command,
                                     ref<str> context_id,
                                     ref<rstd::path::Path> working_directory,
-                                    SharedBuiltinMacroSnapshot builtin_macros,
+                                    SharedClangBuiltinEnvironmentSnapshot
+                                        builtin_environment,
+                                    BuiltinSemanticContext semantic_context,
+                                    const Vec<String> &options,
                                     const Vec<String> &definitions)
     -> Result<PreprocessorEnvironment> {
-  auto command_line_seeds = command_line_macro_seeds(definitions);
-  auto command_line_macros =
-      parse_macro_seeds(command_line_seeds, "<command-line>"_str);
+  auto native_macros = parse_macro_seeds(
+      native_predefined_macro_seeds(semantic_context), "<tenon-built-in>"_str);
+  if (native_macros.is_err())
+    return Err(rstd::move(native_macros).unwrap_err());
+  auto command_line_macros = parse_command_line_macros(options, definitions);
   if (command_line_macros.is_err())
     return Err(rstd::move(command_line_macros).unwrap_err());
+  auto native_values = rstd::move(native_macros).unwrap();
   auto command_line_values = rstd::move(command_line_macros).unwrap();
 
   auto include_command = clone_command(base_command);
@@ -389,16 +925,19 @@ auto query_preprocessor_environment(const Vec<String> &base_command,
   auto includes = parse_include_search(include_output->standard_error.as_str());
   if (includes.is_err())
     return Err(rstd::move(includes).unwrap_err());
-  auto identity = environment_identity(builtin_macros.get()->identity.as_str(),
+  auto identity = environment_identity(
+                                       builtin_environment.get()->identity.as_str(),
                                        *includes, context_id);
   if (identity.is_err())
     return Err(rstd::move(identity).unwrap_err());
   return Ok(PreprocessorEnvironment{
       .context_id = String::make(context_id),
-      .builtin_macros = rstd::move(builtin_macros),
+      .builtin_environment = rstd::move(builtin_environment),
+      .native_source = rstd::move(native_values.source),
+      .native_definitions = rstd::move(native_values.definitions),
       .command_line_source = rstd::move(command_line_values.source),
-      .command_line_definitions =
-          rstd::move(command_line_values.definitions),
+      .command_line_macros = rstd::move(command_line_values.operations),
+      .semantic_context = rstd::move(semantic_context),
       .include_search = rstd::move(includes).unwrap(),
       .query_command = clone_command(base_command),
       .identity = rstd::move(identity).unwrap(),
@@ -480,143 +1019,45 @@ public:
         working_directory_(PathBuf::from(working_directory)) {}
 
   auto predefined_macros()
-      -> preprocessor::Result<Vec<preprocessor::SharedMacroDefinition>> {
-    auto result = Vec<preprocessor::SharedMacroDefinition>::with_capacity(
-        environment_.builtin_macros.get()->definitions.len() +
-        environment_.command_line_definitions.len());
+      -> preprocessor::Result<Vec<preprocessor::PredefinedMacroOperation>> {
+    auto result =
+        Vec<preprocessor::PredefinedMacroOperation>::with_capacity(
+        environment_.builtin_environment.get()->definitions.len() +
+        environment_.native_definitions.len() +
+        environment_.command_line_macros.len());
     for (const auto &definition :
-         environment_.builtin_macros.get()->definitions) {
-      result.push(definition.clone());
+         environment_.builtin_environment.get()->definitions) {
+      result.push(
+          preprocessor::PredefinedMacroOperation::define(definition.clone()));
     }
-    for (const auto &definition : environment_.command_line_definitions)
-      result.push(definition.clone());
+    for (const auto &definition : environment_.native_definitions) {
+      result.push(
+          preprocessor::PredefinedMacroOperation::define(definition.clone()));
+    }
+    for (const auto &operation : environment_.command_line_macros) {
+      if (operation.kind ==
+          preprocessor::PredefinedMacroOperationKind::Define) {
+        result.push(preprocessor::PredefinedMacroOperation::define(
+            operation.definition->clone()));
+      } else {
+        result.push(preprocessor::PredefinedMacroOperation::undefine(
+            operation.name.clone()));
+      }
+    }
     return Ok(rstd::move(result));
   }
 
-  auto prepare(const Vec<preprocessor::BuiltinQuery> &queries)
-      -> preprocessor::Result<empty> {
-    auto pending = Vec<preprocessor::BuiltinQuery>::make();
-    auto keys = Vec<String>::make();
-    auto seen = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto &query : queries) {
-      auto key = query_key(query);
-      if (environment_.builtin_results.contains_key(key.as_str()) ||
-          seen.contains_key(key.as_str())) {
-        continue;
-      }
-      seen.insert(key.clone(), empty{});
-      keys.push(rstd::move(key));
-      pending.push(query.clone());
-    }
-    if (pending.is_empty())
-      return Ok(empty{});
-
-    auto source = String::make();
-    for (auto index = usize{}; index < pending.len(); ++index) {
-      source.push_str(rstd::format("TENON_BUILTIN_QUERY_{} {}({})\n", index,
-                                   builtin_name(pending[index].kind),
-                                   pending[index].argument.as_str())
-                          .as_str());
-    }
-    auto command_line = clone_command(environment_.query_command);
-    command::push_option(command_line, clang_options::PREPROCESS);
-    command::push_option(command_line, clang_options::NO_LINE_MARKERS);
-    command::push_option(command_line, clang_options::LANGUAGE);
-    command::push_option(command_line, clang_options::CXX_SOURCE);
-    command::push_option(command_line, clang_options::STANDARD_INPUT);
-    auto output = run_command_with_input(command_line, source.as_str(),
-                                         Some(working_directory_.as_path()));
-    if (output.is_err())
-      return Err(preprocessor_error(rstd::move(output).unwrap_err()));
-    if (output->exit_code != i32{}) {
-      return Err(preprocessor::Error::at(
-          rstd::format("clang builtin query batch failed: {}",
-                       output->standard_error.as_str()),
-          pending[usize{}].location));
-    }
-
-    auto values = Vec<i64>::make();
-    auto parsed = each_line(
-        output->standard_output.as_str(),
-        [&values](ref<str> raw) -> Result<empty> {
-          auto line = raw.trim_ascii();
-          if (line.is_empty())
-            return Ok(empty{});
-          constexpr auto prefix = "TENON_BUILTIN_QUERY_"_str;
-          if (!line.starts_with(prefix)) {
-            return environment_failure<empty>(rstd::format(
-                "unexpected clang builtin query output: {}", line));
-          }
-          auto cursor = prefix.len();
-          while (cursor < line.len() && line.as_bytes()[cursor] >= u8('0') &&
-                 line.as_bytes()[cursor] <= u8('9')) {
-            ++cursor;
-          }
-          while (cursor < line.len() && line.as_bytes()[cursor] == u8(' '))
-            ++cursor;
-          auto value_text = line.get(cursor, line.len());
-          if (value_text.is_none() || value_text->is_empty()) {
-            return environment_failure<empty>(
-                "clang builtin query emitted no value"_str);
-          }
-          auto probe_source = preprocessor::SourceFile::make(
-              preprocessor::SourceId{},
-              preprocessor::SourceBuffer{
-                  .path = PathBuf::from("<clang-builtin-query>"_str),
-                  .contents = String::make(*value_text),
-              });
-          auto tokens = preprocessor::lex(probe_source);
-          if (tokens.is_err()) {
-            return environment_failure<empty>(
-                rstd::move(tokens).unwrap_err().message.clone());
-          }
-          auto filtered = Vec<preprocessor::Token>::make();
-          for (auto &token : *tokens) {
-            if (token.kind != preprocessor::TokenKind::Newline) {
-              filtered.push(rstd::move(token));
-            }
-          }
-          auto value = preprocessor::evaluate_expression(filtered);
-          if (value.is_err()) {
-            return environment_failure<empty>(
-                rstd::move(value).unwrap_err().message.clone());
-          }
-          values.push(i64(*value));
-          return Ok(empty{});
-        });
-    if (parsed.is_err())
-      return Err(preprocessor_error(rstd::move(parsed).unwrap_err()));
-    if (values.len() != pending.len()) {
-      return Err(preprocessor::Error::at(
-          rstd::format("clang builtin query returned {} values for {} queries",
-                       values.len(), pending.len()),
-          pending[usize{}].location));
-    }
-    for (auto index = usize{}; index < values.len(); ++index) {
-      environment_.builtin_results.insert(rstd::move(keys[index]),
-                                          i64(values[index]));
-    }
-    return Ok(empty{});
-  }
-
-  auto evaluate(const preprocessor::BuiltinQuery &query)
+  auto evaluate(const preprocessor::BuiltinQueryKey &query)
       -> preprocessor::Result<i64> {
-    auto key = query_key(query);
-    auto cached = environment_.builtin_results.get(key.as_str());
+    auto native = native_capability(query, environment_.semantic_context);
+    if (native.is_some())
+      return Ok(*native);
+    auto key = capability_key(query);
+    auto cached =
+        environment_.builtin_environment.get()->capabilities.get(key.as_str());
     if (cached.is_some())
       return Ok(**cached);
-    auto one = Vec<preprocessor::BuiltinQuery>::make();
-    one.push(query.clone());
-    auto prepared = prepare(one);
-    if (prepared.is_err())
-      return Err(rstd::move(prepared).unwrap_err());
-    auto result = environment_.builtin_results.get(key.as_str());
-    if (result.is_none()) {
-      return Err(preprocessor::Error::at(
-          String::make("clang builtin query did not produce a result"_str),
-          query.location));
-    }
-    return Ok(**result);
+    return Ok(i64{});
   }
 
   auto text(preprocessor::BuiltinTextKind kind)
@@ -696,35 +1137,6 @@ private:
           "clang text builtin query returned an incomplete snapshot"_str));
     }
     return Ok(empty{});
-  }
-
-  auto query_key(const preprocessor::BuiltinQuery &query) const -> String {
-    return rstd::format("{}:{}", builtin_name(query.kind),
-                        query.argument.as_str());
-  }
-
-  auto builtin_name(preprocessor::BuiltinQueryKind kind) const -> ref<str> {
-    switch (kind) {
-    case preprocessor::BuiltinQueryKind::HasBuiltin:
-      return "__has_builtin"_str;
-    case preprocessor::BuiltinQueryKind::HasConstexprBuiltin:
-      return "__has_constexpr_builtin"_str;
-    case preprocessor::BuiltinQueryKind::HasFeature:
-      return "__has_feature"_str;
-    case preprocessor::BuiltinQueryKind::HasExtension:
-      return "__has_extension"_str;
-    case preprocessor::BuiltinQueryKind::HasCppAttribute:
-      return "__has_cpp_attribute"_str;
-    case preprocessor::BuiltinQueryKind::HasAttribute:
-      return "__has_attribute"_str;
-    case preprocessor::BuiltinQueryKind::HasDeclspecAttribute:
-      return "__has_declspec_attribute"_str;
-    case preprocessor::BuiltinQueryKind::HasWarning:
-      return "__has_warning"_str;
-    case preprocessor::BuiltinQueryKind::IsIdentifier:
-      return "__is_identifier"_str;
-    }
-    __builtin_unreachable();
   }
 
   PreprocessorEnvironment &environment_;

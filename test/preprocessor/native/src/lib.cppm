@@ -18,6 +18,22 @@ TENON_OPTIONAL_IMPORT(TENON_PARTITION)
 import :missing;
 #endif
 
+#if !__has_builtin(__builtin_assume) || \
+    !__has_cpp_attribute(_Clang::__lifetimebound__) || \
+    !__has_attribute(__type_visibility__) || \
+    !__has_warning("-Winvalid-specialization")
+import :standard_library_capability_failure;
+#endif
+
+#if __has_builtin(__builtin_tenon_missing) || __has_feature(cxx_exceptions) || \
+    __has_extension(cxx_exceptions) || __has_feature(cxx_rtti) || \
+    __has_extension(cxx_rtti) || __is_identifier(class) || \
+    __is_identifier(_Atomic) || __is_identifier(__datasizeof) || \
+    !__is_identifier(tenon_identifier) || defined(__EXCEPTIONS) || \
+    defined(__cpp_exceptions) || defined(__GXX_RTTI) || defined(__cpp_rtti)
+import :native_builtin_failure;
+#endif
+
 #if 0 && (1 / 0)
 import :short_circuit_failure;
 #endif
