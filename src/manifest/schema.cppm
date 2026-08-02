@@ -102,7 +102,7 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) 
 
 auto package_root_key(ref<str> key) -> bool {
     return key == "package"_str || key == "library"_str || key == "executable"_str ||
-           key == "usage"_str || key == "dependencies"_str;
+           key == "test"_str || key == "usage"_str || key == "dependencies"_str;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {
@@ -599,18 +599,26 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
 
     auto library_value_option    = member(document, "library"_str);
     auto executable_value_option = member(document, "executable"_str);
-    if (library_value_option.is_some() == executable_value_option.is_some()) {
+    auto test_value_option       = member(document, "test"_str);
+    auto artifact_count          = usize {};
+    if (library_value_option.is_some()) ++artifact_count;
+    if (executable_value_option.is_some()) ++artifact_count;
+    if (test_value_option.is_some()) ++artifact_count;
+    if (artifact_count != usize(1)) {
         return failure<ManifestDocument>(
-            "manifest must contain exactly one of 'library' or 'executable'"_str);
+            "manifest must contain exactly one of 'library', 'executable', or 'test'"_str);
     }
-    const auto artifact_kind =
-        library_value_option.is_some() ? ArtifactKind::StaticLibrary : ArtifactKind::Executable;
-    const auto& artifact_value =
-        library_value_option.is_some() ? **library_value_option : **executable_value_option;
-    const auto artifact_context = artifact_kind == ArtifactKind::StaticLibrary
-                                      ? "manifest.library"_str
-                                      : "manifest.executable"_str;
-    auto       artifact_table   = table_value(artifact_value, artifact_context);
+    auto artifact_kind = ArtifactKind::TestExecutable;
+    if (library_value_option.is_some()) artifact_kind = ArtifactKind::StaticLibrary;
+    if (executable_value_option.is_some()) artifact_kind = ArtifactKind::Executable;
+    const auto& artifact_value = library_value_option.is_some()      ? **library_value_option
+                                 : executable_value_option.is_some() ? **executable_value_option
+                                                                     : **test_value_option;
+    const auto  artifact_context =
+        artifact_kind == ArtifactKind::StaticLibrary ? "manifest.library"_str
+        : artifact_kind == ArtifactKind::Executable  ? "manifest.executable"_str
+                                                     : "manifest.test"_str;
+    auto artifact_table = table_value(artifact_value, artifact_context);
     if (artifact_table.is_err()) return Err(rstd::move(artifact_table).unwrap_err());
     auto artifact_known =
         reject_unknown(**artifact_table,
@@ -622,14 +630,11 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto        name          = required_string(package_value, "name"_str, "package"_str);
     auto        version       = parse_package_version(package_value);
     auto        root_module   = optional_string(package_value, "module"_str, "package"_str);
-    auto        artifact_name = required_string(
-        artifact_value,
-        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
-        artifact_kind == ArtifactKind::StaticLibrary ? "library"_str : "executable"_str);
-    auto discovery_text = required_string(
-        artifact_value,
-        "discovery"_str,
-        artifact_kind == ArtifactKind::StaticLibrary ? "library"_str : "executable"_str);
+    auto        artifact_name =
+        required_string(artifact_value,
+                        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
+                        artifact_context);
+    auto discovery_text = required_string(artifact_value, "discovery"_str, artifact_context);
     if (name.is_err()) return Err(rstd::move(name).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     if (root_module.is_err()) return Err(rstd::move(root_module).unwrap_err());
@@ -664,7 +669,8 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto sources =
         declared_paths(member(artifact_value, "sources"_str),
                        artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
-                                                                    : "executable.sources"_str,
+                       : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
+                                                                    : "test.sources"_str,
                        explicit_discovery);
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
 

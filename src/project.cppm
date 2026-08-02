@@ -12,7 +12,9 @@ export namespace tenon {
 
 auto resolve_project_metadata(const PackageSelection &selection,
                               const BuildConfiguration &configuration,
-                              const PackageSourceConfig &sources, bool locked)
+                              const PackageSourceConfig &sources, bool locked,
+                              PackageSelectionPurpose purpose =
+                                  PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
   auto lock = load_lock_session(selection.root.as_path(), locked);
   if (lock.is_err())
@@ -20,7 +22,8 @@ auto resolve_project_metadata(const PackageSelection &selection,
   auto lock_session = rstd::move(lock).unwrap();
   auto resolution = lock_session.take_resolution_options();
   resolution.sources = sources.clone();
-  auto resolved = resolve_package_selection(selection, rstd::move(resolution));
+  auto resolved =
+      resolve_package_selection(selection, purpose, rstd::move(resolution));
   if (resolved.is_err())
     return Err(rstd::move(resolved).unwrap_err());
   auto project = rstd::move(resolved).unwrap();

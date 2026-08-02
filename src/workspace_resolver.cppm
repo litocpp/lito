@@ -29,6 +29,12 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
     return result;
 }
 
+auto selected_by_purpose(ArtifactKind kind, PackageSelectionPurpose purpose) -> bool {
+    if (purpose == PackageSelectionPurpose::All) return true;
+    if (purpose == PackageSelectionPurpose::Test) return kind == ArtifactKind::TestExecutable;
+    return kind != ArtifactKind::TestExecutable;
+}
+
 auto selected_closure(const ResolvedPackageGraph& graph, const Vec<String>& selected_roots)
     -> Result<Vec<String>> {
     auto indices = IndexMap::make();
@@ -67,6 +73,7 @@ export namespace tenon
 {
 
 auto resolve_package_selection(const PackageSelection&  selection,
+                               PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
                                PackageResolutionOptions options = {})
     -> Result<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph(selection.root.as_path(), rstd::move(options));
@@ -78,10 +85,21 @@ auto resolve_package_selection(const PackageSelection&  selection,
 
     auto roots = StringSet::make();
     for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
+    auto root_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
+    for (const auto& package : graph.packages) {
+        if (roots.contains_key(package.manifest.name.as_str())) {
+            root_kinds.insert(package.manifest.name.clone(), package.manifest.artifact_kind);
+        }
+    }
 
     auto selected_roots = Vec<String>::make();
     if (selection.packages.is_empty()) {
-        selected_roots = copy_strings(graph.root_names);
+        for (const auto& name : graph.root_names) {
+            auto kind = root_kinds.get(name.as_str());
+            if (kind.is_some() && selected_by_purpose(**kind, purpose)) {
+                selected_roots.push(name.clone());
+            }
+        }
     } else {
         auto selected_names = StringSet::make();
         for (const auto& name : selection.packages) {
@@ -99,9 +117,20 @@ auto resolve_package_selection(const PackageSelection&  selection,
                 return failure<ResolvedPackageSelection>(
                     rstd::format("workspace has no member package named '{}'", name.as_str()));
             }
+            auto kind = root_kinds.get(name.as_str());
+            if (purpose == PackageSelectionPurpose::Test &&
+                (kind.is_none() || **kind != ArtifactKind::TestExecutable)) {
+                return failure<ResolvedPackageSelection>(
+                    rstd::format("workspace package '{}' is not a test package", name.as_str()));
+            }
             selected_names.insert(name.clone(), empty {});
             selected_roots.push(name.clone());
         }
+    }
+    if (selected_roots.is_empty()) {
+        return failure<ResolvedPackageSelection>(purpose == PackageSelectionPurpose::Test
+                                                     ? "workspace has no selected test package"_str
+                                                     : "workspace has no selected package"_str);
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 

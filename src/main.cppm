@@ -34,6 +34,18 @@ void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
     rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
 }
 
+void observe_test(void* raw_context, const tenon::TestEvent& event) noexcept {
+    auto& context = *static_cast<EventContext*>(raw_context);
+    if (! context.verbose) return;
+    rstd::io::println("[run] {} {} (cwd {})",
+                      event.package,
+                      event.executable,
+                      event.working_directory);
+    for (const auto& argument : event.arguments) {
+        rstd::io::println("  [arg] {}", argument.as_str());
+    }
+}
+
 auto build_configuration(tenon::ToolchainSpec toolchain) -> tenon::BuildConfiguration {
     return tenon::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
@@ -41,6 +53,24 @@ auto build_configuration(tenon::ToolchainSpec toolchain) -> tenon::BuildConfigur
         .bmi_mode          = tenon::BmiMode::Reduced,
         .language_standard = tenon::String::make("c++20"_str),
     };
+}
+
+struct ArtifactCounts {
+    usize archives {};
+    usize executables {};
+    usize tests {};
+};
+
+auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
+    auto counts = ArtifactCounts {};
+    for (const auto& artifact : summary.artifacts) {
+        switch (artifact.kind) {
+        case tenon::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case tenon::ArtifactKind::Executable: ++counts.executables; break;
+        case tenon::ArtifactKind::TestExecutable: ++counts.tests; break;
+        }
+    }
+    return counts;
 }
 
 } // namespace
@@ -111,6 +141,86 @@ extern "C++" int main() {
         return 0;
     }
 
+    if (invocation.command.is_Test()) {
+        auto options                     = rstd::move(invocation.command).as_Test().options;
+        auto request                     = tenon::TestRequest {};
+        request.build.selection.root     = rstd::move(project.root);
+        request.build.configuration      = build_configuration(rstd::move(project.toolchain));
+        request.build.sources            = rstd::move(project.sources);
+        request.build.selection.packages = rstd::move(options.packages);
+        request.build.locked             = options.locked;
+        request.arguments                = rstd::move(options.arguments);
+        request.no_run                   = options.no_run;
+        if (options.profile.is_some()) request.build.configuration.profile = *options.profile;
+        if (options.output.is_some()) request.build.output = rstd::move(*options.output);
+        auto event_context     = EventContext { .verbose = options.verbose };
+        request.build.observer = Some(tenon::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
+        request.observer = Some(tenon::TestObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe_test,
+        });
+
+        auto result = tenon::test(rstd::move(request));
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        auto counts  = artifact_counts(summary.build);
+        if (options.no_run) {
+            rstd::io::println("built {} tests ({}) in {}: {} scanned, {} compiled, {} reused",
+                              counts.tests,
+                              summary.build.profile.as_str(),
+                              summary.build.output.as_path(),
+                              summary.build.scanned,
+                              summary.build.compiled,
+                              summary.build.reused);
+            return 0;
+        }
+
+        rstd::io::println("test build: {} scanned, {} compiled, {} reused",
+                          summary.build.scanned,
+                          summary.build.compiled,
+                          summary.build.reused);
+
+        auto passed = usize {};
+        auto failed = usize {};
+        for (const auto& execution : summary.executions) {
+            if (execution.success()) {
+                ++passed;
+                rstd::io::println(
+                    "[pass] {} ({} ms)", execution.package.as_str(), execution.elapsed.as_millis());
+                continue;
+            }
+            ++failed;
+            if (execution.error.is_some()) {
+                rstd::io::eprintln("[fail] {} in {}: {}",
+                                   execution.package.as_str(),
+                                   execution.working_directory.as_path(),
+                                   execution.error->as_str());
+            } else if (execution.status->code().is_some()) {
+                rstd::io::eprintln("[fail] {} in {}: exit code {}",
+                                   execution.package.as_str(),
+                                   execution.working_directory.as_path(),
+                                   *execution.status->code());
+            } else {
+                rstd::io::eprintln("[fail] {} in {}: signal {}",
+                                   execution.package.as_str(),
+                                   execution.working_directory.as_path(),
+                                   *execution.status->signal());
+            }
+        }
+        rstd::io::println("test result: {}. {} passed; {} failed",
+                          failed == usize {} ? "ok"_str : "failed"_str,
+                          passed,
+                          failed);
+        return failed == usize {} ? 0 : 1;
+    }
+
     auto options               = rstd::move(invocation.command).as_Build().options;
     auto request               = tenon::BuildRequest {};
     request.selection.root     = rstd::move(project.root);
@@ -135,16 +245,18 @@ extern "C++" int main() {
     }
 
     auto summary = rstd::move(result).unwrap();
+    auto counts  = artifact_counts(summary);
     rstd::io::println("built {} ({}) in {}: {} scanned, {} compiled, {} reused, "
-                      "{} archives, {} executables",
+                      "{} archives, {} executables, {} tests",
                       summary.package.as_str(),
                       summary.profile.as_str(),
                       summary.output.as_path(),
                       summary.scanned,
                       summary.compiled,
                       summary.reused,
-                      summary.archives.len(),
-                      summary.executables.len());
+                      counts.archives,
+                      counts.executables,
+                      counts.tests);
     if (event_context.verbose) {
         rstd::io::println("frontend: {} source requests, {} hits, {} stats, {} reads, {} bytes, "
                           "{} lexed, {} analyzed, {} analysis hits",

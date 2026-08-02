@@ -114,6 +114,14 @@ enum class ArtifactKind
 {
     StaticLibrary,
     Executable,
+    TestExecutable,
+};
+
+enum class PackageSelectionPurpose
+{
+    All,
+    Production,
+    Test,
 };
 
 enum class PackageVersionSource
@@ -483,26 +491,34 @@ struct ToolchainStatistics {
 };
 
 struct BuildRequest {
-    PackageSelection      selection;
-    Vec<String>           targets;
-    PathBuf               output;
-    BuildConfiguration    configuration;
-    PackageSourceConfig   sources;
-    bool                  locked { false };
-    Option<BuildObserver> observer;
+    PackageSelection        selection;
+    Vec<String>             targets;
+    PathBuf                 output;
+    BuildConfiguration      configuration;
+    PackageSourceConfig     sources;
+    PackageSelectionPurpose purpose { PackageSelectionPurpose::Production };
+    bool                    locked { false };
+    Option<BuildObserver>   observer;
+};
+
+struct BuiltArtifact {
+    String       package;
+    String       target;
+    ArtifactKind kind { ArtifactKind::StaticLibrary };
+    PathBuf      path;
+    PathBuf      package_root;
 };
 
 struct BuildSummary {
-    String       package;
-    String       profile;
-    PathBuf      output;
-    usize        scanned {};
-    usize        compiled {};
-    usize        reused {};
-    Vec<PathBuf> archives;
-    Vec<PathBuf> executables;
+    String                       package;
+    String                       profile;
+    PathBuf                      output;
+    usize                        scanned {};
+    usize                        compiled {};
+    usize                        reused {};
+    Vec<BuiltArtifact>           artifacts;
     frontend::FrontendStatistics frontend;
-    ToolchainStatistics toolchain;
+    ToolchainStatistics          toolchain;
 };
 
 struct ScanRequest {

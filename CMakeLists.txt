@@ -103,6 +103,7 @@ target_sources(
          src/cache/hash.cppm
          src/cache/mod.cppm
          src/builder.cppm
+         src/test_runner.cppm
          src/scanner.cppm
          src/formatter.cppm
          src/mod.cppm)
@@ -152,4 +153,78 @@ if(BUILD_TESTING)
                "\"logical-name\": \"fixture.scan.definitions:defined\""
                FAIL_REGULAR_EXPRESSION
                "fixture.scan.definitions:missing;command_line_undef_failure")
+
+  set(TENON_TEST_COMMAND_FIXTURE
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/test-command/workspace)
+  set(TENON_TEST_COMMAND_OUTPUT
+      ${CMAKE_CURRENT_BINARY_DIR}/test-command-build)
+  add_test(
+    NAME tenon.test-command.build-production
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} build --out
+            ${TENON_TEST_COMMAND_OUTPUT})
+  set_tests_properties(
+    tenon.test-command.build-production
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "1 archives, 1 executables, 0 tests")
+  add_test(
+    NAME tenon.test-command.no-run
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out
+            ${TENON_TEST_COMMAND_OUTPUT} --no-run)
+  set_tests_properties(
+    tenon.test-command.no-run
+    PROPERTIES DEPENDS tenon.test-command.build-production
+               PASS_REGULAR_EXPRESSION "built 3 tests")
+  add_test(
+    NAME tenon.test-command.pass
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --package
+            fixture-test-pass --out ${TENON_TEST_COMMAND_OUTPUT} --locked --
+            expected-argument)
+  set_tests_properties(
+    tenon.test-command.pass
+    PROPERTIES DEPENDS tenon.test-command.no-run
+               PASS_REGULAR_EXPRESSION
+               "fixture pass executed;test result: ok. 1 passed; 0 failed")
+  add_test(
+    NAME tenon.test-command.failure
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out
+            ${TENON_TEST_COMMAND_OUTPUT})
+  set_tests_properties(
+    tenon.test-command.failure
+    PROPERTIES DEPENDS tenon.test-command.pass WILL_FAIL TRUE)
+  add_test(
+    NAME tenon.test-command.signal
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --package
+            fixture-test-signal --out ${TENON_TEST_COMMAND_OUTPUT} --locked)
+  set_tests_properties(
+    tenon.test-command.signal
+    PROPERTIES DEPENDS tenon.test-command.pass WILL_FAIL TRUE)
+  add_test(
+    NAME tenon.test-command.release-no-run
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --profile release
+            --out ${TENON_TEST_COMMAND_OUTPUT}-release --no-run --locked)
+  set_tests_properties(
+    tenon.test-command.release-no-run
+    PROPERTIES DEPENDS tenon.test-command.build-production
+               PASS_REGULAR_EXPRESSION "built 3 tests.*release")
+  add_test(
+    NAME tenon.test-command.reject-production-selection
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --package
+            fixture-test-app --out ${TENON_TEST_COMMAND_OUTPUT})
+  set_tests_properties(
+    tenon.test-command.reject-production-selection
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(
+    NAME tenon.test-command.reject-multiple-artifacts
+    COMMAND tenon -C
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test-command/invalid-artifact build)
+  set_tests_properties(
+    tenon.test-command.reject-multiple-artifacts
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(
+    NAME tenon.test-command.reject-test-dependency
+    COMMAND tenon -C
+            ${CMAKE_CURRENT_SOURCE_DIR}/test/test-command/invalid-dependency build)
+  set_tests_properties(
+    tenon.test-command.reject-test-dependency
+    PROPERTIES WILL_FAIL TRUE)
 endif()

@@ -39,7 +39,8 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
     auto lock_session  = rstd::move(lock).unwrap();
     auto resolution    = lock_session.take_resolution_options();
     resolution.sources = request.sources.clone();
-    auto resolved      = resolve_package_selection(request.selection, rstd::move(resolution));
+    auto resolved      = resolve_package_selection(
+        request.selection, PackageSelectionPurpose::All, rstd::move(resolution));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto selection = rstd::move(resolved).unwrap();
 

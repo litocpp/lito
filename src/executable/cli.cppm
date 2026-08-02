@@ -41,6 +41,13 @@ struct CliSchema {
     ArgKey<String>       build_output;
     ArgKey<bool>         build_locked;
     ArgKey<bool>         build_verbose;
+    ArgKey<String>       test_package;
+    ArgKey<BuildProfile> test_profile;
+    ArgKey<String>       test_output;
+    ArgKey<bool>         test_locked;
+    ArgKey<bool>         test_no_run;
+    ArgKey<bool>         test_verbose;
+    ArgKey<String>       test_arguments;
     ArgKey<String>       scan_source;
     ArgKey<String>       scan_package;
     ArgKey<BuildProfile> scan_profile;
@@ -93,6 +100,25 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build_verbose = build.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
 
+    auto test = Command::make("test"_str);
+    test.about("Build and run test packages"_str);
+    auto test_package = test.add_arg(package_arg());
+    auto test_profile = test.add_arg(profile_arg());
+    auto test_output  = test.add_arg(Arg<String>::value("out"_str, string_parser())
+                                         .long_name("out"_str)
+                                         .value_name("DIRECTORY"_str)
+                                         .help("Override the build output directory"_str));
+    auto test_locked  = test.add_arg(locked_arg());
+    auto test_no_run  = test.add_arg(Arg<bool>::flag("no-run"_str)
+                                         .long_name("no-run"_str)
+                                         .help("Build tests without running"_str));
+    auto test_verbose = test.add_arg(
+        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto test_arguments = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                           .value_name("ARGS"_str)
+                                           .num_args(NumArgs::any())
+                                           .allow_hyphen_values());
+
     auto scan = Command::make("scan"_str);
     scan.about("Scan one source file"_str);
     auto scan_source  = scan.add_arg(Arg<String>::value("source"_str, string_parser())
@@ -117,6 +143,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .help("Change the working directory"_str)
                                       .default_value("."_str));
     root.add_subcommand(rstd::move(build));
+    root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
     auto parser = rstd::move(root).build();
@@ -129,6 +156,13 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_output   = build_output,
         .build_locked   = build_locked,
         .build_verbose  = build_verbose,
+        .test_package   = test_package,
+        .test_profile   = test_profile,
+        .test_output    = test_output,
+        .test_locked    = test_locked,
+        .test_no_run    = test_no_run,
+        .test_verbose   = test_verbose,
+        .test_arguments = test_arguments,
         .scan_source    = scan_source,
         .scan_package   = scan_package,
         .scan_profile   = scan_profile,
@@ -182,6 +216,16 @@ struct ScanOptions {
     bool                 locked {};
 };
 
+struct TestOptions {
+    Vec<String>          packages;
+    Option<BuildProfile> profile;
+    Option<PathBuf>      output;
+    Vec<String>          arguments;
+    bool                 locked {};
+    bool                 no_run {};
+    bool                 verbose {};
+};
+
 struct FormatOptions {
     Vec<String> packages;
 };
@@ -189,6 +233,7 @@ struct FormatOptions {
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
+              (Test, (TestOptions options;)),
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)))
 };
@@ -255,6 +300,22 @@ auto parse() -> CliOutcome {
                 .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
                 .targets  = string_values(*child, schema.scan_target),
                 .locked   = flag_value(*child, schema.scan_locked),
+            }));
+    }
+    if (subcommand->get<0>() == "test"_str) {
+        auto child   = subcommand->get<1>();
+        auto profile = optional_value(*child, schema.test_profile);
+        auto output  = optional_value(*child, schema.test_output);
+        return CliOutcome::Parsed(
+            rstd::move(working_directory),
+            CliCommand::Test(TestOptions {
+                .packages  = string_values(*child, schema.test_package),
+                .profile   = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
+                .output    = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
+                .arguments = string_values(*child, schema.test_arguments),
+                .locked    = flag_value(*child, schema.test_locked),
+                .no_run    = flag_value(*child, schema.test_no_run),
+                .verbose   = flag_value(*child, schema.test_verbose),
             }));
     }
     auto child = subcommand->get<1>();

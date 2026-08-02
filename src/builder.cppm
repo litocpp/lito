@@ -49,7 +49,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto loaded = resolve_project_metadata(request.selection,
                                            request.configuration,
                                            request.sources,
-                                           request.locked);
+                                           request.locked,
+                                           request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata = rstd::move(loaded).unwrap();
 
@@ -223,7 +224,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
     }
 
-    auto archives      = Vec<PathBuf>::make();
+    auto artifacts     = Vec<BuiltArtifact>::make();
     auto archive_paths = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         archive_paths.emplace_back(None());
@@ -240,13 +241,18 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
         if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
         archive_paths[target] = Some(archive_path.clone());
-        archives.push(rstd::move(archive_path));
+        artifacts.push(BuiltArtifact {
+            .package      = target_spec.name.clone(),
+            .target       = target_spec.name.clone(),
+            .kind         = target_spec.artifact_kind,
+            .path         = rstd::move(archive_path),
+            .package_root = target_spec.root.clone(),
+        });
     }
 
-    auto executables = Vec<PathBuf>::make();
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
-        if (target_spec.artifact_kind != ArtifactKind::Executable) continue;
+        if (target_spec.artifact_kind == ArtifactKind::StaticLibrary) continue;
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
         auto linked_archives =
@@ -265,7 +271,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             linked_archives.push((*archive_paths[dependency]).clone());
         }
         auto executable_path =
-            layout.executable(target_spec.name.as_str(), target_spec.artifact_name.as_str());
+            target_spec.artifact_kind == ArtifactKind::TestExecutable
+                ? layout.test(target_spec.name.as_str(), target_spec.artifact_name.as_str())
+                : layout.executable(target_spec.name.as_str(), target_spec.artifact_name.as_str());
         emit(request, BuildEventKind::Link, target_spec.name.as_str(), executable_path.as_path());
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
@@ -274,20 +282,25 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
-        executables.push(rstd::move(executable_path));
+        artifacts.push(BuiltArtifact {
+            .package      = target_spec.name.clone(),
+            .target       = target_spec.name.clone(),
+            .kind         = target_spec.artifact_kind,
+            .path         = rstd::move(executable_path),
+            .package_root = target_spec.root.clone(),
+        });
     }
 
     return Ok(BuildSummary {
-        .package     = package.name.clone(),
-        .profile     = package_plan.profile->name.clone(),
-        .output      = PathBuf::from(layout.output()),
-        .scanned     = scans.len(),
-        .compiled    = compiled,
-        .reused      = reused,
-        .archives    = rstd::move(archives),
-        .executables = rstd::move(executables),
-        .frontend    = frontend_service.statistics(),
-        .toolchain   = toolchain.statistics(),
+        .package   = package.name.clone(),
+        .profile   = package_plan.profile->name.clone(),
+        .output    = PathBuf::from(layout.output()),
+        .scanned   = scans.len(),
+        .compiled  = compiled,
+        .reused    = reused,
+        .artifacts = rstd::move(artifacts),
+        .frontend  = frontend_service.statistics(),
+        .toolchain = toolchain.statistics(),
     });
 }
 

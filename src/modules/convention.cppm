@@ -9,6 +9,10 @@ using namespace rstd::literals;
 namespace tenon
 {
 
+auto executable_artifact(ArtifactKind kind) -> bool {
+    return kind == ArtifactKind::Executable || kind == ArtifactKind::TestExecutable;
+}
+
 template<typename T>
 auto convention_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
@@ -116,8 +120,7 @@ auto root_module_source(const PackageManifest& manifest) -> Result<ResolvedSourc
     auto source_root_result = canonical_source_root(manifest);
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    auto relative =
-        manifest.artifact_kind == ArtifactKind::Executable ? "mod.cppm"_str : "lib.cppm"_str;
+    auto relative  = executable_artifact(manifest.artifact_kind) ? "mod.cppm"_str : "lib.cppm"_str;
     auto requested = source_root.join(PathBuf::from(relative).as_path());
     return canonical_candidate(
         manifest, source_root.as_path(), requested.as_path(), Some(manifest.root_module->clone()));
@@ -137,7 +140,7 @@ auto module_name_belongs(ref<str> root_module, ref<str> logical_name) -> bool {
 }
 
 auto module_entry_source(const PackageManifest& manifest) -> Result<ResolvedSource> {
-    if (manifest.artifact_kind == ArtifactKind::Executable) {
+    if (executable_artifact(manifest.artifact_kind)) {
         auto source_root_result = canonical_source_root(manifest);
         if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
         auto source_root = rstd::move(source_root_result).unwrap();

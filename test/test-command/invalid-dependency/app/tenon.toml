@@ -1,0 +1,12 @@
+[package]
+name = "fixture-invalid-test-app"
+version = { workspace = true }
+
+[executable]
+name = "fixture-invalid-test-app"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-test-dependency]
+path = "../test-dependency"
+visibility = "private"

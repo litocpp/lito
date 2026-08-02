@@ -1,0 +1,8 @@
+[package]
+name = "fixture-test-app"
+version = { workspace = true }
+
+[executable]
+name = "fixture-test-app"
+discovery = "explicit"
+sources = ["src/main.cpp"]

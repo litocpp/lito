@@ -75,7 +75,8 @@ auto scan(const ScanRequest &request) -> Result<ScanReport> {
 
   auto loaded =
       resolve_project_metadata(request.selection, request.configuration,
-                               request.sources, request.locked);
+                               request.sources, request.locked,
+                               PackageSelectionPurpose::All);
   if (loaded.is_err())
     return Err(rstd::move(loaded).unwrap_err());
   auto metadata = rstd::move(loaded).unwrap();

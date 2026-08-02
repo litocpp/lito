@@ -141,6 +141,11 @@ public:
         auto directory = join(join(output_.as_path(), "bin"_str).as_path(), target);
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
+
+    auto test(ref<str> target, ref<str> artifact_name) const -> PathBuf {
+        auto directory = join(join(output_.as_path(), "test"_str).as_path(), target);
+        return directory.join(PathBuf::from(artifact_name).as_path());
+    }
 };
 
 } // namespace tenon

@@ -1,0 +1,31 @@
+{
+  "packages": [
+    {
+      "dependencies": [
+        "fixture-test-dependency"
+      ],
+      "manifest": "app/tenon.toml",
+      "name": "fixture-invalid-test-app",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "test-dependency/tenon.toml",
+      "name": "fixture-test-dependency",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-invalid-test-app",
+    "fixture-test-dependency"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

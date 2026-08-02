@@ -29,7 +29,7 @@ auto validate_options(const Vec<String>& options) -> Result<empty> {
 }
 
 auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
-    if (kind == ArtifactKind::Executable) return String::make(declared_name);
+    if (kind != ArtifactKind::StaticLibrary) return String::make(declared_name);
     auto result = String::make("lib"_str);
     result.push_str(declared_name);
     result.push_str(".a"_str);
@@ -68,10 +68,10 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
     }
 
     for (const auto& package : graph.packages) {
-        if (package.manifest.artifact_kind == ArtifactKind::Executable &&
+        if (package.manifest.artifact_kind != ArtifactKind::StaticLibrary &&
             ! roots.contains_key(package.manifest.name.as_str())) {
             return adapter_failure<PackageMetadata>(
-                rstd::format("dependency package '{}' cannot produce an executable",
+                rstd::format("dependency package '{}' cannot produce an executable artifact",
                              package.manifest.name.as_str()));
         }
         for (const auto& dependency : package.dependencies) {
@@ -80,9 +80,9 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                 return adapter_failure<PackageMetadata>(
                     rstd::format("resolved dependency '{}' is missing", dependency.name.as_str()));
             }
-            if (**kind == ArtifactKind::Executable) {
+            if (**kind != ArtifactKind::StaticLibrary) {
                 return adapter_failure<PackageMetadata>(
-                    rstd::format("package '{}' cannot depend on executable package '{}'",
+                    rstd::format("package '{}' cannot depend on non-library package '{}'",
                                  package.manifest.name.as_str(),
                                  dependency.name.as_str()));
             }
