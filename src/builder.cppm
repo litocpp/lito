@@ -3,8 +3,7 @@ export module tenon.builder;
 import rstd;
 import tenon.model;
 import tenon.source_discovery;
-import tenon.workspace_resolver;
-import tenon.lock_store;
+import tenon.project;
 import tenon.package;
 import tenon.toolchain;
 import tenon.modules;
@@ -38,24 +37,6 @@ auto emit(const BuildRequest&   request,
     observer.notify(observer.context, BuildEvent { kind, target, path });
 }
 
-auto load_build_metadata(const BuildRequest& request) -> Result<PackageMetadata> {
-    auto lock = load_lock_session(request.selection.root.as_path(), request.locked);
-    if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
-    auto lock_session  = rstd::move(lock).unwrap();
-    auto resolution    = lock_session.take_resolution_options();
-    resolution.sources = request.sources.clone();
-    auto resolved      = resolve_package_selection(request.selection, rstd::move(resolution));
-    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-    auto build  = rstd::move(resolved).unwrap();
-    auto locked = sync_lock(build.graph, rstd::move(lock_session));
-    if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
-
-    return adapt_package_graph_metadata(rstd::move(build.graph),
-                                        build.selected_package_names,
-                                        build.selected_root_names,
-                                        request.configuration);
-}
-
 } // namespace tenon
 
 export namespace tenon
@@ -65,7 +46,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
-    auto loaded = load_build_metadata(request);
+    auto loaded = resolve_project_metadata(request.selection,
+                                           request.configuration,
+                                           request.sources,
+                                           request.locked);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata = rstd::move(loaded).unwrap();
 

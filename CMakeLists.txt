@@ -91,6 +91,7 @@ target_sources(
          src/package/mod.cppm
          src/workspace_resolver.cppm
          src/lock_store.cppm
+         src/project.cppm
          src/toolchain/command.cppm
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
@@ -102,6 +103,7 @@ target_sources(
          src/cache/hash.cppm
          src/cache/mod.cppm
          src/builder.cppm
+         src/scanner.cppm
          src/formatter.cppm
          src/mod.cppm)
 target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)
@@ -124,4 +126,22 @@ if(BUILD_TESTING)
   target_sources(tenon.preprocessor.test PRIVATE test/preprocessor/core.cpp)
   target_link_libraries(tenon.preprocessor.test PRIVATE tenon.lib rstd::nostd)
   add_test(NAME tenon.preprocessor.core COMMAND tenon.preprocessor.test)
+  add_test(
+    NAME tenon.scan.native
+    COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/preprocessor/native scan
+            src/lib.cppm)
+  set_tests_properties(
+    tenon.scan.native
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "\"logical-name\": \"fixture.preprocessor.native:dependency\""
+               FAIL_REGULAR_EXPRESSION "pragma_operator_failure")
+  add_test(
+    NAME tenon.scan.definitions
+    COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/scan/definitions scan
+            src/lib.cppm)
+  set_tests_properties(
+    tenon.scan.definitions
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "\"logical-name\": \"fixture.scan.definitions:defined\""
+               FAIL_REGULAR_EXPRESSION "fixture.scan.definitions:missing")
 endif()

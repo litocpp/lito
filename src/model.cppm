@@ -488,6 +488,21 @@ struct BuildSummary {
     frontend::FrontendStatistics frontend;
 };
 
+struct ScanRequest {
+    PackageSelection    selection;
+    Vec<String>         targets;
+    PathBuf             source;
+    BuildConfiguration  configuration;
+    PackageSourceConfig sources;
+    bool                locked { false };
+};
+
+struct ScanReport {
+    String         target;
+    String         profile;
+    FrontendResult result;
+};
+
 struct FormatRequest {
     PackageSelection    selection;
     ToolchainSpec       toolchain;

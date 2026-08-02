@@ -57,6 +57,15 @@ auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> wor
     return Ok(rstd::move(identity));
 }
 
+auto argument_identity(ref<str> recipe, const Vec<String>& arguments) -> String {
+    auto identity = String::make(recipe);
+    identity.push_ascii('\n');
+    for (const auto& argument : arguments) {
+        identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
+    }
+    return identity;
+}
+
 auto unsupported_native_preprocessor_option(ref<str> option) -> bool {
     return option == "-include"_str || option.starts_with("-include="_str) ||
            option == "-imacros"_str || option.starts_with("-imacros="_str) ||
@@ -227,11 +236,36 @@ public:
             }
         }
         if (environment == nullptr) {
+            auto builtin_command = Vec<String>::make();
+            auto builtin_context = append_builtin_context(builtin_command, compile_context);
+            if (builtin_context.is_err()) {
+                return Err(rstd::move(builtin_context).unwrap_err());
+            }
+            auto builtin_key =
+                argument_identity("tenon-clang-builtin-context-v1"_str, builtin_command);
+            auto builtin_macros = Option<toolchain::SharedBuiltinMacroSnapshot> {};
+            for (const auto& existing : builtin_macro_snapshots_) {
+                if (existing.get()->key.as_str() == builtin_key.as_str()) {
+                    builtin_macros = Some(existing.clone());
+                    break;
+                }
+            }
+            if (builtin_macros.is_none()) {
+                auto queried = toolchain::query_builtin_macro_snapshot(
+                    builtin_command, builtin_key.as_str(), working_directory);
+                if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+                builtin_macro_snapshots_.push(queried->clone());
+                builtin_macros = Some(rstd::move(queried).unwrap());
+            }
             auto command = Vec<String>::make();
             auto context = append_compile_context(command, compile_context);
             if (context.is_err()) return Err(rstd::move(context).unwrap_err());
             auto queried = toolchain::query_preprocessor_environment(
-                command, compile_context.id.as_str(), working_directory);
+                command,
+                compile_context.id.as_str(),
+                working_directory,
+                rstd::move(builtin_macros).unwrap(),
+                compile_context.definitions);
             if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
             queried->working_directory = PathBuf::from(working_directory);
             preprocessor_environments_.push(rstd::move(queried).unwrap());
@@ -428,7 +462,7 @@ private:
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)) {}
 
-    auto append_compile_context(Vec<String>& command, const CompileContext& context) const
+    auto append_builtin_context(Vec<String>& command, const CompileContext& context) const
         -> Result<empty> {
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
@@ -443,6 +477,13 @@ private:
         for (const auto& option : context.options) command.push(option.clone());
         toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
         toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
+        return Ok(empty {});
+    }
+
+    auto append_compile_context(Vec<String>& command, const CompileContext& context) const
+        -> Result<empty> {
+        auto pushed = append_builtin_context(command, context);
+        if (pushed.is_err()) return pushed;
         for (const auto& definition : context.definitions) {
             command.push(
                 rstd::format("{}{}", toolchain::clang_options::DEFINE, definition.as_str()));
@@ -459,6 +500,7 @@ private:
     PathBuf          archiver_;
     PathBuf          resource_dir_;
     CompilerIdentity compiler_identity_;
+    mutable Vec<toolchain::SharedBuiltinMacroSnapshot> builtin_macro_snapshots_;
     mutable Vec<toolchain::PreprocessorEnvironment> preprocessor_environments_;
 };
 

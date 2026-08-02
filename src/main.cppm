@@ -38,12 +38,23 @@ void print_help() {
     rstd::io::println("");
     rstd::io::println("Usage: tenon [-C <directory>] build [--package <name>] [--profile "
                       "<debug|release>] [--target <name>] [--out <dir>] [--locked] [--verbose]");
+    rstd::io::println("       tenon [-C <directory>] scan <source> [--package <name>] [--profile "
+                      "<debug|release>] [--target <name>] [--locked]");
     rstd::io::println("       tenon [-C <directory>] format [--package <name>]");
 }
 
 auto missing_value(ref<str> option) -> int {
     rstd::io::eprintln("tenon: {} requires a value", option);
     return 2;
+}
+
+auto build_configuration(tenon::ToolchainSpec toolchain) -> tenon::BuildConfiguration {
+    return tenon::BuildConfiguration {
+        .toolchain         = rstd::move(toolchain),
+        .standard_library  = tenon::StandardLibrary::Libcxx,
+        .bmi_mode          = tenon::BmiMode::Reduced,
+        .language_standard = tenon::String::make("c++20"_str),
+    };
 }
 
 } // namespace
@@ -63,7 +74,7 @@ extern "C++" int main() {
         print_help();
         return 0;
     }
-    if (*command != "build"_str && *command != "format"_str) {
+    if (*command != "build"_str && *command != "scan"_str && *command != "format"_str) {
         rstd::io::eprintln("tenon: unknown command '{}'", command->as_str());
         print_help();
         return 2;
@@ -107,12 +118,68 @@ extern "C++" int main() {
         return 0;
     }
 
+    if (*command == "scan"_str) {
+        auto request             = tenon::ScanRequest {};
+        request.selection.root   = rstd::move(project.root);
+        request.configuration    = build_configuration(rstd::move(project.toolchain));
+        request.sources          = rstd::move(project.sources);
+        auto source              = Option<tenon::String> {};
+        while (auto option = arguments.next()) {
+            if (*option == "--profile"_str) {
+                auto value = arguments.next();
+                if (value.is_none()) return missing_value("--profile"_str);
+                auto profile = tenon::parse_build_profile(value->as_str());
+                if (profile.is_err()) {
+                    auto error = rstd::move(profile).unwrap_err();
+                    rstd::io::eprintln("tenon: {}", error.message.as_str());
+                    return 2;
+                }
+                request.configuration.profile = rstd::move(profile).unwrap();
+            } else if (*option == "--target"_str) {
+                auto value = arguments.next();
+                if (value.is_none()) return missing_value("--target"_str);
+                request.targets.push(rstd::move(value).unwrap());
+            } else if (*option == "--package"_str) {
+                auto value = arguments.next();
+                if (value.is_none()) return missing_value("--package"_str);
+                request.selection.packages.push(rstd::move(value).unwrap());
+            } else if (*option == "--locked"_str) {
+                request.locked = true;
+            } else if (*option == "--help"_str || *option == "-h"_str) {
+                print_help();
+                return 0;
+            } else if (option->as_str().starts_with("-"_str)) {
+                rstd::io::eprintln("tenon: unknown scan option '{}'", option->as_str());
+                return 2;
+            } else if (source.is_some()) {
+                rstd::io::eprintln("tenon: scan accepts exactly one source");
+                return 2;
+            } else {
+                source = Some(rstd::move(option).unwrap());
+            }
+        }
+        if (source.is_none()) return missing_value("scan <source>"_str);
+        request.source = tenon::PathBuf::from(rstd::move(source).unwrap());
+
+        auto scanned = tenon::scan(request);
+        if (scanned.is_err()) {
+            auto error = rstd::move(scanned).unwrap_err();
+            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            return 1;
+        }
+        auto json = tenon::scan_report_json(*scanned);
+        if (json.is_err()) {
+            auto error = rstd::move(json).unwrap_err();
+            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            return 1;
+        }
+        rstd::io::println("{}", json->as_str());
+        return 0;
+    }
+
     auto request                            = tenon::BuildRequest {};
     request.selection.root                  = rstd::move(project.root);
-    request.configuration.toolchain         = rstd::move(project.toolchain);
-    request.configuration.standard_library  = tenon::StandardLibrary::Libcxx;
-    request.configuration.bmi_mode          = tenon::BmiMode::Reduced;
-    request.configuration.language_standard = tenon::String::make("c++20"_str);
+    request.configuration                   = build_configuration(rstd::move(project.toolchain));
     request.sources                         = rstd::move(project.sources);
     auto event_context                      = EventContext {};
     while (auto option = arguments.next()) {

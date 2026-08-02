@@ -316,4 +316,38 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
     });
 }
 
+auto resolve_source_target(const PackageMetadata&      package,
+                           const SourceDiscoveryPlan& discovery,
+                           ref<rstd::path::Path>      source)
+    -> Result<TargetId> {
+    auto selected            = Option<TargetId> {};
+    auto selected_root_length = usize {};
+    for (auto target : discovery.target_order) {
+        const auto root = package.targets[target].manifest.root.as_path();
+        if (source.strip_prefix(root).is_none()) continue;
+        auto root_length = root.as_os_str().as_encoded_bytes().len();
+        if (selected.is_some() && root_length == selected_root_length) {
+            return plan_failure<TargetId>(
+                rstd::format("source '{}' belongs to multiple selected targets", source));
+        }
+        if (selected.is_none() || root_length > selected_root_length) {
+            selected             = Some(target);
+            selected_root_length = root_length;
+        }
+    }
+    if (selected.is_none()) {
+        return plan_failure<TargetId>(
+            rstd::format("source '{}' is outside the selected package targets", source));
+    }
+    auto relative =
+        source.strip_prefix(package.targets[*selected].manifest.root.as_path());
+    if (relative.is_none() || relative->is_empty()) {
+        return plan_failure<TargetId>(rstd::format(
+            "source '{}' does not name a file inside target '{}'",
+            source,
+            package.targets[*selected].manifest.name.as_str()));
+    }
+    return Ok(*selected);
+}
+
 } // namespace tenon

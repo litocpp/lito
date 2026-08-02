@@ -22,11 +22,20 @@ struct IncludeSearchEntry {
   bool system{true};
 };
 
+struct BuiltinMacroSnapshot {
+  String key;
+  String identity;
+  lexical::SharedSourceSnapshot source;
+  Vec<preprocessor::SharedMacroDefinition> definitions;
+};
+
+using SharedBuiltinMacroSnapshot = rstd::rc::Rc<const BuiltinMacroSnapshot>;
+
 struct PreprocessorEnvironment {
   String context_id;
-  Vec<preprocessor::MacroSeed> macros;
-  Vec<preprocessor::SharedMacroDefinition> macro_definitions;
-  Option<lexical::SharedSourceSnapshot> macro_source;
+  SharedBuiltinMacroSnapshot builtin_macros;
+  lexical::SharedSourceSnapshot command_line_source;
+  Vec<preprocessor::SharedMacroDefinition> command_line_definitions;
   Vec<IncludeSearchEntry> include_search;
   Vec<String> query_command;
   String identity;
@@ -106,6 +115,90 @@ auto parse_macro_dump(ref<str> output) -> Result<Vec<preprocessor::MacroSeed>> {
   return Ok(rstd::move(macros));
 }
 
+struct ParsedMacroSet {
+  lexical::SharedSourceSnapshot source;
+  Vec<preprocessor::SharedMacroDefinition> definitions;
+};
+
+auto parse_macro_seeds(const Vec<preprocessor::MacroSeed> &seeds,
+                       ref<str> source_name) -> Result<ParsedMacroSet> {
+  auto text = String::make();
+  for (const auto &seed : seeds) {
+    text.push_str("#define "_str);
+    text.push_str(seed.definition.as_str());
+    text.push_ascii('\n');
+  }
+  auto snapshot = lexical::make_source_snapshot(lexical::SourceBuffer{
+      .path = PathBuf::from(source_name),
+      .contents = rstd::move(text),
+  });
+  auto source = lexical::SourceFile{.snapshot = snapshot.clone()};
+  auto tokens = lexical::lex(source, true);
+  if (tokens.is_err()) {
+    return environment_failure<ParsedMacroSet>(
+        rstd::move(tokens).unwrap_err().message.clone());
+  }
+  auto definitions = Vec<preprocessor::SharedMacroDefinition>::make();
+  for (auto cursor = usize{}; cursor < tokens->len();) {
+    auto end = cursor;
+    while (end < tokens->len() &&
+           (*tokens)[end].kind != lexical::TokenKind::Newline) {
+      ++end;
+    }
+    if (cursor == end) {
+      cursor = end < tokens->len() ? end + usize(1) : end;
+      continue;
+    }
+    if (cursor + usize(2) > end ||
+        (*tokens)[cursor].text.as_str() != "#"_str ||
+        (*tokens)[cursor + usize(1)].text.as_str() != "define"_str) {
+      return environment_failure<ParsedMacroSet>(
+          "invalid cached predefined macro line"_str);
+    }
+    auto line = Vec<lexical::Token>::make();
+    for (auto index = cursor + usize(2); index < end; ++index)
+      line.push((*tokens)[index].clone());
+    auto definition = preprocessor::parse_macro_definition(line);
+    if (definition.is_err()) {
+      return environment_failure<ParsedMacroSet>(
+          rstd::move(definition).unwrap_err().message.clone());
+    }
+    definitions.push(preprocessor::share_macro_definition(
+        rstd::move(definition).unwrap()));
+    cursor = end < tokens->len() ? end + usize(1) : end;
+  }
+  return Ok(ParsedMacroSet{
+      .source = rstd::move(snapshot),
+      .definitions = rstd::move(definitions),
+  });
+}
+
+auto command_line_macro_seeds(const Vec<String> &definitions)
+    -> Vec<preprocessor::MacroSeed> {
+  auto seeds = Vec<preprocessor::MacroSeed>::with_capacity(definitions.len());
+  for (const auto &definition : definitions) {
+    auto bytes = definition.as_str().as_bytes();
+    auto equal = usize{};
+    while (equal < bytes.len() && bytes[equal] != u8('='))
+      ++equal;
+    auto value = String::make();
+    auto name = definition.as_str().get(usize{}, equal);
+    if (name.is_some())
+      value.push_str(*name);
+    value.push_ascii(' ');
+    if (equal < bytes.len()) {
+      auto replacement =
+          definition.as_str().get(equal + usize(1), bytes.len());
+      if (replacement.is_some())
+        value.push_str(*replacement);
+    } else {
+      value.push_ascii('1');
+    }
+    seeds.push(preprocessor::MacroSeed{.definition = rstd::move(value)});
+  }
+  return seeds;
+}
+
 auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
   auto entries = Vec<IncludeSearchEntry>::make();
   auto inside = false;
@@ -158,7 +251,34 @@ auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
   return Ok(rstd::move(entries));
 }
 
-auto environment_identity(const Vec<preprocessor::MacroSeed> &macros,
+auto macro_snapshot_identity(const Vec<preprocessor::MacroSeed> &macros,
+                             ref<str> key) -> String {
+  constexpr rstd::uint64_t offset = 14695981039346656037ull;
+  constexpr rstd::uint64_t prime = 1099511628211ull;
+  auto hash = offset;
+  auto add = [&hash](ref<str> value) {
+    for (auto byte : value) {
+      hash ^= byte.to_primitive();
+      hash *= prime;
+    }
+    hash ^= 0;
+    hash *= prime;
+  };
+  add("tenon-clang-builtin-macros-v1"_str);
+  add(key);
+  for (const auto &macro : macros)
+    add(macro.definition.as_str());
+  static constexpr char digits[] = "0123456789abcdef";
+  char result[16];
+  for (rstd::size_t index = 0; index < 16; ++index) {
+    result[15 - index] = digits[hash & 0xfu];
+    hash >>= 4u;
+  }
+  return String::make(ref<str>::from_raw_parts_unchecked(
+      reinterpret_cast<const byte *>(result), usize(16)));
+}
+
+auto environment_identity(ref<str> builtin_identity,
                           const Vec<IncludeSearchEntry> &includes,
                           ref<str> context_id) -> Result<String> {
   constexpr rstd::uint64_t offset = 14695981039346656037ull;
@@ -174,8 +294,7 @@ auto environment_identity(const Vec<preprocessor::MacroSeed> &macros,
   };
   add("tenon-clang-preprocessor-environment-v1"_str);
   add(context_id);
-  for (const auto &macro : macros)
-    add(macro.definition.as_str());
+  add(builtin_identity);
   for (const auto &include : includes) {
     auto text = include.directory.as_path().to_str();
     if (text.is_none()) {
@@ -204,10 +323,10 @@ auto preprocessor_error(const Error &error) -> preprocessor::Error {
 
 export namespace tenon::toolchain {
 
-auto query_preprocessor_environment(const Vec<String> &base_command,
-                                    ref<str> context_id,
-                                    ref<rstd::path::Path> working_directory)
-    -> Result<PreprocessorEnvironment> {
+auto query_builtin_macro_snapshot(const Vec<String> &base_command,
+                                  ref<str> key,
+                                  ref<rstd::path::Path> working_directory)
+    -> Result<SharedBuiltinMacroSnapshot> {
   auto macro_command = clone_command(base_command);
   command::push_option(macro_command, clang_options::DUMP_MACROS);
   command::push_option(macro_command, clang_options::PREPROCESS);
@@ -219,13 +338,38 @@ auto query_preprocessor_environment(const Vec<String> &base_command,
   if (macro_output.is_err())
     return Err(rstd::move(macro_output).unwrap_err());
   if (macro_output->exit_code != i32{}) {
-    return environment_failure<PreprocessorEnvironment>(rstd::format(
+    return environment_failure<SharedBuiltinMacroSnapshot>(rstd::format(
         "clang++ -dM failed\n{}\n{}", command_text(macro_command).as_str(),
         macro_output->standard_error.as_str()));
   }
   auto macros = parse_macro_dump(macro_output->standard_output.as_str());
   if (macros.is_err())
     return Err(rstd::move(macros).unwrap_err());
+  auto parsed = parse_macro_seeds(*macros, "<built-in>"_str);
+  if (parsed.is_err())
+    return Err(rstd::move(parsed).unwrap_err());
+  auto values = rstd::move(parsed).unwrap();
+  return Ok(rstd::rc::make_rc<BuiltinMacroSnapshot>(BuiltinMacroSnapshot{
+                .key = String::make(key),
+                .identity = macro_snapshot_identity(*macros, key),
+                .source = rstd::move(values.source),
+                .definitions = rstd::move(values.definitions),
+            })
+                .to_const());
+}
+
+auto query_preprocessor_environment(const Vec<String> &base_command,
+                                    ref<str> context_id,
+                                    ref<rstd::path::Path> working_directory,
+                                    SharedBuiltinMacroSnapshot builtin_macros,
+                                    const Vec<String> &definitions)
+    -> Result<PreprocessorEnvironment> {
+  auto command_line_seeds = command_line_macro_seeds(definitions);
+  auto command_line_macros =
+      parse_macro_seeds(command_line_seeds, "<command-line>"_str);
+  if (command_line_macros.is_err())
+    return Err(rstd::move(command_line_macros).unwrap_err());
+  auto command_line_values = rstd::move(command_line_macros).unwrap();
 
   auto include_command = clone_command(base_command);
   command::push_option(include_command, clang_options::PREPROCESS);
@@ -245,12 +389,16 @@ auto query_preprocessor_environment(const Vec<String> &base_command,
   auto includes = parse_include_search(include_output->standard_error.as_str());
   if (includes.is_err())
     return Err(rstd::move(includes).unwrap_err());
-  auto identity = environment_identity(*macros, *includes, context_id);
+  auto identity = environment_identity(builtin_macros.get()->identity.as_str(),
+                                       *includes, context_id);
   if (identity.is_err())
     return Err(rstd::move(identity).unwrap_err());
   return Ok(PreprocessorEnvironment{
       .context_id = String::make(context_id),
-      .macros = rstd::move(macros).unwrap(),
+      .builtin_macros = rstd::move(builtin_macros),
+      .command_line_source = rstd::move(command_line_values.source),
+      .command_line_definitions =
+          rstd::move(command_line_values.definitions),
       .include_search = rstd::move(includes).unwrap(),
       .query_command = clone_command(base_command),
       .identity = rstd::move(identity).unwrap(),
@@ -333,52 +481,14 @@ public:
 
   auto predefined_macros()
       -> preprocessor::Result<Vec<preprocessor::SharedMacroDefinition>> {
-    if (environment_.macro_definitions.is_empty()) {
-      auto text = String::make();
-      for (const auto &seed : environment_.macros) {
-        text.push_str("#define "_str);
-        text.push_str(seed.definition.as_str());
-        text.push_ascii('\n');
-      }
-      auto snapshot = lexical::make_source_snapshot(
-          lexical::SourceBuffer{
-              .path = PathBuf::from("<built-in>"_str),
-              .contents = rstd::move(text),
-          });
-      auto source = lexical::SourceFile{
-          .snapshot = snapshot.clone(),
-      };
-      auto tokens = lexical::lex(source, true);
-      if (tokens.is_err())
-        return Err(rstd::move(tokens).unwrap_err());
-      environment_.macro_source = Some(rstd::move(snapshot));
-      for (auto cursor = usize{}; cursor < tokens->len();) {
-        auto end = cursor;
-        while (end < tokens->len() &&
-               (*tokens)[end].kind != preprocessor::TokenKind::Newline) {
-          ++end;
-        }
-        if (cursor + usize(2) > end ||
-            (*tokens)[cursor].text.as_str() != "#"_str ||
-            (*tokens)[cursor + usize(1)].text.as_str() != "define"_str) {
-          return Err(preprocessor::Error::make(
-              "invalid cached Clang predefined macro line"_str));
-        }
-        auto line = Vec<preprocessor::Token>::make();
-        for (auto index = cursor + usize(2); index < end; ++index)
-          line.push((*tokens)[index].clone());
-        auto definition = preprocessor::parse_macro_definition(line);
-        if (definition.is_err())
-          return Err(rstd::move(definition).unwrap_err());
-        environment_.macro_definitions.push(
-            preprocessor::share_macro_definition(
-                rstd::move(definition).unwrap()));
-        cursor = end < tokens->len() ? end + usize(1) : end;
-      }
-    }
     auto result = Vec<preprocessor::SharedMacroDefinition>::with_capacity(
-        environment_.macro_definitions.len());
-    for (const auto &definition : environment_.macro_definitions)
+        environment_.builtin_macros.get()->definitions.len() +
+        environment_.command_line_definitions.len());
+    for (const auto &definition :
+         environment_.builtin_macros.get()->definitions) {
+      result.push(definition.clone());
+    }
+    for (const auto &definition : environment_.command_line_definitions)
       result.push(definition.clone());
     return Ok(rstd::move(result));
   }

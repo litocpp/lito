@@ -1,0 +1,11 @@
+[package]
+name = "fixture-scan-definitions"
+version = "0.1.0"
+module = "fixture.scan.definitions"
+
+[library]
+archive = "fixture.scan.definitions"
+discovery = "module"
+
+[usage]
+private-definitions = ["TENON_SCAN_DEFINITION=7"]
