@@ -116,8 +116,9 @@ target_sources(
           TYPE
           CXX_MODULES
           FILES
+          src/executable/cli.cppm
           src/main.cppm)
-target_link_libraries(tenon PRIVATE tenon.lib rstd::nostd)
+target_link_libraries(tenon PRIVATE tenon.lib rstd.argparse rstd::nostd)
 
 include(CTest)
 

@@ -27,6 +27,10 @@ visibility = "private"
 git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
 
+[dependencies.rstd-argparse]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
 [dependencies.rstd-toml]
 git = "https://github.com/litocpp/rstd.git"
 visibility = "private"
