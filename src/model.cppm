@@ -6,6 +6,7 @@ export module tenon.model;
 import rstd;
 import rstd.bench;
 import tenon.frontend;
+import tenon.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -561,6 +562,9 @@ struct BuildObserver {
 
 struct ToolchainStatistics {
     usize target_queries {};
+    usize preprocessor_environment_entries {};
+    usize preprocessor_environment_queries {};
+    usize preprocessor_environment_hits {};
     usize builtin_snapshots {};
     usize builtin_refreshes {};
     usize builtin_hits {};
@@ -619,7 +623,7 @@ struct BuildSummary {
     Vec<BuiltArtifact>           artifacts;
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;
-    rstd::bench::probe::ProbeReport scan_profile;
+    ScanProfileReport              scan_profile;
     Vec<CompileTestExecution>    compile_tests;
 };
 

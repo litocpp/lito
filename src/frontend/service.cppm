@@ -2,6 +2,7 @@ export module tenon.frontend:service;
 
 import rstd;
 import tenon.frontend.lexical;
+import tenon.frontend.preprocessor;
 import tenon.profiling;
 
 using namespace rstd::prelude;
@@ -18,6 +19,7 @@ struct FrontendStatistics {
   usize lex_builds{};
   usize analyze_builds{};
   usize analyze_hits{};
+  preprocessor::PreprocessorStatistics preprocessor;
 };
 
 class FrontendService {
@@ -143,6 +145,18 @@ public:
   }
 
   auto record_analysis_hit() noexcept -> void { ++statistics_.analyze_hits; }
+
+  auto record_preprocessor_statistics(
+      const preprocessor::PreprocessorStatistics &statistics) noexcept -> void {
+    statistics_.preprocessor.add(statistics);
+  }
+
+  auto release_source_cache() -> void {
+    sources_ = rstd::collections::HashMap<
+        String, lexical::SharedLexedSource>::make();
+    identities_ = rstd::collections::HashMap<
+        String, lexical::SharedLexedSource>::make();
+  }
 
 private:
   explicit FrontendService(ScanProfiler &profiler) : profiler_(&profiler) {}

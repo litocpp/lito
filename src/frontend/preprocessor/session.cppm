@@ -27,10 +27,12 @@ struct PreprocessedTranslationUnit {
   Vec<rstd::path::PathBuf> header_inputs;
   String environment_identity;
   usize input_bytes{};
+  PreprocessorStatistics statistics;
 };
 
 template <typename Sources, typename Includes, typename Builtins,
-          typename Pragmas, typename Events, typename Consumer>
+          typename Pragmas, typename Events, typename Consumer,
+          typename Observer>
 class PreprocessorSession {
   struct ConditionalFrame {
     bool parent_active{false};
@@ -45,34 +47,121 @@ class PreprocessorSession {
     Option<usize> search_index;
   };
 
+  struct DisabledMacro {
+    SharedMacroDefinition definition;
+    bool dynamic_builtin{false};
+  };
+
+  class DisabledMacros {
+  public:
+    auto contains(ref<str> value) const -> bool {
+      for (const auto &macro : values_) {
+        if (macro.definition.get()->name.as_str() == value)
+          return true;
+      }
+      return false;
+    }
+
+    auto contains_dynamic(ref<str> value) const -> bool {
+      if (dynamic_builtins_ == usize{})
+        return false;
+      for (const auto &macro : values_) {
+        if (macro.dynamic_builtin &&
+            macro.definition.get()->name.as_str() == value)
+          return true;
+      }
+      return false;
+    }
+
+    auto push(SharedMacroDefinition definition, bool dynamic_builtin) -> void {
+      if (dynamic_builtin)
+        ++dynamic_builtins_;
+      values_.push(DisabledMacro{.definition = rstd::move(definition),
+                                 .dynamic_builtin = dynamic_builtin});
+    }
+
+    auto pop() -> void {
+      auto macro = values_.pop().unwrap();
+      if (macro.dynamic_builtin)
+        --dynamic_builtins_;
+    }
+
+  private:
+    Vec<DisabledMacro> values_;
+    usize dynamic_builtins_{};
+  };
+
+  struct RawStatistics {
+    rstd::size_t files{};
+    rstd::size_t source_tokens{};
+    rstd::size_t token_clones{};
+    rstd::size_t synthetic_tokens{};
+    rstd::size_t directives{};
+    rstd::size_t conditionals{};
+    rstd::size_t macro_lookups{};
+    rstd::size_t macro_lookup_hits{};
+    rstd::size_t macro_expansions{};
+    rstd::size_t include_attempts{};
+    rstd::size_t include_hits{};
+    rstd::size_t consumer_batches{};
+    rstd::size_t consumer_tokens{};
+  };
+
+  class ActivityGuard {
+  public:
+    ActivityGuard(PreprocessorSession &session,
+                  PreprocessorActivity activity) noexcept
+        : session_(&session), activity_(activity) {
+      session_->begin_activity(activity_);
+    }
+
+    ActivityGuard(const ActivityGuard &) = delete;
+    auto operator=(const ActivityGuard &) -> ActivityGuard & = delete;
+
+    ~ActivityGuard() { session_->end_activity(activity_); }
+
+  private:
+    PreprocessorSession *session_;
+    PreprocessorActivity activity_;
+  };
+
 public:
   PreprocessorSession(PreprocessRequest request, Sources &sources,
                       Includes &includes, Builtins &builtins, Pragmas &pragmas,
-                      Events &events, Consumer &consumer)
+                      Events &events, Consumer &consumer, Observer &observer)
       : request_(rstd::move(request)), source_provider_(sources),
         include_resolver_(includes), builtin_provider_(builtins),
-        pragma_handler_(pragmas), event_sink_(events), consumer_(consumer) {}
+        pragma_handler_(pragmas), event_sink_(events), consumer_(consumer),
+        observer_(observer) {}
 
   auto run() -> Result<PreprocessedTranslationUnit> {
-    auto predefined =
-        rstd::as<BuiltinProvider>(builtin_provider_).predefined_macros();
-    if (predefined.is_err())
-      return Err(rstd::move(predefined).unwrap_err());
-    for (auto &operation : *predefined) {
-      if (operation.kind == PredefinedMacroOperationKind::Define) {
-        if (operation.definition.is_none()) {
-          return Err(Error::make(
-              "predefined macro define operation has no definition"_str));
+    {
+      auto activity = ActivityGuard(*this, PreprocessorActivity::PredefinedMacros);
+      auto predefined =
+          rstd::as<BuiltinProvider>(builtin_provider_).predefined_macros();
+      if (predefined.is_err())
+        return Err(rstd::move(predefined).unwrap_err());
+      for (auto &operation : *predefined) {
+        if (operation.kind == PredefinedMacroOperationKind::Define) {
+          if (operation.definition.is_none()) {
+            return Err(Error::make(
+                "predefined macro define operation has no definition"_str));
+          }
+          (void)macros_.define_shared(rstd::move(operation.definition).unwrap());
+        } else {
+          (void)macros_.undefine(operation.name.as_str());
         }
-        (void)macros_.define_shared(rstd::move(operation.definition).unwrap());
-      } else {
-        (void)macros_.undefine(operation.name.as_str());
       }
     }
 
-    auto processed = process_file(request_.source.as_path(), None());
-    if (processed.is_err())
-      return Err(rstd::move(processed).unwrap_err());
+    {
+      auto activity = ActivityGuard(*this, PreprocessorActivity::TranslationUnit);
+      auto processed = process_file(request_.source.as_path(), None());
+      if (processed.is_err())
+        return Err(rstd::move(processed).unwrap_err());
+    }
+    auto statistics = finish_statistics();
+    rstd::as<PreprocessorObserver>(observer_).record(statistics);
     return Ok(PreprocessedTranslationUnit{
         .sources = rstd::move(sources_),
         .main_source = main_source_,
@@ -80,10 +169,37 @@ public:
         .header_inputs = Vec<rstd::path::PathBuf>::make(),
         .environment_identity = environment_identity(),
         .input_bytes = input_bytes_,
+        .statistics = statistics,
     });
   }
 
 private:
+  auto begin_activity(PreprocessorActivity activity) -> void {
+    rstd::as<PreprocessorObserver>(observer_).begin(activity);
+  }
+
+  auto end_activity(PreprocessorActivity activity) -> void {
+    rstd::as<PreprocessorObserver>(observer_).end(activity);
+  }
+
+  auto finish_statistics() const noexcept -> PreprocessorStatistics {
+    return PreprocessorStatistics{
+        .files = usize(raw_statistics_.files),
+        .source_tokens = usize(raw_statistics_.source_tokens),
+        .token_clones = usize(raw_statistics_.token_clones),
+        .synthetic_tokens = usize(raw_statistics_.synthetic_tokens),
+        .directives = usize(raw_statistics_.directives),
+        .conditionals = usize(raw_statistics_.conditionals),
+        .macro_lookups = usize(raw_statistics_.macro_lookups),
+        .macro_lookup_hits = usize(raw_statistics_.macro_lookup_hits),
+        .macro_expansions = usize(raw_statistics_.macro_expansions),
+        .include_attempts = usize(raw_statistics_.include_attempts),
+        .include_hits = usize(raw_statistics_.include_hits),
+        .consumer_batches = usize(raw_statistics_.consumer_batches),
+        .consumer_tokens = usize(raw_statistics_.consumer_tokens),
+    };
+  }
+
   auto failure(ref<str> message, SourceLocation location) -> Error {
     auto error = Error::at(String::make(message), location);
     if (location.source < sources_.len()) {
@@ -113,13 +229,18 @@ private:
   }
 
   auto emit(Event event) -> Result<empty> {
+    if (!rstd::as<PreprocessorEventSink>(event_sink_).wants(event.kind))
+      return Ok(empty{});
     return rstd::as<PreprocessorEventSink>(event_sink_).on_event(event);
   }
 
   auto emit_name(EventKind kind, ref<str> name, SourceLocation location)
       -> Result<empty> {
-    return emit(
-        Event{.kind = kind, .name = String::make(name), .location = location});
+    if (!rstd::as<PreprocessorEventSink>(event_sink_).wants(kind))
+      return Ok(empty{});
+    auto event = Event{
+        .kind = kind, .name = String::make(name), .location = location};
+    return rstd::as<PreprocessorEventSink>(event_sink_).on_event(event);
   }
 
   auto active(const Vec<ConditionalFrame> &conditions) const -> bool {
@@ -127,46 +248,31 @@ private:
            conditions[conditions.len() - usize(1)].active;
   }
 
-  auto without_newline(const Vec<Token> &tokens, usize begin, usize end)
+  auto clone_token(const Token &token) -> Token {
+    ++raw_statistics_.token_clones;
+    return token.clone();
+  }
+
+  auto clone_tokens_counted(const Vec<Token> &tokens) -> Vec<Token> {
+    auto result = Vec<Token>::with_capacity(tokens.len());
+    for (const auto &token : tokens)
+      result.push(clone_token(token));
+    return result;
+  }
+
+  auto without_newline(Vec<Token> &tokens, usize begin, usize end)
       -> Result<Vec<Token>> {
     auto result = Vec<Token>::with_capacity(end - begin);
     for (auto index = begin; index < end; ++index) {
       if (tokens[index].kind != TokenKind::Newline)
-        result.push(tokens[index].clone());
+        result.push(rstd::move(tokens[index]));
     }
     return Ok(rstd::move(result));
   }
 
-  auto same_name(const Vec<String> &names, ref<str> value) const -> bool {
-    for (const auto &name : names) {
-      if (name.as_str() == value)
-        return true;
-    }
-    return false;
-  }
-
-  auto is_dynamic_builtin(ref<str> name) const -> bool {
-    return name == "__LINE__"_str || name == "__FILE__"_str ||
-           name == "__BASE_FILE__"_str || name == "__FILE_NAME__"_str ||
-           name == "__INCLUDE_LEVEL__"_str || name == "__COUNTER__"_str ||
-           name == "__DATE__"_str || name == "__TIME__"_str ||
-           name == "__has_builtin"_str ||
-           name == "__has_constexpr_builtin"_str ||
-           name == "__has_feature"_str || name == "__has_extension"_str ||
-           name == "__has_cpp_attribute"_str || name == "__has_attribute"_str ||
-           name == "__has_declspec_attribute"_str ||
-           name == "__has_embed"_str || name == "__has_warning"_str ||
-           name == "__is_identifier"_str || name == "__is_target_arch"_str ||
-           name == "__is_target_vendor"_str ||
-           name == "__is_target_os"_str ||
-           name == "__is_target_environment"_str ||
-           name == "__is_target_variant_os"_str ||
-           name == "__is_target_variant_environment"_str ||
-           name == "__has_include"_str || name == "__has_include_next"_str;
-  }
-
   auto number_token(i64 value, const Token &origin) -> Token {
-    auto token = origin.clone();
+    auto token = clone_token(origin);
+    ++raw_statistics_.synthetic_tokens;
     token.kind = TokenKind::PpNumber;
     token.text = rstd::format("{}", value);
     token.start_of_line = origin.start_of_line;
@@ -188,7 +294,8 @@ private:
     }
     text.push_str(value.get(begin, value.len()).unwrap());
     text.push_ascii('"');
-    auto token = origin.clone();
+    auto token = clone_token(origin);
+    ++raw_statistics_.synthetic_tokens;
     token.kind = TokenKind::StringLiteral;
     token.text = rstd::move(text);
     return token;
@@ -205,24 +312,15 @@ private:
       -> Vec<Token> {
     auto result = Vec<Token>::with_capacity(end - begin);
     for (auto index = begin; index < end; ++index)
-      result.push(input[index].clone());
+      result.push(clone_token(input[index]));
     return result;
   }
 
-  auto parameter_index(const MacroDefinition &macro, ref<str> name) const
-      -> Option<usize> {
-    if (macro.parameters.is_some()) {
-      for (auto index = usize{}; index < macro.parameters->len(); ++index) {
-        if ((*macro.parameters)[index].as_str() == name)
-          return Some(index);
-      }
-    }
-    if (macro.variadic &&
-        (name == "__VA_ARGS__"_str || name == macro.variadic_name.as_str())) {
-      return Some(macro.parameters.is_some() ? macro.parameters->len()
-                                             : usize{});
-    }
-    return None();
+  auto move_range(Vec<Token> &input, usize begin, usize end) -> Vec<Token> {
+    auto result = Vec<Token>::with_capacity(end - begin);
+    for (auto index = begin; index < end; ++index)
+      result.push(rstd::move(input[index]));
+    return result;
   }
 
   auto stringify(const Vec<Token> &argument, const Token &origin) -> Token {
@@ -249,7 +347,8 @@ private:
       first = false;
     }
     text.push_ascii('"');
-    auto result = origin.clone();
+    auto result = clone_token(origin);
+    ++raw_statistics_.synthetic_tokens;
     result.kind = TokenKind::StringLiteral;
     result.text = rstd::move(text);
     return result;
@@ -394,6 +493,7 @@ private:
   }
 
   auto pasted(Token left, const Token &right) -> Result<Token> {
+    ++raw_statistics_.synthetic_tokens;
     left.text.push_str(right.text.as_str());
     if (left.text.is_empty()) {
       return Err(
@@ -418,59 +518,81 @@ private:
     return Ok(rstd::move(left));
   }
 
-  auto collect_arguments(const Vec<Token> &input, usize open)
-      -> Result<rstd::tuple<Vec<Vec<Token>>, usize>> {
-    auto arguments = Vec<Vec<Token>>::make();
-    auto current = Vec<Token>::make();
+  struct ArgumentRange {
+    usize begin;
+    usize end;
+  };
+
+  struct ParsedArguments {
+    Vec<ArgumentRange> ranges;
+    usize next;
+  };
+
+  auto parse_arguments(const Vec<Token> &input, usize open)
+      -> Result<ParsedArguments> {
+    auto ranges = Vec<ArgumentRange>::make();
+    auto begin = open + usize(1);
     auto depth = usize{};
     for (auto index = open + usize(1); index < input.len(); ++index) {
       const auto &token = input[index];
       if (token.text.as_str() == "("_str) {
         ++depth;
-        current.push(token.clone());
         continue;
       }
       if (token.text.as_str() == ")"_str) {
         if (depth == usize{}) {
-          arguments.push(rstd::move(current));
-          return Ok(rstd::tuple{rstd::move(arguments), index + usize(1)});
+          ranges.push(ArgumentRange{.begin = begin, .end = index});
+          return Ok(ParsedArguments{.ranges = rstd::move(ranges),
+                                    .next = index + usize(1)});
         }
         --depth;
-        current.push(token.clone());
         continue;
       }
       if (token.text.as_str() == ","_str && depth == usize{}) {
-        arguments.push(rstd::move(current));
-        current = Vec<Token>::make();
+        ranges.push(ArgumentRange{.begin = begin, .end = index});
+        begin = index + usize(1);
         continue;
       }
-      current.push(token.clone());
     }
     return Err(
         failure("unterminated macro invocation"_str, input[open].expansion));
   }
 
+  auto materialize_arguments(Vec<Token> &input,
+                             const Vec<ArgumentRange> &ranges)
+      -> Vec<Vec<Token>> {
+    auto arguments = Vec<Vec<Token>>::with_capacity(ranges.len());
+    for (const auto &range : ranges)
+      arguments.push(move_range(input, range.begin, range.end));
+    return arguments;
+  }
+
   auto variadic_argument(const MacroDefinition &macro,
-                         const Vec<Vec<Token>> &arguments, const Token &origin)
+                         Vec<Vec<Token>> &arguments, const Token &origin,
+                         bool consume_arguments)
       -> Vec<Token> {
     auto result = Vec<Token>::make();
     auto fixed = macro.parameters.is_some() ? macro.parameters->len() : usize{};
     for (auto index = fixed; index < arguments.len(); ++index) {
       if (!result.is_empty()) {
-        auto comma = origin.clone();
+        auto comma = clone_token(origin);
+        ++raw_statistics_.synthetic_tokens;
         comma.kind = TokenKind::Punctuation;
         comma.text = String::make(","_str);
         result.push(rstd::move(comma));
       }
-      for (const auto &token : arguments[index])
-        result.push(token.clone());
+      for (auto &token : arguments[index]) {
+        result.push(consume_arguments ? rstd::move(token)
+                                      : clone_token(token));
+      }
     }
     return result;
   }
 
   auto substitute(const MacroDefinition &macro,
-                  const Vec<Vec<Token>> &arguments, const Token &origin,
-                  Vec<String> &disabled) -> Result<Vec<Token>> {
+                  Vec<Vec<Token>> &arguments, const Token &origin,
+                  DisabledMacros &disabled,
+                  bool consume_arguments = true) -> Result<Vec<Token>> {
     auto fixed = macro.parameters.is_some() ? macro.parameters->len() : usize{};
     auto argument_count = arguments.len();
     if (!macro.variadic && fixed == usize{} && argument_count == usize(1) &&
@@ -484,21 +606,29 @@ private:
                                macro.name.as_str(), fixed, argument_count),
                   origin.expansion));
     }
-    auto variadic = variadic_argument(macro, arguments, origin);
+    auto variadic = variadic_argument(
+        macro, arguments, origin,
+        consume_arguments && macro.can_consume_argument(fixed));
     auto expanded_arguments =
         Vec<Option<Vec<Token>>>::with_capacity(fixed + usize(1));
     for (auto index = usize{}; index <= fixed; ++index)
       expanded_arguments.emplace_back(None());
     auto expanded_argument = [&](usize parameter,
-                                 const Vec<Token> &argument)
+                                 Vec<Token> &argument,
+                                 bool last_use)
         -> Result<Vec<Token>> {
       if (expanded_arguments[parameter].is_none()) {
-        auto expanded = expand(clone_tokens(argument), disabled);
+        auto input = consume_arguments && macro.can_consume_argument(parameter)
+                         ? rstd::move(argument)
+                         : clone_tokens_counted(argument);
+        auto expanded = expand(rstd::move(input), disabled);
         if (expanded.is_err())
           return Err(rstd::move(expanded).unwrap_err());
         expanded_arguments[parameter] = Some(rstd::move(expanded).unwrap());
       }
-      return Ok(clone_tokens(*expanded_arguments[parameter]));
+      if (last_use)
+        return Ok(rstd::move(expanded_arguments[parameter]).unwrap_unchecked());
+      return Ok(clone_tokens_counted(*expanded_arguments[parameter]));
     };
     auto result = Vec<Token>::make();
     for (auto index = usize{}; index < macro.replacement.len(); ++index) {
@@ -506,30 +636,30 @@ private:
       if (token.text.as_str() == "__VA_OPT__"_str && macro.variadic &&
           index + usize(1) < macro.replacement.len() &&
           macro.replacement[index + usize(1)].text.as_str() == "("_str) {
-        auto nested = collect_arguments(macro.replacement, index + usize(1));
-        if (nested.is_err())
-          return Err(rstd::move(nested).unwrap_err());
-        auto end = nested->template get<1>();
+        auto end = macro.va_opt_end(index);
+        if (end.is_none())
+          return Err(failure("unterminated __VA_OPT__"_str,
+                             token.expansion));
         if (!variadic.is_empty()) {
-          auto nested_macro = macro.clone();
-          nested_macro.replacement =
-              clone_range(macro.replacement, index + usize(2), end - usize(1));
+          auto nested_macro = macro.with_replacement(
+              clone_range(macro.replacement, index + usize(2),
+                          *end - usize(1)));
           auto substituted =
-              substitute(nested_macro, arguments, origin, disabled);
+              substitute(nested_macro, arguments, origin, disabled, false);
           if (substituted.is_err())
             return substituted;
           for (auto &item : *substituted)
             result.push(rstd::move(item));
         }
-        index = end - usize(1);
+        index = *end - usize(1);
         continue;
       }
       if (token.text.as_str() == "#"_str &&
           index + usize(1) < macro.replacement.len()) {
-        auto parameter = parameter_index(
-            macro, macro.replacement[index + usize(1)].text.as_str());
+        auto parameter =
+            macro.parameter_index(macro.replacement[index + usize(1)].text.as_str());
         if (parameter.is_some()) {
-          const auto *argument = &variadic;
+          auto *argument = &variadic;
           if (*parameter < fixed)
             argument = &arguments[*parameter];
           result.push(stringify(*argument, origin));
@@ -541,25 +671,27 @@ private:
       auto paste_left =
           index > usize{} &&
           macro.replacement[index - usize(1)].text.as_str() == "##"_str;
-      auto parameter = parameter_index(macro, token.text.as_str());
+      auto parameter = macro.parameter_index(token.text.as_str());
       auto piece = Vec<Token>::make();
       if (parameter.is_some()) {
-        const auto *argument = &variadic;
+        auto *argument = &variadic;
         if (*parameter < fixed)
           argument = &arguments[*parameter];
         auto paste_right =
             index + usize(1) < macro.replacement.len() &&
             macro.replacement[index + usize(1)].text.as_str() == "##"_str;
         if (paste_left || paste_right) {
-          piece = clone_tokens(*argument);
+          piece = clone_tokens_counted(*argument);
         } else {
-          auto expanded = expanded_argument(*parameter, *argument);
+          auto expanded = expanded_argument(
+              *parameter, *argument,
+              macro.is_last_expanded_use(*parameter, index));
           if (expanded.is_err())
             return expanded;
           piece = rstd::move(expanded).unwrap();
         }
       } else {
-        piece.push(token.clone());
+        piece.push(clone_token(token));
       }
 
       if (paste_left) {
@@ -576,7 +708,7 @@ private:
             return Err(rstd::move(combined).unwrap_err());
           result.push(rstd::move(combined).unwrap());
           for (auto part = usize(1); part < piece.len(); ++part) {
-            result.push(piece[part].clone());
+            result.push(clone_token(piece[part]));
           }
         } else {
           for (auto &item : piece)
@@ -643,8 +775,11 @@ private:
     };
     auto resolved =
         rstd::as<IncludeResolver>(include_resolver_).resolve(request);
+    ++raw_statistics_.include_attempts;
     if (resolved.is_err())
       return Err(rstd::move(resolved).unwrap_err());
+    if (resolved->is_some())
+      ++raw_statistics_.include_hits;
     auto event = resolved->is_some()
                      ? emit(Event{
                            .kind = EventKind::IncludeProbeResolved,
@@ -659,190 +794,214 @@ private:
     return Ok(resolved->is_some());
   }
 
-  auto expand(Vec<Token> input, Vec<String> &disabled) -> Result<Vec<Token>> {
+  auto expand(Vec<Token> input, DisabledMacros &disabled)
+      -> Result<Vec<Token>> {
     auto output = Vec<Token>::make();
     for (auto index = usize{}; index < input.len();) {
-      auto token = input[index].clone();
+      auto token = rstd::move(input[index]);
       if (token.kind != TokenKind::Identifier || token.disable_expand) {
         output.push(rstd::move(token));
         ++index;
         continue;
       }
-      auto name = token.text.as_str();
-      if (same_name(disabled, name)) {
-        token.disable_expand = true;
+      auto revision = macros_.revision();
+      if (token.is_known_unavailable_macro(revision)) {
+        ++raw_statistics_.macro_lookup_hits;
         output.push(rstd::move(token));
         ++index;
         continue;
       }
-      if (name == "__LINE__"_str) {
-        output.push(
-            number_token(rstd::as_cast<i64>(token.expansion.line), token));
-        ++index;
-        continue;
-      }
-      if (name == "__INCLUDE_LEVEL__"_str) {
-        auto level = include_stack_.is_empty()
-                         ? usize{}
-                         : include_stack_.len() - usize(1);
-        output.push(number_token(rstd::as_cast<i64>(level), token));
-        ++index;
-        continue;
-      }
-      if (name == "__COUNTER__"_str) {
-        output.push(number_token(rstd::as_cast<i64>(counter_), token));
-        ++counter_;
-        ++index;
-        continue;
-      }
-      if (name == "__FILE__"_str || name == "__FILE_NAME__"_str ||
-          name == "__BASE_FILE__"_str) {
-        auto source = name == "__BASE_FILE__"_str
-                          ? include_stack_[usize{}].source
-                          : token.expansion.source;
-        auto path = name != "__BASE_FILE__"_str && token.presumed_path.is_some()
-                        ? token.presumed_path->as_path()
-                        : sources_.path(source);
-        if (name == "__FILE_NAME__"_str && path.file_name().is_some()) {
-          auto text = (*path.file_name()).to_str();
-          if (text.is_some()) {
-            output.push(string_token(*text, token));
-            ++index;
-            continue;
+      auto name = token.text.as_str();
+      auto name_bytes = name.as_bytes();
+      if (!name_bytes.is_empty() && name_bytes[usize{}] == u8('_')) {
+        if (disabled.contains_dynamic(name)) {
+          token.disable_expand = true;
+          output.push(rstd::move(token));
+          ++index;
+          continue;
+        }
+        if (name == "__LINE__"_str) {
+          output.push(
+              number_token(rstd::as_cast<i64>(token.expansion.line), token));
+          ++index;
+          continue;
+        }
+        if (name == "__INCLUDE_LEVEL__"_str) {
+          auto level = include_stack_.is_empty()
+                           ? usize{}
+                           : include_stack_.len() - usize(1);
+          output.push(number_token(rstd::as_cast<i64>(level), token));
+          ++index;
+          continue;
+        }
+        if (name == "__COUNTER__"_str) {
+          output.push(number_token(rstd::as_cast<i64>(counter_), token));
+          ++counter_;
+          ++index;
+          continue;
+        }
+        if (name == "__FILE__"_str || name == "__FILE_NAME__"_str ||
+            name == "__BASE_FILE__"_str) {
+          auto source = name == "__BASE_FILE__"_str
+                            ? include_stack_[usize{}].source
+                            : token.expansion.source;
+          auto path =
+              name != "__BASE_FILE__"_str && token.presumed_path.is_some()
+                  ? token.presumed_path->as_path()
+                  : sources_.path(source);
+          if (name == "__FILE_NAME__"_str && path.file_name().is_some()) {
+            auto text = (*path.file_name()).to_str();
+            if (text.is_some()) {
+              output.push(string_token(*text, token));
+              ++index;
+              continue;
+            }
           }
+          auto text = path.to_str();
+          if (text.is_none())
+            return Err(
+                failure("source path is not valid UTF-8"_str, token.expansion));
+          output.push(string_token(*text, token));
+          ++index;
+          continue;
         }
-        auto text = path.to_str();
-        if (text.is_none())
-          return Err(
-              failure("source path is not valid UTF-8"_str, token.expansion));
-        output.push(string_token(*text, token));
-        ++index;
-        continue;
-      }
-      if (name == "__DATE__"_str || name == "__TIME__"_str) {
-        auto kind = name == "__DATE__"_str ? BuiltinTextKind::Date
-                                           : BuiltinTextKind::Time;
-        auto value = rstd::as<BuiltinProvider>(builtin_provider_).text(kind);
-        if (value.is_err())
-          return Err(rstd::move(value).unwrap_err());
-        builtin_identity_.push_str(name);
-        builtin_identity_.push_ascii('=');
-        builtin_identity_.push_str(value->as_str());
-        builtin_identity_.push_ascii(';');
-        output.push(string_token(value->as_str(), token));
-        ++index;
-        continue;
-      }
-      if (name == "_Pragma"_str) {
-        auto open = index + usize(1);
-        while (open < input.len() && input[open].kind == TokenKind::Newline)
-          ++open;
-        if (open >= input.len() || input[open].text.as_str() != "("_str) {
-          return Err(
-              failure("_Pragma requires parentheses"_str, token.expansion));
+        if (name == "__DATE__"_str || name == "__TIME__"_str) {
+          auto kind = name == "__DATE__"_str ? BuiltinTextKind::Date
+                                             : BuiltinTextKind::Time;
+          auto value = rstd::as<BuiltinProvider>(builtin_provider_).text(kind);
+          if (value.is_err())
+            return Err(rstd::move(value).unwrap_err());
+          builtin_identity_.push_str(name);
+          builtin_identity_.push_ascii('=');
+          builtin_identity_.push_str(value->as_str());
+          builtin_identity_.push_ascii(';');
+          output.push(string_token(value->as_str(), token));
+          ++index;
+          continue;
         }
-        auto collected = collect_arguments(input, open);
-        if (collected.is_err())
-          return Err(rstd::move(collected).unwrap_err());
-        const auto &arguments = collected->template get<0>();
-        if (arguments.len() != usize(1)) {
-          return Err(failure("_Pragma requires one string literal"_str,
+        if (name == "_Pragma"_str) {
+          auto open = index + usize(1);
+          while (open < input.len() && input[open].kind == TokenKind::Newline)
+            ++open;
+          if (open >= input.len() || input[open].text.as_str() != "("_str) {
+            return Err(
+                failure("_Pragma requires parentheses"_str, token.expansion));
+          }
+          auto parsed = parse_arguments(input, open);
+          if (parsed.is_err())
+            return Err(rstd::move(parsed).unwrap_err());
+          auto arguments = materialize_arguments(input, parsed->ranges);
+          if (arguments.len() != usize(1)) {
+            return Err(failure("_Pragma requires one string literal"_str,
+                               token.expansion));
+          }
+          auto expanded_argument =
+              expand(rstd::move(arguments[usize{}]), disabled);
+          if (expanded_argument.is_err()) {
+            return Err(rstd::move(expanded_argument).unwrap_err());
+          }
+          if (expanded_argument->len() != usize(1)) {
+            return Err(failure("_Pragma requires one string literal"_str,
+                               token.expansion));
+          }
+          auto pragma = destringize_pragma((*expanded_argument)[usize{}]);
+          if (pragma.is_err())
+            return Err(rstd::move(pragma).unwrap_err());
+          auto handled =
+              handle_pragma(rstd::move(pragma).unwrap(), token.expansion);
+          if (handled.is_err())
+            return Err(rstd::move(handled).unwrap_err());
+          index = parsed->next;
+          continue;
+        }
+        if (name == "__has_embed"_str) {
+          return Err(failure("builtin '__has_embed' is unsupported"_str,
                              token.expansion));
         }
-        auto expanded_argument =
-            expand(clone_tokens(arguments[usize{}]), disabled);
-        if (expanded_argument.is_err()) {
-          return Err(rstd::move(expanded_argument).unwrap_err());
-        }
-        if (expanded_argument->len() != usize(1)) {
-          return Err(failure("_Pragma requires one string literal"_str,
-                             token.expansion));
-        }
-        auto pragma = destringize_pragma((*expanded_argument)[usize{}]);
-        if (pragma.is_err())
-          return Err(rstd::move(pragma).unwrap_err());
-        auto handled =
-            handle_pragma(rstd::move(pragma).unwrap(), token.expansion);
-        if (handled.is_err())
-          return Err(rstd::move(handled).unwrap_err());
-        index = collected->template get<1>();
-        continue;
-      }
-      if (name == "__has_embed"_str) {
-        return Err(failure("builtin '__has_embed' is unsupported"_str,
-                           token.expansion));
-      }
 
-      auto query = builtin_query_kind(name);
-      auto include_builtin =
-          name == "__has_include"_str || name == "__has_include_next"_str;
-      auto identifier_builtin = name == "__is_identifier"_str;
-      if (query.is_some() || include_builtin || identifier_builtin) {
-        auto open = index + usize(1);
-        while (open < input.len() && input[open].kind == TokenKind::Newline)
-          ++open;
-        if (open >= input.len() || input[open].text.as_str() != "("_str) {
-          return Err(
-              failure(rstd::format("builtin '{}' requires parentheses", name),
-                      token.expansion));
+        auto query = Option<BuiltinQueryKind>{};
+        if (name_bytes.len() >= usize(2) && name_bytes[usize{}] == u8('_') &&
+            name_bytes[usize(1)] == u8('_')) {
+          query = builtin_query_kind(name);
         }
-        auto collected = collect_arguments(input, open);
-        if (collected.is_err())
-          return Err(rstd::move(collected).unwrap_err());
-        auto arguments = rstd::move(collected->template get<0>());
-        if (arguments.len() != usize(1)) {
-          return Err(
-              failure(rstd::format("builtin '{}' requires one argument", name),
-                      token.expansion));
-        }
-        auto value = Result<i64>(Ok(i64{}));
-        if (include_builtin) {
-          auto included = include_query(token, name, arguments[usize{}]);
-          if (included.is_err())
-            return Err(rstd::move(included).unwrap_err());
-          value = Ok(i64(*included));
-        } else if (identifier_builtin) {
-          if (arguments[usize{}].len() != usize(1) ||
-              arguments[usize{}][usize{}].kind != TokenKind::Identifier) {
+        auto include_builtin =
+            name == "__has_include"_str || name == "__has_include_next"_str;
+        auto identifier_builtin = name == "__is_identifier"_str;
+        if (query.is_some() || include_builtin || identifier_builtin) {
+          auto open = index + usize(1);
+          while (open < input.len() && input[open].kind == TokenKind::Newline)
+            ++open;
+          if (open >= input.len() || input[open].text.as_str() != "("_str) {
+            return Err(
+                failure(rstd::format("builtin '{}' requires parentheses", name),
+                        token.expansion));
+          }
+          auto parsed = parse_arguments(input, open);
+          if (parsed.is_err())
+            return Err(rstd::move(parsed).unwrap_err());
+          auto arguments = materialize_arguments(input, parsed->ranges);
+          if (arguments.len() != usize(1)) {
             return Err(failure(
-                "builtin '__is_identifier' requires one identifier token"_str,
+                rstd::format("builtin '{}' requires one argument", name),
                 token.expansion));
           }
-          value = Ok(i64(lexical::is_cpp_identifier_token(
-              arguments[usize{}][usize{}],
-              request_.language_standard.as_str())));
-        } else {
-          auto argument = String::make();
-          if (*query == BuiltinQueryKind::HasWarning) {
-            if (arguments[usize{}].len() != usize(1)) {
+          auto value = Result<i64>(Ok(i64{}));
+          if (include_builtin) {
+            auto included = include_query(token, name, arguments[usize{}]);
+            if (included.is_err())
+              return Err(rstd::move(included).unwrap_err());
+            value = Ok(i64(*included));
+          } else if (identifier_builtin) {
+            if (arguments[usize{}].len() != usize(1) ||
+                arguments[usize{}][usize{}].kind != TokenKind::Identifier) {
               return Err(failure(
-                  "builtin '__has_warning' requires one string literal"_str,
+                  "builtin '__is_identifier' requires one identifier token"_str,
                   token.expansion));
             }
-            auto contents = string_contents(arguments[usize{}][usize{}],
-                                            "builtin '__has_warning'"_str);
-            if (contents.is_err())
-              return Err(rstd::move(contents).unwrap_err());
-            argument = rstd::move(contents).unwrap();
+            value = Ok(i64(lexical::is_cpp_identifier_token(
+                arguments[usize{}][usize{}],
+                request_.language_standard.as_str())));
           } else {
-            argument = joined_argument(arguments[usize{}]);
+            auto argument = String::make();
+            if (*query == BuiltinQueryKind::HasWarning) {
+              if (arguments[usize{}].len() != usize(1)) {
+                return Err(failure(
+                    "builtin '__has_warning' requires one string literal"_str,
+                    token.expansion));
+              }
+              auto contents = string_contents(arguments[usize{}][usize{}],
+                                              "builtin '__has_warning'"_str);
+              if (contents.is_err())
+                return Err(rstd::move(contents).unwrap_err());
+              argument = rstd::move(contents).unwrap();
+            } else {
+              argument = joined_argument(arguments[usize{}]);
+            }
+            value = rstd::as<BuiltinProvider>(builtin_provider_)
+                        .evaluate(BuiltinQueryKey{
+                            .kind = *query,
+                            .argument = normalize_builtin_query_argument(
+                                *query, argument.as_str()),
+                        });
           }
-          value = rstd::as<BuiltinProvider>(builtin_provider_)
-                      .evaluate(BuiltinQueryKey{
-                          .kind = *query,
-                          .argument = normalize_builtin_query_argument(
-                              *query, argument.as_str()),
-                      });
+          if (value.is_err())
+            return Err(rstd::move(value).unwrap_err());
+          output.push(number_token(*value, token));
+          index = parsed->next;
+          continue;
         }
-        if (value.is_err())
-          return Err(rstd::move(value).unwrap_err());
-        output.push(number_token(*value, token));
-        index = collected->template get<1>();
-        continue;
       }
 
+      ++raw_statistics_.macro_lookups;
       auto found = macros_.get(name);
       if (found.is_none()) {
+        token.mark_unavailable_macro(revision);
+        output.push(rstd::move(token));
+        ++index;
+        continue;
+      }
+      if (disabled.contains(name)) {
+        token.disable_expand = true;
         output.push(rstd::move(token));
         ++index;
         continue;
@@ -860,23 +1019,24 @@ private:
       }
       auto macro = rstd::move(found).unwrap();
       const auto &definition = *macro.get();
+      ++raw_statistics_.macro_expansions;
       auto replacement = Vec<Token>::make();
       if (definition.parameters.is_some()) {
         auto open = next;
         while (open < input.len() && input[open].kind == TokenKind::Newline)
           ++open;
-        auto collected = collect_arguments(input, open);
-        if (collected.is_err())
-          return Err(rstd::move(collected).unwrap_err());
+        auto parsed = parse_arguments(input, open);
+        if (parsed.is_err())
+          return Err(rstd::move(parsed).unwrap_err());
+        auto arguments = materialize_arguments(input, parsed->ranges);
         auto substituted =
-            substitute(definition, collected->template get<0>(), token,
-                       disabled);
+            substitute(definition, arguments, token, disabled);
         if (substituted.is_err())
           return substituted;
         replacement = rstd::move(substituted).unwrap();
-        next = collected->template get<1>();
+        next = parsed->next;
       } else {
-        replacement = clone_tokens(definition.replacement);
+        replacement = clone_tokens_counted(definition.replacement);
         for (auto &item : replacement)
           item.expansion = token.expansion;
       }
@@ -885,9 +1045,10 @@ private:
                              token.expansion);
       if (event.is_err())
         return Err(rstd::move(event).unwrap_err());
-      disabled.push(definition.name.clone());
+      auto dynamic_builtin = definition.is_dynamic_builtin();
+      disabled.push(rstd::move(macro), dynamic_builtin);
       auto rescanned = expand(rstd::move(replacement), disabled);
-      (void)disabled.pop();
+      disabled.pop();
       if (rescanned.is_err())
         return rescanned;
       for (auto &item : *rescanned)
@@ -954,7 +1115,7 @@ private:
     for (auto index = usize{}; index < line.len();) {
       const auto &token = line[index];
       if (token.text.as_str() != "defined"_str) {
-        result.push(token.clone());
+        result.push(clone_token(token));
         ++index;
         continue;
       }
@@ -968,7 +1129,7 @@ private:
             failure("defined requires an identifier"_str, token.expansion));
       }
       auto value = macros_.contains(line[cursor].text.as_str()) ||
-                   is_dynamic_builtin(line[cursor].text.as_str());
+                   is_dynamic_builtin_name(line[cursor].text.as_str());
       ++cursor;
       if (parenthesized) {
         if (cursor >= line.len() || line[cursor].text.as_str() != ")"_str) {
@@ -987,7 +1148,7 @@ private:
     auto defined = replace_defined(line);
     if (defined.is_err())
       return Err(rstd::move(defined).unwrap_err());
-    auto disabled = Vec<String>::make();
+    auto disabled = DisabledMacros{};
     auto expanded = expand(rstd::move(defined).unwrap(), disabled);
     if (expanded.is_err())
       return Err(rstd::move(expanded).unwrap_err());
@@ -1075,20 +1236,22 @@ private:
     return Some(rstd::move(guard));
   }
 
-  auto handle_include(const Vec<Token> &line, bool next,
+  auto handle_include(Vec<Token> line, bool next,
                       SourceLocation location) -> Result<empty> {
-    auto expanded = Result<Vec<Token>>(Ok(clone_tokens(line)));
     auto direct_header = line.len() == usize(1) &&
                          line[usize{}].kind == TokenKind::StringLiteral;
     direct_header =
         direct_header ||
         (line.len() >= usize(2) && line[usize{}].text.as_str() == "<"_str &&
          line[line.len() - usize(1)].text.as_str() == ">"_str);
+    auto expanded = Result<Vec<Token>>(Ok(Vec<Token>::make()));
     if (!direct_header) {
-      auto disabled = Vec<String>::make();
-      expanded = expand(clone_tokens(line), disabled);
+      auto disabled = DisabledMacros{};
+      expanded = expand(rstd::move(line), disabled);
       if (expanded.is_err())
         return Err(rstd::move(expanded).unwrap_err());
+    } else {
+      expanded = Ok(rstd::move(line));
     }
     auto kind = next ? IncludeKind::NextQuoted : IncludeKind::Quoted;
     auto name = include_name(*expanded, kind, location);
@@ -1104,6 +1267,7 @@ private:
                             .previous_search_index = frame.search_index,
                             .location = location,
                         });
+    ++raw_statistics_.include_attempts;
     if (resolved.is_err())
       return Err(rstd::move(resolved).unwrap_err());
     if (resolved->is_none()) {
@@ -1114,6 +1278,7 @@ private:
       return Err(failure(
           rstd::format("header '{}' was not found", name->as_str()), location));
     }
+    ++raw_statistics_.include_hits;
     auto value = rstd::move(resolved).unwrap().unwrap();
     auto event = emit(Event{
         .kind = EventKind::IncludeResolved,
@@ -1146,7 +1311,7 @@ private:
                 "conditional directive requires one identifier"_str, location));
           }
           value = macros_.contains(rest[usize{}].text.as_str()) ||
-                  is_dynamic_builtin(rest[usize{}].text.as_str());
+                  is_dynamic_builtin_name(rest[usize{}].text.as_str());
           if (directive == "ifndef"_str)
             value = !value;
         }
@@ -1184,7 +1349,7 @@ private:
                 "conditional directive requires one identifier"_str, location));
           }
           value = macros_.contains(rest[usize{}].text.as_str()) ||
-                  is_dynamic_builtin(rest[usize{}].text.as_str());
+                  is_dynamic_builtin_name(rest[usize{}].text.as_str());
           if (directive == "elifndef"_str)
             value = !value;
         }
@@ -1216,11 +1381,13 @@ private:
   auto flush_normal(Vec<Token> &normal) -> Result<empty> {
     if (normal.is_empty())
       return Ok(empty{});
-    auto disabled = Vec<String>::make();
+    auto disabled = DisabledMacros{};
     auto expanded = expand(rstd::move(normal), disabled);
     normal = Vec<Token>::make();
     if (expanded.is_err())
       return Err(rstd::move(expanded).unwrap_err());
+    ++raw_statistics_.consumer_batches;
+    raw_statistics_.consumer_tokens += expanded->len().to_primitive();
     return rstd::as<PreprocessedTokenConsumer>(consumer_).consume(
         rstd::move(expanded).unwrap());
   }
@@ -1245,13 +1412,15 @@ private:
     if (loaded.is_err())
       return Err(rstd::move(loaded).unwrap_err());
     input_bytes_ += loaded->get()->snapshot.get()->contents.len();
+    ++raw_statistics_.files;
+    raw_statistics_.source_tokens += loaded->get()->tokens.len().to_primitive();
     auto source = sources_.add(loaded->get()->snapshot.clone());
     auto main_file = include_stack_.is_empty();
     if (main_file)
       main_source_ = source;
     auto tokens = Vec<Token>::with_capacity(loaded->get()->tokens.len());
     for (const auto &cached : loaded->get()->tokens) {
-      auto token = cached.clone();
+      auto token = clone_token(cached);
       token.spelling.source = source;
       token.expansion.source = source;
       tokens.push(rstd::move(token));
@@ -1284,13 +1453,15 @@ private:
       if (!directive) {
         if (active(conditions)) {
           for (auto index = cursor; index < end; ++index)
-            normal.push(tokens[index].clone());
+            normal.push(rstd::move(tokens[index]));
           if (end < tokens.len())
-            normal.push(tokens[end].clone());
+            normal.push(rstd::move(tokens[end]));
         }
         cursor = end < tokens.len() ? end + usize(1) : end;
         continue;
       }
+
+      ++raw_statistics_.directives;
 
       auto flushed = flush_normal(normal);
       if (flushed.is_err())
@@ -1308,12 +1479,13 @@ private:
       }
       auto keyword = (*line)[usize{}].text.as_str();
       auto location = (*line)[usize{}].expansion;
-      auto rest = clone_range(*line, usize(1), line->len());
+      auto rest = move_range(*line, usize(1), line->len());
       auto conditional =
           handle_conditional(keyword, rest, location, conditions);
       if (conditional.is_err())
         return Err(rstd::move(conditional).unwrap_err());
       if (*conditional) {
+        ++raw_statistics_.conditionals;
         cursor = end < tokens.len() ? end + usize(1) : end;
         continue;
       }
@@ -1339,7 +1511,7 @@ private:
           return Err(rstd::move(event).unwrap_err());
       } else if (keyword == "include"_str || keyword == "include_next"_str) {
         auto included =
-            handle_include(rest, keyword == "include_next"_str, location);
+            handle_include(rstd::move(rest), keyword == "include_next"_str, location);
         if (included.is_err())
           return Err(rstd::move(included).unwrap_err());
       } else if (keyword == "pragma"_str) {
@@ -1358,7 +1530,7 @@ private:
         if (event.is_err())
           return Err(rstd::move(event).unwrap_err());
       } else if (keyword == "line"_str) {
-        auto disabled = Vec<String>::make();
+        auto disabled = DisabledMacros{};
         auto expanded = expand(rstd::move(rest), disabled);
         if (expanded.is_err())
           return Err(rstd::move(expanded).unwrap_err());
@@ -1367,7 +1539,7 @@ private:
           return Err(failure("#line requires a line number"_str, location));
         }
         auto number = Vec<Token>::make();
-        number.push((*expanded)[usize{}].clone());
+        number.push(clone_token((*expanded)[usize{}]));
         auto value = evaluate_expression(number);
         if (value.is_err() || *value <= i64{}) {
           return Err(
@@ -1437,6 +1609,7 @@ private:
   Pragmas &pragma_handler_;
   Events &event_sink_;
   Consumer &consumer_;
+  Observer &observer_;
   SourceManager sources_;
   MacroTable macros_;
   Vec<IncludeFrame> include_stack_;
@@ -1448,6 +1621,7 @@ private:
   usize input_bytes_{};
   SourceId main_source_{};
   String builtin_identity_;
+  RawStatistics raw_statistics_;
 };
 
 class CollectPreprocessedTokens {
@@ -1465,15 +1639,28 @@ private:
 };
 
 template <typename Sources, typename Includes, typename Builtins,
+          typename Pragmas, typename Events, typename Consumer,
+          typename Observer>
+auto preprocess_to(PreprocessRequest request, Sources &sources,
+                   Includes &includes, Builtins &builtins, Pragmas &pragmas,
+                   Events &events, Consumer &consumer, Observer &observer)
+    -> Result<PreprocessedTranslationUnit> {
+  return PreprocessorSession<Sources, Includes, Builtins, Pragmas, Events,
+                             Consumer, Observer>(rstd::move(request), sources,
+                                       includes, builtins, pragmas, events,
+                                       consumer, observer)
+      .run();
+}
+
+template <typename Sources, typename Includes, typename Builtins,
           typename Pragmas, typename Events, typename Consumer>
 auto preprocess_to(PreprocessRequest request, Sources &sources,
                    Includes &includes, Builtins &builtins, Pragmas &pragmas,
                    Events &events, Consumer &consumer)
     -> Result<PreprocessedTranslationUnit> {
-  return PreprocessorSession<Sources, Includes, Builtins, Pragmas, Events,
-                             Consumer>(rstd::move(request), sources, includes,
-                                       builtins, pragmas, events, consumer)
-      .run();
+  auto observer = IgnorePreprocessorObserver{};
+  return preprocess_to(rstd::move(request), sources, includes, builtins,
+                       pragmas, events, consumer, observer);
 }
 
 template <typename Sources, typename Includes, typename Builtins,

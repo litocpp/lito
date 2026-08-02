@@ -5,6 +5,7 @@ import tenon.model;
 import tenon.modules;
 import tenon.toolchain;
 import tenon.frontend;
+import tenon.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -337,11 +338,24 @@ auto discover_package_sources(const PackageMetadata&     package,
                                           target.manifest.name.as_str(),
                                           candidate.source.canonical_path.as_path() });
         }
+        auto source_frame = frontend_service.profiler().begin_source_frame(
+            target.manifest.name.as_str(),
+            candidate.source.canonical_path.as_path(),
+            ScanSourceOrigin::Discovery);
+        if (source_frame.is_err()) {
+            return Err(Error::make(ErrorKind::Artifact,
+                                   rstd::move(source_frame).unwrap_err_unchecked()));
+        }
         auto facts = toolchain.preprocess(candidate.source.canonical_path.as_path(),
                                           plan.contexts[candidate.target],
                                           target.manifest.root.as_path(),
                                           frontend_service);
+        auto source_finished = frontend_service.profiler().end_source_frame();
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
+        if (source_finished.is_err()) {
+            return Err(Error::make(ErrorKind::Artifact,
+                                   rstd::move(source_finished).unwrap_err_unchecked()));
+        }
         auto frontend_result = rstd::move(facts).unwrap();
         if (candidate.source.expected_module.is_some()) {
             if (frontend_result.provided.is_none() ||

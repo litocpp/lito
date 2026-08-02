@@ -1,0 +1,9 @@
+[package]
+name = "fixture-environment-cache"
+version = "0.1.0"
+module = "fixture.environment"
+
+[library]
+archive = "fixture_environment_cache"
+discovery = "explicit"
+sources = ["one.cpp", "two.cpp"]

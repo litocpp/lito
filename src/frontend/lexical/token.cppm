@@ -26,6 +26,20 @@ enum class TokenKind {
   Newline,
 };
 
+class TokenTextIdentity {
+public:
+  TokenTextIdentity() = default;
+
+  auto is_valid() const noexcept -> bool { return data_ != nullptr; }
+
+private:
+  explicit TokenTextIdentity(const byte *data) noexcept : data_(data) {}
+
+  const byte *data_{};
+
+  friend class TokenText;
+};
+
 class TokenText {
 public:
   TokenText() = default;
@@ -45,6 +59,14 @@ public:
   auto len() const noexcept -> usize { return as_str().len(); }
   auto is_empty() const noexcept -> bool { return as_str().is_empty(); }
   auto clone() const -> String { return String::make(as_str()); }
+
+  auto borrowed_identity() const noexcept -> TokenTextIdentity {
+    return TokenTextIdentity(is_borrowed_ ? borrowed_.data() : nullptr);
+  }
+
+  auto matches(TokenTextIdentity identity) const noexcept -> bool {
+    return identity.is_valid() && is_borrowed_ && borrowed_.data() == identity.data_;
+  }
 
   auto shared_clone() const -> TokenText {
     return is_borrowed_ ? borrowed(borrowed_) : TokenText{owned_.clone()};
@@ -81,6 +103,18 @@ struct Token {
   bool start_of_line{false};
   bool leading_space{false};
   bool disable_expand{false};
+  u32 unavailable_macro_revision{};
+  TokenTextIdentity unavailable_macro;
+
+  auto is_known_unavailable_macro(u32 revision) const noexcept -> bool {
+    return unavailable_macro_revision == revision &&
+           text.matches(unavailable_macro);
+  }
+
+  auto mark_unavailable_macro(u32 revision) noexcept -> void {
+    unavailable_macro_revision = revision;
+    unavailable_macro = text.borrowed_identity();
+  }
 
   auto clone() const -> Token {
     return Token{
@@ -95,6 +129,8 @@ struct Token {
         .start_of_line = start_of_line,
         .leading_space = leading_space,
         .disable_expand = disable_expand,
+        .unavailable_macro_revision = unavailable_macro_revision,
+        .unavailable_macro = unavailable_macro,
     };
   }
 };

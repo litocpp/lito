@@ -49,8 +49,28 @@ struct ClangBuiltinEnvironmentSnapshot {
 using SharedClangBuiltinEnvironmentSnapshot =
     rstd::rc::Rc<const ClangBuiltinEnvironmentSnapshot>;
 
-struct PreprocessorEnvironment {
+struct PreprocessorEnvironmentKey {
   String context_id;
+  PathBuf working_directory;
+
+  static auto make(ref<str> context_id,
+                   ref<rstd::path::Path> working_directory)
+      -> PreprocessorEnvironmentKey {
+    return PreprocessorEnvironmentKey{
+        .context_id = String::make(context_id),
+        .working_directory = PathBuf::from(working_directory),
+    };
+  }
+
+  auto matches(ref<str> context, ref<rstd::path::Path> working) const
+      noexcept -> bool {
+    return context_id.as_str() == context &&
+           working_directory.as_path() == working;
+  }
+};
+
+struct PreprocessorEnvironment {
+  PreprocessorEnvironmentKey key;
   SharedClangBuiltinEnvironmentSnapshot builtin_environment;
   lexical::SharedSourceSnapshot native_source;
   Vec<preprocessor::SharedMacroDefinition> native_definitions;
@@ -60,7 +80,6 @@ struct PreprocessorEnvironment {
   Vec<IncludeSearchEntry> include_search;
   Vec<String> query_command;
   String identity;
-  PathBuf working_directory;
   Option<String> date;
   Option<String> time;
 };
@@ -889,14 +908,14 @@ auto query_clang_builtin_environment_snapshot(
 }
 
 auto query_preprocessor_environment(const Vec<String> &base_command,
-                                    ref<str> context_id,
-                                    ref<rstd::path::Path> working_directory,
+                                    PreprocessorEnvironmentKey key,
                                     SharedClangBuiltinEnvironmentSnapshot
                                         builtin_environment,
                                     BuiltinSemanticContext semantic_context,
                                     const Vec<String> &options,
                                     const Vec<String> &definitions)
     -> Result<PreprocessorEnvironment> {
+  auto working_directory = key.working_directory.as_path();
   auto native_macros = parse_macro_seeds(
       native_predefined_macro_seeds(semantic_context), "<tenon-built-in>"_str);
   if (native_macros.is_err())
@@ -927,11 +946,11 @@ auto query_preprocessor_environment(const Vec<String> &base_command,
     return Err(rstd::move(includes).unwrap_err());
   auto identity = environment_identity(
                                        builtin_environment.get()->identity.as_str(),
-                                       *includes, context_id);
+                                       *includes, key.context_id.as_str());
   if (identity.is_err())
     return Err(rstd::move(identity).unwrap_err());
   return Ok(PreprocessorEnvironment{
-      .context_id = String::make(context_id),
+      .key = rstd::move(key),
       .builtin_environment = rstd::move(builtin_environment),
       .native_source = rstd::move(native_values.source),
       .native_definitions = rstd::move(native_values.definitions),
@@ -1153,6 +1172,10 @@ public:
 
 class DependencyEvents {
 public:
+  auto wants(preprocessor::EventKind kind) const -> bool {
+    return kind == preprocessor::EventKind::IncludeResolved;
+  }
+
   auto on_event(const preprocessor::Event &event)
       -> preprocessor::Result<empty> {
     if (event.kind != preprocessor::EventKind::IncludeResolved ||

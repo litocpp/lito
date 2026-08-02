@@ -124,6 +124,10 @@ target_link_libraries(tenon PRIVATE tenon.lib rstd.argparse rstd::nostd)
 include(CTest)
 
 if(BUILD_TESTING)
+  add_executable(tenon.profiling.test)
+  target_sources(tenon.profiling.test PRIVATE test/profiling.cpp)
+  target_link_libraries(tenon.profiling.test PRIVATE tenon.lib rstd::nostd)
+  add_test(NAME tenon.profiling COMMAND tenon.profiling.test)
   add_executable(tenon.preprocessor.test)
   target_sources(tenon.preprocessor.test PRIVATE test/preprocessor/core.cpp)
   target_link_libraries(tenon.preprocessor.test PRIVATE tenon.lib rstd::nostd)
@@ -173,7 +177,16 @@ if(BUILD_TESTING)
   set_tests_properties(
     tenon.timing.scan
     PROPERTIES DEPENDS tenon.test-command.build-production
-               PASS_REGULAR_EXPRESSION "timing scan.preprocessor:")
+               PASS_REGULAR_EXPRESSION
+               "timing scan.preprocessor:.*mean.*median.*p95.*max;timing scan sources: 2 frames, 0 dropped, 0 diagnostics")
+  add_test(
+    NAME tenon.environment-cache
+    COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/environment-cache build
+            --out ${CMAKE_CURRENT_BINARY_DIR}/test/environment-cache --verbose)
+  set_tests_properties(
+    tenon.environment-cache
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "clang environments: 1 entries, 1 queries, 1 hits")
   add_test(
     NAME tenon.test-command.no-run
     COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out

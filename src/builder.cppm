@@ -174,9 +174,26 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                  BuildEventKind::Scan,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
+            auto source_frame = profiler.begin_source_frame(package.targets[target].name.as_str(),
+                                                            units[unit].unit.source.as_path(),
+                                                            ScanSourceOrigin::Classify);
+            if (source_frame.is_err()) {
+                return failure<BuildSummary>(
+                    ErrorKind::Artifact,
+                    rstd::move(source_frame).unwrap_err_unchecked());
+            }
         }
         auto scanned = toolchain.scan(units[unit], frontend_service);
+        auto source_finished = rstd::Result<empty, String>(Ok(empty {}));
+        if (units[unit].frontend_result == nullptr) {
+            source_finished = profiler.end_source_frame();
+        }
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
+        if (source_finished.is_err()) {
+            return failure<BuildSummary>(
+                ErrorKind::Artifact,
+                rstd::move(source_finished).unwrap_err_unchecked());
+        }
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
             units[unit].unit.bmi = Some(layout.bmi((*result.provided).logical_name.as_str()));
@@ -214,6 +231,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                      rstd::move(finished_profile).unwrap_err_unchecked());
     }
     auto scan_profile = rstd::move(finished_profile).unwrap_unchecked();
+    auto frontend_statistics = frontend_service.statistics();
+    frontend_service.release_source_cache();
 
     auto created_cache = CompileCacheSession::create(layout,
                                                      package.root.as_path(),
@@ -426,7 +445,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .compiled  = compiled,
         .reused    = reused,
         .artifacts = rstd::move(artifacts),
-        .frontend  = frontend_service.statistics(),
+        .frontend  = frontend_statistics,
         .toolchain = toolchain.statistics(),
         .scan_profile = rstd::move(scan_profile),
         .compile_tests = rstd::move(compile_tests),

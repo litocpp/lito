@@ -31,6 +31,77 @@ auto failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Toolchain, message));
 }
 
+auto preprocessor_probe(preprocessor::PreprocessorActivity activity) noexcept -> ScanProbe {
+    switch (activity) {
+    case preprocessor::PreprocessorActivity::PredefinedMacros:
+        return ScanProbe::PredefinedMacros;
+    case preprocessor::PreprocessorActivity::TranslationUnit:
+        return ScanProbe::TranslationUnit;
+    }
+    return ScanProbe::Preprocessor;
+}
+
+class PreprocessorProfileObserver {
+    struct ActiveActivity {
+        preprocessor::PreprocessorActivity activity;
+        ScanSpanGuard                      span;
+    };
+
+public:
+    explicit PreprocessorProfileObserver(ScanProfiler& profiler)
+        : profiler_(&profiler), active_(Vec<ActiveActivity>::make()) {}
+
+    auto begin(preprocessor::PreprocessorActivity activity) -> void {
+        active_.push(ActiveActivity {
+            .activity = activity,
+            .span     = profiler_->span(preprocessor_probe(activity)),
+        });
+    }
+
+    auto end(preprocessor::PreprocessorActivity activity) -> void {
+        auto current = active_.pop();
+        if (current.is_none()) {
+            remember(String::make("preprocessor profiling activity stack is empty"_str));
+            return;
+        }
+        auto value = rstd::move(current).unwrap_unchecked();
+        if (value.activity != activity) {
+            remember(String::make("preprocessor profiling activities ended out of order"_str));
+        }
+        auto completed = profiler_->complete(value.span);
+        if (completed.is_err()) {
+            remember(rstd::move(completed).unwrap_err_unchecked());
+        }
+    }
+
+    auto record(const preprocessor::PreprocessorStatistics& statistics) -> void {
+        statistics_ = statistics;
+        profiler_->record_preprocessor_statistics(statistics);
+    }
+
+    auto finish() -> rstd::Result<empty, String> {
+        if (! active_.is_empty()) {
+            return Err(String::make("preprocessor profiling activities remain active"_str));
+        }
+        if (error_.is_some()) return Err(rstd::move(error_).unwrap_unchecked());
+        return Ok(empty {});
+    }
+
+    auto statistics() const noexcept -> const preprocessor::PreprocessorStatistics& {
+        return statistics_;
+    }
+
+private:
+    auto remember(String error) -> void {
+        if (error_.is_none()) error_ = Some(rstd::move(error));
+    }
+
+    ScanProfiler*                                profiler_ {};
+    Vec<ActiveActivity>                          active_;
+    preprocessor::PreprocessorStatistics         statistics_;
+    Option<String>                               error_;
+};
+
 auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
@@ -401,9 +472,10 @@ public:
     }
 
     auto statistics() const -> ToolchainStatistics {
-        auto result                   = toolchain_statistics_;
-        result.target_queries         = usize(1);
-        result.builtin_snapshots      = builtin_environment_snapshots_.len();
+        auto result                                = toolchain_statistics_;
+        result.target_queries                      = usize(1);
+        result.preprocessor_environment_entries    = preprocessor_environments_.len();
+        result.builtin_snapshots                   = builtin_environment_snapshots_.len();
         return result;
     }
 
@@ -448,91 +520,23 @@ public:
                     option.as_str()));
             }
         }
-        toolchain::PreprocessorEnvironment* environment = nullptr;
-        auto working_text = working_directory.to_str();
-        if (working_text.is_none()) {
-            return failure<FrontendResult>(rstd::format(
-                "preprocessor working directory '{}' is not valid UTF-8", working_directory));
+        auto selected_environment = environment_for(compile_context, working_directory);
+        if (selected_environment.is_err()) {
+            return Err(rstd::move(selected_environment).unwrap_err());
         }
-        for (auto& existing : preprocessor_environments_) {
-            if (existing.context_id.as_str() == compile_context.id.as_str() &&
-                existing.working_directory.as_path() == working_directory) {
-                environment = rstd::addressof(existing);
-                break;
-            }
-        }
-        if (environment == nullptr) {
-            auto builtin_context = make_builtin_context(compile_context);
-            if (builtin_context.is_err()) {
-                return Err(rstd::move(builtin_context).unwrap_err());
-            }
-            auto builtin_values  = rstd::move(builtin_context).unwrap();
-            auto builtin_command = rstd::move(builtin_values.query_command);
-            auto builtin_key     = rstd::move(builtin_values.key);
-            toolchain_statistics_.ignored_builtin_options +=
-                builtin_values.ignored_options;
-            auto builtin_environment =
-                Option<toolchain::SharedClangBuiltinEnvironmentSnapshot> {};
-            for (const auto& existing : builtin_environment_snapshots_) {
-                if (existing.get()->key.as_str() == builtin_key.as_str()) {
-                    builtin_environment = Some(existing.clone());
-                    ++toolchain_statistics_.builtin_hits;
-                    break;
-                }
-            }
-            if (builtin_environment.is_none()) {
-                auto queried = toolchain::query_clang_builtin_environment_snapshot(
-                    builtin_command,
-                    builtin_key.as_str(),
-                    builtin_values.semantic,
-                    working_directory);
-                if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-                ++toolchain_statistics_.builtin_refreshes;
-                ++toolchain_statistics_.builtin_macro_processes;
-                ++toolchain_statistics_.builtin_capability_processes;
-                toolchain_statistics_.clang_macros += queried->get()->clang_macro_count;
-                toolchain_statistics_.native_macro_owners +=
-                    queried->get()->native_macro_count;
-                toolchain_statistics_.clang_capabilities +=
-                    queried->get()->clang_capability_count;
-                toolchain_statistics_.native_capabilities +=
-                    queried->get()->native_capability_count;
-                toolchain_statistics_.builtin_macro_output_bytes +=
-                    queried->get()->macro_output_bytes;
-                toolchain_statistics_.builtin_capability_input_bytes +=
-                    queried->get()->capability_input_bytes;
-                toolchain_statistics_.builtin_capability_output_bytes +=
-                    queried->get()->capability_output_bytes;
-                builtin_environment_snapshots_.push(queried->clone());
-                builtin_environment = Some(rstd::move(queried).unwrap());
-            }
-            auto command = Vec<String>::make();
-            auto context = append_compile_context(command, compile_context);
-            if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-            auto queried = toolchain::query_preprocessor_environment(
-                command,
-                compile_context.id.as_str(),
-                working_directory,
-                rstd::move(builtin_environment).unwrap(),
-                rstd::move(builtin_values.semantic),
-                compile_context.options,
-                compile_context.definitions);
-            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-            queried->working_directory = PathBuf::from(working_directory);
-            preprocessor_environments_.push(rstd::move(queried).unwrap());
-            environment = rstd::addressof(
-                preprocessor_environments_[preprocessor_environments_.len() - usize(1)]);
-        }
+        auto environment = *selected_environment;
         auto environment_finished = frontend_service.profiler().complete(environment_span);
         if (environment_finished.is_err()) {
             return failure<FrontendResult>(
                 rstd::move(environment_finished).unwrap_err_unchecked());
         }
         auto includes = toolchain::ClangIncludeResolver(*environment);
-        auto builtins = toolchain::ClangBuiltinProvider(*environment, working_directory);
+        auto builtins = toolchain::ClangBuiltinProvider(
+            *environment, environment->key.working_directory.as_path());
         auto pragmas  = toolchain::ClangPragmaHandler {};
         auto events   = toolchain::DependencyEvents {};
         auto consumer = frontend::parser::ModuleDependencyConsumer::make();
+        auto observer = PreprocessorProfileObserver(frontend_service.profiler());
         auto translation = frontend_service.profiler().measure(ScanProbe::Preprocessor, [&] {
             return preprocessor::preprocess_to(
                 preprocessor::PreprocessRequest {
@@ -545,8 +549,15 @@ public:
                 builtins,
                 pragmas,
                 events,
-                consumer);
+                consumer,
+                observer);
         });
+        auto observer_finished = observer.finish();
+        if (observer_finished.is_err()) {
+            return failure<FrontendResult>(
+                rstd::move(observer_finished).unwrap_err_unchecked());
+        }
+        frontend_service.record_preprocessor_statistics(observer.statistics());
         if (translation.is_err()) {
             auto error = rstd::move(translation).unwrap_err();
             if (error.path.is_some() && error.location.is_some()) {
@@ -733,6 +744,78 @@ private:
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
           target_info_(rstd::move(target_info)) {}
+
+    auto environment_for(const CompileContext& compile_context,
+                         ref<rstd::path::Path> working_directory) const
+        -> Result<toolchain::PreprocessorEnvironment*> {
+        auto working_text = working_directory.to_str();
+        if (working_text.is_none()) {
+            return failure<toolchain::PreprocessorEnvironment*>(rstd::format(
+                "preprocessor working directory '{}' is not valid UTF-8", working_directory));
+        }
+        for (auto& existing : preprocessor_environments_) {
+            if (existing.key.matches(compile_context.id.as_str(), working_directory)) {
+                ++toolchain_statistics_.preprocessor_environment_hits;
+                return Ok(rstd::addressof(existing));
+            }
+        }
+
+        auto builtin_context = make_builtin_context(compile_context);
+        if (builtin_context.is_err()) {
+            return Err(rstd::move(builtin_context).unwrap_err());
+        }
+        auto builtin_values  = rstd::move(builtin_context).unwrap();
+        auto builtin_command = rstd::move(builtin_values.query_command);
+        auto builtin_key     = rstd::move(builtin_values.key);
+        toolchain_statistics_.ignored_builtin_options += builtin_values.ignored_options;
+        auto builtin_environment =
+            Option<toolchain::SharedClangBuiltinEnvironmentSnapshot> {};
+        for (const auto& existing : builtin_environment_snapshots_) {
+            if (existing.get()->key.as_str() == builtin_key.as_str()) {
+                builtin_environment = Some(existing.clone());
+                ++toolchain_statistics_.builtin_hits;
+                break;
+            }
+        }
+        if (builtin_environment.is_none()) {
+            auto queried = toolchain::query_clang_builtin_environment_snapshot(builtin_command,
+                                                                                builtin_key.as_str(),
+                                                                                builtin_values.semantic,
+                                                                                working_directory);
+            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+            ++toolchain_statistics_.builtin_refreshes;
+            ++toolchain_statistics_.builtin_macro_processes;
+            ++toolchain_statistics_.builtin_capability_processes;
+            toolchain_statistics_.clang_macros += queried->get()->clang_macro_count;
+            toolchain_statistics_.native_macro_owners += queried->get()->native_macro_count;
+            toolchain_statistics_.clang_capabilities += queried->get()->clang_capability_count;
+            toolchain_statistics_.native_capabilities +=
+                queried->get()->native_capability_count;
+            toolchain_statistics_.builtin_macro_output_bytes += queried->get()->macro_output_bytes;
+            toolchain_statistics_.builtin_capability_input_bytes +=
+                queried->get()->capability_input_bytes;
+            toolchain_statistics_.builtin_capability_output_bytes +=
+                queried->get()->capability_output_bytes;
+            builtin_environment_snapshots_.push(queried->clone());
+            builtin_environment = Some(rstd::move(queried).unwrap());
+        }
+        auto command = Vec<String>::make();
+        auto context = append_compile_context(command, compile_context);
+        if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        ++toolchain_statistics_.preprocessor_environment_queries;
+        auto queried = toolchain::query_preprocessor_environment(
+            command,
+            toolchain::PreprocessorEnvironmentKey::make(compile_context.id.as_str(),
+                                                        working_directory),
+            rstd::move(builtin_environment).unwrap(),
+            rstd::move(builtin_values.semantic),
+            compile_context.options,
+            compile_context.definitions);
+        if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+        preprocessor_environments_.push(rstd::move(queried).unwrap());
+        return Ok(rstd::addressof(
+            preprocessor_environments_[preprocessor_environments_.len() - usize(1)]));
+    }
 
     auto make_builtin_context(const CompileContext& context) const
         -> Result<ClangBuiltinContext> {

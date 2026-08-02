@@ -309,12 +309,16 @@ struct PreprocessorEventSink {
   template <typename Self, typename = void> struct Api {
     using Trait = PreprocessorEventSink;
 
+    auto wants(EventKind kind) const -> bool {
+      return rstd::trait_call<0>(this, kind);
+    }
+
     auto on_event(const Event &event) -> Result<empty> {
-      return rstd::trait_call<0>(this, event);
+      return rstd::trait_call<1>(this, event);
     }
   };
 
-  template <typename T> using Funcs = TraitFuncs<&T::on_event>;
+  template <typename T> using Funcs = TraitFuncs<&T::wants, &T::on_event>;
 };
 
 struct PreprocessedTokenConsumer {
@@ -329,6 +333,70 @@ struct PreprocessedTokenConsumer {
   template <typename T> using Funcs = TraitFuncs<&T::consume>;
 };
 
+enum class PreprocessorActivity {
+  PredefinedMacros,
+  TranslationUnit,
+};
+
+struct PreprocessorStatistics {
+  usize files{};
+  usize source_tokens{};
+  usize token_clones{};
+  usize synthetic_tokens{};
+  usize directives{};
+  usize conditionals{};
+  usize macro_lookups{};
+  usize macro_lookup_hits{};
+  usize macro_expansions{};
+  usize include_attempts{};
+  usize include_hits{};
+  usize consumer_batches{};
+  usize consumer_tokens{};
+
+  auto add(const PreprocessorStatistics &other) noexcept -> void {
+    files += other.files;
+    source_tokens += other.source_tokens;
+    token_clones += other.token_clones;
+    synthetic_tokens += other.synthetic_tokens;
+    directives += other.directives;
+    conditionals += other.conditionals;
+    macro_lookups += other.macro_lookups;
+    macro_lookup_hits += other.macro_lookup_hits;
+    macro_expansions += other.macro_expansions;
+    include_attempts += other.include_attempts;
+    include_hits += other.include_hits;
+    consumer_batches += other.consumer_batches;
+    consumer_tokens += other.consumer_tokens;
+  }
+};
+
+struct PreprocessorObserver {
+  template <typename Self, typename = void> struct Api {
+    using Trait = PreprocessorObserver;
+
+    auto begin(PreprocessorActivity activity) -> void {
+      rstd::trait_call<0>(this, activity);
+    }
+
+    auto end(PreprocessorActivity activity) -> void {
+      rstd::trait_call<1>(this, activity);
+    }
+
+    auto record(const PreprocessorStatistics &statistics) -> void {
+      rstd::trait_call<2>(this, statistics);
+    }
+  };
+
+  template <typename T>
+  using Funcs = TraitFuncs<&T::begin, &T::end, &T::record>;
+};
+
+struct IgnorePreprocessorObserver {
+  auto begin(PreprocessorActivity) -> void {}
+  auto end(PreprocessorActivity) -> void {}
+  auto record(const PreprocessorStatistics &) -> void {}
+};
+
 struct IgnorePragmas {
   auto handle(const PragmaRequest &) -> Result<PragmaOutcome> {
     return Ok(PragmaOutcome::Ignored);
@@ -336,6 +404,7 @@ struct IgnorePragmas {
 };
 
 struct IgnoreEvents {
+  auto wants(EventKind) const -> bool { return false; }
   auto on_event(const Event &) -> Result<empty> { return Ok(empty{}); }
 };
 

@@ -20,18 +20,6 @@ auto plan_failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, message));
 }
 
-auto path_equal(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> bool {
-    auto left_os     = left.as_os_str();
-    auto right_os    = right.as_os_str();
-    auto left_bytes  = left_os.as_encoded_bytes();
-    auto right_bytes = right_os.as_encoded_bytes();
-    if (left_bytes.len() != right_bytes.len()) return false;
-    for (auto index = usize {}; index < left_bytes.len(); ++index) {
-        if (left_bytes[index] != right_bytes[index]) return false;
-    }
-    return true;
-}
-
 auto append_unique(Vec<String>& output, const Vec<String>& input) -> void {
     for (const auto& value : input) {
         auto present = false;
@@ -49,7 +37,7 @@ auto append_unique(Vec<PathBuf>& output, const Vec<PathBuf>& input) -> void {
     for (const auto& value : input) {
         auto present = false;
         for (const auto& existing : output) {
-            if (path_equal(existing.as_path(), value.as_path())) {
+            if (existing.as_path() == value.as_path()) {
                 present = true;
                 break;
             }

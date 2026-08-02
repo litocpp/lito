@@ -81,14 +81,24 @@ public:
 
 class TestEvents {
 public:
+    auto wants(EventKind kind) const -> bool {
+        return kind == EventKind::IncludeResolved ||
+               kind == EventKind::IncludeProbeResolved;
+    }
+
     auto on_event(const Event& event) -> PpResult<empty> {
         if (event.kind == EventKind::IncludeResolved) ++includes;
         if (event.kind == EventKind::IncludeProbeResolved) ++probes;
+        if (event.kind != EventKind::IncludeResolved &&
+            event.kind != EventKind::IncludeProbeResolved) {
+            ++unexpected;
+        }
         return Ok(empty {});
     }
 
     usize includes {};
     usize probes {};
+    usize unexpected {};
 };
 
 auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second) -> bool {
@@ -97,6 +107,13 @@ auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second
             tokens[index + usize(1)].text.as_str() == second) {
             return true;
         }
+    }
+    return false;
+}
+
+auto contains_token(const Vec<Token>& tokens, ref<str> value) -> bool {
+    for (const auto& token : tokens) {
+        if (token.text.as_str() == value) return true;
     }
     return false;
 }
@@ -149,7 +166,15 @@ auto main() -> int {
         "TENON_IMPORT :dependency;\n"
         "#endif\n"
         "#define TENON_DUP(value) value + value\n"
-        "TENON_DUP(__COUNTER__)\n"_str);
+        "TENON_DUP(__COUNTER__)\n"
+        "#define TENON_CAT_INNER(left, right) left ## right\n"
+        "#define TENON_CAT(left, right) TENON_CAT_INNER(left, right)\n"
+        "#define TENON_PREFIX TENON_\n"
+        "#define TENON_JOINED 9\n"
+        "TENON_CAT(TENON_PREFIX, JOINED);\n"
+        "TENON_LATE\n"
+        "#define TENON_LATE 42\n"
+        "TENON_LATE\n"_str);
     auto includes = MemoryIncludes(sources);
     auto builtins = TestBuiltins {};
     auto pragmas  = IgnorePragmas {};
@@ -168,8 +193,14 @@ auto main() -> int {
     if (! contains_sequence(result->tokens, "import"_str, ":"_str)) return 3;
     if (result->sources.len() != usize(3)) return 4;
     if (events.includes != usize(3) || events.probes != usize(1)) return 5;
+    if (events.unexpected != usize{}) return 13;
     if (builtins.text_queries != usize(1)) return 6;
     if (! contains_sequence(result->tokens, "2"_str, "+"_str, "2"_str)) return 7;
+    if (! contains_sequence(result->tokens, "9"_str, ";"_str)) return 11;
+    if (! contains_token(result->tokens, "TENON_LATE"_str) ||
+        ! contains_token(result->tokens, "42"_str)) {
+        return 12;
+    }
 
     auto stream_builtins = TestBuiltins {};
     auto stream_pragmas  = IgnorePragmas {};
