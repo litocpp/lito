@@ -70,13 +70,9 @@ auto parse_name(const Vec<lexical::Token> &tokens, usize start,
 }
 
 auto primary_module(ref<str> declared) -> String {
-  auto result = String::make();
-  for (auto value : declared) {
-    if (value == u8(':'))
-      break;
-    result.push_ascii(value);
-  }
-  return result;
+  auto separator = declared.find(":"_str);
+  if (separator.is_none()) return String::make(declared);
+  return String::make(declared.get(usize{}, *separator).unwrap());
 }
 
 auto normalized_import(ref<str> imported, ref<str> declared)

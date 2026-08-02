@@ -31,11 +31,15 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
 
 auto selected_by_purpose(ArtifactKind kind, PackageSelectionPurpose purpose) -> bool {
     if (purpose == PackageSelectionPurpose::All) return true;
-    if (purpose == PackageSelectionPurpose::Test) return kind == ArtifactKind::TestExecutable;
-    return kind != ArtifactKind::TestExecutable;
+    if (purpose == PackageSelectionPurpose::Test) {
+        return kind == ArtifactKind::TestExecutable || kind == ArtifactKind::CompileTest;
+    }
+    return kind != ArtifactKind::TestExecutable && kind != ArtifactKind::CompileTest;
 }
 
-auto selected_closure(const ResolvedPackageGraph& graph, const Vec<String>& selected_roots)
+auto selected_closure(const ResolvedPackageGraph& graph,
+                      const Vec<String>&          selected_roots,
+                      const TargetInfo*           target)
     -> Result<Vec<String>> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
@@ -51,6 +55,12 @@ auto selected_closure(const ResolvedPackageGraph& graph, const Vec<String>& sele
         if (index.is_none()) {
             return failure<Vec<String>>(rstd::format(
                 "selected package '{}' is missing from resolved graph", current.as_str()));
+        }
+        if (target != nullptr && ! graph.packages[**index].manifest.target.matches(*target)) {
+            return failure<Vec<String>>(rstd::format(
+                "package '{}' does not support target '{}'",
+                current.as_str(),
+                target->triple.as_str()));
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
@@ -74,7 +84,8 @@ export namespace tenon
 
 auto resolve_package_selection(const PackageSelection&  selection,
                                PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
-                               PackageResolutionOptions options = {})
+                               PackageResolutionOptions options = {},
+                               const TargetInfo*        target = nullptr)
     -> Result<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph(selection.root.as_path(), rstd::move(options));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -96,7 +107,16 @@ auto resolve_package_selection(const PackageSelection&  selection,
     if (selection.packages.is_empty()) {
         for (const auto& name : graph.root_names) {
             auto kind = root_kinds.get(name.as_str());
-            if (kind.is_some() && selected_by_purpose(**kind, purpose)) {
+            auto supported = true;
+            if (target != nullptr) {
+                for (const auto& package : graph.packages) {
+                    if (package.manifest.name.as_str() == name.as_str()) {
+                        supported = package.manifest.target.matches(*target);
+                        break;
+                    }
+                }
+            }
+            if (kind.is_some() && selected_by_purpose(**kind, purpose) && supported) {
                 selected_roots.push(name.clone());
             }
         }
@@ -119,9 +139,20 @@ auto resolve_package_selection(const PackageSelection&  selection,
             }
             auto kind = root_kinds.get(name.as_str());
             if (purpose == PackageSelectionPurpose::Test &&
-                (kind.is_none() || **kind != ArtifactKind::TestExecutable)) {
+                (kind.is_none() || ! selected_by_purpose(**kind, purpose))) {
                 return failure<ResolvedPackageSelection>(
                     rstd::format("workspace package '{}' is not a test package", name.as_str()));
+            }
+            if (target != nullptr) {
+                for (const auto& package : graph.packages) {
+                    if (package.manifest.name.as_str() == name.as_str() &&
+                        ! package.manifest.target.matches(*target)) {
+                        return failure<ResolvedPackageSelection>(rstd::format(
+                            "package '{}' does not support target '{}'",
+                            name.as_str(),
+                            target->triple.as_str()));
+                    }
+                }
             }
             selected_names.insert(name.clone(), empty {});
             selected_roots.push(name.clone());
@@ -134,7 +165,7 @@ auto resolve_package_selection(const PackageSelection&  selection,
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
-    auto selected_packages = selected_closure(graph, selected_roots);
+    auto selected_packages = selected_closure(graph, selected_roots, target);
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }

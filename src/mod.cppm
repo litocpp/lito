@@ -16,6 +16,7 @@ export import tenon.build_layout;
 export import tenon.cache;
 export import tenon.toolchain;
 export import tenon.builder;
+export import tenon.compile_test;
 export import tenon.test_runner;
 export import tenon.scanner;
 export import tenon.formatter;

@@ -70,6 +70,9 @@ struct TestSummary {
     Vec<TestExecution> executions;
 
     auto success() const noexcept -> bool {
+        for (const auto& execution : build.compile_tests) {
+            if (! execution.success()) return false;
+        }
         for (const auto& execution : executions) {
             if (! execution.success()) return false;
         }

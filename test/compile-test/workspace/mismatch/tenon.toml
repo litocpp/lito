@@ -1,0 +1,11 @@
+[package]
+name = "fixture-compile-mismatch"
+version = { workspace = true }
+
+[compile-test]
+
+[[compile-test.cases]]
+name = "Compile.DiagnosticMismatch"
+source = "src/failure.cpp"
+outcome = "failure"
+diagnostic-contains = ["diagnostic that is intentionally absent"]

@@ -44,7 +44,8 @@ export namespace tenon
 auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                                   const Vec<String>&        selected_package_names,
                                   const Vec<String>&        selected_root_names,
-                                  const BuildConfiguration& configuration)
+                                  const BuildConfiguration& configuration,
+                                  const TargetInfo&         target_info)
     -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
@@ -92,6 +93,13 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
     auto targets = Vec<TargetMetadata>::with_capacity(selected_package_names.len());
     for (auto& package : graph.packages) {
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
+        for (auto& group : package.manifest.conditional_source_groups) {
+            if (! group.predicate.matches(target_info)) continue;
+            for (auto& source : group.sources) {
+                package.manifest.declared_sources.push(rstd::move(source));
+            }
+        }
+        package.manifest.conditional_source_groups.clear();
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         for (const auto& dependency : package.dependencies) {
             if (! selected.contains_key(dependency.name.as_str())) {
@@ -177,6 +185,7 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
         }
         auto artifact_name =
             output_name(target.manifest.artifact_kind, target.manifest.artifact_name.as_str());
+        auto compile_tests = rstd::move(target.manifest.compile_tests);
         targets.push(TargetSpec {
             .name               = rstd::move(target.manifest.name),
             .artifact_kind      = target.manifest.artifact_kind,
@@ -186,6 +195,7 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
             .sources            = rstd::move(sources),
             .dependencies       = rstd::move(target.dependencies),
             .usage              = rstd::move(target.manifest.usage),
+            .compile_tests      = rstd::move(compile_tests),
         });
     }
 

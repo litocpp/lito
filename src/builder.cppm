@@ -10,6 +10,7 @@ import tenon.modules;
 import tenon.cache;
 import tenon.build_layout;
 import tenon.frontend;
+import tenon.compile_test;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -46,19 +47,19 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
-    auto loaded = resolve_project_metadata(request.selection,
-                                           request.configuration,
-                                           request.sources,
-                                           request.locked,
-                                           request.purpose);
-    if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
-    auto metadata = rstd::move(loaded).unwrap();
-
-    auto created_toolchain = ClangToolchain::create(metadata.toolchain);
+    auto created_toolchain = ClangToolchain::create(request.configuration.toolchain);
     if (created_toolchain.is_err()) {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
+    auto loaded = resolve_project_metadata(request.selection,
+                                           request.configuration,
+                                           request.sources,
+                                           toolchain.target_info(),
+                                           request.locked,
+                                           request.purpose);
+    if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+    auto metadata = rstd::move(loaded).unwrap();
     auto frontend_service = frontend::FrontendService::make();
 
     auto resolved =
@@ -99,15 +100,39 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         target_units.emplace_back();
     }
+    auto compile_contexts = Vec<Box<CompileContext>>::make();
     auto units = Vec<PreparedUnit>::make();
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         for (const auto& source : target_spec.sources) {
+            const auto* compile_test = static_cast<const CompileTestCase*>(nullptr);
+            const auto* context      = rstd::addressof(package_plan.contexts[target]);
+            if (target_spec.artifact_kind == ArtifactKind::CompileTest) {
+                auto selected = compile_test_for_source(target_spec, source.relative_path.as_path());
+                if (selected.is_none()) {
+                    return failure<BuildSummary>(
+                        ErrorKind::Manifest,
+                        rstd::format("compile-test package '{}' has no case for source '{}'",
+                                     target_spec.name.as_str(),
+                                     source.relative_path.as_path()));
+                }
+                compile_test = *selected;
+                compile_contexts.push(Box<CompileContext>::make(
+                    compile_test_context(package_plan.contexts[target], *compile_test)));
+                context = compile_contexts[compile_contexts.len() - usize(1)].get();
+            }
             auto object = layout.object(target_spec.name.as_str(), source.relative_path.as_path());
             auto cache_record =
                 layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
             if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
+            auto compile_test_record = Option<PathBuf> {};
+            if (compile_test != nullptr) {
+                auto record = layout.cache_compile_test(target_spec.name.as_str(),
+                                                        source.relative_path.as_path());
+                if (record.is_err()) return Err(rstd::move(record).unwrap_err());
+                compile_test_record = Some(rstd::move(record).unwrap());
+            }
 
             auto id       = units.len();
             auto prepared = toolchain.prepare(
@@ -118,7 +143,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     .source          = source.path.clone(),
                     .object          = rstd::move(object).unwrap(),
                     .cache_record    = rstd::move(cache_record).unwrap(),
-                    .context         = rstd::addressof(package_plan.contexts[target]),
+                    .compile_test_record = rstd::move(compile_test_record),
+                    .context         = context,
+                    .compile_test    = compile_test,
                 },
                 target_spec.root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
@@ -165,6 +192,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto bmi_directory = layout.bmi_directory();
     auto compiled      = usize {};
     auto reused        = usize {};
+    auto compile_tests = Vec<CompileTestExecution>::make();
     for (auto unit : module_plan.compile_order) {
         auto dependencies = Vec<DependencyArtifact>::make();
         for (auto input : module_plan.direct_inputs[unit]) {
@@ -193,6 +221,61 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                        dependencies);
         if (decision.is_err()) return Err(rstd::move(decision).unwrap_err());
         auto cache_decision = rstd::move(decision).unwrap();
+        if (units[unit].unit.compile_test != nullptr) {
+            const auto& test = *units[unit].unit.compile_test;
+            if (cache_decision.current() && test.outcome == CompileTestOutcome::Success) {
+                ++reused;
+                emit(request,
+                     BuildEventKind::Reuse,
+                     package.targets[target].name.as_str(),
+                     units[unit].unit.source.as_path());
+                auto execution = evaluate_compile_test(
+                    package.targets[target].name.as_str(),
+                    test,
+                    units[unit].unit.source.as_path(),
+                    CompileCommandResult {},
+                    rstd::time::Duration {});
+                auto recorded = cache.record_compile_test(
+                    cache_decision,
+                    (*units[unit].unit.compile_test_record).as_path(),
+                    execution);
+                if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
+                compile_tests.push(rstd::move(execution));
+                keys[unit] = String::make(cache_decision.artifact());
+                continue;
+            }
+            auto begun = cache.begin_compile_test(cache_decision,
+                                                  (*units[unit].unit.compile_test_record).as_path(),
+                                                  test);
+            if (begun.is_err()) return Err(rstd::move(begun).unwrap_err());
+            emit(request,
+                 BuildEventKind::Compile,
+                 package.targets[target].name.as_str(),
+                 units[unit].unit.source.as_path());
+            auto started = rstd::time::Instant::now();
+            auto output  = toolchain.execute_compile_capture(*invocation);
+            auto elapsed = started.elapsed();
+            if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+            auto execution = evaluate_compile_test(
+                package.targets[target].name.as_str(),
+                test,
+                units[unit].unit.source.as_path(),
+                rstd::move(output).unwrap(),
+                elapsed);
+            if (execution.exit_code == i32 {}) {
+                auto committed = cache.commit_success(units[unit], cache_decision);
+                if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
+                keys[unit] = String::make(cache_decision.artifact());
+            }
+            auto recorded = cache.record_compile_test(
+                cache_decision,
+                (*units[unit].unit.compile_test_record).as_path(),
+                execution);
+            if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
+            compile_tests.push(rstd::move(execution));
+            ++compiled;
+            continue;
+        }
         if (cache_decision.current()) {
             ++reused;
             emit(request,
@@ -218,7 +301,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     for (auto target : package_plan.target_order) {
         auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) {
-            records.push(units[unit].unit.cache_record.clone());
+            if (units[unit].unit.compile_test == nullptr ||
+                units[unit].unit.compile_test->outcome == CompileTestOutcome::Success) {
+                records.push(units[unit].unit.cache_record.clone());
+            }
+            if (units[unit].unit.compile_test_record.is_some()) {
+                records.push((*units[unit].unit.compile_test_record).clone());
+            }
         }
         auto finished = cache.finish_target(layout, package.targets[target].name.as_str(), records);
         if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
@@ -252,7 +341,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
 
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
-        if (target_spec.artifact_kind == ArtifactKind::StaticLibrary) continue;
+        if (target_spec.artifact_kind == ArtifactKind::StaticLibrary ||
+            target_spec.artifact_kind == ArtifactKind::CompileTest) {
+            continue;
+        }
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
         auto linked_archives =
@@ -301,6 +393,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .artifacts = rstd::move(artifacts),
         .frontend  = frontend_service.statistics(),
         .toolchain = toolchain.statistics(),
+        .compile_tests = rstd::move(compile_tests),
     });
 }
 

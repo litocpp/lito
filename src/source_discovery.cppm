@@ -240,7 +240,7 @@ export namespace tenon
 auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
     auto seen    = StringSet::make();
     auto entries = Vec<SourceEntry>::make();
-    for (const auto& declared : manifest.declared_sources) {
+    const auto append = [&](const PathBuf& declared) -> Result<empty> {
         auto resolved = resolve_declared_source(manifest, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
@@ -248,11 +248,22 @@ auto discover_explicit_sources(const PackageManifest& manifest) -> Result<Resolv
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto source_key = rstd::move(key).unwrap();
         if (seen.contains_key(source_key.as_str())) {
-            return discovery_failure<ResolvedSourceSet>(
+            return discovery_failure<empty>(
                 rstd::format("artifact sources repeat source '{}'", source_key.as_str()));
         }
         seen.insert(source_key.clone(), empty {});
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
+        return Ok(empty {});
+    };
+    for (const auto& declared : manifest.declared_sources) {
+        auto appended = append(declared);
+        if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+    }
+    for (const auto& group : manifest.conditional_source_groups) {
+        for (const auto& declared : group.sources) {
+            auto appended = append(declared);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
     }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
@@ -308,6 +319,13 @@ auto discover_package_sources(const PackageMetadata&     package,
         auto enqueued = enqueue_candidate(
             target, rstd::move(entry).unwrap(), path_names, name_paths, queued, queue);
         if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+        for (const auto& declared : manifest.declared_sources) {
+            auto resolved = resolve_declared_source(manifest, declared.as_path());
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            enqueued = enqueue_candidate(
+                target, rstd::move(resolved).unwrap(), path_names, name_paths, queued, queue);
+            if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+        }
     }
 
     for (auto cursor = usize {}; cursor < queue.len(); ++cursor) {

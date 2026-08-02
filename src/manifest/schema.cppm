@@ -102,7 +102,8 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) 
 
 auto package_root_key(ref<str> key) -> bool {
     return key == "package"_str || key == "library"_str || key == "executable"_str ||
-           key == "test"_str || key == "usage"_str || key == "dependencies"_str;
+           key == "test"_str || key == "compile-test"_str || key == "usage"_str ||
+           key == "dependencies"_str;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {
@@ -110,15 +111,35 @@ auto workspace_root_key(ref<str> key) -> bool {
 }
 
 auto package_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "version"_str || key == "module"_str;
+    return key == "name"_str || key == "version"_str || key == "module"_str ||
+           key == "target"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
-    return key == "archive"_str || key == "discovery"_str || key == "sources"_str;
+    return key == "archive"_str || key == "discovery"_str || key == "sources"_str ||
+           key == "source-groups"_str;
 }
 
 auto executable_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "discovery"_str || key == "sources"_str;
+    return key == "name"_str || key == "discovery"_str || key == "sources"_str ||
+           key == "source-groups"_str;
+}
+
+auto compile_test_key(ref<str> key) -> bool { return key == "cases"_str; }
+
+auto target_predicate_key(ref<str> key) -> bool {
+    return key == "family"_str || key == "os"_str || key == "not-family"_str ||
+           key == "not-os"_str;
+}
+
+auto source_group_key(ref<str> key) -> bool {
+    return key == "sources"_str || key == "target"_str;
+}
+
+auto compile_test_case_key(ref<str> key) -> bool {
+    return key == "name"_str || key == "source"_str || key == "outcome"_str ||
+           key == "options"_str || key == "diagnostic-contains"_str ||
+           key == "diagnostic-contains-any"_str;
 }
 
 auto usage_key(ref<str> key) -> bool {
@@ -251,6 +272,128 @@ auto declared_paths(Option<ref<Toml>> value, ref<str> context, bool required)
     return Ok(rstd::move(result));
 }
 
+auto predicate_values(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<String>> {
+    auto result = Vec<String>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto single = (**value).as_str();
+    if (single.is_some()) {
+        if (single->is_empty()) {
+            return failure<Vec<String>>(rstd::format("{} must not be empty", context));
+        }
+        result.push(String::make(*single));
+        return Ok(rstd::move(result));
+    }
+    auto values = string_array(value, context);
+    if (values.is_err()) return Err(rstd::move(values).unwrap_err());
+    result = rstd::move(values).unwrap();
+    if (result.is_empty()) {
+        return failure<Vec<String>>(rstd::format("{} must not be empty", context));
+    }
+    for (const auto& item : result) {
+        if (item.is_empty()) {
+            return failure<Vec<String>>(rstd::format("{} item must not be empty", context));
+        }
+    }
+    return Ok(rstd::move(result));
+}
+
+auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context)
+    -> Result<TargetPredicate> {
+    if (value.is_none()) return Ok(TargetPredicate {});
+    auto table = table_value(**value, context);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_unknown(**table, context, target_predicate_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto families = predicate_values(member(**value, "family"_str),
+                                     rstd::format("{}.family", context).as_str());
+    auto operating_systems = predicate_values(member(**value, "os"_str),
+                                               rstd::format("{}.os", context).as_str());
+    auto excluded_families = predicate_values(member(**value, "not-family"_str),
+                                              rstd::format("{}.not-family", context).as_str());
+    auto excluded_operating_systems =
+        predicate_values(member(**value, "not-os"_str),
+                         rstd::format("{}.not-os", context).as_str());
+    if (families.is_err()) return Err(rstd::move(families).unwrap_err());
+    if (operating_systems.is_err()) {
+        return Err(rstd::move(operating_systems).unwrap_err());
+    }
+    if (excluded_families.is_err()) {
+        return Err(rstd::move(excluded_families).unwrap_err());
+    }
+    if (excluded_operating_systems.is_err()) {
+        return Err(rstd::move(excluded_operating_systems).unwrap_err());
+    }
+    const auto valid_family = [](ref<str> item) {
+        return item == "unix"_str || item == "windows"_str || item == "unknown"_str;
+    };
+    const auto valid_os = [](ref<str> item) {
+        return item == "linux"_str || item == "windows"_str || item == "macos"_str ||
+               item == "android"_str || item == "freebsd"_str || item == "netbsd"_str ||
+               item == "openbsd"_str || item == "unknown"_str;
+    };
+    for (const auto& item : *families) {
+        if (! valid_family(item.as_str())) {
+            return failure<TargetPredicate>(
+                rstd::format("{}.family contains unsupported value '{}'", context, item.as_str()));
+        }
+    }
+    for (const auto& item : *excluded_families) {
+        if (! valid_family(item.as_str())) {
+            return failure<TargetPredicate>(rstd::format(
+                "{}.not-family contains unsupported value '{}'", context, item.as_str()));
+        }
+    }
+    for (const auto& item : *operating_systems) {
+        if (! valid_os(item.as_str())) {
+            return failure<TargetPredicate>(
+                rstd::format("{}.os contains unsupported value '{}'", context, item.as_str()));
+        }
+    }
+    for (const auto& item : *excluded_operating_systems) {
+        if (! valid_os(item.as_str())) {
+            return failure<TargetPredicate>(
+                rstd::format("{}.not-os contains unsupported value '{}'", context, item.as_str()));
+        }
+    }
+    return Ok(TargetPredicate {
+        .families                   = rstd::move(families).unwrap(),
+        .operating_systems          = rstd::move(operating_systems).unwrap(),
+        .excluded_families          = rstd::move(excluded_families).unwrap(),
+        .excluded_operating_systems = rstd::move(excluded_operating_systems).unwrap(),
+    });
+}
+
+auto parse_source_groups(Option<ref<Toml>> value, ref<str> context)
+    -> Result<Vec<ConditionalSourceGroup>> {
+    auto result = Vec<ConditionalSourceGroup>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto groups = (**value).as_array();
+    if (groups.is_none()) {
+        return failure<Vec<ConditionalSourceGroup>>(
+            rstd::format("{} must be an array", context));
+    }
+    for (usize index {}; index < (**groups).len(); ++index) {
+        const auto item_context = rstd::format("{}[{}]", context, index);
+        auto table = table_value((**groups)[index], item_context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, item_context.as_str(), source_group_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto sources = declared_paths(member((**groups)[index], "sources"_str),
+                                      rstd::format("{}.sources", item_context.as_str()).as_str(),
+                                      true);
+        auto predicate = parse_target_predicate(
+            member((**groups)[index], "target"_str),
+            rstd::format("{}.target", item_context.as_str()).as_str());
+        if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
+        if (predicate.is_err()) return Err(rstd::move(predicate).unwrap_err());
+        result.push(ConditionalSourceGroup {
+            .predicate = rstd::move(predicate).unwrap(),
+            .sources   = rstd::move(sources).unwrap(),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto resolve_directories(Option<ref<Toml>> value, ref<rstd::path::Path> root, ref<str> context)
     -> Result<Vec<PathBuf>> {
     auto declared = declared_paths(value, context, false);
@@ -294,6 +437,94 @@ auto validate_options(const Vec<String>& options, ref<str> context) -> Result<em
         }
     }
     return Ok(empty {});
+}
+
+auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>> {
+    auto result = Vec<CompileTestCase>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto cases = (**value).as_array();
+    if (cases.is_none()) {
+        return failure<Vec<CompileTestCase>>("compile-test.cases must be an array"_str);
+    }
+    auto names   = rstd::collections::BTreeMap<String, empty>::make();
+    auto sources = rstd::collections::BTreeMap<String, empty>::make();
+    for (usize index {}; index < (**cases).len(); ++index) {
+        const auto context = rstd::format("compile-test.cases[{}]", index);
+        const auto& value  = (**cases)[index];
+        auto table = table_value(value, context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, context.as_str(), compile_test_case_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto name    = required_string(value, "name"_str, context.as_str());
+        auto source  = required_string(value, "source"_str, context.as_str());
+        auto outcome = required_string(value, "outcome"_str, context.as_str());
+        auto options = string_array(member(value, "options"_str),
+                                    rstd::format("{}.options", context.as_str()).as_str());
+        auto contains = string_array(
+            member(value, "diagnostic-contains"_str),
+            rstd::format("{}.diagnostic-contains", context.as_str()).as_str());
+        auto contains_any = string_array(
+            member(value, "diagnostic-contains-any"_str),
+            rstd::format("{}.diagnostic-contains-any", context.as_str()).as_str());
+        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
+        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+        if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());
+        if (options.is_err()) return Err(rstd::move(options).unwrap_err());
+        if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
+        if (contains_any.is_err()) return Err(rstd::move(contains_any).unwrap_err());
+        if (name->is_empty()) {
+            return failure<Vec<CompileTestCase>>(
+                rstd::format("{}.name must not be empty", context.as_str()));
+        }
+        if (names.contains_key(name->as_str())) {
+            return failure<Vec<CompileTestCase>>(
+                rstd::format("compile-test repeats case name '{}'", name->as_str()));
+        }
+        auto relative = relative_path(rstd::move(source).unwrap(),
+                                      rstd::format("{}.source", context.as_str()).as_str());
+        if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
+        auto source_text = relative->as_path().to_str();
+        if (source_text.is_none()) {
+            return failure<Vec<CompileTestCase>>(
+                rstd::format("{}.source is not valid UTF-8", context.as_str()));
+        }
+        if (sources.contains_key(*source_text)) {
+            return failure<Vec<CompileTestCase>>(
+                rstd::format("compile-test source '{}' is used by more than one case",
+                             relative->as_path()));
+        }
+        auto expected = CompileTestOutcome::Failure;
+        if (outcome->as_str() == "success"_str) {
+            expected = CompileTestOutcome::Success;
+        } else if (outcome->as_str() != "failure"_str) {
+            return failure<Vec<CompileTestCase>>(
+                rstd::format("{}.outcome must be success or failure", context.as_str()));
+        }
+        auto option_values = rstd::move(options).unwrap();
+        auto options_valid = validate_options(option_values, context.as_str());
+        if (options_valid.is_err()) return Err(rstd::move(options_valid).unwrap_err());
+        auto contains_values     = rstd::move(contains).unwrap();
+        auto contains_any_values = rstd::move(contains_any).unwrap();
+        if (expected == CompileTestOutcome::Success &&
+            (! contains_values.is_empty() || ! contains_any_values.is_empty())) {
+            return failure<Vec<CompileTestCase>>(rstd::format(
+                "{} cannot require diagnostics for a successful outcome", context.as_str()));
+        }
+        names.insert(name->clone(), empty {});
+        sources.insert(String::make(*source_text), empty {});
+        result.push(CompileTestCase {
+            .name                    = rstd::move(name).unwrap(),
+            .source                  = rstd::move(relative).unwrap(),
+            .outcome                 = expected,
+            .options                 = rstd::move(option_values),
+            .diagnostic_contains     = rstd::move(contains_values),
+            .diagnostic_contains_any = rstd::move(contains_any_values),
+        });
+    }
+    if (result.is_empty()) {
+        return failure<Vec<CompileTestCase>>("compile-test.cases must not be empty"_str);
+    }
+    return Ok(rstd::move(result));
 }
 
 auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> Result<empty> {
@@ -600,46 +831,47 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto library_value_option    = member(document, "library"_str);
     auto executable_value_option = member(document, "executable"_str);
     auto test_value_option       = member(document, "test"_str);
+    auto compile_test_value_option = member(document, "compile-test"_str);
     auto artifact_count          = usize {};
     if (library_value_option.is_some()) ++artifact_count;
     if (executable_value_option.is_some()) ++artifact_count;
     if (test_value_option.is_some()) ++artifact_count;
+    if (compile_test_value_option.is_some()) ++artifact_count;
     if (artifact_count != usize(1)) {
         return failure<ManifestDocument>(
-            "manifest must contain exactly one of 'library', 'executable', or 'test'"_str);
+            "manifest must contain exactly one of 'library', 'executable', 'test', or "
+            "'compile-test'"_str);
     }
     auto artifact_kind = ArtifactKind::TestExecutable;
     if (library_value_option.is_some()) artifact_kind = ArtifactKind::StaticLibrary;
     if (executable_value_option.is_some()) artifact_kind = ArtifactKind::Executable;
+    if (compile_test_value_option.is_some()) artifact_kind = ArtifactKind::CompileTest;
     const auto& artifact_value = library_value_option.is_some()      ? **library_value_option
                                  : executable_value_option.is_some() ? **executable_value_option
-                                                                     : **test_value_option;
+                                 : test_value_option.is_some()       ? **test_value_option
+                                                                     : **compile_test_value_option;
     const auto  artifact_context =
         artifact_kind == ArtifactKind::StaticLibrary ? "manifest.library"_str
         : artifact_kind == ArtifactKind::Executable  ? "manifest.executable"_str
-                                                     : "manifest.test"_str;
+        : artifact_kind == ArtifactKind::TestExecutable ? "manifest.test"_str
+                                                        : "manifest.compile-test"_str;
     auto artifact_table = table_value(artifact_value, artifact_context);
     if (artifact_table.is_err()) return Err(rstd::move(artifact_table).unwrap_err());
     auto artifact_known =
         reject_unknown(**artifact_table,
                        artifact_context,
-                       artifact_kind == ArtifactKind::StaticLibrary ? library_key : executable_key);
+                       artifact_kind == ArtifactKind::StaticLibrary ? library_key
+                       : artifact_kind == ArtifactKind::CompileTest ? compile_test_key
+                                                                    : executable_key);
     if (artifact_known.is_err()) return Err(rstd::move(artifact_known).unwrap_err());
 
     const auto& package_value = **member(document, "package"_str);
     auto        name          = required_string(package_value, "name"_str, "package"_str);
     auto        version       = parse_package_version(package_value);
     auto        root_module   = optional_string(package_value, "module"_str, "package"_str);
-    auto        artifact_name =
-        required_string(artifact_value,
-                        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
-                        artifact_context);
-    auto discovery_text = required_string(artifact_value, "discovery"_str, artifact_context);
     if (name.is_err()) return Err(rstd::move(name).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     if (root_module.is_err()) return Err(rstd::move(root_module).unwrap_err());
-    if (artifact_name.is_err()) return Err(rstd::move(artifact_name).unwrap_err());
-    if (discovery_text.is_err()) return Err(rstd::move(discovery_text).unwrap_err());
     if (! package_name_is_valid(name->as_str())) {
         return failure<ManifestDocument>(
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
@@ -650,34 +882,64 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     if (artifact_kind == ArtifactKind::StaticLibrary && root_module->is_none()) {
         return failure<ManifestDocument>("package.module is required for a library"_str);
     }
+    Result<String> artifact_name = Ok(name->clone());
+    if (artifact_kind != ArtifactKind::CompileTest) {
+        artifact_name = required_string(
+            artifact_value,
+            artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
+            artifact_context);
+    }
+    if (artifact_name.is_err()) return Err(rstd::move(artifact_name).unwrap_err());
     if (! valid_artifact_name(artifact_name->as_str())) {
         return failure<ManifestDocument>(rstd::format(
             "{}.{} must be a safe artifact basename",
             artifact_context,
             artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str));
     }
+    Result<String> discovery_text = Ok(String::make("explicit"_str));
+    if (artifact_kind != ArtifactKind::CompileTest) {
+        discovery_text = required_string(artifact_value, "discovery"_str, artifact_context);
+    }
+    if (discovery_text.is_err()) return Err(rstd::move(discovery_text).unwrap_err());
     const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
     const auto module_discovery   = discovery_text->as_str() == "module"_str;
     if (! explicit_discovery && ! module_discovery) {
         return failure<ManifestDocument>(
             rstd::format("{}.discovery must be explicit or module", artifact_context));
     }
-    if (module_discovery && member(artifact_value, "sources"_str).is_some()) {
-        return failure<ManifestDocument>(
-            rstd::format("{}.sources is not allowed when discovery is module", artifact_context));
+    Result<Vec<ConditionalSourceGroup>> source_groups =
+        Ok(Vec<ConditionalSourceGroup>::make());
+    if (artifact_kind != ArtifactKind::CompileTest) {
+        source_groups = parse_source_groups(
+            member(artifact_value, "source-groups"_str),
+            rstd::format("{}.source-groups", artifact_context).as_str());
     }
-    auto sources =
-        declared_paths(member(artifact_value, "sources"_str),
-                       artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
-                       : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
-                                                                    : "test.sources"_str,
-                       explicit_discovery);
-    if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
+    if (source_groups.is_err()) return Err(rstd::move(source_groups).unwrap_err());
+    Result<Vec<CompileTestCase>> compile_tests = Ok(Vec<CompileTestCase>::make());
+    if (artifact_kind == ArtifactKind::CompileTest) {
+        compile_tests = parse_compile_tests(member(artifact_value, "cases"_str));
+    }
+    if (compile_tests.is_err()) return Err(rstd::move(compile_tests).unwrap_err());
+    auto sources = Vec<PathBuf>::make();
+    if (artifact_kind == ArtifactKind::CompileTest) {
+        for (const auto& item : *compile_tests) sources.push(item.source.clone());
+    } else {
+        auto parsed_sources = declared_paths(
+            member(artifact_value, "sources"_str),
+            artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
+            : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
+                                                         : "test.sources"_str,
+            explicit_discovery && source_groups->is_empty());
+        if (parsed_sources.is_err()) return Err(rstd::move(parsed_sources).unwrap_err());
+        sources = rstd::move(parsed_sources).unwrap();
+    }
 
     auto usage        = parse_usage(member(document, "usage"_str), root.as_path());
     auto dependencies = parse_dependencies(member(document, "dependencies"_str));
+    auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
+    if (target.is_err()) return Err(rstd::move(target).unwrap_err());
 
     return Ok(ManifestDocument {
         .kind    = ManifestKind::Package,
@@ -691,9 +953,12 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
             .artifact_name = rstd::move(artifact_name).unwrap(),
             .discovery =
                 explicit_discovery ? SourceDiscoveryMode::Explicit : SourceDiscoveryMode::Module,
-            .declared_sources = rstd::move(sources).unwrap(),
-            .usage            = rstd::move(usage).unwrap(),
-            .dependencies     = rstd::move(dependencies).unwrap(),
+            .declared_sources          = rstd::move(sources),
+            .conditional_source_groups = rstd::move(source_groups).unwrap(),
+            .target                    = rstd::move(target).unwrap(),
+            .compile_tests             = rstd::move(compile_tests).unwrap(),
+            .usage                     = rstd::move(usage).unwrap(),
+            .dependencies              = rstd::move(dependencies).unwrap(),
         }),
     });
 }

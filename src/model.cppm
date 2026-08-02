@@ -7,6 +7,7 @@ import rstd;
 import tenon.frontend;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace tenon
 {
@@ -115,6 +116,7 @@ enum class ArtifactKind
     StaticLibrary,
     Executable,
     TestExecutable,
+    CompileTest,
 };
 
 enum class PackageSelectionPurpose
@@ -197,6 +199,76 @@ struct DeclaredDependency {
     DependencyVisibility     visibility { DependencyVisibility::Private };
 };
 
+enum class TargetFamily
+{
+    Unix,
+    Windows,
+    Unknown,
+};
+
+struct TargetInfo {
+    String       triple;
+    String       arch;
+    String       os;
+    TargetFamily family { TargetFamily::Unknown };
+
+    auto family_name() const noexcept -> ref<str> {
+        switch (family) {
+        case TargetFamily::Unix: return "unix"_str;
+        case TargetFamily::Windows: return "windows"_str;
+        case TargetFamily::Unknown: return "unknown"_str;
+        }
+        return "unknown"_str;
+    }
+};
+
+struct TargetPredicate {
+    Vec<String> families;
+    Vec<String> operating_systems;
+    Vec<String> excluded_families;
+    Vec<String> excluded_operating_systems;
+
+    auto matches(const TargetInfo& target) const noexcept -> bool {
+        const auto contains = [](const Vec<String>& values, ref<str> value) {
+            if (values.is_empty()) return true;
+            for (const auto& candidate : values) {
+                if (candidate.as_str() == value) return true;
+            }
+            return false;
+        };
+        const auto excludes = [](const Vec<String>& values, ref<str> value) {
+            for (const auto& candidate : values) {
+                if (candidate.as_str() == value) return true;
+            }
+            return false;
+        };
+        return contains(families, target.family_name()) &&
+               contains(operating_systems, target.os.as_str()) &&
+               ! excludes(excluded_families, target.family_name()) &&
+               ! excludes(excluded_operating_systems, target.os.as_str());
+    }
+};
+
+struct ConditionalSourceGroup {
+    TargetPredicate predicate;
+    Vec<PathBuf>    sources;
+};
+
+enum class CompileTestOutcome
+{
+    Success,
+    Failure,
+};
+
+struct CompileTestCase {
+    String             name;
+    PathBuf            source;
+    CompileTestOutcome outcome { CompileTestOutcome::Failure };
+    Vec<String>        options;
+    Vec<String>        diagnostic_contains;
+    Vec<String>        diagnostic_contains_any;
+};
+
 struct PackageManifest {
     String                  name;
     PackageVersion          version;
@@ -207,6 +279,9 @@ struct PackageManifest {
     String                  artifact_name;
     SourceDiscoveryMode     discovery { SourceDiscoveryMode::Explicit };
     Vec<PathBuf>            declared_sources;
+    Vec<ConditionalSourceGroup> conditional_source_groups;
+    TargetPredicate         target;
+    Vec<CompileTestCase>    compile_tests;
     UsageRequirements       usage;
     Vec<DeclaredDependency> dependencies;
 };
@@ -364,6 +439,7 @@ struct TargetSpec {
     Vec<TargetSource>   sources;
     Vec<DependencySpec> dependencies;
     UsageRequirements   usage;
+    Vec<CompileTestCase> compile_tests;
 };
 
 struct PackageSpec {
@@ -395,6 +471,12 @@ struct CompilerIdentity {
     u64     size {};
     i64     modified_seconds {};
     u32     modified_nanoseconds {};
+};
+
+struct CompileCommandResult {
+    i32    exit_code {};
+    String standard_output;
+    String standard_error;
 };
 
 struct CompileInvocation {
@@ -430,8 +512,10 @@ struct UnitSpec {
     PathBuf               source;
     PathBuf               object;
     PathBuf               cache_record;
+    Option<PathBuf>       compile_test_record;
     Option<PathBuf>       bmi;
     const CompileContext* context {};
+    const CompileTestCase* compile_test {};
 };
 
 struct PreparedUnit {
@@ -475,6 +559,7 @@ struct BuildObserver {
 };
 
 struct ToolchainStatistics {
+    usize target_queries {};
     usize builtin_snapshots {};
     usize builtin_refreshes {};
     usize builtin_hits {};
@@ -509,6 +594,20 @@ struct BuiltArtifact {
     PathBuf      package_root;
 };
 
+struct CompileTestExecution {
+    String             package;
+    String             name;
+    PathBuf            source;
+    CompileTestOutcome expected { CompileTestOutcome::Failure };
+    i32                exit_code {};
+    String             standard_output;
+    String             standard_error;
+    Option<String>     mismatch;
+    rstd::time::Duration elapsed;
+
+    auto success() const noexcept -> bool { return mismatch.is_none(); }
+};
+
 struct BuildSummary {
     String                       package;
     String                       profile;
@@ -519,6 +618,7 @@ struct BuildSummary {
     Vec<BuiltArtifact>           artifacts;
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;
+    Vec<CompileTestExecution>    compile_tests;
 };
 
 struct ScanRequest {

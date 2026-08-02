@@ -77,6 +77,49 @@ auto unsupported_native_preprocessor_option(ref<str> option) -> bool {
            option.starts_with("-fmodules-cache-path="_str);
 }
 
+auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
+    if (triple.is_empty()) return failure<TargetInfo>("clang target triple is empty"_str);
+    auto arch_end = usize {};
+    while (arch_end < triple.len() && triple.as_bytes()[arch_end] != u8('-')) ++arch_end;
+    auto arch = triple.get(usize {}, arch_end);
+    if (arch.is_none() || arch->is_empty()) {
+        return failure<TargetInfo>(
+            rstd::format("clang target triple '{}' has no architecture", triple));
+    }
+
+    auto os     = String::make("unknown"_str);
+    auto family = TargetFamily::Unknown;
+    if (triple.contains("-windows"_str) || triple.contains("-win32"_str) ||
+        triple.contains("-mingw"_str)) {
+        os     = String::make("windows"_str);
+        family = TargetFamily::Windows;
+    } else if (triple.contains("-android"_str)) {
+        os     = String::make("android"_str);
+        family = TargetFamily::Unix;
+    } else if (triple.contains("-linux"_str)) {
+        os     = String::make("linux"_str);
+        family = TargetFamily::Unix;
+    } else if (triple.contains("-darwin"_str) || triple.contains("-apple"_str)) {
+        os     = String::make("macos"_str);
+        family = TargetFamily::Unix;
+    } else if (triple.contains("-freebsd"_str)) {
+        os     = String::make("freebsd"_str);
+        family = TargetFamily::Unix;
+    } else if (triple.contains("-netbsd"_str)) {
+        os     = String::make("netbsd"_str);
+        family = TargetFamily::Unix;
+    } else if (triple.contains("-openbsd"_str)) {
+        os     = String::make("openbsd"_str);
+        family = TargetFamily::Unix;
+    }
+    return Ok(TargetInfo {
+        .triple = String::make(triple),
+        .arch   = String::make(*arch),
+        .os     = rstd::move(os),
+        .family = family,
+    });
+}
+
 auto optimization_option(ref<str> option) -> bool {
     return option == "-O"_str || option == "-O0"_str || option == "-O1"_str ||
            option == "-O2"_str || option == "-O3"_str || option == "-O4"_str ||
@@ -302,6 +345,8 @@ public:
         if (! compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured compiler is not clang++"_str);
         }
+        auto target_info = parse_target_info(target->as_str());
+        if (target_info.is_err()) return Err(rstd::move(target_info).unwrap_err());
 
         auto resource_path      = PathBuf::from(resource->as_str());
         auto canonical_resource = toolchain::command::resolve_tool(resource_path.as_path(),
@@ -341,11 +386,13 @@ public:
             rstd::move(archiver_path),
             rstd::move(resolved_resource),
             rstd::move(identity),
+            rstd::move(target_info).unwrap(),
         });
     }
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
+    auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
 
     auto builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
@@ -354,6 +401,7 @@ public:
 
     auto statistics() const -> ToolchainStatistics {
         auto result                   = toolchain_statistics_;
+        result.target_queries         = usize(1);
         result.builtin_snapshots      = builtin_environment_snapshots_.len();
         return result;
     }
@@ -561,17 +609,28 @@ public:
 
     auto execute_compile(const CompileInvocation& invocation, ref<rstd::path::Path> source) const
         -> Result<empty> {
+        auto output = execute_compile_capture(invocation);
+        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output->exit_code != i32 {}) {
+            return failure<empty>(rstd::format("clang++ failed for '{}'\n{}\n{}",
+                                               source,
+                                               command_text(invocation.arguments).as_str(),
+                                               output->standard_error.as_str()));
+        }
+        return Ok(empty {});
+    }
+
+    auto execute_compile_capture(const CompileInvocation& invocation) const
+        -> Result<CompileCommandResult> {
         auto output =
             run_command(invocation.arguments, Some(invocation.working_directory.as_path()));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != i32 {}) {
-            return failure<empty>(rstd::format("clang++ failed for '{}'\n{}\n{}",
-                                               source,
-                                               command_text(invocation.arguments).as_str(),
-                                               command_output.standard_error.as_str()));
-        }
-        return Ok(empty {});
+        return Ok(CompileCommandResult {
+            .exit_code       = command_output.exit_code,
+            .standard_output = rstd::move(command_output.standard_output),
+            .standard_error  = rstd::move(command_output.standard_error),
+        });
     }
 
     auto archive(ref<rstd::path::Path> output_path,
@@ -657,11 +716,13 @@ private:
     ClangToolchain(PathBuf          compiler,
                    PathBuf          archiver,
                    PathBuf          resource_dir,
-                   CompilerIdentity identity)
+                   CompilerIdentity identity,
+                   TargetInfo       target_info)
         : compiler_(rstd::move(compiler)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
-          compiler_identity_(rstd::move(identity)) {}
+          compiler_identity_(rstd::move(identity)),
+          target_info_(rstd::move(target_info)) {}
 
     auto make_builtin_context(const CompileContext& context) const
         -> Result<ClangBuiltinContext> {
@@ -750,6 +811,7 @@ private:
     PathBuf          archiver_;
     PathBuf          resource_dir_;
     CompilerIdentity compiler_identity_;
+    TargetInfo       target_info_;
     mutable ToolchainStatistics toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot>
         builtin_environment_snapshots_;

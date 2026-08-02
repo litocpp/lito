@@ -109,18 +109,6 @@ auto visit_target(const PackageMetadata& package,
     return Ok(empty {});
 }
 
-auto mark_link_dependencies(const PackageMetadata& package,
-                            const TargetMap&       target_ids,
-                            TargetId               target,
-                            Vec<uint8_t>&          marked) -> void {
-    for (const auto& dependency : package.targets[target].dependencies) {
-        const auto dependency_id = **target_ids.get(dependency.target.as_str());
-        if (marked[dependency_id] != uint8_t {}) continue;
-        marked[dependency_id] = uint8_t(1);
-        mark_link_dependencies(package, target_ids, dependency_id, marked);
-    }
-}
-
 auto append_context_path(String& result, ref<str> prefix, ref<rstd::path::Path> path) -> void {
     result.push_str(prefix);
     auto text = path.to_str();
@@ -155,6 +143,21 @@ auto context_id(const CompileContext& context) -> String {
 
 export namespace tenon
 {
+
+auto compile_test_context(const CompileContext& base, const CompileTestCase& test)
+    -> CompileContext {
+    auto context = CompileContext {
+        .standard_library  = base.standard_library,
+        .bmi_mode          = base.bmi_mode,
+        .language_standard = base.language_standard.clone(),
+    };
+    append_unique(context.include_directories, base.include_directories);
+    append_unique(context.definitions, base.definitions);
+    append_unique(context.options, base.options);
+    append_unique(context.options, test.options);
+    context.id = context_id(context);
+    return context;
+}
 
 auto resolve_source_discovery(const PackageMetadata& package,
                               ref<str>               requested_profile,
@@ -265,15 +268,17 @@ auto resolve_source_discovery(const PackageMetadata& package,
     }
 
     for (auto target : target_order) {
-        auto marked = Vec<uint8_t>::with_capacity(package.targets.len());
+        auto colors = Vec<uint8_t>::with_capacity(package.targets.len());
         for (auto id = TargetId {}; id < package.targets.len(); ++id) {
-            marked.emplace_back(uint8_t {});
+            colors.emplace_back(uint8_t {});
         }
-        mark_link_dependencies(package, target_ids, target, marked);
+        auto dependency_order = Vec<TargetId>::make();
+        auto ordered = visit_target(package, target_ids, target, colors, dependency_order);
+        if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& dependencies = link_dependencies[target];
-        for (auto index = target_order.len(); index > usize {}; --index) {
-            const auto candidate = target_order[index - usize(1)];
-            if (marked[candidate] != uint8_t {}) dependencies.emplace_back(candidate);
+        for (auto index = dependency_order.len(); index > usize {}; --index) {
+            const auto candidate = dependency_order[index - usize(1)];
+            if (candidate != target) dependencies.emplace_back(candidate);
         }
     }
 

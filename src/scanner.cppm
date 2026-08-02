@@ -73,10 +73,14 @@ auto scan(const ScanRequest &request) -> Result<ScanReport> {
   }
   auto source = rstd::move(canonical_source).unwrap();
 
-  auto loaded =
-      resolve_project_metadata(request.selection, request.configuration,
-                               request.sources, request.locked,
-                               PackageSelectionPurpose::All);
+  auto created_toolchain = ClangToolchain::create(request.configuration.toolchain);
+  if (created_toolchain.is_err()) {
+    return Err(rstd::move(created_toolchain).unwrap_err());
+  }
+  auto toolchain = rstd::move(created_toolchain).unwrap();
+  auto loaded = resolve_project_metadata(request.selection, request.configuration,
+                                         request.sources, toolchain.target_info(),
+                                         request.locked, PackageSelectionPurpose::All);
   if (loaded.is_err())
     return Err(rstd::move(loaded).unwrap_err());
   auto metadata = rstd::move(loaded).unwrap();
@@ -90,11 +94,6 @@ auto scan(const ScanRequest &request) -> Result<ScanReport> {
     return Err(rstd::move(selected).unwrap_err());
   auto source_target = *selected;
 
-  auto created_toolchain = ClangToolchain::create(metadata.toolchain);
-  if (created_toolchain.is_err()) {
-    return Err(rstd::move(created_toolchain).unwrap_err());
-  }
-  auto toolchain = rstd::move(created_toolchain).unwrap();
   auto frontend_service = frontend::FrontendService::make();
   auto facts = toolchain.preprocess(
       source.as_path(), discovery.contexts[source_target],

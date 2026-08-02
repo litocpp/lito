@@ -176,11 +176,17 @@ private:
   auto string_token(ref<str> value, const Token &origin) -> Token {
     auto text = String::make();
     text.push_ascii('"');
-    for (auto byte : value) {
-      if (byte == u8('\\') || byte == u8('"'))
+    auto begin = usize{};
+    for (auto index = usize{}; index < value.len(); ++index) {
+      auto byte = value[index];
+      if (byte == u8('\\') || byte == u8('"')) {
+        text.push_str(value.get(begin, index).unwrap());
         text.push_ascii('\\');
-      text.push_ascii(byte);
+        text.push_ascii(byte);
+        begin = index + usize(1);
+      }
     }
+    text.push_str(value.get(begin, value.len()).unwrap());
     text.push_ascii('"');
     auto token = origin.clone();
     token.kind = TokenKind::StringLiteral;
@@ -228,11 +234,18 @@ private:
         continue;
       if (!first && token.leading_space)
         text.push_ascii(' ');
-      for (auto byte : token.text.as_str()) {
-        if (byte == u8('\\') || byte == u8('"'))
+      auto value = token.text.as_str();
+      auto begin = usize{};
+      for (auto index = usize{}; index < value.len(); ++index) {
+        auto byte = value[index];
+        if (byte == u8('\\') || byte == u8('"')) {
+          text.push_str(value.get(begin, index).unwrap());
           text.push_ascii('\\');
-        text.push_ascii(byte);
+          text.push_ascii(byte);
+          begin = index + usize(1);
+        }
       }
+      text.push_str(value.get(begin, value.len()).unwrap());
       first = false;
     }
     text.push_ascii('"');
@@ -345,7 +358,7 @@ private:
     auto encoded = string_contents(token, "_Pragma"_str);
     if (encoded.is_err())
       return Err(rstd::move(encoded).unwrap_err());
-    auto contents = String::make();
+    auto contents = Vec<u8>::make();
     auto bytes = encoded->as_str().as_bytes();
     for (auto index = usize{}; index < bytes.len(); ++index) {
       if (bytes[index] == u8('\\') && index + usize(1) < bytes.len() &&
@@ -353,14 +366,18 @@ private:
            bytes[index + usize(1)] == u8('"'))) {
         ++index;
       }
-      contents.push_ascii(bytes[index]);
+      contents.push(bytes[index]);
     }
+    auto decoded = String::from_utf8(rstd::move(contents));
+    if (decoded.is_err())
+      return Err(failure("_Pragma contents are not valid UTF-8"_str,
+                         token.spelling));
     auto source = SourceFile::make(
         token.spelling.source,
         SourceBuffer{
             .path =
                 rstd::path::PathBuf::from(sources_.path(token.spelling.source)),
-            .contents = rstd::move(contents),
+            .contents = rstd::move(decoded).unwrap(),
         });
     auto lexed = lex(source);
     if (lexed.is_err())

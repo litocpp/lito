@@ -29,9 +29,7 @@ add_link_options(
   "$<$<LINK_LANGUAGE:CXX>:-stdlib=libc++>"
   "$<$<LINK_LANGUAGE:CXX>:-nostdlib++>")
 
-set(RSTD_BUILD_TESTING OFF CACHE BOOL "" FORCE)
 set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
-set(RSTD_BENCHMARKS_IN_CTEST OFF CACHE BOOL "" FORCE)
 
 include(FetchContent)
 
@@ -102,6 +100,7 @@ target_sources(
          src/build_layout.cppm
          src/cache/hash.cppm
          src/cache/mod.cppm
+         src/compile_test.cppm
          src/builder.cppm
          src/test_runner.cppm
          src/scanner.cppm
@@ -226,5 +225,41 @@ if(BUILD_TESTING)
             ${CMAKE_CURRENT_SOURCE_DIR}/test/test-command/invalid-dependency build)
   set_tests_properties(
     tenon.test-command.reject-test-dependency
+    PROPERTIES WILL_FAIL TRUE)
+
+  set(TENON_COMPILE_TEST_FIXTURE
+      ${CMAKE_CURRENT_SOURCE_DIR}/test/compile-test/workspace)
+  set(TENON_COMPILE_TEST_OUTPUT
+      ${CMAKE_CURRENT_BINARY_DIR}/compile-test-build)
+  add_test(
+    NAME tenon.compile-test.pass
+    COMMAND tenon -C ${TENON_COMPILE_TEST_FIXTURE} test --package
+            fixture-compile-pass --out ${TENON_COMPILE_TEST_OUTPUT} --verbose)
+  set_tests_properties(
+    tenon.compile-test.pass
+    PROPERTIES PASS_REGULAR_EXPRESSION
+               "test result: ok. 3 passed; 0 failed"
+               FAIL_REGULAR_EXPRESSION "windows.cpp")
+  add_test(
+    NAME tenon.compile-test.reuse
+    COMMAND tenon -C ${TENON_COMPILE_TEST_FIXTURE} test --package
+            fixture-compile-pass --out ${TENON_COMPILE_TEST_OUTPUT} --verbose)
+  set_tests_properties(
+    tenon.compile-test.reuse
+    PROPERTIES DEPENDS tenon.compile-test.pass
+               PASS_REGULAR_EXPRESSION "1 compiled, 4 reused")
+  add_test(
+    NAME tenon.compile-test.diagnostic-mismatch
+    COMMAND tenon -C ${TENON_COMPILE_TEST_FIXTURE} test --package
+            fixture-compile-mismatch --out ${TENON_COMPILE_TEST_OUTPUT})
+  set_tests_properties(
+    tenon.compile-test.diagnostic-mismatch
+    PROPERTIES WILL_FAIL TRUE)
+  add_test(
+    NAME tenon.target-condition.reject-explicit
+    COMMAND tenon -C ${TENON_COMPILE_TEST_FIXTURE} build --package
+            fixture-windows-only --out ${TENON_COMPILE_TEST_OUTPUT})
+  set_tests_properties(
+    tenon.target-condition.reject-explicit
     PROPERTIES WILL_FAIL TRUE)
 endif()

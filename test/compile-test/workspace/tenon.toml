@@ -1,0 +1,5 @@
+[workspace]
+members = ["lib", "pass", "mismatch", "windows-only"]
+
+[workspace.package]
+version = "0.1.0"

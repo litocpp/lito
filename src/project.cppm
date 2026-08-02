@@ -12,7 +12,9 @@ export namespace tenon {
 
 auto resolve_project_metadata(const PackageSelection &selection,
                               const BuildConfiguration &configuration,
-                              const PackageSourceConfig &sources, bool locked,
+                              const PackageSourceConfig &sources,
+                              const TargetInfo& target_info,
+                              bool locked,
                               PackageSelectionPurpose purpose =
                                   PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
@@ -23,7 +25,8 @@ auto resolve_project_metadata(const PackageSelection &selection,
   auto resolution = lock_session.take_resolution_options();
   resolution.sources = sources.clone();
   auto resolved =
-      resolve_package_selection(selection, purpose, rstd::move(resolution));
+      resolve_package_selection(selection, purpose, rstd::move(resolution),
+                                rstd::addressof(target_info));
   if (resolved.is_err())
     return Err(rstd::move(resolved).unwrap_err());
   auto project = rstd::move(resolved).unwrap();
@@ -33,7 +36,7 @@ auto resolve_project_metadata(const PackageSelection &selection,
   }
   return adapt_package_graph_metadata(
       rstd::move(project.graph), project.selected_package_names,
-      project.selected_root_names, configuration);
+      project.selected_root_names, configuration, target_info);
 }
 
 } // namespace tenon

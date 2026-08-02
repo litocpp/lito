@@ -126,6 +126,14 @@ public:
             cache_target_directory(target).as_path(), ""_str, relative_source, ".json"_str);
     }
 
+    auto cache_compile_test(ref<str> target, ref<rstd::path::Path> relative_source) const
+        -> Result<PathBuf> {
+        return source_path(cache_target_directory(target).as_path(),
+                           ""_str,
+                           relative_source,
+                           ".test.json"_str);
+    }
+
     auto bmi_directory() const -> PathBuf { return join(output_.as_path(), "bmi"_str); }
 
     auto bmi(ref<str> logical_name) const -> PathBuf {

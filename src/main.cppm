@@ -59,6 +59,7 @@ struct ArtifactCounts {
     usize archives {};
     usize executables {};
     usize tests {};
+    usize compile_tests {};
 };
 
 auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
@@ -68,6 +69,7 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
         case tenon::ArtifactKind::StaticLibrary: ++counts.archives; break;
         case tenon::ArtifactKind::Executable: ++counts.executables; break;
         case tenon::ArtifactKind::TestExecutable: ++counts.tests; break;
+        case tenon::ArtifactKind::CompileTest: ++counts.compile_tests; break;
         }
     }
     return counts;
@@ -173,7 +175,7 @@ extern "C++" int main() {
         auto counts  = artifact_counts(summary.build);
         if (options.no_run) {
             rstd::io::println("built {} tests ({}) in {}: {} scanned, {} compiled, {} reused",
-                              counts.tests,
+                              counts.tests + summary.build.compile_tests.len(),
                               summary.build.profile.as_str(),
                               summary.build.output.as_path(),
                               summary.build.scanned,
@@ -189,6 +191,24 @@ extern "C++" int main() {
 
         auto passed = usize {};
         auto failed = usize {};
+        for (const auto& execution : summary.build.compile_tests) {
+            if (execution.success()) {
+                ++passed;
+                rstd::io::println("[pass] {}::{} ({} ms)",
+                                  execution.package.as_str(),
+                                  execution.name.as_str(),
+                                  execution.elapsed.as_millis());
+                continue;
+            }
+            ++failed;
+            rstd::io::eprintln("[fail] {}::{}: {}",
+                               execution.package.as_str(),
+                               execution.name.as_str(),
+                               execution.mismatch->as_str());
+            if (! execution.standard_error.is_empty()) {
+                rstd::io::eprintln("{}", execution.standard_error.as_str());
+            }
+        }
         for (const auto& execution : summary.executions) {
             if (execution.success()) {
                 ++passed;
@@ -256,7 +276,7 @@ extern "C++" int main() {
                       summary.reused,
                       counts.archives,
                       counts.executables,
-                      counts.tests);
+                      counts.tests + summary.compile_tests.len());
     if (event_context.verbose) {
         rstd::io::println("frontend: {} source requests, {} hits, {} stats, {} reads, {} bytes, "
                           "{} lexed, {} analyzed, {} analysis hits",
@@ -269,11 +289,13 @@ extern "C++" int main() {
                           summary.frontend.analyze_builds,
                           summary.frontend.analyze_hits);
         rstd::io::println(
-            "clang builtins: key v3, stdlib catalog {}, {} snapshots, {} refreshes, {} hits, "
+            "clang target: {} query; builtins: key v3, stdlib catalog {}, {} snapshots, "
+            "{} refreshes, {} hits, "
             "{} macro processes, "
             "{} capability processes, {} clang macros, {} native macro owners, "
             "{} clang capabilities, {} native capabilities, {} macro bytes, "
             "{} capability input bytes, {} capability output bytes, {} ignored options",
+            summary.toolchain.target_queries,
             tenon::toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID,
             summary.toolchain.builtin_snapshots,
             summary.toolchain.builtin_refreshes,
