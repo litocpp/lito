@@ -7,6 +7,7 @@ import tenon.project;
 import tenon.package;
 import tenon.toolchain;
 import tenon.frontend;
+import tenon.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -94,7 +95,14 @@ auto scan(const ScanRequest &request) -> Result<ScanReport> {
     return Err(rstd::move(selected).unwrap_err());
   auto source_target = *selected;
 
-  auto frontend_service = frontend::FrontendService::make();
+  auto created_profiler = ScanProfiler::create();
+  if (created_profiler.is_err()) {
+    return Err(
+        Error::make(ErrorKind::Artifact,
+                    rstd::move(created_profiler).unwrap_err_unchecked()));
+  }
+  auto profiler = rstd::move(created_profiler).unwrap_unchecked();
+  auto frontend_service = frontend::FrontendService::make(profiler);
   auto facts = toolchain.preprocess(
       source.as_path(), discovery.contexts[source_target],
       metadata.targets[source_target].manifest.root.as_path(), frontend_service);

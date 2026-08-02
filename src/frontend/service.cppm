@@ -2,6 +2,7 @@ export module tenon.frontend:service;
 
 import rstd;
 import tenon.frontend.lexical;
+import tenon.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -21,7 +22,11 @@ struct FrontendStatistics {
 
 class FrontendService {
 public:
-  static auto make() -> FrontendService { return FrontendService{}; }
+  static auto make(ScanProfiler &profiler) -> FrontendService {
+    return FrontendService{profiler};
+  }
+
+  auto profiler() noexcept -> ScanProfiler & { return *profiler_; }
 
   auto load(ref<rstd::path::Path> path)
       -> lexical::Result<lexical::SharedLexedSource> {
@@ -36,6 +41,8 @@ public:
       ++statistics_.source_hits;
       return Ok((**cached).clone());
     }
+
+    auto source_span = profiler_->span(ScanProbe::SourceResolve);
 
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
@@ -89,7 +96,9 @@ public:
       return Ok(rstd::move(shared));
     }
 
-    auto contents = rstd::fs::read_to_string(canonical->as_path());
+    auto contents = profiler_->measure(ScanProbe::SourceRead, [&] {
+      return rstd::fs::read_to_string(canonical->as_path());
+    });
     if (contents.is_err()) {
       return Err(lexical::Error::make(rstd::format(
           "cannot read source '{}': {}", canonical->as_path(),
@@ -102,7 +111,8 @@ public:
         .contents = rstd::move(contents).unwrap(),
     });
     auto source = lexical::SourceFile{.snapshot = snapshot.clone()};
-    auto tokens = lexical::lex(source, true);
+    auto tokens = profiler_->measure(
+        ScanProbe::Lex, [&] { return lexical::lex(source, true); });
     if (tokens.is_err())
       return Err(rstd::move(tokens).unwrap_err());
     ++statistics_.lex_builds;
@@ -135,6 +145,9 @@ public:
   auto record_analysis_hit() noexcept -> void { ++statistics_.analyze_hits; }
 
 private:
+  explicit FrontendService(ScanProfiler &profiler) : profiler_(&profiler) {}
+
+  ScanProfiler *profiler_{};
   rstd::collections::HashMap<String, lexical::SharedLexedSource> sources_;
   rstd::collections::HashMap<String, lexical::SharedLexedSource> identities_;
   FrontendStatistics statistics_;

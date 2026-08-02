@@ -4,6 +4,7 @@ import rstd;
 import tenon.model;
 import tenon.process;
 import tenon.frontend;
+import tenon.profiling;
 import tenon.modules;
 import tenon.build_profile;
 import :clang_options;
@@ -437,7 +438,9 @@ public:
                     ref<rstd::path::Path> working_directory,
                     frontend::FrontendService& frontend_service) const
         -> Result<FrontendResult> {
+        auto frontend_span = frontend_service.profiler().span(ScanProbe::Frontend);
         frontend_service.record_analysis_build();
+        auto environment_span = frontend_service.profiler().span(ScanProbe::Environment);
         for (const auto& option : compile_context.options) {
             if (unsupported_native_preprocessor_option(option.as_str())) {
                 return failure<FrontendResult>(rstd::format(
@@ -520,23 +523,30 @@ public:
             environment = rstd::addressof(
                 preprocessor_environments_[preprocessor_environments_.len() - usize(1)]);
         }
+        auto environment_finished = frontend_service.profiler().complete(environment_span);
+        if (environment_finished.is_err()) {
+            return failure<FrontendResult>(
+                rstd::move(environment_finished).unwrap_err_unchecked());
+        }
         auto includes = toolchain::ClangIncludeResolver(*environment);
         auto builtins = toolchain::ClangBuiltinProvider(*environment, working_directory);
         auto pragmas  = toolchain::ClangPragmaHandler {};
         auto events   = toolchain::DependencyEvents {};
         auto consumer = frontend::parser::ModuleDependencyConsumer::make();
-        auto translation = preprocessor::preprocess_to(
-            preprocessor::PreprocessRequest {
-                .source = PathBuf::from(source),
-                .language_standard = compile_context.language_standard.clone(),
-                .environment_identity = environment->identity.clone(),
-            },
-            frontend_service,
-            includes,
-            builtins,
-            pragmas,
-            events,
-            consumer);
+        auto translation = frontend_service.profiler().measure(ScanProbe::Preprocessor, [&] {
+            return preprocessor::preprocess_to(
+                preprocessor::PreprocessRequest {
+                    .source = PathBuf::from(source),
+                    .language_standard = compile_context.language_standard.clone(),
+                    .environment_identity = environment->identity.clone(),
+                },
+                frontend_service,
+                includes,
+                builtins,
+                pragmas,
+                events,
+                consumer);
+        });
         if (translation.is_err()) {
             auto error = rstd::move(translation).unwrap_err();
             if (error.path.is_some() && error.location.is_some()) {

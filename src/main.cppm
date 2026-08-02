@@ -1,6 +1,7 @@
 export module tenon.executable;
 
 import rstd;
+import rstd.bench;
 import tenon;
 import :cli;
 
@@ -73,6 +74,19 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
         }
     }
     return counts;
+}
+
+void print_scan_profile(const tenon::BuildSummary& summary) {
+    const auto schema = summary.scan_profile.schema();
+    for (const auto& timing : summary.scan_profile.overall()) {
+        auto label = schema->label(timing.probe);
+        if (label.is_none()) continue;
+        rstd::io::println("timing {}: {} calls, {} us total, {} us self",
+                          *label,
+                          timing.count,
+                          timing.inclusive_total.as_micros(),
+                          timing.exclusive_total.as_micros());
+    }
 }
 
 } // namespace
@@ -173,6 +187,7 @@ extern "C++" int main() {
         }
         auto summary = rstd::move(result).unwrap();
         auto counts  = artifact_counts(summary.build);
+        if (event_context.verbose) print_scan_profile(summary.build);
         if (options.no_run) {
             rstd::io::println("built {} tests ({}) in {}: {} scanned, {} compiled, {} reused",
                               counts.tests + summary.build.compile_tests.len(),
@@ -310,6 +325,7 @@ extern "C++" int main() {
             summary.toolchain.builtin_capability_input_bytes,
             summary.toolchain.builtin_capability_output_bytes,
             summary.toolchain.ignored_builtin_options);
+        print_scan_profile(summary);
     }
     return 0;
 }

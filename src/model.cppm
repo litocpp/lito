@@ -4,6 +4,7 @@ module;
 export module tenon.model;
 
 import rstd;
+import rstd.bench;
 import tenon.frontend;
 
 using namespace rstd::prelude;
@@ -618,6 +619,7 @@ struct BuildSummary {
     Vec<BuiltArtifact>           artifacts;
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;
+    rstd::bench::probe::ProbeReport scan_profile;
     Vec<CompileTestExecution>    compile_tests;
 };
 

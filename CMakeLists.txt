@@ -36,7 +36,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 1a39de4fe7587ff0013be71ebb2adc27f638deed)
+  GIT_TAG ff15588888448b94a56e7f59df637306cc24ae90)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
@@ -66,6 +66,7 @@ target_sources(
          src/frontend/parser/mod.cppm
          src/frontend/service.cppm
          src/frontend/mod.cppm
+         src/profiling.cppm
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm
@@ -106,7 +107,7 @@ target_sources(
          src/scanner.cppm
          src/formatter.cppm
          src/mod.cppm)
-target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml)
+target_link_libraries(tenon.lib PUBLIC rstd.std rstd.json rstd.toml rstd.bench)
 
 add_executable(tenon)
 target_sources(
@@ -165,6 +166,14 @@ if(BUILD_TESTING)
     tenon.test-command.build-production
     PROPERTIES PASS_REGULAR_EXPRESSION
                "1 archives, 1 executables, 0 tests")
+  add_test(
+    NAME tenon.timing.scan
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} build --out
+            ${TENON_TEST_COMMAND_OUTPUT} --verbose)
+  set_tests_properties(
+    tenon.timing.scan
+    PROPERTIES DEPENDS tenon.test-command.build-production
+               PASS_REGULAR_EXPRESSION "timing scan.preprocessor:")
   add_test(
     NAME tenon.test-command.no-run
     COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out

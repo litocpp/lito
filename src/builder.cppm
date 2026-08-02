@@ -11,6 +11,7 @@ import tenon.cache;
 import tenon.build_layout;
 import tenon.frontend;
 import tenon.compile_test;
+import tenon.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -60,10 +61,19 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                            request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata = rstd::move(loaded).unwrap();
-    auto frontend_service = frontend::FrontendService::make();
+    auto created_profiler = ScanProfiler::create();
+    if (created_profiler.is_err()) {
+        return failure<BuildSummary>(ErrorKind::Artifact,
+                                     rstd::move(created_profiler).unwrap_err_unchecked());
+    }
+    auto profiler         = rstd::move(created_profiler).unwrap_unchecked();
+    auto frontend_service = frontend::FrontendService::make(profiler);
+    auto scan_span        = profiler.span(ScanProbe::Total);
 
-    auto resolved =
-        resolve_source_discovery(metadata, metadata.default_profile.as_str(), request.targets);
+    auto resolved = profiler.measure(ScanProbe::Plan, [&] {
+        return resolve_source_discovery(
+            metadata, metadata.default_profile.as_str(), request.targets);
+    });
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto discovery_plan = rstd::move(resolved).unwrap();
 
@@ -74,12 +84,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
     auto layout = rstd::move(selected_layout).unwrap();
 
-    auto discovered =
-        discover_package_sources(metadata,
-                                 discovery_plan,
-                                 toolchain,
-                                 frontend_service,
-                                 request.observer);
+    auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
+        return discover_package_sources(
+            metadata, discovery_plan, toolchain, frontend_service, request.observer);
+    });
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
     auto finalized   = finalize_package(rstd::move(metadata), rstd::move(source_sets));
@@ -89,19 +97,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (resolved_package.is_err()) return Err(rstd::move(resolved_package).unwrap_err());
     auto package_plan = rstd::move(resolved_package).unwrap();
 
-    auto created_cache = CompileCacheSession::create(layout,
-                                                     package.root.as_path(),
-                                                     package_plan.profile->name.as_str(),
-                                                     toolchain.compiler_identity());
-    if (created_cache.is_err()) return Err(rstd::move(created_cache).unwrap_err());
-    auto cache = rstd::move(created_cache).unwrap();
-
     auto target_units = Vec<Vec<UnitId>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         target_units.emplace_back();
     }
     auto compile_contexts = Vec<Box<CompileContext>>::make();
     auto units = Vec<PreparedUnit>::make();
+    auto prepare_span = profiler.span(ScanProbe::PrepareUnits);
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         for (const auto& source : target_spec.sources) {
@@ -157,8 +159,14 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             target_units[target].emplace_back(id);
         }
     }
+    auto prepared_units = profiler.complete(prepare_span);
+    if (prepared_units.is_err()) {
+        return failure<BuildSummary>(ErrorKind::Artifact,
+                                     rstd::move(prepared_units).unwrap_err_unchecked());
+    }
 
     auto scans = Vec<ScanResult>::with_capacity(units.len());
+    auto classify_span = profiler.span(ScanProbe::ClassifyUnits);
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         const auto target = units[unit].unit.target;
         if (units[unit].frontend_result == nullptr) {
@@ -175,17 +183,44 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         }
         scans.push(rstd::move(result));
     }
+    auto classified_units = profiler.complete(classify_span);
+    if (classified_units.is_err()) {
+        return failure<BuildSummary>(ErrorKind::Artifact,
+                                     rstd::move(classified_units).unwrap_err_unchecked());
+    }
 
-    auto convention_valid = validate_module_conventions(package, units, scans);
+    auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
+        return validate_module_conventions(package, units, scans);
+    });
     if (convention_valid.is_err()) {
         return Err(rstd::move(convention_valid).unwrap_err());
     }
 
-    auto resolved_modules = resolve_modules(package_plan, units, scans);
+    auto resolved_modules = profiler.measure(ScanProbe::ModuleGraph, [&] {
+        return resolve_modules(package_plan, units, scans);
+    });
     if (resolved_modules.is_err()) {
         return Err(rstd::move(resolved_modules).unwrap_err());
     }
-    auto module_plan = rstd::move(resolved_modules).unwrap();
+    auto module_plan    = rstd::move(resolved_modules).unwrap();
+    auto completed_scan = profiler.complete(scan_span);
+    if (completed_scan.is_err()) {
+        return failure<BuildSummary>(ErrorKind::Artifact,
+                                     rstd::move(completed_scan).unwrap_err_unchecked());
+    }
+    auto finished_profile = profiler.finish();
+    if (finished_profile.is_err()) {
+        return failure<BuildSummary>(ErrorKind::Artifact,
+                                     rstd::move(finished_profile).unwrap_err_unchecked());
+    }
+    auto scan_profile = rstd::move(finished_profile).unwrap_unchecked();
+
+    auto created_cache = CompileCacheSession::create(layout,
+                                                     package.root.as_path(),
+                                                     package_plan.profile->name.as_str(),
+                                                     toolchain.compiler_identity());
+    if (created_cache.is_err()) return Err(rstd::move(created_cache).unwrap_err());
+    auto cache = rstd::move(created_cache).unwrap();
 
     auto keys = Vec<String>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
@@ -393,6 +428,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .artifacts = rstd::move(artifacts),
         .frontend  = frontend_service.statistics(),
         .toolchain = toolchain.statistics(),
+        .scan_profile = rstd::move(scan_profile),
         .compile_tests = rstd::move(compile_tests),
     });
 }
