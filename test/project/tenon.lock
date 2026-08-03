@@ -1,0 +1,115 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "compile-lib/tenon.toml",
+      "name": "fixture-compile-lib",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "compile-mismatch/tenon.toml",
+      "name": "fixture-compile-mismatch",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [
+        "fixture-compile-lib"
+      ],
+      "manifest": "compile-pass/tenon.toml",
+      "name": "fixture-compile-pass",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "environment-cache/tenon.toml",
+      "name": "fixture-environment-cache",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "preprocessor-native/tenon.toml",
+      "name": "fixture-preprocessor-native",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "scan-definitions/tenon.toml",
+      "name": "fixture-scan-definitions",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "test-app/tenon.toml",
+      "name": "fixture-test-app",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [
+        "fixture-test-lib"
+      ],
+      "manifest": "test-fail/tenon.toml",
+      "name": "fixture-test-fail",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "test-lib/tenon.toml",
+      "name": "fixture-test-lib",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [
+        "fixture-test-lib"
+      ],
+      "manifest": "test-pass/tenon.toml",
+      "name": "fixture-test-pass",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "test-signal/tenon.toml",
+      "name": "fixture-test-signal",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "windows-only/tenon.toml",
+      "name": "fixture-windows-only",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-compile-lib",
+    "fixture-compile-mismatch",
+    "fixture-compile-pass",
+    "fixture-environment-cache",
+    "fixture-preprocessor-native",
+    "fixture-scan-definitions",
+    "fixture-test-app",
+    "fixture-test-fail",
+    "fixture-test-lib",
+    "fixture-test-pass",
+    "fixture-test-signal",
+    "fixture-windows-only"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

@@ -1,9 +1,0 @@
-[package]
-name = "fixture-convention-sources"
-version = "0.1.0"
-module = "fixture.convention.sources"
-
-[library]
-archive = "fixture.convention.sources"
-discovery = "module"
-sources = ["src/lib.cppm"]

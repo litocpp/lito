@@ -12,7 +12,7 @@
     {
       "name": "debug",
       "inherits": "clang-base",
-      "binaryDir": "${sourceDir}/build/debug",
+      "binaryDir": "${sourceDir}/build/cmake-debug",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Debug"
       }
@@ -20,7 +20,7 @@
     {
       "name": "release",
       "inherits": "clang-base",
-      "binaryDir": "${sourceDir}/build/release",
+      "binaryDir": "${sourceDir}/build/cmake-release",
       "cacheVariables": {
         "CMAKE_BUILD_TYPE": "Release"
       }

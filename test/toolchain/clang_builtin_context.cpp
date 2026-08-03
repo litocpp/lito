@@ -1,4 +1,7 @@
+#include <rstd/test/gtest.hpp>
+
 import rstd;
+import rstd.test;
 import tenon;
 
 using namespace rstd::prelude;
@@ -38,7 +41,7 @@ auto same_command(const tenon::Vec<String>& left, const tenon::Vec<String>& righ
 
 } // namespace
 
-auto main() -> int {
+auto run_clang_builtin_context_test() -> int {
     auto created = ClangToolchain::create(ToolchainSpec {
         .compiler = PathBuf::from("clang++"_str),
         .archiver = PathBuf::from("llvm-ar"_str),
@@ -97,4 +100,8 @@ auto main() -> int {
     if (cxx23.is_err() || cxx23->key.as_str() == debug->key.as_str()) return 12;
     if (cxx17.is_ok()) return 13;
     return 0;
+}
+
+TEST(ClangBuiltinContext, RelevantOptionsOnly) {
+    EXPECT_EQ(run_clang_builtin_context_test(), 0);
 }

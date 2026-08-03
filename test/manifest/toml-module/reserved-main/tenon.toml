@@ -1,8 +1,0 @@
-[package]
-name = "fixture-convention-main"
-version = "0.1.0"
-module = "fixture.convention.main"
-
-[library]
-archive = "fixture.convention.main"
-discovery = "module"

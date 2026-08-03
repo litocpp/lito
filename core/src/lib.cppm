@@ -1,0 +1,25 @@
+export module tenon;
+
+export import tenon.model;
+export import tenon.build_profile;
+export import tenon.profiling;
+export import tenon.reporting;
+export import tenon.config;
+export import tenon.manifest;
+export import tenon.frontend;
+export import tenon.frontend_analysis;
+export import tenon.source_discovery;
+export import tenon.modules;
+export import tenon.package;
+export import tenon.workspace;
+export import tenon.workspace_resolver;
+export import tenon.lock_store;
+export import tenon.project;
+export import tenon.build_layout;
+export import tenon.cache;
+export import tenon.toolchain;
+export import tenon.builder;
+export import tenon.compile_test;
+export import tenon.test_runner;
+export import tenon.scanner;
+export import tenon.formatter;

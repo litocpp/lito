@@ -1,4 +1,7 @@
+#include <rstd/test/gtest.hpp>
+
 import rstd;
+import rstd.test;
 import tenon.frontend;
 
 using namespace rstd::prelude;
@@ -132,7 +135,7 @@ auto contains_sequence(const Vec<Token>& tokens,
     return false;
 }
 
-auto main() -> int {
+auto run_preprocessor_test() -> int {
     auto sources = MemorySources {};
     sources.add("/config.hpp"_str,
                 "#pragma once\n#define TENON_VALUE 7\n"_str);
@@ -229,4 +232,8 @@ auto main() -> int {
         return 10;
     }
     return 0;
+}
+
+TEST(Preprocessor, Core) {
+    EXPECT_EQ(run_preprocessor_test(), 0);
 }

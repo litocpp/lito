@@ -1,0 +1,52 @@
+[package]
+name = "tenon-test"
+version.workspace = true
+module = "tenon.test"
+
+[test]
+name = "tenon-test"
+discovery = "explicit"
+sources = [
+  "src/main.cpp",
+  "src/support/mod.cppm",
+  "src/integration.cpp",
+  "src/contracts.cpp",
+  "profiling.cpp",
+  "preprocessor/core.cpp",
+  "toolchain/clang_builtin_context.cpp",
+]
+
+[usage]
+private-options = [
+  "-fPIC",
+  "-Wall",
+  "-Wpedantic",
+  "-Wno-gnu-statement-expression",
+  "-Wno-deprecated-declarations",
+  "-Wunknown-attributes",
+  "-fsized-deallocation",
+]
+
+[dependencies.tenon-core]
+path = "../core"
+visibility = "private"
+
+[dependencies.tenon-frontend]
+path = "../frontend"
+visibility = "private"
+
+[dependencies.rstd-std]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-test]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-bench]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-nostd]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "runtime"

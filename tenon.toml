@@ -1,44 +1,6 @@
-[package]
-name = "tenon"
+[workspace]
+members = ["frontend", "core", "cli", "test"]
+default-members = ["cli", "test"]
+
+[workspace.package]
 version = "0.1.0"
-module = "tenon"
-
-[executable]
-name = "tenon"
-discovery = "module"
-
-[usage]
-private-options = [
-  "-fPIC",
-  "-Wall",
-  "-Wpedantic",
-  "-Wno-gnu-statement-expression",
-  "-Wno-deprecated-declarations",
-  "-Wunknown-attributes",
-  "-fsized-deallocation",
-]
-private-linker-options = ["-nostdlib++"]
-
-[dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
-
-[dependencies.rstd-json]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
-
-[dependencies.rstd-argparse]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
-
-[dependencies.rstd-bench]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
-
-[dependencies.rstd-toml]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "private"
-
-[dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
-visibility = "runtime"

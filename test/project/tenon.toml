@@ -1,0 +1,18 @@
+[workspace]
+members = [
+  "test-lib",
+  "test-app",
+  "test-pass",
+  "test-fail",
+  "test-signal",
+  "compile-lib",
+  "compile-pass",
+  "compile-mismatch",
+  "windows-only",
+  "preprocessor-native",
+  "scan-definitions",
+  "environment-cache",
+]
+
+[workspace.package]
+version = "0.1.0"

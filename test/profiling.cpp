@@ -1,5 +1,8 @@
+#include <rstd/test/gtest.hpp>
+
 import rstd;
 import rstd.bench;
+import rstd.test;
 import tenon.profiling;
 
 using namespace rstd::prelude;
@@ -20,7 +23,7 @@ struct ManualClock {
 
 } // namespace
 
-auto main() -> int {
+auto run_profiling_test() -> int {
     auto registry = rstd::bench::probe::ProbeRegistry::new_();
     auto probe = registry.register_probe(tenon::scan_probe_label(tenon::ScanProbe::Preprocessor))
                      .unwrap();
@@ -109,4 +112,8 @@ auto main() -> int {
         return 6;
     }
     return 0;
+}
+
+TEST(Profiling, ReportAndBuildTiming) {
+    EXPECT_EQ(run_profiling_test(), 0);
 }
