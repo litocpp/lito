@@ -19,11 +19,6 @@ auto failure(String message) -> Result<T> {
 export namespace tenon
 {
 
-auto is_supported_cpp_standard(ref<str> standard) -> bool {
-    return standard == "c++20"_str || standard == "c++23"_str || standard == "c++26"_str ||
-           standard == "c++2b"_str || standard == "c++2c"_str;
-}
-
 auto build_profile_name(BuildProfile profile) -> ref<str> {
     switch (profile) {
     case BuildProfile::Debug: return "debug"_str;
@@ -64,26 +59,41 @@ auto make_profile_spec(const BuildConfiguration& configuration) -> Result<Profil
         }
     }
 
-    auto options = Vec<String>::make();
+    auto optimization = CppOptimization::Default;
+    auto debug_info   = CppDebugInfo::None;
+    auto layer        = CppOptionLayer {};
     switch (configuration.profile) {
     case BuildProfile::Debug:
-        options.push(String::make("-O0"_str));
-        options.push(String::make("-g"_str));
+        optimization = CppOptimization::None;
+        debug_info   = CppDebugInfo::Full;
         break;
     case BuildProfile::Release:
-        options.push(String::make("-O3"_str));
-        options.push(String::make("-DNDEBUG"_str));
+        optimization = CppOptimization::Level3;
+        layer.definitions.push(String::make("NDEBUG"_str));
         break;
     }
-    for (const auto& option : configuration.options) options.push(option.clone());
+    for (const auto& option : configuration.options) layer.options.push(option.clone());
+
+    auto cpp = make_cpp_options(configuration.language_standard.as_str(),
+                                configuration.standard_library,
+                                configuration.exceptions,
+                                configuration.rtti,
+                                optimization,
+                                debug_info,
+                                rstd::move(layer));
+    if (cpp.is_err()) {
+        return failure<ProfileSpec>(rstd::move(cpp).unwrap_err());
+    }
 
     return Ok(ProfileSpec {
-        .name              = String::make(build_profile_name(configuration.profile)),
-        .standard_library  = configuration.standard_library,
-        .bmi_mode          = configuration.bmi_mode,
-        .language_standard = configuration.language_standard.clone(),
-        .options           = rstd::move(options),
-        .linker_options    = configuration.linker_options.clone(),
+        .name = String::make(build_profile_name(configuration.profile)),
+        .bmi =
+            BmiRequest {
+                .representation   = configuration.bmi_mode,
+                .source_embedding = configuration.bmi_source_embedding,
+            },
+        .cpp            = rstd::move(cpp).unwrap(),
+        .linker_options = configuration.linker_options.clone(),
     });
 }
 

@@ -7,6 +7,8 @@ import rstd;
 import rstd.bench;
 import tenon.frontend;
 import tenon.profiling;
+export import tenon.cpp;
+export import tenon.bmi;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -50,18 +52,6 @@ struct Error {
 
 template<typename T>
 using Result = rstd::Result<T, Error>;
-
-enum class StandardLibrary
-{
-    Libstdcxx,
-    Libcxx,
-};
-
-enum class BmiMode
-{
-    Reduced,
-    Full,
-};
 
 enum class BuildProfile
 {
@@ -174,12 +164,10 @@ struct ProjectConfig {
 };
 
 struct ProfileSpec {
-    String          name;
-    StandardLibrary standard_library { StandardLibrary::Libstdcxx };
-    BmiMode         bmi_mode { BmiMode::Reduced };
-    String          language_standard;
-    Vec<String>     options;
-    Vec<String>     linker_options;
+    String            name;
+    BmiRequest        bmi;
+    CppCompileOptions cpp;
+    Vec<String>       linker_options;
 };
 
 struct DependencySpec {
@@ -410,13 +398,16 @@ enum class LockStatus
 };
 
 struct BuildConfiguration {
-    BuildProfile    profile { BuildProfile::Debug };
-    ToolchainSpec   toolchain;
-    StandardLibrary standard_library { StandardLibrary::Libstdcxx };
-    BmiMode         bmi_mode { BmiMode::Reduced };
-    String          language_standard;
-    Vec<String>     options;
-    Vec<String>     linker_options;
+    BuildProfile             profile { BuildProfile::Debug };
+    ToolchainSpec            toolchain;
+    StandardLibrary          standard_library { StandardLibrary::Libstdcxx };
+    BmiMode                  bmi_mode { BmiMode::Reduced };
+    BmiSourceEmbeddingPolicy bmi_source_embedding { BmiSourceEmbeddingPolicy::ExternalSources };
+    bool                     exceptions { false };
+    bool                     rtti { false };
+    String                   language_standard;
+    Vec<String>              options;
+    Vec<String>              linker_options;
 };
 
 struct TargetSource {
@@ -475,13 +466,10 @@ struct PackageSpec {
 };
 
 struct CompileContext {
-    String          id;
-    StandardLibrary standard_library { StandardLibrary::Libstdcxx };
-    BmiMode         bmi_mode { BmiMode::Reduced };
-    String          language_standard;
-    Vec<PathBuf>    include_directories;
-    Vec<String>     definitions;
-    Vec<String>     options;
+    String                id;
+    BmiRequest            bmi;
+    CppCompileOptions     cpp;
+    CppPublicRequirements public_requirements;
 };
 
 struct CompilerIdentity {
@@ -489,6 +477,7 @@ struct CompilerIdentity {
     String  version;
     String  target;
     PathBuf resource_directory;
+    String  build_identity;
     u64     size {};
     i64     modified_seconds {};
     u32     modified_nanoseconds {};
@@ -502,9 +491,13 @@ struct CompileCommandResult {
 };
 
 struct CompileInvocation {
-    Vec<String> arguments;
-    PathBuf     working_directory;
-    String      identity;
+    Vec<String>     arguments;
+    PathBuf         working_directory;
+    String          identity;
+    PathBuf         staged_object;
+    PathBuf         final_object;
+    Option<PathBuf> staged_bmi;
+    Option<PathBuf> final_bmi;
 };
 
 enum class LinkArchiveMode
@@ -546,7 +539,7 @@ struct UnitSpec {
     PathBuf                object;
     PathBuf                cache_record;
     Option<PathBuf>        compile_test_record;
-    Option<PathBuf>        bmi;
+    Option<BmiArtifact>    bmi;
     const CompileContext*  context {};
     const CompileTestCase* compile_test {};
 };
@@ -569,6 +562,7 @@ struct ScanResult {
 struct ModulePlan {
     Vec<UnitId>      compile_order;
     Vec<Vec<UnitId>> direct_inputs;
+    Vec<Vec<UnitId>> resolved_inputs;
 };
 
 enum class BuildEventKind

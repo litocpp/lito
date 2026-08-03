@@ -12,6 +12,33 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace tenon_test;
 
+namespace
+{
+
+auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
+    auto opened = rstd::fs::read_dir(directory);
+    if (opened.is_err()) return None();
+    auto count   = usize {};
+    auto entries = rstd::move(opened).unwrap();
+    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
+        auto item = rstd::move(next).unwrap();
+        if (item.is_err()) return None();
+        auto entry = rstd::move(item).unwrap();
+        auto type  = entry.file_type();
+        if (type.is_err()) return None();
+        if (type->is_file()) {
+            ++count;
+        } else if (type->is_dir()) {
+            auto nested = regular_file_count(entry.path().as_path());
+            if (nested.is_none()) return None();
+            count += *nested;
+        }
+    }
+    return Some(count);
+}
+
+} // namespace
+
 TEST(Integration, ScanUsesNativePreprocessorAndDefinitions) {
     auto root   = project_root();
     auto native = tenon::scan(tenon::ScanRequest {
@@ -317,6 +344,10 @@ TEST(Integration, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(cold->frontend.persistent_scan_misses, usize(1));
     EXPECT_EQ(cold->frontend.persistent_scan_refresh, usize(1));
     EXPECT_EQ(cold->frontend.analyze_builds, usize(1));
+    auto bmi_directory = output.join(PathBuf::from("bmi"_str).as_path());
+    auto cold_bmis     = regular_file_count(bmi_directory.as_path());
+    ASSERT_TRUE(cold_bmis.is_some());
+    EXPECT_EQ(*cold_bmis, usize(1));
 
     auto warm =
         tenon::build(build_request(fixture.as_path(), output.as_path(), Vec<String>::make()));
@@ -357,6 +388,9 @@ TEST(Integration, ScanCacheReusesAndInvalidatesOwnedInputs) {
         tenon::build(build_request(fixture.as_path(), output.as_path(), Vec<String>::make()));
     ASSERT_TRUE(changed_source.is_ok());
     EXPECT_EQ(changed_source->frontend.persistent_scan_source, usize(1));
+    auto changed_bmis = regular_file_count(bmi_directory.as_path());
+    ASSERT_TRUE(changed_bmis.is_some());
+    EXPECT_EQ(*changed_bmis, usize(1));
 
     clear_output(base.as_path());
 

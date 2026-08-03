@@ -97,55 +97,42 @@ auto visit_target(const PackageMetadata& package,
     return Ok(empty {});
 }
 
-auto append_context_path(String& result, ref<str> prefix, ref<rstd::path::Path> path) -> void {
-    result.push_str(prefix);
-    auto text = path.to_str();
-    if (text.is_some()) result.push_str(*text);
-    result.push_ascii('\n');
-}
-
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("tenon-compile-context-v1\n"_str);
-    result.push_str(context.language_standard.as_str());
+    auto result = String::make("tenon-compile-context-v2\n"_str);
+    result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
-    result.push_str(context.standard_library == StandardLibrary::Libstdcxx ? "libstdc++\n"_str
-                                                                           : "libc++\n"_str);
-    result.push_str(context.bmi_mode == BmiMode::Reduced ? "reduced\n"_str : "full\n"_str);
-    for (const auto& value : context.include_directories) {
-        append_context_path(result, "I"_str, value.as_path());
-    }
-    for (const auto& value : context.definitions) {
-        result.push_ascii('D');
-        result.push_str(value.as_str());
-        result.push_ascii('\n');
-    }
-    for (const auto& value : context.options) {
-        result.push_ascii('O');
-        result.push_str(value.as_str());
-        result.push_ascii('\n');
-    }
+    result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
+    result.push_ascii('\n');
+    result.push_str(cpp_compile_identity(context.cpp).as_str());
+    result.push_str(cpp_public_requirements_identity(context.public_requirements).as_str());
     return result;
 }
 
 auto attachment_context(const CompileContext&       library,
                         const CompileContext&       test,
-                        const TestAttachmentTarget& attachment) -> CompileContext {
+                        const TestAttachmentTarget& attachment) -> Result<CompileContext> {
+    if (library.bmi.representation != test.bmi.representation ||
+        library.bmi.source_embedding != test.bmi.source_embedding) {
+        return plan_failure<CompileContext>(
+            "test attachment cannot merge different BMI requests"_str);
+    }
     auto result = CompileContext {
-        .standard_library  = library.standard_library,
-        .bmi_mode          = library.bmi_mode,
-        .language_standard = library.language_standard.clone(),
+        .bmi                 = library.bmi,
+        .cpp                 = clone_cpp_options(library.cpp),
+        .public_requirements = clone_cpp_public_requirements(library.public_requirements),
     };
-    append_unique(result.include_directories, library.include_directories);
-    append_unique(result.include_directories, test.include_directories);
-    append_unique(result.definitions, library.definitions);
-    append_unique(result.definitions, test.definitions);
-    append_unique(result.options, library.options);
-    append_unique(result.options, test.options);
+    auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
+    if (merged.is_err()) {
+        return plan_failure<CompileContext>(rstd::move(merged).unwrap_err());
+    }
+    result.cpp                 = rstd::move(merged).unwrap();
+    result.public_requirements = merge_cpp_public_requirements(
+        rstd::move(result.public_requirements), test.public_requirements);
     result.id = rstd::format("tenon-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
                              attachment.test_target.as_str(),
                              attachment.library_target.as_str(),
                              context_id(result).as_str());
-    return result;
+    return Ok(rstd::move(result));
 }
 
 } // namespace tenon
@@ -154,18 +141,21 @@ export namespace tenon
 {
 
 auto compile_test_context(const CompileContext& base, const CompileTestCase& test)
-    -> CompileContext {
+    -> Result<CompileContext> {
     auto context = CompileContext {
-        .standard_library  = base.standard_library,
-        .bmi_mode          = base.bmi_mode,
-        .language_standard = base.language_standard.clone(),
+        .bmi                 = base.bmi,
+        .cpp                 = clone_cpp_options(base.cpp),
+        .public_requirements = clone_cpp_public_requirements(base.public_requirements),
     };
-    append_unique(context.include_directories, base.include_directories);
-    append_unique(context.definitions, base.definitions);
-    append_unique(context.options, base.options);
-    append_unique(context.options, test.options);
-    context.id = context_id(context);
-    return context;
+    auto layer = CppOptionLayer {};
+    for (const auto& option : test.options) layer.options.push(option.clone());
+    auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(layer));
+    if (applied.is_err()) {
+        return plan_failure<CompileContext>(rstd::move(applied).unwrap_err());
+    }
+    context.cpp = rstd::move(applied).unwrap();
+    context.id  = context_id(context);
+    return Ok(rstd::move(context));
 }
 
 auto resolve_source_discovery(const PackageMetadata& package,
@@ -246,17 +236,26 @@ auto resolve_source_discovery(const PackageMetadata& package,
         const auto& spec             = package.targets[target];
         const auto& selected_profile = package.profiles[*profile];
         auto        context          = CompileContext {
-            .standard_library  = selected_profile.standard_library,
-            .bmi_mode          = selected_profile.bmi_mode,
-            .language_standard = selected_profile.language_standard.clone(),
+            .bmi = selected_profile.bmi,
         };
-        append_unique(context.include_directories, spec.manifest.usage.public_include_directories);
-        append_unique(context.include_directories, spec.manifest.usage.private_include_directories);
-        append_unique(context.definitions, spec.manifest.usage.public_definitions);
-        append_unique(context.definitions, spec.manifest.usage.private_definitions);
-        append_unique(context.options, selected_profile.options);
-        append_unique(context.options, spec.manifest.usage.public_options);
-        append_unique(context.options, spec.manifest.usage.private_options);
+        auto        public_layer   = CppOptionLayer {};
+        const auto& exported_usage = *public_usage[target];
+        append_unique(public_layer.include_directories, exported_usage.include_directories);
+        append_unique(public_layer.definitions, exported_usage.definitions);
+        append_unique(public_layer.options, exported_usage.options);
+        auto public_cpp = apply_cpp_option_layer(clone_cpp_options(selected_profile.cpp),
+                                                 rstd::move(public_layer));
+        if (public_cpp.is_err()) {
+            return plan_failure<SourceDiscoveryPlan>(rstd::move(public_cpp).unwrap_err());
+        }
+        context.public_requirements = cpp_public_requirements(*public_cpp);
+        context.cpp                 = rstd::move(public_cpp).unwrap();
+
+        auto private_layer = CppOptionLayer {};
+        append_unique(private_layer.include_directories,
+                      spec.manifest.usage.private_include_directories);
+        append_unique(private_layer.definitions, spec.manifest.usage.private_definitions);
+        append_unique(private_layer.options, spec.manifest.usage.private_options);
 
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
@@ -264,11 +263,17 @@ auto resolve_source_discovery(const PackageMetadata& package,
             if (dependency.visibility == DependencyVisibility::Runtime) continue;
             auto dependency_id = **target_ids.get(dependency.target.as_str());
             append_unique(visible, public_visible[dependency_id]);
+            if (dependency.visibility == DependencyVisibility::Public) continue;
             const auto& usage = *public_usage[dependency_id];
-            append_unique(context.include_directories, usage.include_directories);
-            append_unique(context.definitions, usage.definitions);
-            append_unique(context.options, usage.options);
+            append_unique(private_layer.include_directories, usage.include_directories);
+            append_unique(private_layer.definitions, usage.definitions);
+            append_unique(private_layer.options, usage.options);
         }
+        auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
+        if (applied.is_err()) {
+            return plan_failure<SourceDiscoveryPlan>(rstd::move(applied).unwrap_err());
+        }
+        context.cpp             = rstd::move(applied).unwrap();
         context.id              = context_id(context);
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
@@ -291,8 +296,10 @@ auto resolve_source_discovery(const PackageMetadata& package,
         }
         append_unique(visible_targets[target], visible_targets[**library_id]);
         append_unique(visible_targets[target], visible_targets[**test_id]);
-        contexts[target] =
+        auto attached =
             attachment_context(contexts[**library_id], contexts[**test_id], *attachment);
+        if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
+        contexts[target] = rstd::move(attached).unwrap();
     }
 
     auto expanded_target_order = Vec<TargetId>::with_capacity(package.targets.len());

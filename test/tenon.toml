@@ -11,6 +11,7 @@ sources = [
   "src/support/mod.cppm",
   "src/integration.cpp",
   "src/contracts.cpp",
+  "contracts/cpp_bmi.cpp",
   "profiling.cpp",
   "preprocessor/core.cpp",
   "toolchain/clang_builtin_context.cpp",

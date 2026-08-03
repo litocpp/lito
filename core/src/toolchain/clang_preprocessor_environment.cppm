@@ -223,7 +223,7 @@ auto command_line_macro_seed(ref<str> definition) -> preprocessor::MacroSeed {
     return preprocessor::MacroSeed { .definition = rstd::move(value) };
 }
 
-auto command_line_macro_states(const Vec<String>& options, const Vec<String>& definitions)
+auto command_line_macro_states(const Vec<CppMacroDirective>& macros)
     -> rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>> {
     auto values = rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>>::make();
     auto apply_define = [&values](ref<str> definition) {
@@ -235,23 +235,13 @@ auto command_line_macro_states(const Vec<String>& options, const Vec<String>& de
     auto apply_undefine = [&values](ref<str> name) {
         if (! name.is_empty()) values.insert(String::make(name), None());
     };
-    for (auto index = usize {}; index < options.len(); ++index) {
-        auto option = options[index].as_str();
-        if (option == "-D"_str && index + usize(1) < options.len()) {
-            ++index;
-            apply_define(options[index].as_str());
-        } else if (option.starts_with("-D"_str) && option.len() > usize(2)) {
-            auto value = option.get(usize(2), option.len());
-            if (value.is_some()) apply_define(*value);
-        } else if (option == "-U"_str && index + usize(1) < options.len()) {
-            ++index;
-            apply_undefine(options[index].as_str());
-        } else if (option.starts_with("-U"_str) && option.len() > usize(2)) {
-            auto value = option.get(usize(2), option.len());
-            if (value.is_some()) apply_undefine(*value);
+    for (const auto& macro : macros) {
+        if (macro.action == CppMacroAction::Define) {
+            apply_define(macro.value.as_str());
+        } else {
+            apply_undefine(macro.value.as_str());
         }
     }
-    for (const auto& definition : definitions) apply_define(definition.as_str());
     return values;
 }
 
@@ -265,9 +255,9 @@ struct ParsedCommandLineMacros {
     Vec<preprocessor::PredefinedMacroOperation> operations;
 };
 
-auto parse_command_line_macros(const Vec<String>& options, const Vec<String>& definitions)
+auto parse_command_line_macros(const Vec<CppMacroDirective>& macros)
     -> Result<ParsedCommandLineMacros> {
-    auto states  = command_line_macro_states(options, definitions);
+    auto states  = command_line_macro_states(macros);
     auto seeds   = Vec<preprocessor::MacroSeed>::make();
     auto entries = Vec<CommandLineMacroEntry>::with_capacity(states.len());
     auto values  = states.into_iter();
@@ -845,14 +835,13 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
                                     PreprocessorEnvironmentKey            key,
                                     SharedClangBuiltinEnvironmentSnapshot builtin_environment,
                                     BuiltinSemanticContext                semantic_context,
-                                    const Vec<String>&                    options,
-                                    const Vec<String>&                    definitions)
+                                    const Vec<CppMacroDirective>&         macros)
     -> Result<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
     auto native_macros =
         parse_macro_seeds(native_predefined_macro_seeds(semantic_context), "<tenon-built-in>"_str);
     if (native_macros.is_err()) return Err(rstd::move(native_macros).unwrap_err());
-    auto command_line_macros = parse_command_line_macros(options, definitions);
+    auto command_line_macros = parse_command_line_macros(macros);
     if (command_line_macros.is_err()) return Err(rstd::move(command_line_macros).unwrap_err());
     auto native_values       = rstd::move(native_macros).unwrap();
     auto command_line_values = rstd::move(command_line_macros).unwrap();

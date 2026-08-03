@@ -525,10 +525,10 @@ auto resolve_directories(Option<ref<Toml>> value, ref<rstd::path::Path> root, re
 auto validate_options(const Vec<String>& options, ref<str> context) -> Result<empty> {
     for (const auto& option : options) {
         auto value = option.as_str();
-        if (value == "-frtti"_str || value == "-fexceptions"_str ||
-            value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
-            value == "-fmodules-reduced-bmi"_str || value == "-fno-modules-reduced-bmi"_str ||
-            is_profile_owned_option(value)) {
+        if (value == "-frtti"_str || value == "-fno-rtti"_str || value == "-fexceptions"_str ||
+            value == "-fno-exceptions"_str || value.starts_with("-stdlib="_str) ||
+            value.starts_with("-std="_str) || value == "-fmodules-reduced-bmi"_str ||
+            value == "-fno-modules-reduced-bmi"_str || is_profile_owned_option(value)) {
             return failure<empty>(
                 rstd::format("{} option '{}' overrides a Tenon-owned setting", context, value));
         }

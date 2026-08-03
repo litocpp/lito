@@ -9,6 +9,8 @@ target_sources(
          CXX_MODULES
          FILES
          src/profiling.cppm
+         src/cpp.cppm
+         src/bmi.cppm
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm

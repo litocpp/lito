@@ -22,7 +22,14 @@ auto graph_failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, message));
 }
 
-auto contains(const Vec<TargetId>& values, TargetId value) -> bool {
+auto contains_target(const Vec<TargetId>& values, TargetId value) -> bool {
+    for (auto item : values) {
+        if (item == value) return true;
+    }
+    return false;
+}
+
+auto contains_unit(const Vec<UnitId>& values, UnitId value) -> bool {
     for (auto item : values) {
         if (item == value) return true;
     }
@@ -58,7 +65,8 @@ export namespace tenon
 
 auto resolve_modules(const PackagePlan&       package,
                      const Vec<PreparedUnit>& units,
-                     const Vec<ScanResult>&   scans) -> Result<ModulePlan> {
+                     const Vec<ScanResult>&   scans,
+                     const BmiFormatIdentity& format) -> Result<ModulePlan> {
     if (units.len() != scans.len()) {
         return graph_failure<ModulePlan>("module graph received mismatched units and scans"_str);
     }
@@ -77,10 +85,6 @@ auto resolve_modules(const PackagePlan&       package,
                              provided.logical_name.as_str(),
                              units[**existing].unit.source.as_path(),
                              units[scan.unit].unit.source.as_path()));
-        }
-        if (units[scan.unit].unit.bmi.is_none()) {
-            return graph_failure<ModulePlan>(rstd::format("module provider has no BMI artifact: {}",
-                                                          units[scan.unit].unit.source.as_path()));
         }
         providers.insert(provided.logical_name.clone(), scan.unit);
     }
@@ -113,6 +117,13 @@ auto resolve_modules(const PackagePlan&       package,
                              provided.logical_name.as_str(),
                              primary_name));
         }
+        if (units[**primary_provider].unit.context->id.as_str() !=
+            units[scan.unit].unit.context->id.as_str()) {
+            return graph_failure<ModulePlan>(
+                rstd::format("partition '{}' and primary module '{}' use different BMI contexts",
+                             provided.logical_name.as_str(),
+                             primary_name));
+        }
     }
 
     auto direct_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
@@ -131,12 +142,29 @@ auto resolve_modules(const PackagePlan&       package,
             const auto importer_target = units[scan.unit].unit.target;
             const auto provider_target = units[provider_unit].unit.target;
             if (importer_target >= package.visible_targets.len() ||
-                ! contains(package.visible_targets[importer_target], provider_target)) {
+                ! contains_target(package.visible_targets[importer_target], provider_target)) {
                 return graph_failure<ModulePlan>(
                     rstd::format("module '{}' from target '{}' is not visible to target '{}'",
                                  required.as_str(),
                                  package.package->targets[provider_target].name.as_str(),
                                  package.package->targets[importer_target].name.as_str()));
+            }
+            auto compatibility =
+                check_bmi_compatibility(format,
+                                        units[provider_unit].unit.context->cpp,
+                                        units[provider_unit].unit.context->public_requirements,
+                                        format,
+                                        units[scan.unit].unit.context->cpp);
+            if (! compatibility.compatible()) {
+                const auto& difference = compatibility.differences[usize {}];
+                return graph_failure<ModulePlan>(
+                    rstd::format("module '{}' imported by '{}' has incompatible {}: provider '{}', "
+                                 "consumer '{}'",
+                                 required.as_str(),
+                                 units[scan.unit].unit.source.as_path(),
+                                 bmi_compatibility_field_name(difference.field),
+                                 difference.provider.as_str(),
+                                 difference.consumer.as_str()));
             }
             if (names.contains_key(required.as_str())) continue;
             names.insert(required.clone(), empty {});
@@ -152,9 +180,25 @@ auto resolve_modules(const PackagePlan&       package,
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
     }
 
+    auto resolved_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
+    for (auto unit = UnitId {}; unit < units.len(); ++unit) resolved_inputs.emplace_back();
+    for (auto unit : compile_order) {
+        for (auto input : direct_inputs[unit]) {
+            for (auto transitive : resolved_inputs[input]) {
+                if (! contains_unit(resolved_inputs[unit], transitive)) {
+                    resolved_inputs[unit].emplace_back(transitive);
+                }
+            }
+            if (! contains_unit(resolved_inputs[unit], input)) {
+                resolved_inputs[unit].emplace_back(input);
+            }
+        }
+    }
+
     return Ok(ModulePlan {
-        .compile_order = rstd::move(compile_order),
-        .direct_inputs = rstd::move(direct_inputs),
+        .compile_order   = rstd::move(compile_order),
+        .direct_inputs   = rstd::move(direct_inputs),
+        .resolved_inputs = rstd::move(resolved_inputs),
     });
 }
 

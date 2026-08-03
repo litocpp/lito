@@ -16,9 +16,9 @@ using JsonArray = rstd::json::Array;
 namespace tenon
 {
 
-inline constexpr auto CACHE_VERSION  = u64(2);
+inline constexpr auto CACHE_VERSION  = u64(3);
 inline constexpr auto SCAN_RECIPE    = "tenon-native-frontend-v1"_str;
-inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v2"_str;
+inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
 
 template<typename T>
 auto cache_failure(String message) -> Result<T> {
@@ -105,9 +105,75 @@ auto output_exists(ref<rstd::path::Path> path) -> Result<bool> {
     return Ok(*exists);
 }
 
-auto collect_stale_records(ref<rstd::path::Path>                             directory,
-                           const rstd::collections::BTreeMap<String, empty>& current)
+auto output_content_digest(ref<rstd::path::Path> path) -> Result<String> {
+    auto contents = rstd::fs::read(path);
+    if (contents.is_err()) {
+        return cache_failure<String>(rstd::format(
+            "cannot hash compiler output '{}': {}", path, rstd::move(contents).unwrap_err()));
+    }
+    auto hash = cache::FNV_OFFSET;
+    cache::add_text(hash, "tenon-output-content-v1"_str);
+    cache::add_bytes(hash, contents->as_slice());
+    return Ok(cache::hex(hash));
+}
+
+auto receipt_output_paths(const Json& document) -> Vec<PathBuf> {
+    auto result  = Vec<PathBuf>::make();
+    auto outputs = document.get("outputs"_str);
+    if (outputs.is_none()) return result;
+    const auto append = [&](ref<str> key) {
+        auto output = (**outputs).get(key);
+        if (output.is_none()) return;
+        auto path = (**output).get("path"_str);
+        if (path.is_none()) return;
+        auto text = (**path).as_str();
+        if (text.is_some()) result.push(PathBuf::from(*text));
+    };
+    append("bmi"_str);
+    append("object"_str);
+    return result;
+}
+
+auto read_receipt_output_paths(ref<rstd::path::Path> path) -> Result<Vec<PathBuf>> {
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_err()) {
+        return cache_failure<Vec<PathBuf>>(
+            rstd::format("cannot inspect cache record '{}': {}", path, exists.unwrap_err()));
+    }
+    if (! *exists) return Ok(Vec<PathBuf>::make());
+    auto contents = rstd::fs::read_to_string(path);
+    if (contents.is_err()) {
+        return cache_failure<Vec<PathBuf>>(
+            rstd::format("cannot read cache record '{}': {}", path, contents.unwrap_err()));
+    }
+    auto parsed = rstd::json::from_str(contents->as_str());
+    if (parsed.is_err()) return Ok(Vec<PathBuf>::make());
+    return Ok(receipt_output_paths(*parsed));
+}
+
+auto remove_owned_output(ref<rstd::path::Path> path, ref<rstd::path::Path> owner_root)
     -> Result<empty> {
+    if (path.strip_prefix(owner_root).is_none()) {
+        return cache_failure<empty>(
+            rstd::format("cache output '{}' is outside build root '{}'", path, owner_root));
+    }
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_err()) {
+        return cache_failure<empty>(
+            rstd::format("cannot inspect cache output '{}': {}", path, exists.unwrap_err()));
+    }
+    if (! *exists) return Ok(empty {});
+    auto removed = rstd::fs::remove_file(path);
+    if (removed.is_err()) {
+        return cache_failure<empty>(
+            rstd::format("cannot remove cache output '{}': {}", path, removed.unwrap_err()));
+    }
+    return Ok(empty {});
+}
+
+auto collect_stale_records(ref<rstd::path::Path>                             directory,
+                           const rstd::collections::BTreeMap<String, empty>& current,
+                           ref<rstd::path::Path> owner_root) -> Result<empty> {
     auto exists = rstd::fs::exists(directory);
     if (exists.is_err()) {
         return cache_failure<empty>(rstd::format(
@@ -137,7 +203,7 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
         }
         auto path = entry.path();
         if (type->is_dir()) {
-            auto nested = collect_stale_records(path.as_path(), current);
+            auto nested = collect_stale_records(path.as_path(), current, owner_root);
             if (nested.is_err()) return nested;
             auto removed = rstd::fs::remove_dir(path.as_path());
             if (removed.is_err() &&
@@ -152,6 +218,12 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
         auto text = path_string(path.as_path());
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
         if (current.contains_key(text->as_str())) continue;
+        auto outputs = read_receipt_output_paths(path.as_path());
+        if (outputs.is_err()) return Err(rstd::move(outputs).unwrap_err());
+        for (const auto& output : *outputs) {
+            auto removed = remove_owned_output(output.as_path(), owner_root);
+            if (removed.is_err()) return removed;
+        }
         auto removed = rstd::fs::remove_file(path.as_path());
         if (removed.is_err()) {
             return cache_failure<empty>(rstd::format("cannot remove stale cache record '{}': {}",
@@ -206,6 +278,8 @@ public:
         identity.push_ascii('\n');
         identity.push_str(compiler.target.as_str());
         identity.push_ascii('\n');
+        identity.push_str(compiler.build_identity.as_str());
+        identity.push_ascii('\n');
         identity.push_str(resource->as_str());
         identity.push_ascii('\n');
         identity.push_str(rstd::format("{}\n{}\n{}",
@@ -221,6 +295,8 @@ public:
         compiler_json.insert(String::make("modified-seconds"_str),
                              cache_i64(compiler.modified_seconds));
         compiler_json.insert(String::make("path"_str), cache_string(compiler_path->as_str()));
+        compiler_json.insert(String::make("build-identity"_str),
+                             cache_string(compiler.build_identity.as_str()));
         compiler_json.insert(String::make("resource-directory"_str),
                              cache_string(resource->as_str()));
         compiler_json.insert(String::make("size"_str), cache_u64(compiler.size));
@@ -942,18 +1018,25 @@ public:
 };
 
 class CacheDecision {
-    bool    current_ { false };
-    String  artifact_;
-    PathBuf record_;
-    Json    building_;
-    Json    complete_;
+    bool         current_ { false };
+    String       artifact_;
+    PathBuf      record_;
+    Json         building_;
+    Json         complete_;
+    Vec<PathBuf> stale_outputs_;
 
-    CacheDecision(bool current, String artifact, PathBuf record, Json building, Json complete)
+    CacheDecision(bool         current,
+                  String       artifact,
+                  PathBuf      record,
+                  Json         building,
+                  Json         complete,
+                  Vec<PathBuf> stale_outputs)
         : current_(current),
           artifact_(rstd::move(artifact)),
           record_(rstd::move(record)),
           building_(rstd::move(building)),
-          complete_(rstd::move(complete)) {}
+          complete_(rstd::move(complete)),
+          stale_outputs_(rstd::move(stale_outputs)) {}
 
     friend class CompileCacheSession;
 
@@ -967,8 +1050,9 @@ public:
 };
 
 class CompileCacheSession {
-    String environment_;
-    bool   force_refresh_ { false };
+    String  environment_;
+    PathBuf owner_root_;
+    bool    force_refresh_ { false };
 
     auto record_current(const PreparedUnit& unit, const Json& complete) const -> Result<bool> {
         if (force_refresh_) return Ok(false);
@@ -986,22 +1070,41 @@ class CompileCacheSession {
                                                     rstd::move(contents).unwrap_err()));
         }
         auto parsed = rstd::json::from_str(contents->as_str());
-        if (parsed.is_err() || *parsed != complete) return Ok(false);
+        if (parsed.is_err()) return Ok(false);
+        auto comparable        = parsed->clone();
+        auto comparable_object = comparable.as_object_mut();
+        if (comparable_object.is_none()) return Ok(false);
+        (**comparable_object).remove("content-digests"_str);
+        if (comparable != complete) return Ok(false);
+        auto stored_digests = parsed->get("content-digests"_str);
+        if (stored_digests.is_none()) return Ok(false);
+        auto stored_object_digest = json_text(*stored_digests, "object"_str);
+        if (stored_object_digest.is_none()) return Ok(false);
         auto object = output_exists(unit.unit.object.as_path());
         if (object.is_err()) return object;
         if (! *object) return Ok(false);
+        auto object_digest = output_content_digest(unit.unit.object.as_path());
+        if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
+        if (object_digest->as_str() != *stored_object_digest) return Ok(false);
         if (unit.unit.bmi.is_some()) {
-            auto bmi = output_exists((*unit.unit.bmi).as_path());
+            auto bmi = output_exists(unit.unit.bmi->path.as_path());
             if (bmi.is_err()) return bmi;
             if (! *bmi) return Ok(false);
+            auto stored_bmi_digest = json_text(*stored_digests, "bmi"_str);
+            if (stored_bmi_digest.is_none()) return Ok(false);
+            auto bmi_digest = output_content_digest(unit.unit.bmi->path.as_path());
+            if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
+            if (bmi_digest->as_str() != *stored_bmi_digest) return Ok(false);
         }
         return Ok(true);
     }
 
 public:
-    static auto create(const CacheEnvironment& environment) -> CompileCacheSession {
+    static auto create(const CacheEnvironment& environment, ref<rstd::path::Path> owner_root)
+        -> CompileCacheSession {
         auto session           = CompileCacheSession {};
         session.environment_   = environment.key_.clone();
+        session.owner_root_    = PathBuf::from(owner_root);
         session.force_refresh_ = environment.force_refresh_;
         return session;
     }
@@ -1044,12 +1147,29 @@ public:
         auto outputs  = JsonMap::make();
         auto bmi_json = Json::Null();
         if (unit.unit.bmi.is_some()) {
-            auto bmi = path_string((*unit.unit.bmi).as_path());
+            auto bmi = path_string(unit.unit.bmi->path.as_path());
             if (bmi.is_err()) return Err(rstd::move(bmi).unwrap_err());
-            bmi_json = cache_string(bmi->as_str());
+            auto bmi_output = JsonMap::make();
+            bmi_output.insert(String::make("format"_str),
+                              cache_string(bmi_format_identity(unit.unit.bmi->format).as_str()));
+            bmi_output.insert(String::make("kind"_str), cache_string("bmi"_str));
+            bmi_output.insert(String::make("path"_str), cache_string(bmi->as_str()));
+            bmi_output.insert(String::make("recipe"_str),
+                              cache_string(unit.unit.bmi->key.value.as_str()));
+            bmi_output.insert(
+                String::make("representation"_str),
+                cache_string(bmi_representation_name(unit.unit.bmi->request.representation)));
+            bmi_output.insert(
+                String::make("source-embedding"_str),
+                cache_string(bmi_source_embedding_name(unit.unit.bmi->request.source_embedding)));
+            bmi_json = Json::Object(rstd::move(bmi_output));
         }
         outputs.insert(String::make("bmi"_str), rstd::move(bmi_json));
-        outputs.insert(String::make("object"_str), cache_string(object->as_str()));
+        auto object_output = JsonMap::make();
+        object_output.insert(String::make("kind"_str), cache_string("object"_str));
+        object_output.insert(String::make("path"_str), cache_string(object->as_str()));
+        object_output.insert(String::make("recipe"_str), cache_string(command_key.as_str()));
+        outputs.insert(String::make("object"_str), Json::Object(rstd::move(object_output)));
 
         auto complete = JsonMap::make();
         complete.insert(String::make("artifact"_str), cache_string(artifact.as_str()));
@@ -1076,13 +1196,25 @@ public:
         building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
         auto building_json = Json::Object(rstd::move(building));
 
+        auto previous_outputs = read_receipt_output_paths(unit.unit.cache_record.as_path());
+        if (previous_outputs.is_err()) return Err(rstd::move(previous_outputs).unwrap_err());
+        auto stale_outputs = Vec<PathBuf>::make();
+        for (auto& path : *previous_outputs) {
+            auto current_output = path.as_path() == unit.unit.object.as_path();
+            if (unit.unit.bmi.is_some()) {
+                current_output = current_output || path.as_path() == unit.unit.bmi->path.as_path();
+            }
+            if (! current_output) stale_outputs.push(rstd::move(path));
+        }
+
         auto current = record_current(unit, complete_json);
         if (current.is_err()) return Err(rstd::move(current).unwrap_err());
         return Ok(CacheDecision { *current,
                                   rstd::move(artifact),
                                   unit.unit.cache_record.clone(),
                                   rstd::move(building_json),
-                                  rstd::move(complete_json) });
+                                  rstd::move(complete_json),
+                                  rstd::move(stale_outputs) });
     }
 
     auto begin_compile(const CacheDecision& decision) -> Result<empty> {
@@ -1137,22 +1269,41 @@ public:
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
-    auto commit_success(const PreparedUnit& unit, const CacheDecision& decision) -> Result<empty> {
+    auto commit_success(PreparedUnit& unit, const CacheDecision& decision) -> Result<empty> {
         auto object = output_exists(unit.unit.object.as_path());
         if (object.is_err()) return Err(rstd::move(object).unwrap_err());
         if (! *object) {
             return cache_failure<empty>(
                 rstd::format("compiler did not produce object '{}'", unit.unit.object.as_path()));
         }
+        auto digests       = JsonMap::make();
+        auto object_digest = output_content_digest(unit.unit.object.as_path());
+        if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
+        digests.insert(String::make("object"_str), cache_string(object_digest->as_str()));
         if (unit.unit.bmi.is_some()) {
-            auto bmi = output_exists((*unit.unit.bmi).as_path());
+            auto bmi = output_exists(unit.unit.bmi->path.as_path());
             if (bmi.is_err()) return Err(rstd::move(bmi).unwrap_err());
             if (! *bmi) {
-                return cache_failure<empty>(
-                    rstd::format("compiler did not produce BMI '{}'", (*unit.unit.bmi).as_path()));
+                return cache_failure<empty>(rstd::format("compiler did not produce BMI '{}'",
+                                                         unit.unit.bmi->path.as_path()));
             }
+            auto bmi_digest = output_content_digest(unit.unit.bmi->path.as_path());
+            if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
+            unit.unit.bmi->content_digest = Some(bmi_digest->clone());
+            digests.insert(String::make("bmi"_str), cache_string(bmi_digest->as_str()));
         }
-        return write_json(decision.record_.as_path(), decision.complete_);
+        auto complete        = decision.complete_.clone();
+        auto complete_object = complete.as_object_mut();
+        if (complete_object.is_none()) {
+            return cache_failure<empty>(String::make("compile cache receipt is not an object"_str));
+        }
+        (**complete_object)
+            .insert(String::make("content-digests"_str), Json::Object(rstd::move(digests)));
+        for (const auto& output : decision.stale_outputs_) {
+            auto removed = remove_owned_output(output.as_path(), owner_root_.as_path());
+            if (removed.is_err()) return removed;
+        }
+        return write_json(decision.record_.as_path(), complete);
     }
 
     auto finish_target(const BuildLayout&  layout,
@@ -1170,7 +1321,7 @@ public:
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
             current.insert(rstd::move(path).unwrap(), empty {});
         }
-        return collect_stale_records(directory, current);
+        return collect_stale_records(directory, current, owner_root_.as_path());
     }
 };
 

@@ -136,8 +136,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                      source.relative_path.as_path()));
                 }
                 compile_test = *selected;
-                compile_contexts.push(Box<CompileContext>::make(
-                    compile_test_context(package_plan.contexts[target], *compile_test)));
+                auto selected_context =
+                    compile_test_context(package_plan.contexts[target], *compile_test);
+                if (selected_context.is_err()) {
+                    return Err(rstd::move(selected_context).unwrap_err());
+                }
+                compile_contexts.push(
+                    Box<CompileContext>::make(rstd::move(selected_context).unwrap()));
                 context = compile_contexts[compile_contexts.len() - usize(1)].get();
             }
             auto object =
@@ -232,16 +237,6 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         auto scanned = toolchain.scan(units[unit]);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
-        if (result.provided.is_some()) {
-            const auto& target_spec = package.targets[target];
-            units[unit].unit.bmi =
-                Some(target_spec.test_attachment.is_some()
-                         ? layout.test_attachment_bmi(
-                               target_spec.test_attachment->test_target.as_str(),
-                               target_spec.test_attachment->library_target.as_str(),
-                               (*result.provided).logical_name.as_str())
-                         : layout.bmi((*result.provided).logical_name.as_str()));
-        }
         scans.push(rstd::move(result));
     }
     auto classified_units = profiler.complete(classify_span);
@@ -258,7 +253,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
 
     auto resolved_modules = profiler.measure(ScanProbe::ModuleGraph, [&] {
-        return resolve_modules(package_plan, units, scans);
+        return resolve_modules(package_plan, units, scans, toolchain.bmi_format());
     });
     if (resolved_modules.is_err()) {
         return Err(rstd::move(resolved_modules).unwrap_err());
@@ -293,41 +288,95 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     frontend_statistics.persistent_scan_receipt         = scan_cache_statistics.receipt;
     frontend_service.release_source_cache();
 
-    auto cache = CompileCacheSession::create(cache_environment);
+    auto cache = CompileCacheSession::create(cache_environment, layout.output());
 
-    auto keys = Vec<String>::with_capacity(units.len());
-    for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
-    auto bmi_directory = layout.bmi_directory();
-    auto compiled      = usize {};
-    auto reused        = usize {};
-    auto compile_tests = Vec<CompileTestExecution>::make();
-    auto build_timing  = BuildTimingReport {};
+    auto format_identity = bmi_format_identity(toolchain.bmi_format());
+    auto format_key      = bmi_format_key(toolchain.bmi_format());
+    auto compiled        = usize {};
+    auto reused          = usize {};
+    auto compile_tests   = Vec<CompileTestExecution>::make();
+    auto build_timing    = BuildTimingReport {};
     for (auto unit : module_plan.compile_order) {
-        auto dependencies = Vec<DependencyArtifact>::make();
+        auto dependencies        = Vec<DependencyArtifact>::make();
+        auto recipe_dependencies = Vec<BmiRecipeDependency>::make();
         for (auto input : module_plan.direct_inputs[unit]) {
-            if (scans[input].provided.is_none()) {
+            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
                 return failure<BuildSummary>(
                     ErrorKind::Dependency,
-                    rstd::format("module dependency '{}' has no provided module",
+                    rstd::format("module dependency '{}' has no resolved BMI artifact",
                                  units[input].unit.source.as_path()));
             }
+            const auto& artifact = *units[input].unit.bmi;
             dependencies.push(DependencyArtifact {
-                .logical_name = scans[input].provided->logical_name.clone(),
-                .artifact     = keys[input].clone(),
+                .logical_name = artifact.logical_name.clone(),
+                .artifact     = artifact.key.value.clone(),
+            });
+            recipe_dependencies.push(BmiRecipeDependency {
+                .logical_name = artifact.logical_name.clone(),
+                .artifact_key = artifact.key.value.clone(),
             });
         }
-        const auto target                = units[unit].unit.target;
-        auto       prebuilt_module_paths = Vec<PathBuf>::make();
-        if (! module_plan.direct_inputs[unit].is_empty()) {
-            prebuilt_module_paths.push(bmi_directory.clone());
-            const auto& attachment = package.targets[target].test_attachment;
-            if (attachment.is_some()) {
-                prebuilt_module_paths.push(layout.test_attachment_bmi_directory(
-                    attachment->test_target.as_str(), attachment->library_target.as_str()));
+        auto module_dependencies = Vec<ModuleArtifactDependency>::make();
+        for (auto input : module_plan.resolved_inputs[unit]) {
+            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
+                return failure<BuildSummary>(
+                    ErrorKind::Dependency,
+                    rstd::format("module dependency '{}' has no resolved BMI artifact",
+                                 units[input].unit.source.as_path()));
             }
+            const auto& artifact = *units[input].unit.bmi;
+            module_dependencies.push(ModuleArtifactDependency {
+                .logical_name = artifact.logical_name.clone(),
+                .artifact_key = BmiArtifactKey { .value = artifact.key.value.clone() },
+                .path         = artifact.path.clone(),
+            });
         }
-        auto invocation =
-            toolchain.prepare_compile(units[unit], scans[unit], prebuilt_module_paths);
+        const auto target = units[unit].unit.target;
+        if (scans[unit].provided.is_some()) {
+            auto source_identity   = units[unit].unit.source.as_path().to_str();
+            auto relative_identity = units[unit].unit.relative_source.as_path().to_str();
+            if (source_identity.is_none() || relative_identity.is_none()) {
+                return failure<BuildSummary>(ErrorKind::Artifact,
+                                             "BMI provider path is not valid UTF-8"_str);
+            }
+            auto provider_identity = rstd::format("{}:{}:{}",
+                                                  package.targets[target].name.as_str(),
+                                                  *relative_identity,
+                                                  units[unit].unit.context->id.as_str());
+            auto key               = make_bmi_artifact_key(BmiRecipe {
+                .request                 = units[unit].unit.context->bmi,
+                .logical_name            = scans[unit].provided->logical_name.clone(),
+                .provider_identity       = provider_identity.clone(),
+                .source_identity         = String::make(*source_identity),
+                .source_content_identity = units[unit].frontend_analysis->receipt.clone(),
+                .cpp_context_identity    = cpp_compile_identity(units[unit].unit.context->cpp),
+                .public_requirements_identity =
+                    cpp_public_requirements_identity(units[unit].unit.context->public_requirements),
+                .format_identity     = format_identity.clone(),
+                .direct_dependencies = rstd::move(recipe_dependencies),
+            });
+            auto bmi_path          = layout.bmi(format_key.as_str(),
+                                                key.value.as_str(),
+                                                scans[unit].provided->logical_name.as_str());
+            auto direct            = Vec<BmiRecipeDependency>::with_capacity(dependencies.len());
+            for (const auto& dependency : dependencies) {
+                direct.push(BmiRecipeDependency {
+                    .logical_name = dependency.logical_name.clone(),
+                    .artifact_key = dependency.artifact.clone(),
+                });
+            }
+            units[unit].unit.bmi = Some(BmiArtifact {
+                .logical_name        = scans[unit].provided->logical_name.clone(),
+                .provider_identity   = rstd::move(provider_identity),
+                .key                 = rstd::move(key),
+                .format              = clone_bmi_format_identity(toolchain.bmi_format()),
+                .request             = units[unit].unit.context->bmi,
+                .path                = rstd::move(bmi_path),
+                .direct_dependencies = rstd::move(direct),
+                .paired_object       = Some(units[unit].unit.object.clone()),
+            });
+        }
+        auto invocation = toolchain.prepare_compile(units[unit], scans[unit], module_dependencies);
         if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
         auto decision = cache.evaluate(package.targets[target].name.as_str(),
                                        units[unit],
@@ -352,7 +401,6 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
                 if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
                 compile_tests.push(rstd::move(execution));
-                keys[unit] = String::make(cache_decision.artifact());
                 continue;
             }
             auto begun = cache.begin_compile_test(
@@ -374,7 +422,6 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             if (execution.exit_code == i32 {}) {
                 auto committed = cache.commit_success(units[unit], cache_decision);
                 if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
-                keys[unit] = String::make(cache_decision.artifact());
             }
             auto recorded = cache.record_compile_test(
                 cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
@@ -403,7 +450,6 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
             ++compiled;
         }
-        keys[unit] = String::make(cache_decision.artifact());
     }
 
     for (auto target : package_plan.target_order) {
@@ -523,7 +569,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
                                                 linked_archives,
-                                                package_plan.profile->standard_library,
+                                                package_plan.profile->cpp.abi.standard_library,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());

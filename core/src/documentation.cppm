@@ -116,7 +116,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
             .root              = manifest.root.clone(),
             .toolchain_version = toolchain.compiler_identity().version.clone(),
             .toolchain_target  = toolchain.compiler_identity().target.clone(),
-            .language_standard = discovery.contexts[*target].language_standard.clone(),
+            .language_standard = discovery.contexts[*target].cpp.language.standard.clone(),
         };
         for (auto& source : source_set.sources.sources) {
             if (source.documentation.is_none())

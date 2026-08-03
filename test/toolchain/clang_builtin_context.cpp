@@ -11,16 +11,32 @@ using namespace tenon;
 namespace
 {
 
-auto context_with(tenon::Vec<String> options) -> CompileContext {
+auto context_with(tenon::Vec<String> options,
+                  CppOptimization    optimization = CppOptimization::Default,
+                  CppDebugInfo       debug_info   = CppDebugInfo::None) -> CompileContext {
+    auto normalized = make_cpp_options("c++20"_str,
+                                       StandardLibrary::Libcxx,
+                                       false,
+                                       false,
+                                       optimization,
+                                       debug_info,
+                                       CppOptionLayer { .options = rstd::move(options) });
+    if (normalized.is_err()) return CompileContext {};
     return CompileContext {
-        .language_standard = String::make("c++20"_str),
-        .options           = rstd::move(options),
+        .cpp = rstd::move(normalized).unwrap(),
     };
 }
 
 auto context_with_standard(ref<str> standard) -> CompileContext {
+    auto normalized = make_cpp_options(standard,
+                                       StandardLibrary::Libcxx,
+                                       false,
+                                       false,
+                                       CppOptimization::Default,
+                                       CppDebugInfo::None);
+    if (normalized.is_err()) return CompileContext {};
     return CompileContext {
-        .language_standard = String::make(standard),
+        .cpp = rstd::move(normalized).unwrap(),
     };
 }
 
@@ -50,9 +66,9 @@ auto run_clang_builtin_context_test() -> int {
     auto toolchain = rstd::move(created).unwrap();
 
     auto debug = toolchain.builtin_context(
-        context_with(options("-O0"_str, "-g"_str, "-Wall"_str, "-fPIC"_str)));
+        context_with(options("-Wall"_str, "-fPIC"_str), CppOptimization::None, CppDebugInfo::Full));
     auto reordered = toolchain.builtin_context(
-        context_with(options("-Wall"_str, "-fPIC"_str, "-g0"_str, "-O0"_str)));
+        context_with(options("-fPIC"_str, "-Wall"_str), CppOptimization::None));
     if (debug.is_err() || reordered.is_err()) return 2;
     if (debug->key.as_str() != reordered->key.as_str() ||
         ! same_command(debug->query_command, reordered->query_command)) {
@@ -60,14 +76,9 @@ auto run_clang_builtin_context_test() -> int {
     }
 
     auto optimized =
-        toolchain.builtin_context(context_with(options("-O0"_str, "-O3"_str, "-fPIC"_str)));
-    auto optimized_direct =
-        toolchain.builtin_context(context_with(options("-O3"_str, "-fPIC"_str)));
-    if (optimized.is_err() || optimized_direct.is_err()) return 4;
-    if (optimized->key.as_str() != optimized_direct->key.as_str() ||
-        optimized->key.as_str() == debug->key.as_str()) {
-        return 5;
-    }
+        toolchain.builtin_context(context_with(options("-fPIC"_str), CppOptimization::Level3));
+    if (optimized.is_err()) return 4;
+    if (optimized->key.as_str() == debug->key.as_str()) return 5;
 
     auto target_attached = toolchain.builtin_context(
         context_with(options("--target=x86_64-pc-linux-gnu"_str, "-fPIC"_str, "-fno-PIC"_str)));
@@ -85,9 +96,9 @@ auto run_clang_builtin_context_test() -> int {
     if (target_feature.is_err() || target_feature_direct.is_err()) return 8;
     if (target_feature->key.as_str() != target_feature_direct->key.as_str()) return 9;
 
-    auto llvm_debug =
-        toolchain.builtin_context(context_with(options("-mllvm=tenon-ignored"_str, "-g"_str)));
-    auto llvm_debug_direct = toolchain.builtin_context(context_with(options("-g0"_str)));
+    auto llvm_debug        = toolchain.builtin_context(context_with(
+        options("-mllvm=tenon-ignored"_str), CppOptimization::Default, CppDebugInfo::Full));
+    auto llvm_debug_direct = toolchain.builtin_context(context_with(options()));
     if (llvm_debug.is_err() || llvm_debug_direct.is_err()) return 10;
     if (llvm_debug->key.as_str() != llvm_debug_direct->key.as_str() ||
         ! same_command(llvm_debug->query_command, llvm_debug_direct->query_command)) {

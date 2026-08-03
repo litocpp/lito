@@ -1,5 +1,7 @@
 export module tenon;
 
+export import tenon.cpp;
+export import tenon.bmi;
 export import tenon.model;
 export import tenon.build_profile;
 export import tenon.profiling;

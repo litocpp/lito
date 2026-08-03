@@ -146,8 +146,10 @@ public:
 
     auto bmi_directory() const -> PathBuf { return join(output_.as_path(), "bmi"_str); }
 
-    auto bmi(ref<str> logical_name) const -> PathBuf {
-        return bmi_directory().join(PathBuf::from(module_filename(logical_name)).as_path());
+    auto bmi(ref<str> format_key, ref<str> artifact_key, ref<str> logical_name) const -> PathBuf {
+        auto format_directory   = join(bmi_directory().as_path(), format_key);
+        auto artifact_directory = join(format_directory.as_path(), artifact_key);
+        return artifact_directory.join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
     auto test_attachment_object(ref<str>              test_target,
@@ -169,18 +171,6 @@ public:
     auto test_attachment_cache_directory(ref<str> test_target, ref<str> library_target) const
         -> PathBuf {
         return join(test_attachment_directory(test_target, library_target).as_path(), "cache"_str);
-    }
-
-    auto test_attachment_bmi_directory(ref<str> test_target, ref<str> library_target) const
-        -> PathBuf {
-        return join(test_attachment_directory(test_target, library_target).as_path(), "bmi"_str);
-    }
-
-    auto test_attachment_bmi(ref<str> test_target,
-                             ref<str> library_target,
-                             ref<str> logical_name) const -> PathBuf {
-        return test_attachment_bmi_directory(test_target, library_target)
-            .join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
     auto test_attachment_archive(ref<str> test_target,

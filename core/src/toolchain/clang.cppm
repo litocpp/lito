@@ -114,6 +114,62 @@ auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
     return Ok(empty {});
 }
 
+auto staging_path(ref<rstd::path::Path> output) -> Result<PathBuf> {
+    auto text = output.to_str();
+    if (text.is_none()) {
+        return failure<PathBuf>(rstd::format("output path '{}' is not valid UTF-8", output));
+    }
+    auto value = String::make(*text);
+    value.push_str(".tenon-building"_str);
+    return Ok(PathBuf::from(rstd::move(value)));
+}
+
+auto clear_staged_output(ref<rstd::path::Path> path) -> Result<empty> {
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_err()) {
+        return failure<empty>(
+            rstd::format("cannot inspect staged output '{}': {}", path, exists.unwrap_err()));
+    }
+    if (! *exists) return Ok(empty {});
+    auto removed = rstd::fs::remove_file(path);
+    if (removed.is_err()) {
+        return failure<empty>(
+            rstd::format("cannot remove stale staged output '{}': {}", path, removed.unwrap_err()));
+    }
+    return Ok(empty {});
+}
+
+auto publish_output(ref<rstd::path::Path> staged, ref<rstd::path::Path> final) -> Result<empty> {
+    auto exists = rstd::fs::exists(staged);
+    if (exists.is_err()) {
+        return failure<empty>(
+            rstd::format("cannot inspect staged output '{}': {}", staged, exists.unwrap_err()));
+    }
+    if (! *exists) {
+        return failure<empty>(rstd::format("compiler did not produce staged output '{}'", staged));
+    }
+    auto published = rstd::fs::rename(staged, final);
+    if (published.is_err()) {
+        return failure<empty>(rstd::format("cannot publish compiler output '{}' as '{}': {}",
+                                           staged,
+                                           final,
+                                           published.unwrap_err()));
+    }
+    return Ok(empty {});
+}
+
+auto verify_staged_output(ref<rstd::path::Path> path) -> Result<empty> {
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_err()) {
+        return failure<empty>(
+            rstd::format("cannot inspect staged output '{}': {}", path, exists.unwrap_err()));
+    }
+    if (! *exists) {
+        return failure<empty>(rstd::format("compiler did not produce staged output '{}'", path));
+    }
+    return Ok(empty {});
+}
+
 auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> working_directory)
     -> Result<String> {
     auto working = working_directory.to_str();
@@ -190,158 +246,41 @@ auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
     });
 }
 
-auto optimization_option(ref<str> option) -> bool {
-    return option == "-O"_str || option == "-O0"_str || option == "-O1"_str ||
-           option == "-O2"_str || option == "-O3"_str || option == "-O4"_str ||
-           option == "-Og"_str || option == "-Os"_str || option == "-Oz"_str ||
-           option == "-Ofast"_str;
-}
-
-struct ClangBuiltinOptionSet {
-    Option<String>                              target;
-    Option<String>                              sysroot;
-    Option<String>                              optimization;
-    rstd::collections::BTreeMap<String, String> last_options;
-    Vec<String>                                 ordered_options;
-    usize                                       ignored_options {};
-};
-
-auto attached_option(ref<str> option, ref<str> prefix) -> Option<ref<str>> {
-    if (! option.starts_with(prefix) || option.len() <= prefix.len()) return None();
-    return option.get(prefix.len(), option.len());
-}
-
-auto toggle_family(ref<str> option) -> Option<ref<str>> {
-    if (option == "-fPIC"_str || option == "-fpic"_str || option == "-fPIE"_str ||
-        option == "-fpie"_str || option == "-fno-PIC"_str || option == "-fno-pic"_str ||
-        option == "-fno-PIE"_str || option == "-fno-pie"_str) {
-        return Some("pic"_str);
+auto append_typed_options(Vec<String>&             command,
+                          const CppCompileOptions& options,
+                          bool                     builtin_query) -> void {
+    if (options.target.target.is_some()) {
+        command.push(rstd::format("--target={}", options.target.target->as_str()));
     }
-    if (option == "-fblocks"_str || option == "-fno-blocks"_str) {
-        return Some("blocks"_str);
+    if (options.target.sysroot.is_some()) {
+        command.push(rstd::format("--sysroot={}", options.target.sysroot->as_str()));
     }
-    if (option == "-fcoroutines"_str || option == "-fno-coroutines"_str) {
-        return Some("coroutines"_str);
+    auto optimization = cpp_optimization_option(options.codegen.optimization);
+    if (! optimization.is_empty()) toolchain::command::push_option(command, optimization);
+    auto debug = cpp_debug_option(options.codegen.debug_info);
+    if (! builtin_query && ! debug.is_empty()) toolchain::command::push_option(command, debug);
+    for (const auto& option : options.language.modes) command.push(option.value.clone());
+    for (const auto& option : options.abi.modes) command.push(option.value.clone());
+    for (const auto& option : options.target.features) command.push(option.value.clone());
+    for (const auto& option : options.codegen.modes) command.push(option.value.clone());
+    for (const auto& option : options.codegen.instrumentation) command.push(option.clone());
+    toolchain::command::push_option(command,
+                                    options.language.rtti ? toolchain::clang_options::RTTI
+                                                          : toolchain::clang_options::NO_RTTI);
+    toolchain::command::push_option(command,
+                                    options.language.exceptions
+                                        ? toolchain::clang_options::EXCEPTIONS
+                                        : toolchain::clang_options::NO_EXCEPTIONS);
+    for (const auto& option : options.vendor) {
+        if (builtin_query && (option.effect == CppVendorOptionEffect::Codegen ||
+                              option.effect == CppVendorOptionEffect::Diagnostic)) {
+            continue;
+        }
+        command.push(option.value.clone());
     }
-    if (option == "-fsized-deallocation"_str || option == "-fno-sized-deallocation"_str) {
-        return Some("sized-deallocation"_str);
+    if (! builtin_query) {
+        for (const auto& option : options.diagnostics.options) command.push(option.clone());
     }
-    if (option == "-ffreestanding"_str || option == "-fhosted"_str) {
-        return Some("hosted"_str);
-    }
-    if (option == "-fsigned-char"_str || option == "-funsigned-char"_str) {
-        return Some("char-signedness"_str);
-    }
-    if (option == "-fshort-enums"_str || option == "-fno-short-enums"_str) {
-        return Some("short-enums"_str);
-    }
-    if (option == "-fshort-wchar"_str || option == "-fno-short-wchar"_str) {
-        return Some("short-wchar"_str);
-    }
-    if (option == "-fchar8_t"_str || option == "-fno-char8_t"_str) {
-        return Some("char8-t"_str);
-    }
-    return None();
-}
-
-auto target_option_family(ref<str> option) -> String {
-    auto begin = option.starts_with("-mno-"_str) ? usize(5) : usize(2);
-    auto end   = begin;
-    while (end < option.len() && option.as_bytes()[end] != u8('=')) ++end;
-    auto name = option.get(begin, end);
-    return name.is_some() ? String::make(*name) : String::make(option);
-}
-
-auto normalize_builtin_options(const Vec<String>& options) -> Result<ClangBuiltinOptionSet> {
-    auto result = ClangBuiltinOptionSet {};
-    for (auto index = usize {}; index < options.len(); ++index) {
-        auto option     = options[index].as_str();
-        auto take_value = [&](ref<str> canonical) -> Result<String> {
-            if (index + usize(1) >= options.len()) {
-                return failure<String>(
-                    rstd::format("compiler option '{}' requires a value", option));
-            }
-            ++index;
-            return Ok(rstd::format("{}{}", canonical, options[index].as_str()));
-        };
-        if (option == "-D"_str || option == "-U"_str || option == "-mllvm"_str) {
-            if (index + usize(1) >= options.len()) {
-                return failure<ClangBuiltinOptionSet>(
-                    rstd::format("compiler option '{}' requires a value", option));
-            }
-            ++index;
-            result.ignored_options += usize(2);
-            continue;
-        }
-        if (option.starts_with("-D"_str) || option.starts_with("-U"_str)) {
-            ++result.ignored_options;
-            continue;
-        }
-        if (option.starts_with("-mllvm="_str)) {
-            ++result.ignored_options;
-            continue;
-        }
-        if (option == "-target"_str || option == "--target"_str) {
-            auto value = take_value("--target="_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            result.target = Some(rstd::move(value).unwrap());
-            continue;
-        }
-        auto target = attached_option(option, "--target="_str);
-        if (target.is_none()) target = attached_option(option, "-target="_str);
-        if (target.is_some()) {
-            result.target = Some(rstd::format("--target={}", *target));
-            continue;
-        }
-        if (option == "--sysroot"_str || option == "-isysroot"_str) {
-            auto value = take_value("--sysroot="_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            result.sysroot = Some(rstd::move(value).unwrap());
-            continue;
-        }
-        auto sysroot = attached_option(option, "--sysroot="_str);
-        if (sysroot.is_none()) sysroot = attached_option(option, "-isysroot="_str);
-        if (sysroot.is_some()) {
-            result.sysroot = Some(rstd::format("--sysroot={}", *sysroot));
-            continue;
-        }
-        if (option == "-march"_str || option == "-mcpu"_str || option == "-mtune"_str ||
-            option == "-mabi"_str) {
-            auto canonical = rstd::format("{}=", option);
-            auto value     = take_value(canonical.as_str());
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            auto normalized = rstd::move(value).unwrap();
-            result.last_options.insert(target_option_family(normalized.as_str()),
-                                       rstd::move(normalized));
-            continue;
-        }
-        if (optimization_option(option)) {
-            result.optimization = Some(options[index].clone());
-            continue;
-        }
-        auto toggle = toggle_family(option);
-        if (toggle.is_some()) {
-            result.last_options.insert(String::make(*toggle), options[index].clone());
-            continue;
-        }
-        if (option.starts_with("-m"_str)) {
-            result.last_options.insert(target_option_family(option), options[index].clone());
-            continue;
-        }
-        if (option.starts_with("-fsanitize="_str) || option.starts_with("-fno-sanitize="_str) ||
-            option.starts_with("-fsanitize-trap="_str) ||
-            option.starts_with("-fno-sanitize-trap="_str) || option.starts_with("-fms-"_str) ||
-            option.starts_with("-fno-ms-"_str) || option.starts_with("-fptrauth"_str) ||
-            option.starts_with("-fno-ptrauth"_str) || option.starts_with("-fopenmp"_str) ||
-            option.starts_with("-fno-openmp"_str) || option == "-pedantic-errors"_str ||
-            option == "-Werror"_str || option.starts_with("-Werror="_str) ||
-            option == "-Wno-error"_str || option.starts_with("-Wno-error="_str)) {
-            result.ordered_options.push(options[index].clone());
-            continue;
-        }
-        ++result.ignored_options;
-    }
-    return Ok(rstd::move(result));
 }
 
 } // namespace tenon
@@ -388,6 +327,7 @@ public:
         auto compiler_command = Vec<String>::make();
         auto target_command   = Vec<String>::make();
         auto resource_command = Vec<String>::make();
+        auto help_command     = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(compiler_command, toolchain::clang_options::VERSION);
@@ -399,6 +339,9 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(resource_command,
                                         toolchain::clang_options::PRINT_RESOURCE_DIR);
+        pushed = toolchain::command::push_path(help_command, compiler_path.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(help_command, toolchain::clang_options::HELP);
 
         auto compiler_version =
             toolchain::command::tool_output(rstd::move(compiler_command), "clang++ --version"_str);
@@ -406,9 +349,12 @@ public:
             toolchain::command::tool_output(rstd::move(target_command), "clang++ target query"_str);
         auto resource = toolchain::command::tool_output(rstd::move(resource_command),
                                                         "clang++ resource query"_str);
+        auto help =
+            toolchain::command::tool_output(rstd::move(help_command), "clang++ help query"_str);
         if (compiler_version.is_err()) return Err(rstd::move(compiler_version).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
+        if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured compiler is not clang++"_str);
         }
@@ -437,15 +383,50 @@ public:
                              compiler_path.as_path(),
                              rstd::move(modified).unwrap_err()));
         }
-        auto timestamp = modified->as_unix_time();
-        auto identity  = CompilerIdentity {
+        auto timestamp     = modified->as_unix_time();
+        auto compiler_text = compiler_path.as_path().to_str();
+        auto resource_text = resolved_resource.as_path().to_str();
+        if (compiler_text.is_none() || resource_text.is_none()) {
+            return failure<ClangToolchain>(
+                "Clang compiler or resource path is not valid UTF-8"_str);
+        }
+        auto build_identity = rstd::format("tenon-clang-build-v1\n{}\n{}\n{}\n{}\n{}:{}:{}",
+                                           *compiler_text,
+                                           compiler_version->as_str(),
+                                           target->as_str(),
+                                           *resource_text,
+                                           compiler_metadata->size(),
+                                           timestamp.seconds,
+                                           timestamp.nanoseconds);
+        auto identity       = CompilerIdentity {
             .path                 = compiler_path.clone(),
             .version              = rstd::move(compiler_version).unwrap(),
             .target               = rstd::move(target).unwrap(),
             .resource_directory   = resolved_resource.clone(),
+            .build_identity       = build_identity.clone(),
             .size                 = compiler_metadata->size(),
             .modified_seconds     = timestamp.seconds,
             .modified_nanoseconds = timestamp.nanoseconds,
+        };
+        auto capabilities = CppToolchainCapabilities {
+            .one_phase_bmi          = help->as_str().contains("-fmodule-output"_str),
+            .exact_module_mapping   = help->as_str().contains("-fmodule-file"_str),
+            .reduced_bmi            = help->as_str().contains("-fmodules-reduced-bmi"_str),
+            .full_bmi_precompile    = help->as_str().contains("--precompile "_str),
+            .reduced_bmi_precompile = help->as_str().contains("--precompile-reduced-bmi"_str),
+            .source_embedding       = help->as_str().contains("-fmodules-embed-all-files"_str),
+        };
+        if (! capabilities.one_phase_bmi || ! capabilities.exact_module_mapping ||
+            ! capabilities.reduced_bmi) {
+            return failure<ClangToolchain>("configured Clang lacks required reduced BMI, one-phase "
+                                           "BMI, or exact module mapping "
+                                           "support"_str);
+        }
+        auto format = BmiFormatIdentity {
+            .family               = String::make("clang"_str),
+            .compiler_build       = rstd::move(build_identity),
+            .target               = identity.target.clone(),
+            .resource_environment = String::make(*resource_text),
         };
 
         return Ok(ClangToolchain {
@@ -454,6 +435,8 @@ public:
             rstd::move(resolved_resource),
             rstd::move(identity),
             rstd::move(target_info).unwrap(),
+            rstd::move(format),
+            capabilities,
         });
     }
 
@@ -461,6 +444,25 @@ public:
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
+    auto bmi_format() const -> const BmiFormatIdentity& { return bmi_format_; }
+    auto capabilities() const noexcept -> const CppToolchainCapabilities& { return capabilities_; }
+
+    auto validate(const CppCompileOptions& cpp, const BmiRequest& bmi) const -> Result<empty> {
+        if (! is_supported_cpp_standard(cpp.language.standard.as_str())) {
+            return failure<empty>(
+                rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
+                             cpp.language.standard.as_str()));
+        }
+        if (bmi.representation == BmiRepresentation::Reduced && ! capabilities_.reduced_bmi) {
+            return failure<empty>("configured Clang does not support reduced BMI"_str);
+        }
+        if (bmi.source_embedding == BmiSourceEmbeddingPolicy::EmbedAll &&
+            ! capabilities_.source_embedding) {
+            return failure<empty>(
+                "configured Clang does not support embedding BMI source inputs"_str);
+        }
+        return Ok(empty {});
+    }
 
     auto builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
         return make_builtin_context(context);
@@ -509,11 +511,11 @@ public:
         auto frontend_span = profiler.span(ScanProbe::Frontend);
         frontend_service.record_analysis_build();
         auto environment_span = profiler.span(ScanProbe::Environment);
-        for (const auto& option : compile_context.options) {
-            if (unsupported_native_preprocessor_option(option.as_str())) {
+        for (const auto& option : compile_context.cpp.vendor) {
+            if (unsupported_native_preprocessor_option(option.value.as_str())) {
                 return failure<frontend::UncachedFrontendAnalysis>(
                     rstd::format("compiler option '{}' is not supported by the native preprocessor",
-                                 option.as_str()));
+                                 option.value.as_str()));
             }
         }
         auto selected_environment = environment_for(compile_context, working_directory);
@@ -537,7 +539,7 @@ public:
             return preprocessor::preprocess_to(
                 preprocessor::PreprocessRequest {
                     .source               = PathBuf::from(source),
-                    .language_standard    = compile_context.language_standard.clone(),
+                    .language_standard    = compile_context.cpp.language.standard.clone(),
                     .environment_identity = environment->identity.clone(),
                 },
                 frontend_service,
@@ -588,11 +590,11 @@ public:
         auto frontend_span = profiler.span(ScanProbe::Frontend);
         frontend_service.record_analysis_build();
         auto environment_span = profiler.span(ScanProbe::Environment);
-        for (const auto& option : compile_context.options) {
-            if (unsupported_native_preprocessor_option(option.as_str())) {
+        for (const auto& option : compile_context.cpp.vendor) {
+            if (unsupported_native_preprocessor_option(option.value.as_str())) {
                 return failure<frontend::UncachedDocumentationAnalysis>(
                     rstd::format("compiler option '{}' is not supported by the native preprocessor",
-                                 option.as_str()));
+                                 option.value.as_str()));
             }
         }
         auto selected_environment = environment_for(compile_context, working_directory);
@@ -615,7 +617,7 @@ public:
             return frontend::preprocessor::preprocess_to(
                 frontend::preprocessor::PreprocessRequest {
                     .source               = PathBuf::from(source),
-                    .language_standard    = compile_context.language_standard.clone(),
+                    .language_standard    = compile_context.cpp.language.standard.clone(),
                     .environment_identity = environment->identity.clone(),
                 },
                 frontend_service,
@@ -664,25 +666,36 @@ public:
         });
     }
 
-    auto prepare_compile(const PreparedUnit& prepared,
-                         const ScanResult&   scan_result,
-                         const Vec<PathBuf>& prebuilt_module_paths) const
+    auto prepare_compile(const PreparedUnit&                  prepared,
+                         const ScanResult&                    scan_result,
+                         const Vec<ModuleArtifactDependency>& module_dependencies) const
         -> Result<CompileInvocation> {
-        auto command = Vec<String>::make();
-        auto context = append_compile_context(command, *prepared.unit.context);
+        auto valid = validate(prepared.unit.context->cpp, prepared.unit.context->bmi);
+        if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
+        auto staged_object = staging_path(prepared.unit.object.as_path());
+        if (staged_object.is_err()) return Err(rstd::move(staged_object).unwrap_err());
+        auto staged_bmi = Option<PathBuf> {};
+        auto command    = Vec<String>::make();
+        auto context    = append_compile_context(command, *prepared.unit.context);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         if (scan_result.provided.is_some()) {
             if (prepared.unit.bmi.is_none()) {
                 return failure<CompileInvocation>(rstd::format("module unit has no BMI output: {}",
                                                                prepared.unit.source.as_path()));
             }
-            auto parent = create_parent((*prepared.unit.bmi).as_path());
+            auto parent = create_parent(prepared.unit.bmi->path.as_path());
             if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
+            auto output = staging_path(prepared.unit.bmi->path.as_path());
+            if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+            staged_bmi = Some(rstd::move(output).unwrap());
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
             toolchain::command::push_option(command, toolchain::clang_options::CXX_MODULE);
             auto pushed = toolchain::command::push_path_option(
-                command, toolchain::clang_options::MODULE_OUTPUT, (*prepared.unit.bmi).as_path());
+                command, toolchain::clang_options::MODULE_OUTPUT, staged_bmi->as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            if (prepared.unit.context->bmi.source_embedding == BmiSourceEmbeddingPolicy::EmbedAll) {
+                toolchain::command::push_option(command, toolchain::clang_options::EMBED_ALL_FILES);
+            }
         } else {
             auto extension      = prepared.unit.source.as_path().extension();
             auto extension_text = extension.is_some() ? (*extension).to_str() : None();
@@ -691,18 +704,18 @@ public:
                 toolchain::command::push_option(command, toolchain::clang_options::CXX_SOURCE);
             }
         }
-        for (const auto& prebuilt_module_path : prebuilt_module_paths) {
-            auto pushed =
-                toolchain::command::push_path_option(command,
-                                                     toolchain::clang_options::PREBUILT_MODULE_PATH,
-                                                     prebuilt_module_path.as_path());
+        for (const auto& dependency : module_dependencies) {
+            auto prefix = rstd::format(
+                "{}{}=", toolchain::clang_options::MODULE_FILE, dependency.logical_name.as_str());
+            auto pushed = toolchain::command::push_path_option(
+                command, prefix.as_str(), dependency.path.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         toolchain::command::push_option(command, toolchain::clang_options::COMPILE);
         auto pushed = toolchain::command::push_path(command, prepared.unit.source.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
-        pushed = toolchain::command::push_path(command, prepared.unit.object.as_path());
+        pushed = toolchain::command::push_path(command, staged_object->as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
         auto identity = invocation_identity(command, prepared.working_directory.as_path());
@@ -711,6 +724,11 @@ public:
             .arguments         = rstd::move(command),
             .working_directory = prepared.working_directory.clone(),
             .identity          = rstd::move(identity).unwrap(),
+            .staged_object     = rstd::move(staged_object).unwrap(),
+            .final_object      = prepared.unit.object.clone(),
+            .staged_bmi        = rstd::move(staged_bmi),
+            .final_bmi         = prepared.unit.bmi.is_some() ? Some(prepared.unit.bmi->path.clone())
+                                                             : Option<PathBuf> {},
         });
     }
 
@@ -730,10 +748,36 @@ public:
 
     auto execute_compile_capture(const CompileInvocation& invocation) const
         -> Result<CompileCommandResult> {
+        auto cleared = clear_staged_output(invocation.staged_object.as_path());
+        if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
+        if (invocation.staged_bmi.is_some()) {
+            cleared = clear_staged_output(invocation.staged_bmi->as_path());
+            if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
+        }
         auto output =
             run_command(invocation.arguments, Some(invocation.working_directory.as_path()));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
+        if (command_output.exit_code == i32 {}) {
+            auto verified = verify_staged_output(invocation.staged_object.as_path());
+            if (verified.is_err()) return Err(rstd::move(verified).unwrap_err());
+            if (invocation.staged_bmi.is_some()) {
+                if (invocation.final_bmi.is_none()) {
+                    return failure<CompileCommandResult>(
+                        "compile invocation has a staged BMI without a final output"_str);
+                }
+                verified = verify_staged_output(invocation.staged_bmi->as_path());
+                if (verified.is_err()) return Err(rstd::move(verified).unwrap_err());
+            }
+            if (invocation.staged_bmi.is_some() && invocation.final_bmi.is_some()) {
+                auto published = publish_output(invocation.staged_bmi->as_path(),
+                                                invocation.final_bmi->as_path());
+                if (published.is_err()) return Err(rstd::move(published).unwrap_err());
+            }
+            auto published = publish_output(invocation.staged_object.as_path(),
+                                            invocation.final_object.as_path());
+            if (published.is_err()) return Err(rstd::move(published).unwrap_err());
+        }
         return Ok(CompileCommandResult {
             .exit_code       = command_output.exit_code,
             .standard_output = rstd::move(command_output.standard_output),
@@ -859,16 +903,20 @@ public:
     }
 
 private:
-    ClangToolchain(PathBuf          compiler,
-                   PathBuf          archiver,
-                   PathBuf          resource_dir,
-                   CompilerIdentity identity,
-                   TargetInfo       target_info)
+    ClangToolchain(PathBuf                  compiler,
+                   PathBuf                  archiver,
+                   PathBuf                  resource_dir,
+                   CompilerIdentity         identity,
+                   TargetInfo               target_info,
+                   BmiFormatIdentity        format,
+                   CppToolchainCapabilities capabilities)
         : compiler_(rstd::move(compiler)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
-          target_info_(rstd::move(target_info)) {}
+          target_info_(rstd::move(target_info)),
+          bmi_format_(rstd::move(format)),
+          capabilities_(capabilities) {}
 
     auto environment_for(const CompileContext& compile_context,
                          ref<rstd::path::Path> working_directory) const
@@ -930,8 +978,7 @@ private:
                                                         working_directory),
             rstd::move(builtin_environment).unwrap(),
             rstd::move(builtin_values.semantic),
-            compile_context.options,
-            compile_context.definitions);
+            compile_context.cpp.preprocessor.macros);
         if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
         preprocessor_environments_.push(rstd::move(queried).unwrap());
         return Ok(rstd::addressof(
@@ -939,10 +986,10 @@ private:
     }
 
     auto make_builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
-        if (! is_supported_cpp_standard(context.language_standard.as_str())) {
+        if (! is_supported_cpp_standard(context.cpp.language.standard.as_str())) {
             return failure<ClangBuiltinContext>(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
-                             context.language_standard.as_str()));
+                             context.cpp.language.standard.as_str()));
         }
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
@@ -955,24 +1002,11 @@ private:
             return Err(rstd::move(pushed).unwrap_err());
         }
         command.push(rstd::format(
-            "{}{}", toolchain::clang_options::STANDARD, context.language_standard.as_str()));
-        auto normalized = normalize_builtin_options(context.options);
-        if (normalized.is_err()) return Err(rstd::move(normalized).unwrap_err());
-        auto options         = rstd::move(normalized).unwrap();
-        auto ignored_options = options.ignored_options;
-        if (options.target.is_some()) command.push(rstd::move(options.target).unwrap());
-        if (options.sysroot.is_some()) command.push(rstd::move(options.sysroot).unwrap());
-        if (options.optimization.is_some()) {
-            command.push(rstd::move(options.optimization).unwrap());
-        }
-        auto last_options = options.last_options.into_iter();
-        while (auto option = last_options.next()) {
-            command.push(rstd::move((*option).template get<1>()));
-        }
-        for (auto& option : options.ordered_options) command.push(rstd::move(option));
-        toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
-        toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
-        auto key = argument_identity("tenon-clang-builtin-context-v3"_str, command);
+            "{}{}", toolchain::clang_options::STANDARD, context.cpp.language.standard.as_str()));
+        toolchain::command::push_option(
+            command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
+        append_typed_options(command, context.cpp, true);
+        auto key = argument_identity("tenon-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
         key.push_str(compiler_identity_.version.as_str());
@@ -986,12 +1020,13 @@ private:
             .query_command = rstd::move(command),
             .semantic =
                 toolchain::BuiltinSemanticContext {
-                    .language_standard = context.language_standard.clone(),
-                    .rtti              = false,
-                    .exceptions        = false,
+                    .language_standard = context.cpp.language.standard.clone(),
+                    .rtti              = context.cpp.language.rtti,
+                    .exceptions        = context.cpp.language.exceptions,
                 },
-            .key             = rstd::move(key),
-            .ignored_options = ignored_options,
+            .key = rstd::move(key),
+            .ignored_options =
+                context.cpp.diagnostics.options.len() + context.cpp.preprocessor.macros.len(),
         });
     }
 
@@ -1003,18 +1038,18 @@ private:
         pushed = toolchain::command::push_path(command, resource_dir_.as_path());
         if (pushed.is_err()) return pushed;
         command.push(rstd::format(
-            "{}{}", toolchain::clang_options::STANDARD, context.language_standard.as_str()));
+            "{}{}", toolchain::clang_options::STANDARD, context.cpp.language.standard.as_str()));
         toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(context.standard_library));
-        toolchain::command::push_option(command, toolchain::clang_options::bmi(context.bmi_mode));
-        for (const auto& option : context.options) command.push(option.clone());
-        toolchain::command::push_option(command, toolchain::clang_options::NO_RTTI);
-        toolchain::command::push_option(command, toolchain::clang_options::NO_EXCEPTIONS);
-        for (const auto& definition : context.definitions) {
-            command.push(
-                rstd::format("{}{}", toolchain::clang_options::DEFINE, definition.as_str()));
+            command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
+        toolchain::command::push_option(command,
+                                        toolchain::clang_options::bmi(context.bmi.representation));
+        append_typed_options(command, context.cpp, false);
+        for (const auto& macro : context.cpp.preprocessor.macros) {
+            command.push(rstd::format("{}{}",
+                                      macro.action == CppMacroAction::Define ? "-D"_str : "-U"_str,
+                                      macro.value.as_str()));
         }
-        for (const auto& include : context.include_directories) {
+        for (const auto& include : context.cpp.preprocessor.include_directories) {
             toolchain::command::push_option(command, toolchain::clang_options::INCLUDE);
             pushed = toolchain::command::push_path(command, include.as_path());
             if (pushed.is_err()) return pushed;
@@ -1027,6 +1062,8 @@ private:
     PathBuf                                                       resource_dir_;
     CompilerIdentity                                              compiler_identity_;
     TargetInfo                                                    target_info_;
+    BmiFormatIdentity                                             bmi_format_;
+    CppToolchainCapabilities                                      capabilities_;
     mutable ToolchainStatistics                                   toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot> builtin_environment_snapshots_;
     mutable Vec<toolchain::PreprocessorEnvironment>               preprocessor_environments_;
