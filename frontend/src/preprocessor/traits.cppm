@@ -19,6 +19,9 @@ using lexical::SourceLocation;
 using lexical::SourceManager;
 using lexical::LexedSource;
 using lexical::SharedLexedSource;
+using lexical::CommentTrivia;
+using lexical::CommentKind;
+using lexical::CommentStyle;
 using lexical::make_source_snapshot;
 using lexical::Token;
 using lexical::TokenKind;
@@ -316,6 +319,8 @@ enum class PreprocessorActivity
 struct PreprocessorStatistics {
     usize files {};
     usize source_tokens {};
+    usize source_comments {};
+    usize active_comments {};
     usize token_clones {};
     usize synthetic_tokens {};
     usize directives {};
@@ -331,6 +336,8 @@ struct PreprocessorStatistics {
     auto add(const PreprocessorStatistics& other) noexcept -> void {
         files += other.files;
         source_tokens += other.source_tokens;
+        source_comments += other.source_comments;
+        active_comments += other.active_comments;
         token_clones += other.token_clones;
         synthetic_tokens += other.synthetic_tokens;
         directives += other.directives;

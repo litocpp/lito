@@ -1,0 +1,8 @@
+[package]
+name = "fixture-doc-basic"
+version.workspace = true
+module = "fixture.doc.basic"
+
+[library]
+archive = "fixture.doc.basic"
+discovery = "module"

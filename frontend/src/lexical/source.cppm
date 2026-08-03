@@ -41,9 +41,48 @@ struct SourceFile {
     auto contents() const -> ref<str> { return snapshot.get()->contents.as_str(); }
 };
 
+enum class CommentKind
+{
+    Ordinary,
+    OuterDocumentation,
+    InnerDocumentation,
+};
+
+enum class CommentStyle
+{
+    Line,
+    Block,
+};
+
+struct CommentTrivia {
+    CommentKind    kind { CommentKind::Ordinary };
+    CommentStyle   style { CommentStyle::Line };
+    TokenText      text;
+    SourceLocation begin;
+    SourceLocation end;
+    bool           start_of_line { false };
+
+    auto clone() const -> CommentTrivia {
+        return CommentTrivia {
+            .kind          = kind,
+            .style         = style,
+            .text          = text.shared_clone(),
+            .begin         = begin,
+            .end           = end,
+            .start_of_line = start_of_line,
+        };
+    }
+};
+
+struct LexedFile {
+    Vec<Token>         tokens;
+    Vec<CommentTrivia> comments;
+};
+
 struct LexedSource {
     SharedSourceSnapshot snapshot;
     Vec<Token>           tokens;
+    Vec<CommentTrivia>   comments;
 };
 
 using SharedLexedSource = rstd::rc::Rc<const LexedSource>;
@@ -66,6 +105,7 @@ public:
     }
 
     auto file(SourceId id) const -> const SourceFile& { return files_[id]; }
+    auto snapshot(SourceId id) const -> SharedSourceSnapshot { return files_[id].snapshot.clone(); }
     auto path(SourceId id) const -> ref<rstd::path::Path> { return files_[id].path(); }
     auto len() const noexcept -> usize { return files_.len(); }
 

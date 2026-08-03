@@ -3,6 +3,7 @@
 import rstd;
 import rstd.test;
 import tenon;
+import tenon.doc;
 import tenon.test.support;
 
 using namespace rstd::prelude;
@@ -58,6 +59,99 @@ TEST(Integration, BuildSelectsProductionArtifacts) {
     EXPECT_EQ(artifact_count(*summary, tenon::ArtifactKind::Executable), usize(1));
     EXPECT_EQ(artifact_count(*summary, tenon::ArtifactKind::TestExecutable), usize {});
     clear_output(output.as_path());
+}
+
+TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
+    auto project = project_root();
+    auto output  = output_root("doc"_str);
+    ASSERT_TRUE(clear_output(output.as_path()));
+    auto generated = tenon::generate_documentation(tenon::DocRequest {
+        .selection =
+            tenon::PackageSelection {
+                .root     = project.clone(),
+                .packages = strings("fixture-doc-basic"_str),
+            },
+        .output        = output.clone(),
+        .configuration = configuration(),
+        .locked        = true,
+    });
+    ASSERT_TRUE(generated.is_ok());
+    ASSERT_EQ(generated->packages.len(), usize(1));
+    const auto& package = generated->packages[usize {}];
+    EXPECT_EQ(package.symbols, usize(5));
+    EXPECT_EQ(package.documented, usize(5));
+    EXPECT_EQ(package.undocumented, usize {});
+    EXPECT_EQ(package.unsupported, usize {});
+    EXPECT_EQ(generated->frontend.source_reads, usize(1));
+    EXPECT_EQ(generated->frontend.lex_builds, usize(1));
+    EXPECT_EQ(generated->frontend.documentation_builds, usize(1));
+    EXPECT_EQ(generated->frontend.documentation_declarations, usize(8));
+    auto json = rstd::fs::read_to_string(package.json.as_path());
+    ASSERT_TRUE(json.is_ok());
+    EXPECT_TRUE(tenon::doc::validate_json(json->as_str()).is_ok());
+    EXPECT_TRUE(tenon::doc::validate_json("{\"format\":\"tenon-doc\",\"version\":2}"_str).is_err());
+    EXPECT_TRUE(json->as_str().contains("Fixture module overview."_str));
+    EXPECT_TRUE(json->as_str().contains("\"toolchain-target\""_str));
+    EXPECT_TRUE(json->as_str().contains("\"language-standard\": \"c++20\""_str));
+    EXPECT_TRUE(json->as_str().contains("\"reexports\""_str));
+    EXPECT_TRUE(json->as_str().contains("\"end-column\""_str));
+    EXPECT_TRUE(json->as_str().contains("\"path\": \"src/lib.cppm\""_str));
+    auto project_text = project.as_path().to_str();
+    ASSERT_TRUE(project_text.is_some());
+    EXPECT_FALSE(json->as_str().contains(*project_text));
+    EXPECT_TRUE(json->as_str().contains("Adds two values"_str));
+    EXPECT_TRUE(json->as_str().contains("fixture::nested::make"_str));
+    EXPECT_FALSE(json->as_str().contains("fixture::nested::T"_str));
+    EXPECT_TRUE(json->as_str().contains("\"group\": \"Arithmetic\""_str));
+    EXPECT_FALSE(json->as_str().contains("Inactive declaration documentation."_str));
+    EXPECT_FALSE(json->as_str().contains("doxygen_hidden"_str));
+    EXPECT_FALSE(json->as_str().contains("private member"_str));
+    auto symbol_directory = package.directory.join(PathBuf::from("symbol"_str).as_path());
+    auto opened_symbols   = rstd::fs::read_dir(symbol_directory.as_path());
+    ASSERT_TRUE(opened_symbols.is_ok());
+    auto symbol_entries = rstd::move(opened_symbols).unwrap();
+    auto symbol_pages   = String::make();
+    for (auto next = symbol_entries.next(); next.is_some(); next = symbol_entries.next()) {
+        auto entry = rstd::move(next).unwrap();
+        ASSERT_TRUE(entry.is_ok());
+        auto page = rstd::fs::read_to_string(entry->path().as_path());
+        ASSERT_TRUE(page.is_ok());
+        symbol_pages.push_str(page->as_str());
+    }
+    EXPECT_TRUE(symbol_pages.as_str().contains("Parameter <code>left</code>"_str));
+    EXPECT_TRUE(symbol_pages.as_str().contains("<h3>Returns</h3>"_str));
+    EXPECT_TRUE(symbol_pages.as_str().contains("<em>record</em>"_str));
+    EXPECT_TRUE(symbol_pages.as_str().contains("href=\"https://example.com\""_str));
+    EXPECT_TRUE(symbol_pages.as_str().contains("&lt;script&gt;"_str));
+    EXPECT_FALSE(symbol_pages.as_str().contains("<script>"_str));
+    EXPECT_TRUE(rstd::fs::exists(generated->index.as_path()).unwrap());
+    auto regenerated = tenon::generate_documentation(tenon::DocRequest {
+        .selection =
+            tenon::PackageSelection {
+                .root     = project.clone(),
+                .packages = strings("fixture-doc-basic"_str),
+            },
+        .output        = output.clone(),
+        .configuration = configuration(),
+        .locked        = true,
+    });
+    ASSERT_TRUE(regenerated.is_ok());
+    auto second_json = rstd::fs::read_to_string(regenerated->packages[usize {}].json.as_path());
+    ASSERT_TRUE(second_json.is_ok());
+    EXPECT_EQ(second_json->as_str(), json->as_str());
+    EXPECT_TRUE(clear_output(output.as_path()));
+
+    auto rejected = tenon::generate_documentation(tenon::DocRequest {
+        .selection =
+            tenon::PackageSelection {
+                .root     = project.clone(),
+                .packages = strings("fixture-test-app"_str),
+            },
+        .output        = output.clone(),
+        .configuration = configuration(),
+        .locked        = true,
+    });
+    EXPECT_TRUE(rejected.is_err());
 }
 
 TEST(Integration, TestRunsPassFailureSignalAndNoRun) {

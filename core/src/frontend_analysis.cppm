@@ -9,6 +9,7 @@ import tenon.build_layout;
 import tenon.profiling;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace tenon
 {
@@ -23,11 +24,21 @@ public:
         return FrontendAnalysisService { layout, toolchain, frontend_service, cache, profiler };
     }
 
+    static auto make_documentation(const ClangToolchain&      toolchain,
+                                   frontend::FrontendService& frontend_service,
+                                   ScanProfiler&              profiler) -> FrontendAnalysisService {
+        return FrontendAnalysisService { toolchain, frontend_service, profiler };
+    }
+
     auto analyze(ref<str>              target,
                  ref<rstd::path::Path> relative_source,
                  ref<rstd::path::Path> source,
                  const CompileContext& context,
                  ref<rstd::path::Path> working_directory) -> Result<frontend::FrontendAnalysis> {
+        if (layout_ == nullptr || cache_ == nullptr) {
+            return Err(
+                Error::make(ErrorKind::Artifact, "scan analysis service has no cache state"_str));
+        }
         auto record = layout_->cache_scan(target, relative_source);
         if (record.is_err()) return Err(rstd::move(record).unwrap_err());
         auto environment =
@@ -57,6 +68,27 @@ public:
 
     auto profiler() noexcept -> ScanProfiler& { return *profiler_; }
 
+    auto analyze_documentation(ref<rstd::path::Path> source,
+                               const CompileContext& context,
+                               ref<rstd::path::Path> working_directory)
+        -> Result<frontend::DocumentationAnalysis> {
+        auto analyzed = toolchain_->preprocess_documentation(
+            source, context, working_directory, *frontend_service_, *profiler_);
+        if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
+        auto value = rstd::move(analyzed).unwrap();
+        frontend_service_->record_documentation_build(value.documentation.declarations.len());
+        return Ok(frontend::DocumentationAnalysis {
+            .analysis =
+                frontend::FrontendAnalysis {
+                    .result           = rstd::move(value.result),
+                    .context_identity = context.id.clone(),
+                    .receipt          = String::make(),
+                    .origin           = frontend::FrontendAnalysisOrigin::Uncacheable,
+                },
+            .documentation = rstd::move(value.documentation),
+        });
+    }
+
     auto record_in_build_reuse() noexcept -> void { frontend_service_->record_analysis_hit(); }
 
 private:
@@ -70,6 +102,11 @@ private:
           frontend_service_(&frontend_service),
           cache_(&cache),
           profiler_(&profiler) {}
+
+    FrontendAnalysisService(const ClangToolchain&      toolchain,
+                            frontend::FrontendService& frontend_service,
+                            ScanProfiler&              profiler)
+        : toolchain_(&toolchain), frontend_service_(&frontend_service), profiler_(&profiler) {}
 
     const BuildLayout*         layout_ {};
     const ClangToolchain*      toolchain_ {};

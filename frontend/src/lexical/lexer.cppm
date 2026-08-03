@@ -11,7 +11,7 @@ using namespace rstd::literals;
 namespace tenon::frontend::lexical
 {
 
-auto lex_failure(ref<str> message, SourceLocation location) -> Result<Vec<Token>> {
+auto lex_failure(ref<str> message, SourceLocation location) {
     return Err(Error::at(String::make(message), location));
 }
 
@@ -121,8 +121,10 @@ auto ucn_length(slice<u8> bytes, usize index) -> usize {
 export namespace tenon::frontend::lexical
 {
 
-auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<Token>> {
+auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
+    -> Result<LexedFile> {
     auto tokens     = Vec<Token>::make();
+    auto comments   = Vec<CommentTrivia>::make();
     auto bytes      = source.contents().as_bytes();
     auto token_text = [borrow_spelling](ref<str> text) -> TokenText {
         return borrow_spelling ? TokenText::borrowed(text) : TokenText { String::make(text) };
@@ -177,13 +179,37 @@ auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<T
         }
         if (value == u8('/') && index + usize(1) < bytes.len() &&
             bytes[index + usize(1)] == u8('/')) {
-            pending_space = true;
+            auto start = SourceLocation {
+                .source = source.id, .offset = index, .line = line, .column = column
+            };
+            auto comment_line_start = line_start;
+            pending_space           = true;
             index += usize(2);
             column += usize(2);
             while (index < bytes.len() && bytes[index] != u8('\n') && bytes[index] != u8('\r')) {
                 ++index;
                 ++column;
             }
+            auto kind = CommentKind::Ordinary;
+            if (start.offset + usize(2) < bytes.len() &&
+                bytes[start.offset + usize(2)] == u8('!')) {
+                kind = CommentKind::InnerDocumentation;
+            } else if (start.offset + usize(2) < bytes.len() &&
+                       bytes[start.offset + usize(2)] == u8('/') &&
+                       (start.offset + usize(3) >= bytes.len() ||
+                        bytes[start.offset + usize(3)] != u8('/'))) {
+                kind = CommentKind::OuterDocumentation;
+            }
+            comments.push(CommentTrivia {
+                .kind  = kind,
+                .style = CommentStyle::Line,
+                .text  = token_text(source.contents().get(start.offset, index).unwrap()),
+                .begin = start,
+                .end =
+                    SourceLocation {
+                        .source = source.id, .offset = index, .line = line, .column = column },
+                .start_of_line = comment_line_start,
+            });
             continue;
         }
         if (value == u8('/') && index + usize(1) < bytes.len() &&
@@ -191,7 +217,8 @@ auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<T
             auto start = SourceLocation {
                 .source = source.id, .offset = index, .line = line, .column = column
             };
-            pending_space = true;
+            auto comment_line_start = line_start;
+            pending_space           = true;
             index += usize(2);
             column += usize(2);
             auto closed = false;
@@ -229,6 +256,26 @@ auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<T
                 ++column;
             }
             if (! closed) return lex_failure("unterminated block comment"_str, start);
+            auto kind = CommentKind::Ordinary;
+            if (start.offset + usize(2) < bytes.len() &&
+                bytes[start.offset + usize(2)] == u8('!')) {
+                kind = CommentKind::InnerDocumentation;
+            } else if (start.offset + usize(2) < bytes.len() &&
+                       bytes[start.offset + usize(2)] == u8('*') &&
+                       (start.offset + usize(3) >= bytes.len() ||
+                        bytes[start.offset + usize(3)] != u8('*'))) {
+                kind = CommentKind::OuterDocumentation;
+            }
+            comments.push(CommentTrivia {
+                .kind  = kind,
+                .style = CommentStyle::Block,
+                .text  = token_text(source.contents().get(start.offset, index).unwrap()),
+                .begin = start,
+                .end =
+                    SourceLocation {
+                        .source = source.id, .offset = index, .line = line, .column = column },
+                .start_of_line = comment_line_start,
+            });
             continue;
         }
 
@@ -359,7 +406,13 @@ auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<T
         line_start    = false;
         pending_space = false;
     }
-    return Ok(rstd::move(tokens));
+    return Ok(LexedFile { .tokens = rstd::move(tokens), .comments = rstd::move(comments) });
+}
+
+auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<Token>> {
+    auto result = lex_with_comments(source, borrow_spelling);
+    if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+    return Ok(rstd::move(result).unwrap().tokens);
 }
 
 } // namespace tenon::frontend::lexical

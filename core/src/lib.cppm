@@ -23,3 +23,4 @@ export import tenon.compile_test;
 export import tenon.test_runner;
 export import tenon.scanner;
 export import tenon.formatter;
+export import tenon.documentation;

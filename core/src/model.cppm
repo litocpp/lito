@@ -126,6 +126,7 @@ enum class PackageSelectionPurpose
     All,
     Production,
     Test,
+    Documentation,
 };
 
 enum class PackageVersionSource
@@ -323,11 +324,12 @@ using ModuleImport   = frontend::ModuleImport;
 using FrontendResult = frontend::FrontendResult;
 
 struct ResolvedSource {
-    PathBuf                            relative_path;
-    PathBuf                            canonical_path;
-    SourceOrigin                       origin { SourceOrigin::Explicit };
-    Option<String>                     expected_module;
-    Option<frontend::FrontendAnalysis> frontend_analysis;
+    PathBuf                             relative_path;
+    PathBuf                             canonical_path;
+    SourceOrigin                        origin { SourceOrigin::Explicit };
+    Option<String>                      expected_module;
+    Option<frontend::FrontendAnalysis>  frontend_analysis;
+    Option<frontend::DocumentationUnit> documentation;
 };
 
 struct ResolvedSourceSet {
@@ -410,10 +412,11 @@ struct BuildConfiguration {
 };
 
 struct TargetSource {
-    PathBuf                            relative_path;
-    PathBuf                            path;
-    Option<String>                     expected_module;
-    Option<frontend::FrontendAnalysis> frontend_analysis;
+    PathBuf                             relative_path;
+    PathBuf                             path;
+    Option<String>                      expected_module;
+    Option<frontend::FrontendAnalysis>  frontend_analysis;
+    Option<frontend::DocumentationUnit> documentation;
 };
 
 struct TargetMetadata {
@@ -654,6 +657,36 @@ struct FormatRequest {
 struct FormatSummary {
     usize packages {};
     usize files {};
+};
+
+struct DocRequest {
+    PackageSelection    selection;
+    Vec<String>         targets;
+    PathBuf             output;
+    BuildConfiguration  configuration;
+    PackageSourceConfig sources;
+    bool                locked { false };
+};
+
+struct DocPackageSummary {
+    String  name;
+    PathBuf directory;
+    PathBuf json;
+    PathBuf index;
+    usize   symbols {};
+    usize   documented {};
+    usize   undocumented {};
+    usize   unsupported {};
+    usize   diagnostics {};
+};
+
+struct DocSummary {
+    String                       profile;
+    PathBuf                      output;
+    PathBuf                      index;
+    Vec<DocPackageSummary>       packages;
+    frontend::FrontendStatistics frontend;
+    ToolchainStatistics          toolchain;
 };
 
 } // namespace tenon

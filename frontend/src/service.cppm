@@ -73,6 +73,8 @@ struct FrontendStatistics {
     usize                                lex_builds {};
     usize                                analyze_builds {};
     usize                                analyze_hits {};
+    usize                                documentation_builds {};
+    usize                                documentation_declarations {};
     usize                                persistent_scan_hits {};
     usize                                persistent_scan_misses {};
     usize                                persistent_scan_uncacheable {};
@@ -181,16 +183,18 @@ public:
             .contents = rstd::move(contents).unwrap(),
         });
         auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
-        auto tokens   = [&] {
+        auto lexed    = [&] {
             auto activity = observe(FrontendActivity::Lex);
-            return lexical::lex(source, true);
+            return lexical::lex_with_comments(source, true);
         }();
-        if (tokens.is_err()) return Err(rstd::move(tokens).unwrap_err());
+        if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
         ++statistics_.lex_builds;
+        auto lexed_file = rstd::move(lexed).unwrap();
         auto shared =
             rstd::rc::make_rc<lexical::LexedSource>(lexical::LexedSource {
                                                         .snapshot = rstd::move(snapshot),
-                                                        .tokens   = rstd::move(tokens).unwrap(),
+                                                        .tokens   = rstd::move(lexed_file.tokens),
+                                                        .comments = rstd::move(lexed_file.comments),
                                                     })
                 .to_const();
         auto stored_path = shared.get()->snapshot.get()->path.as_path().to_str();
@@ -208,6 +212,11 @@ public:
     auto record_analysis_build() noexcept -> void { ++statistics_.analyze_builds; }
 
     auto record_analysis_hit() noexcept -> void { ++statistics_.analyze_hits; }
+
+    auto record_documentation_build(usize declarations) noexcept -> void {
+        ++statistics_.documentation_builds;
+        statistics_.documentation_declarations += declarations;
+    }
 
     auto
     record_preprocessor_statistics(const preprocessor::PreprocessorStatistics& statistics) noexcept

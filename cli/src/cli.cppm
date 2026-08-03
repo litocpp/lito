@@ -58,11 +58,17 @@ struct CliSchema {
     ArgKey<String>       scan_target;
     ArgKey<bool>         scan_locked;
     ArgKey<String>       format_package;
+    ArgKey<String>       doc_package;
+    ArgKey<BuildProfile> doc_profile;
+    ArgKey<String>       doc_target;
+    ArgKey<String>       doc_output;
+    ArgKey<bool>         doc_locked;
     Parser               parser;
 };
 
 auto package_arg() -> Arg<String> {
     return Arg<String>::value("package"_str, string_parser())
+        .short_name(u8('p'))
         .long_name("package"_str)
         .value_name("NAME"_str)
         .help("Select a package"_str)
@@ -155,6 +161,17 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     format.about("Format package sources"_str);
     auto format_package = format.add_arg(package_arg());
 
+    auto doc = Command::make("doc"_str);
+    doc.about("Generate package documentation"_str);
+    auto doc_package = doc.add_arg(package_arg());
+    auto doc_profile = doc.add_arg(profile_arg());
+    auto doc_target  = doc.add_arg(target_arg());
+    auto doc_output  = doc.add_arg(Arg<String>::value("out"_str, string_parser())
+                                       .long_name("out"_str)
+                                       .value_name("DIRECTORY"_str)
+                                       .help("Override the documentation output directory"_str));
+    auto doc_locked  = doc.add_arg(locked_arg());
+
     auto root = Command::make("tenon"_str);
     root.about("Module-first C++ builder"_str);
     root.require_subcommand();
@@ -167,6 +184,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
+    root.add_subcommand(rstd::move(doc));
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
@@ -194,6 +212,11 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_target       = scan_target,
         .scan_locked       = scan_locked,
         .format_package    = format_package,
+        .doc_package       = doc_package,
+        .doc_profile       = doc_profile,
+        .doc_target        = doc_target,
+        .doc_output        = doc_output,
+        .doc_locked        = doc_locked,
         .parser            = rstd::move(parser).unwrap(),
     });
 }
@@ -259,12 +282,21 @@ struct FormatOptions {
     Vec<String> packages;
 };
 
+struct DocOptions {
+    Vec<String>          packages;
+    Option<BuildProfile> profile;
+    Vec<String>          targets;
+    Option<PathBuf>      output;
+    bool                 locked {};
+};
+
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
               (Test, (TestOptions options;)),
               (Scan, (ScanOptions options;)),
-              (Format, (FormatOptions options;)))
+              (Format, (FormatOptions options;)),
+              (Doc, (DocOptions options;)))
 };
 
 class CliOutcome {
@@ -353,6 +385,20 @@ auto parse() -> CliOutcome {
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
+            }));
+    }
+    if (subcommand->get<0>() == "doc"_str) {
+        auto child   = subcommand->get<1>();
+        auto profile = optional_value(*child, schema.doc_profile);
+        auto output  = optional_value(*child, schema.doc_output);
+        return CliOutcome::Parsed(
+            rstd::move(working_directory),
+            CliCommand::Doc(DocOptions {
+                .packages = string_values(*child, schema.doc_package),
+                .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
+                .targets  = string_values(*child, schema.doc_target),
+                .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
+                .locked   = flag_value(*child, schema.doc_locked),
             }));
     }
     auto child = subcommand->get<1>();

@@ -25,6 +25,13 @@
     },
     {
       "dependencies": [],
+      "manifest": "doc-basic/tenon.toml",
+      "name": "fixture-doc-basic",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
       "manifest": "environment-cache/tenon.toml",
       "name": "fixture-environment-cache",
       "source": "path+.",
@@ -95,6 +102,7 @@
     "fixture-compile-lib",
     "fixture-compile-mismatch",
     "fixture-compile-pass",
+    "fixture-doc-basic",
     "fixture-environment-cache",
     "fixture-preprocessor-native",
     "fixture-scan-definitions",

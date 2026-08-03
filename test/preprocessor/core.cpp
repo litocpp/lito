@@ -32,11 +32,13 @@ public:
         auto snapshot = make_source_snapshot(SourceBuffer { .path = rstd::path::PathBuf::from(path),
                                                             .contents = (**contents).clone() });
         auto source   = SourceFile { .snapshot = snapshot.clone() };
-        auto tokens   = lex(source, true);
-        if (tokens.is_err()) return Err(rstd::move(tokens).unwrap_err());
+        auto lexed    = lex_with_comments(source, true);
+        if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
+        auto file = rstd::move(lexed).unwrap();
         return Ok(rstd::rc::make_rc<LexedSource>(LexedSource {
                                                      .snapshot = rstd::move(snapshot),
-                                                     .tokens   = rstd::move(tokens).unwrap(),
+                                                     .tokens   = rstd::move(file.tokens),
+                                                     .comments = rstd::move(file.comments),
                                                  })
                       .to_const());
     }
@@ -154,8 +156,12 @@ auto run_preprocessor_test() -> int {
                 "TENON_PRAGMA(pop_macro(\"TENON_STACK\"))\n"
                 "#define TENON_MODULE module\n"
                 "#define TENON_IMPORT import\n"
+                "#if 0\n"
+                "/// hidden documentation\n"
+                "#endif\n"
                 "#if TENON_VALUE == 7 && TENON_STACK == 1 && TENON_HEADER_STACK == 1 && "
                 "__COUNTER__ == 1 && __has_include(\"config.hpp\")\n"
+                "/// active documentation\n"
                 "export TENON_MODULE fixture.memory;\n"
                 "TENON_IMPORT :dependency;\n"
                 "#endif\n"
@@ -195,6 +201,11 @@ auto run_preprocessor_test() -> int {
     if (! contains_token(result->tokens, "TENON_LATE"_str) ||
         ! contains_token(result->tokens, "42"_str)) {
         return 12;
+    }
+    if (result->active_comments.len() != usize(1) ||
+        result->active_comments[usize {}].kind != CommentKind::OuterDocumentation ||
+        ! result->active_comments[usize {}].text.as_str().contains("active documentation"_str)) {
+        return 14;
     }
 
     auto stream_builtins = TestBuiltins {};

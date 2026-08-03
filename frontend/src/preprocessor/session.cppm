@@ -25,6 +25,7 @@ struct PreprocessedTranslationUnit {
     SourceManager            sources;
     SourceId                 main_source {};
     Vec<Token>               tokens;
+    Vec<CommentTrivia>       active_comments;
     Vec<rstd::path::PathBuf> header_inputs;
     String                   environment_identity;
     usize                    input_bytes {};
@@ -94,6 +95,8 @@ class PreprocessorSession {
     struct RawStatistics {
         rstd::size_t files {};
         rstd::size_t source_tokens {};
+        rstd::size_t source_comments {};
+        rstd::size_t active_comments {};
         rstd::size_t token_clones {};
         rstd::size_t synthetic_tokens {};
         rstd::size_t directives {};
@@ -171,6 +174,7 @@ public:
             .sources              = rstd::move(sources_),
             .main_source          = main_source_,
             .tokens               = Vec<Token>::make(),
+            .active_comments      = rstd::move(active_comments_),
             .header_inputs        = Vec<rstd::path::PathBuf>::make(),
             .environment_identity = environment_identity(),
             .input_bytes          = input_bytes_,
@@ -191,6 +195,8 @@ private:
         return PreprocessorStatistics {
             .files             = usize(raw_statistics_.files),
             .source_tokens     = usize(raw_statistics_.source_tokens),
+            .source_comments   = usize(raw_statistics_.source_comments),
+            .active_comments   = usize(raw_statistics_.active_comments),
             .token_clones      = usize(raw_statistics_.token_clones),
             .synthetic_tokens  = usize(raw_statistics_.synthetic_tokens),
             .directives        = usize(raw_statistics_.directives),
@@ -1237,6 +1243,23 @@ private:
             rstd::move(expanded).unwrap());
     }
 
+    auto collect_comments_through(const Vec<CommentTrivia>& comments,
+                                  usize&                    cursor,
+                                  usize                     offset,
+                                  SourceId                  source,
+                                  bool                      enabled) -> void {
+        while (cursor < comments.len() && comments[cursor].begin.offset <= offset) {
+            if (enabled) {
+                auto comment         = comments[cursor].clone();
+                comment.begin.source = source;
+                comment.end.source   = source;
+                active_comments_.push(rstd::move(comment));
+                ++raw_statistics_.active_comments;
+            }
+            ++cursor;
+        }
+    }
+
     auto process_file(ref<rstd::path::Path> path, Option<usize> search_index) -> Result<empty> {
         if (include_stack_.len() >= request_.maximum_include_depth) {
             return Err(Error::make(rstd::format("maximum include depth exceeded at '{}'", path)));
@@ -1256,6 +1279,7 @@ private:
         input_bytes_ += loaded->get()->snapshot.get()->contents.len();
         ++raw_statistics_.files;
         raw_statistics_.source_tokens += loaded->get()->tokens.len().to_primitive();
+        raw_statistics_.source_comments += loaded->get()->comments.len().to_primitive();
         auto source    = sources_.add(loaded->get()->snapshot.clone());
         auto main_file = include_stack_.is_empty();
         if (main_file) main_source_ = source;
@@ -1280,13 +1304,21 @@ private:
         });
         if (entered.is_err()) return Err(rstd::move(entered).unwrap_err());
 
-        auto normal     = Vec<Token>::make();
-        auto conditions = Vec<ConditionalFrame>::make();
+        auto normal         = Vec<Token>::make();
+        auto conditions     = Vec<ConditionalFrame>::make();
+        auto comment_cursor = usize {};
         for (auto cursor = usize {}; cursor < tokens.len();) {
             auto end = cursor;
             while (end < tokens.len() && tokens[end].kind != TokenKind::Newline) ++end;
             auto directive = cursor < end && tokens[cursor].start_of_line &&
                              tokens[cursor].text.as_str() == "#"_str;
+            auto line_end  = end < tokens.len() ? tokens[end].spelling.offset
+                                                : loaded->get()->snapshot.get()->contents.len();
+            collect_comments_through(loaded->get()->comments,
+                                     comment_cursor,
+                                     line_end,
+                                     source,
+                                     ! directive && active(conditions));
             if (! directive) {
                 if (active(conditions)) {
                     for (auto index = cursor; index < end; ++index)
@@ -1403,6 +1435,11 @@ private:
             }
             cursor = end < tokens.len() ? end + usize(1) : end;
         }
+        collect_comments_through(loaded->get()->comments,
+                                 comment_cursor,
+                                 loaded->get()->snapshot.get()->contents.len(),
+                                 source,
+                                 active(conditions));
         auto flushed = flush_normal(normal);
         if (flushed.is_err()) return Err(rstd::move(flushed).unwrap_err());
         if (! conditions.is_empty()) {
@@ -1430,6 +1467,7 @@ private:
     SourceManager                                                           sources_;
     MacroTable                                                              macros_;
     Vec<IncludeFrame>                                                       include_stack_;
+    Vec<CommentTrivia>                                                      active_comments_;
     rstd::collections::BTreeMap<String, empty>                              once_files_;
     rstd::collections::BTreeMap<String, String>                             include_guards_;
     rstd::collections::BTreeMap<String, Vec<Option<SharedMacroDefinition>>> macro_stacks_;

@@ -34,6 +34,8 @@ auto selected_by_purpose(ArtifactKind kind, PackageSelectionPurpose purpose) -> 
     if (purpose == PackageSelectionPurpose::Test) {
         return kind == ArtifactKind::TestExecutable || kind == ArtifactKind::CompileTest;
     }
+    if (purpose == PackageSelectionPurpose::Documentation)
+        return kind == ArtifactKind::StaticLibrary;
     return kind != ArtifactKind::TestExecutable && kind != ArtifactKind::CompileTest;
 }
 
@@ -141,6 +143,11 @@ auto resolve_package_selection(const PackageSelection&  selection,
                 return failure<ResolvedPackageSelection>(
                     rstd::format("workspace package '{}' is not a test package", name.as_str()));
             }
+            if (purpose == PackageSelectionPurpose::Documentation &&
+                (kind.is_none() || ! selected_by_purpose(**kind, purpose))) {
+                return failure<ResolvedPackageSelection>(
+                    rstd::format("workspace package '{}' is not a library package", name.as_str()));
+            }
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str() &&
@@ -157,9 +164,12 @@ auto resolve_package_selection(const PackageSelection&  selection,
         }
     }
     if (selected_roots.is_empty()) {
-        return failure<ResolvedPackageSelection>(purpose == PackageSelectionPurpose::Test
-                                                     ? "workspace has no selected test package"_str
-                                                     : "workspace has no selected package"_str);
+        if (purpose == PackageSelectionPurpose::Test)
+            return failure<ResolvedPackageSelection>("workspace has no selected test package"_str);
+        if (purpose == PackageSelectionPurpose::Documentation)
+            return failure<ResolvedPackageSelection>(
+                "workspace has no selected library package"_str);
+        return failure<ResolvedPackageSelection>("workspace has no selected package"_str);
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 

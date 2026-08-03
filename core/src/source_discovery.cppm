@@ -292,11 +292,22 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
     return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
-auto discover_package_sources(const PackageMetadata&       package,
-                              const SourceDiscoveryPlan&   plan,
-                              FrontendAnalysisService&     analysis_service,
-                              const Option<BuildObserver>& observer)
-    -> Result<Vec<ResolvedPackageSources>> {
+} // namespace tenon
+
+namespace tenon
+{
+
+enum class DiscoveryProduct
+{
+    Dependencies,
+    Documentation,
+};
+
+auto discover_sources(const PackageMetadata&       package,
+                      const SourceDiscoveryPlan&   plan,
+                      FrontendAnalysisService&     analysis_service,
+                      const Option<BuildObserver>& observer,
+                      DiscoveryProduct             product) -> Result<Vec<ResolvedPackageSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -311,7 +322,16 @@ auto discover_package_sources(const PackageMetadata&       package,
         if (manifest.discovery == SourceDiscoveryMode::Explicit) {
             auto explicit_sources = discover_explicit_sources(manifest);
             if (explicit_sources.is_err()) return Err(rstd::move(explicit_sources).unwrap_err());
-            discovered[target] = rstd::move(explicit_sources).unwrap().sources;
+            if (product == DiscoveryProduct::Dependencies) {
+                discovered[target] = rstd::move(explicit_sources).unwrap().sources;
+                continue;
+            }
+            auto sources = rstd::move(explicit_sources).unwrap().sources;
+            for (auto& source : sources) {
+                auto enqueued = enqueue_candidate(
+                    target, rstd::move(source), path_names, name_paths, queued, queue);
+                if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+            }
             continue;
         }
         auto entry = module_entry_source(manifest);
@@ -339,11 +359,23 @@ auto discover_package_sources(const PackageMetadata&       package,
             return Err(
                 Error::make(ErrorKind::Artifact, rstd::move(source_frame).unwrap_err_unchecked()));
         }
-        auto facts           = analysis_service.analyze(target.manifest.name.as_str(),
-                                                        candidate.source.relative_path.as_path(),
-                                                        candidate.source.canonical_path.as_path(),
-                                                        plan.contexts[candidate.target],
-                                                        target.manifest.root.as_path());
+        auto facts = [&]() -> Result<frontend::FrontendAnalysis> {
+            if (product == DiscoveryProduct::Dependencies) {
+                return analysis_service.analyze(target.manifest.name.as_str(),
+                                                candidate.source.relative_path.as_path(),
+                                                candidate.source.canonical_path.as_path(),
+                                                plan.contexts[candidate.target],
+                                                target.manifest.root.as_path());
+            }
+            auto documented =
+                analysis_service.analyze_documentation(candidate.source.canonical_path.as_path(),
+                                                       plan.contexts[candidate.target],
+                                                       target.manifest.root.as_path());
+            if (documented.is_err()) return Err(rstd::move(documented).unwrap_err());
+            auto product                   = rstd::move(documented).unwrap();
+            candidate.source.documentation = Some(rstd::move(product.documentation));
+            return Ok(rstd::move(product.analysis));
+        }();
         auto source_finished = analysis_service.profiler().end_source_frame();
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
         if (source_finished.is_err()) {
@@ -425,6 +457,29 @@ auto discover_package_sources(const PackageMetadata&       package,
         });
     }
     return Ok(rstd::move(result));
+}
+
+} // namespace tenon
+
+export namespace tenon
+{
+
+auto discover_package_sources(const PackageMetadata&       package,
+                              const SourceDiscoveryPlan&   plan,
+                              FrontendAnalysisService&     analysis_service,
+                              const Option<BuildObserver>& observer)
+    -> Result<Vec<ResolvedPackageSources>> {
+    return discover_sources(
+        package, plan, analysis_service, observer, DiscoveryProduct::Dependencies);
+}
+
+auto discover_documentation_sources(const PackageMetadata&       package,
+                                    const SourceDiscoveryPlan&   plan,
+                                    FrontendAnalysisService&     analysis_service,
+                                    const Option<BuildObserver>& observer)
+    -> Result<Vec<ResolvedPackageSources>> {
+    return discover_sources(
+        package, plan, analysis_service, observer, DiscoveryProduct::Documentation);
 }
 
 } // namespace tenon

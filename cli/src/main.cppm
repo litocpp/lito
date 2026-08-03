@@ -161,6 +161,41 @@ extern "C++" int main() {
         return 0;
     }
 
+    if (invocation.command.is_Doc()) {
+        auto options               = rstd::move(invocation.command).as_Doc().options;
+        auto request               = tenon::DocRequest {};
+        request.selection.root     = rstd::move(project.root);
+        request.configuration      = build_configuration(rstd::move(project.toolchain));
+        request.sources            = rstd::move(project.sources);
+        request.selection.packages = rstd::move(options.packages);
+        request.targets            = rstd::move(options.targets);
+        request.locked             = options.locked;
+        if (options.profile.is_some()) request.configuration.profile = *options.profile;
+        if (options.output.is_some()) request.output = rstd::move(*options.output);
+
+        auto generated = tenon::generate_documentation(request);
+        if (generated.is_err()) {
+            auto error = rstd::move(generated).unwrap_err();
+            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            return 1;
+        }
+        auto summary = rstd::move(generated).unwrap();
+        for (const auto& package : summary.packages) {
+            rstd::io::println("documented {}: {} symbols, {} documented, {} undocumented, "
+                              "{} unsupported, {} diagnostics",
+                              package.name.as_str(),
+                              package.symbols,
+                              package.documented,
+                              package.undocumented,
+                              package.unsupported,
+                              package.diagnostics);
+        }
+        rstd::io::println("generated documentation ({}) at {}",
+                          summary.profile.as_str(),
+                          summary.index.as_path());
+        return 0;
+    }
+
     if (invocation.command.is_Test()) {
         auto options                 = rstd::move(invocation.command).as_Test().options;
         auto timing                  = make_timing_output(project.root.as_path(),

@@ -1,5 +1,5 @@
 [workspace]
-members = ["frontend", "core", "cli", "test"]
+members = ["frontend", "doc", "core", "cli", "test"]
 default-members = ["cli", "test"]
 
 [workspace.package]
