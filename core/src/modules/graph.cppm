@@ -117,12 +117,23 @@ auto resolve_modules(const PackagePlan&       package,
                              provided.logical_name.as_str(),
                              primary_name));
         }
-        if (units[**primary_provider].unit.context->id.as_str() !=
-            units[scan.unit].unit.context->id.as_str()) {
+        const auto& primary_context   = *units[**primary_provider].unit.context;
+        const auto& partition_context = *units[scan.unit].unit.context;
+        auto        compatibility     = check_bmi_compatibility(format,
+                                                                primary_context.cpp,
+                                                                primary_context.public_requirements,
+                                                                format,
+                                                                partition_context.cpp);
+        if (! compatibility.compatible()) {
+            const auto& difference = compatibility.differences[usize {}];
             return graph_failure<ModulePlan>(
-                rstd::format("partition '{}' and primary module '{}' use different BMI contexts",
+                rstd::format("partition '{}' and primary module '{}' have incompatible {}: "
+                             "primary '{}', partition '{}'",
                              provided.logical_name.as_str(),
-                             primary_name));
+                             primary_name,
+                             bmi_compatibility_field_name(difference.field),
+                             difference.provider.as_str(),
+                             difference.consumer.as_str()));
         }
     }
 
