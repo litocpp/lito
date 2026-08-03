@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module tenon.package:adapter;
 
 import rstd;
@@ -15,17 +18,12 @@ auto adapter_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
-auto validate_options(const Vec<String>& options) -> Result<empty> {
-    for (const auto& option : options) {
-        auto value = option.as_str();
-        if (value == "-frtti"_str || value == "-fexceptions"_str ||
-            value.starts_with("-stdlib="_str) || value.starts_with("-std="_str) ||
-            value == "-fmodules-reduced-bmi"_str || value == "-fno-modules-reduced-bmi"_str) {
-            return adapter_failure<empty>(
-                rstd::format("build option '{}' overrides a Tenon-owned setting", value));
-        }
-    }
-    return Ok(empty {});
+auto parse_options(const CppArgumentParser& parser, const Vec<String>& options, String source)
+    -> Result<CppArgumentLayer> {
+    auto parsed = rstd_try(parser.parse(options, source.as_str()), [](String error) {
+        return Error::make(ErrorKind::Manifest, rstd::move(error));
+    });
+    return Ok(rstd::move(parsed));
 }
 
 auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
@@ -54,17 +52,16 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                                   const Vec<String>&        selected_package_names,
                                   const Vec<String>&        selected_root_names,
                                   const BuildConfiguration& configuration,
-                                  const TargetInfo& target_info) -> Result<PackageMetadata> {
+                                  const TargetInfo&         target_info,
+                                  const CppArgumentParser&  argument_parser)
+    -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
     }
-    auto options_valid = validate_options(configuration.options);
-    if (options_valid.is_err()) return Err(rstd::move(options_valid).unwrap_err());
-    auto profile = make_profile_spec(configuration);
-    if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
+    auto profile = rstd_try(make_profile_spec(configuration, argument_parser));
 
     auto selected        = rstd::collections::BTreeMap<String, empty>::make();
     auto roots           = rstd::collections::BTreeMap<String, empty>::make();
@@ -118,6 +115,27 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                 }
             }
             attachment.conditional_source_groups.clear();
+        }
+        auto public_arguments                    = rstd_try(parse_options(
+            argument_parser,
+            package.manifest.usage.public_options,
+            rstd::format("package '{}'.public-options", package.manifest.name.as_str())));
+        auto private_arguments                   = rstd_try(parse_options(
+            argument_parser,
+            package.manifest.usage.private_options,
+            rstd::format("package '{}'.private-options", package.manifest.name.as_str())));
+        package.manifest.usage.public_arguments  = rstd::move(public_arguments);
+        package.manifest.usage.private_arguments = rstd::move(private_arguments);
+        package.manifest.usage.public_options.clear();
+        package.manifest.usage.private_options.clear();
+        for (auto& test : package.manifest.compile_tests) {
+            auto arguments = rstd_try(parse_options(argument_parser,
+                                                    test.options,
+                                                    rstd::format("package '{}'.compile-test '{}'",
+                                                                 package.manifest.name.as_str(),
+                                                                 test.name.as_str())));
+            test.arguments = rstd::move(arguments);
+            test.options.clear();
         }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         for (const auto& dependency : package.dependencies) {
@@ -228,8 +246,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
         package_name = graph.root_names[usize {}].clone();
     }
     auto profiles        = Vec<ProfileSpec>::make();
-    auto default_profile = profile->name.clone();
-    profiles.push(rstd::move(profile).unwrap());
+    auto default_profile = profile.name.clone();
+    profiles.push(rstd::move(profile));
     return Ok(PackageMetadata {
         .name            = rstd::move(package_name),
         .root            = rstd::move(graph.root_directory),

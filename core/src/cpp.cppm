@@ -1,10 +1,16 @@
+module;
+#include <rstd/enum.hpp>
+#include <rstd/macro.hpp>
+
 export module tenon.cpp;
 
 import rstd;
+import tenon.compiler.arguments;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
+using Clone   = rstd::clone::Clone;
 using PathBuf = rstd::path::PathBuf;
 
 export namespace tenon
@@ -52,19 +58,72 @@ enum class CppVendorOptionEffect
     Unknown,
 };
 
-struct CppMacroDirective {
+enum class CppOwnedSetting
+{
+    LanguageStandard,
+    StandardLibrary,
+    BmiRepresentation,
+    Rtti,
+    Exceptions,
+    Optimization,
+    DebugInfo,
+};
+
+enum class CppOptionFamilyDomain
+{
+    Language,
+    Abi,
+    Target,
+    Codegen,
+};
+
+enum class CppCompilerArgumentKind
+{
+    MacroDefine,
+    MacroUndefine,
+    IncludeDirectory,
+    Target,
+    Sysroot,
+    OwnedLanguageStandard,
+    OwnedStandardLibrary,
+    OwnedBmiRepresentation,
+    OwnedRtti,
+    OwnedExceptions,
+    OwnedOptimization,
+    OwnedDebugInfo,
+    LanguageMode,
+    AbiMode,
+    TargetMode,
+    CodegenMode,
+    Instrumentation,
+    Diagnostic,
+    VendorLanguage,
+    VendorCodegen,
+    VendorPreprocessorUnsupported,
+};
+
+struct CppMacroDirective : DefaultInClass<CppMacroDirective, Clone> {
     CppMacroAction action { CppMacroAction::Define };
     String         value;
+
+    auto clone() const -> CppMacroDirective;
 };
 
-struct CppFamilyOption {
+struct CppFamilyOption : DefaultInClass<CppFamilyOption, Clone> {
     String family;
     String value;
+
+    auto clone() const -> CppFamilyOption;
 };
 
-struct CppVendorOption {
+struct CppVendorOption : DefaultInClass<CppVendorOption, Clone> {
     String                value;
+    Vec<String>           raw_tokens;
     CppVendorOptionEffect effect { CppVendorOptionEffect::Unknown };
+    bool                  native_preprocessor_unsupported { false };
+    bool                  preserve_raw_tokens { false };
+
+    auto clone() const -> CppVendorOption;
 };
 
 struct CppLanguageOptions {
@@ -101,7 +160,7 @@ struct CppDiagnosticOptions {
     Vec<String> options;
 };
 
-struct CppCompileOptions {
+struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
     CppLanguageOptions     language;
     CppAbiOptions          abi;
     CppTargetOptions       target;
@@ -109,21 +168,98 @@ struct CppCompileOptions {
     CppCodegenOptions      codegen;
     CppDiagnosticOptions   diagnostics;
     Vec<CppVendorOption>   vendor;
+
+    auto clone() const -> CppCompileOptions;
 };
 
-struct CppPublicRequirements {
+struct CppPublicRequirements : DefaultInClass<CppPublicRequirements, Clone> {
     Vec<PathBuf>           include_directories;
     Vec<CppMacroDirective> macros;
+
+    auto clone() const -> CppPublicRequirements;
 };
 
-struct CppOptionLayer {
-    Vec<PathBuf> include_directories;
-    Vec<String>  definitions;
-    Vec<String>  options;
+class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
+    RSTD_ENUM(CppCompilerArgument,
+              (Macro, (CppMacroDirective directive;)),
+              (IncludeDirectory, (PathBuf path;)),
+              (Target, (String value;)),
+              (Sysroot, (String value;)),
+              (OwnedSetting, (CppOwnedSetting setting;)),
+              (Family, (CppOptionFamilyDomain domain; String family; String value;)),
+              (Instrumentation, (String value;)),
+              (Diagnostic, (String value;)),
+              (Vendor, (CppVendorOption option;)))
+
+public:
+    auto clone() const -> CppCompilerArgument;
+};
+
+struct CppCompilerArgumentOccurrence : DefaultInClass<CppCompilerArgumentOccurrence, Clone> {
+    CppCompilerArgument         argument;
+    Vec<String>                 raw_tokens;
+    CompilerArgumentSourceRange range;
+    String                      source;
+
+    auto clone() const -> CppCompilerArgumentOccurrence;
+};
+
+struct CppArgumentLayer : DefaultInClass<CppArgumentLayer, Clone> {
+    Vec<CppCompilerArgumentOccurrence> occurrences;
+
+    auto clone() const -> CppArgumentLayer;
+};
+
+struct CppOptionDelta {
+    CppCompilerArgument         argument;
+    Vec<String>                 raw_tokens;
+    CompilerArgumentSourceRange range;
+    String                      source;
 };
 
 template<typename T>
 using CppOptionResult = Result<T, String>;
+
+struct CppCompilerArgumentBinding {
+    CppCompilerArgumentKind kind { CppCompilerArgumentKind::VendorLanguage };
+    String                  family;
+};
+
+class CppArgumentParser {
+public:
+    auto parse(const Vec<String>& arguments, ref<str> source) const
+        -> CppOptionResult<CppArgumentLayer>;
+
+private:
+    friend class CppArgumentSchema;
+
+    CppArgumentParser(CompilerArgumentParser parser, Vec<CppCompilerArgumentBinding> bindings)
+        : parser_(rstd::move(parser)), bindings_(rstd::move(bindings)) {}
+
+    CompilerArgumentParser          parser_;
+    Vec<CppCompilerArgumentBinding> bindings_;
+};
+
+class CppArgumentSchema {
+public:
+    static auto make() -> CppArgumentSchema;
+
+    auto add(CppCompilerArgumentKind    kind,
+             CompilerArgumentDefinition definition,
+             ref<str>                   family = {}) -> void;
+
+    auto build() && -> CppOptionResult<CppArgumentParser>;
+
+private:
+    CompilerArgumentSchema          schema_;
+    Vec<CppCompilerArgumentBinding> bindings_;
+};
+
+struct CppOptionLayer {
+    Vec<PathBuf>     include_directories;
+    Vec<String>      definitions;
+    CppArgumentLayer arguments;
+};
 
 auto is_supported_cpp_standard(ref<str> standard) noexcept -> bool {
     return standard == "c++20"_str || standard == "c++23"_str || standard == "c++26"_str ||
@@ -156,11 +292,7 @@ auto cpp_debug_option(CppDebugInfo value) noexcept -> ref<str> {
     return value == CppDebugInfo::Full ? "-g"_str : ""_str;
 }
 
-auto clone_cpp_options(const CppCompileOptions& input) -> CppCompileOptions;
-
 auto cpp_public_requirements(const CppCompileOptions& input) -> CppPublicRequirements;
-
-auto clone_cpp_public_requirements(const CppPublicRequirements& input) -> CppPublicRequirements;
 
 auto merge_cpp_public_requirements(CppPublicRequirements input, const CppPublicRequirements& extra)
     -> CppPublicRequirements;
@@ -190,6 +322,48 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
 
 } // namespace tenon
 
+export namespace rstd
+{
+
+template<>
+struct Impl<convert::TryFrom<tenon::CppCompilerArgumentOccurrence>, tenon::CppOptionDelta> {
+    using Error = String;
+
+    static auto try_from(tenon::CppCompilerArgumentOccurrence occurrence)
+        -> Result<tenon::CppOptionDelta, Error> {
+        if (occurrence.argument.is_OwnedSetting()) {
+            auto field = "language standard"_str;
+            switch (occurrence.argument.as_OwnedSetting().setting) {
+            case tenon::CppOwnedSetting::LanguageStandard: break;
+            case tenon::CppOwnedSetting::StandardLibrary: field = "standard library"_str; break;
+            case tenon::CppOwnedSetting::BmiRepresentation: field = "BMI representation"_str; break;
+            case tenon::CppOwnedSetting::Rtti: field = "RTTI"_str; break;
+            case tenon::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
+            case tenon::CppOwnedSetting::Optimization: field = "optimization"_str; break;
+            case tenon::CppOwnedSetting::DebugInfo: field = "debug info"_str; break;
+            }
+            auto spelling = occurrence.raw_tokens.is_empty()
+                                ? String::make("<structured compiler option>"_str)
+                                : occurrence.raw_tokens[usize {}].clone();
+            return Err(
+                rstd::format("{} arguments {}..{}: compiler option '{}' overrides Tenon-owned {}",
+                             occurrence.source.as_str(),
+                             occurrence.range.begin,
+                             occurrence.range.end,
+                             spelling.as_str(),
+                             field));
+        }
+        return Ok(tenon::CppOptionDelta {
+            .argument   = rstd::move(occurrence.argument),
+            .raw_tokens = rstd::move(occurrence.raw_tokens),
+            .range      = occurrence.range,
+            .source     = rstd::move(occurrence.source),
+        });
+    }
+};
+
+} // namespace rstd
+
 namespace tenon
 {
 
@@ -202,29 +376,6 @@ auto option_error(ref<str> message) -> CppOptionResult<CppCompileOptions> {
 
 auto option_error(String message) -> CppOptionResult<CppCompileOptions> {
     return Err(rstd::move(message));
-}
-
-auto clone_family_options(const Vec<CppFamilyOption>& values) -> Vec<CppFamilyOption> {
-    auto result = Vec<CppFamilyOption>::with_capacity(values.len());
-    for (const auto& value : values) {
-        result.push(CppFamilyOption {
-            .family = value.family.clone(),
-            .value  = value.value.clone(),
-        });
-    }
-    return result;
-}
-
-auto clone_strings(const Vec<String>& values) -> Vec<String> {
-    auto result = Vec<String>::with_capacity(values.len());
-    for (const auto& value : values) result.push(value.clone());
-    return result;
-}
-
-auto clone_paths(const Vec<PathBuf>& values) -> Vec<PathBuf> {
-    auto result = Vec<PathBuf>::with_capacity(values.len());
-    for (const auto& value : values) result.push(value.clone());
-    return result;
 }
 
 auto append_unique(Vec<String>& output, String value) -> void {
@@ -241,59 +392,6 @@ auto append_unique(Vec<PathBuf>& output, PathBuf value) -> void {
     output.push(rstd::move(value));
 }
 
-auto attached_value(ref<str> option, ref<str> prefix) -> Option<ref<str>> {
-    if (! option.starts_with(prefix) || option.len() <= prefix.len()) return None();
-    return option.get(prefix.len(), option.len());
-}
-
-auto target_option_family(ref<str> option) -> String {
-    auto begin = option.starts_with("-mno-"_str) ? usize(5) : usize(2);
-    auto end   = begin;
-    while (end < option.len() && option.as_bytes()[end] != u8('=')) ++end;
-    auto name = option.get(begin, end);
-    return name.is_some() ? String::make(*name) : String::make(option);
-}
-
-auto toggle_family(ref<str> option) -> Option<ref<str>> {
-    if (option == "-fPIC"_str || option == "-fpic"_str || option == "-fPIE"_str ||
-        option == "-fpie"_str || option == "-fno-PIC"_str || option == "-fno-pic"_str ||
-        option == "-fno-PIE"_str || option == "-fno-pie"_str) {
-        return Some("pic"_str);
-    }
-    if (option == "-fblocks"_str || option == "-fno-blocks"_str) return Some("blocks"_str);
-    if (option == "-fcoroutines"_str || option == "-fno-coroutines"_str) {
-        return Some("coroutines"_str);
-    }
-    if (option == "-fsized-deallocation"_str || option == "-fno-sized-deallocation"_str) {
-        return Some("sized-deallocation"_str);
-    }
-    if (option == "-ffreestanding"_str || option == "-fhosted"_str) return Some("hosted"_str);
-    if (option == "-fsigned-char"_str || option == "-funsigned-char"_str) {
-        return Some("char-signedness"_str);
-    }
-    if (option == "-fshort-enums"_str || option == "-fno-short-enums"_str) {
-        return Some("short-enums"_str);
-    }
-    if (option == "-fshort-wchar"_str || option == "-fno-short-wchar"_str) {
-        return Some("short-wchar"_str);
-    }
-    if (option == "-fchar8_t"_str || option == "-fno-char8_t"_str) return Some("char8-t"_str);
-    return None();
-}
-
-auto optimization(ref<str> option) -> Option<CppOptimization> {
-    if (option == "-O"_str || option == "-O1"_str) return Some(CppOptimization::Level1);
-    if (option == "-O0"_str) return Some(CppOptimization::None);
-    if (option == "-O2"_str) return Some(CppOptimization::Level2);
-    if (option == "-O3"_str) return Some(CppOptimization::Level3);
-    if (option == "-O4"_str) return Some(CppOptimization::Level4);
-    if (option == "-Og"_str) return Some(CppOptimization::Debug);
-    if (option == "-Os"_str) return Some(CppOptimization::Size);
-    if (option == "-Oz"_str) return Some(CppOptimization::SizeMin);
-    if (option == "-Ofast"_str) return Some(CppOptimization::Fast);
-    return None();
-}
-
 auto family_map(const Vec<CppFamilyOption>& values) -> BTreeMap<String, String> {
     auto result = BTreeMap<String, String>::make();
     for (const auto& value : values) result.insert(value.family.clone(), value.value.clone());
@@ -308,28 +406,6 @@ auto family_values(BTreeMap<String, String> values) -> Vec<CppFamilyOption> {
         result.push(CppFamilyOption {
             .family = rstd::move(entry.template get<0>()),
             .value  = rstd::move(entry.template get<1>()),
-        });
-    }
-    return result;
-}
-
-auto macro_clone(const Vec<CppMacroDirective>& values) -> Vec<CppMacroDirective> {
-    auto result = Vec<CppMacroDirective>::with_capacity(values.len());
-    for (const auto& value : values) {
-        result.push(CppMacroDirective {
-            .action = value.action,
-            .value  = value.value.clone(),
-        });
-    }
-    return result;
-}
-
-auto vendor_clone(const Vec<CppVendorOption>& values) -> Vec<CppVendorOption> {
-    auto result = Vec<CppVendorOption>::with_capacity(values.len());
-    for (const auto& value : values) {
-        result.push(CppVendorOption {
-            .value  = value.value.clone(),
-            .effect = value.effect,
         });
     }
     return result;
@@ -403,62 +479,311 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
     }
 }
 
+auto compiler_argument_value(const CompilerArgumentMatch& matched) -> const String& {
+    return *matched.value;
+}
+
+auto owned_setting(CppCompilerArgumentKind kind) noexcept -> CppOwnedSetting {
+    switch (kind) {
+    case CppCompilerArgumentKind::OwnedLanguageStandard: return CppOwnedSetting::LanguageStandard;
+    case CppCompilerArgumentKind::OwnedStandardLibrary: return CppOwnedSetting::StandardLibrary;
+    case CppCompilerArgumentKind::OwnedBmiRepresentation: return CppOwnedSetting::BmiRepresentation;
+    case CppCompilerArgumentKind::OwnedRtti: return CppOwnedSetting::Rtti;
+    case CppCompilerArgumentKind::OwnedExceptions: return CppOwnedSetting::Exceptions;
+    case CppCompilerArgumentKind::OwnedOptimization: return CppOwnedSetting::Optimization;
+    case CppCompilerArgumentKind::OwnedDebugInfo: return CppOwnedSetting::DebugInfo;
+    default: return CppOwnedSetting::LanguageStandard;
+    }
+}
+
+auto family_domain(CppCompilerArgumentKind kind) noexcept -> CppOptionFamilyDomain {
+    switch (kind) {
+    case CppCompilerArgumentKind::LanguageMode: return CppOptionFamilyDomain::Language;
+    case CppCompilerArgumentKind::AbiMode: return CppOptionFamilyDomain::Abi;
+    case CppCompilerArgumentKind::TargetMode: return CppOptionFamilyDomain::Target;
+    case CppCompilerArgumentKind::CodegenMode: return CppOptionFamilyDomain::Codegen;
+    default: return CppOptionFamilyDomain::Language;
+    }
+}
+
+auto dynamic_target_family(ref<str> value) -> String {
+    auto begin = value.starts_with("no-"_str) ? usize(3) : usize {};
+    auto end   = begin;
+    while (end < value.len() && value.as_bytes()[end] != u8('=')) ++end;
+    auto name = value.get(begin, end);
+    return name.is_some() ? String::make(*name) : String::make(value);
+}
+
+auto canonical_argument(const CompilerArgumentMatch& matched) -> String {
+    if (matched.value.is_none() || matched.raw_tokens.len() == usize(1)) {
+        return matched.raw_tokens[usize {}].clone();
+    }
+    auto result = matched.spelling.clone();
+    result.push_ascii('=');
+    result.push_str(matched.value->as_str());
+    return result;
+}
+
+auto compiler_argument_raw_tokens(const CompilerArgumentMatch& matched) -> Vec<String> {
+    auto result = Vec<String>::with_capacity(matched.raw_tokens.len());
+    for (const auto& token : matched.raw_tokens) result.push(token.clone());
+    return result;
+}
+
+auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
+                                const CppCompilerArgumentBinding* binding) -> CppCompilerArgument {
+    if (binding == nullptr) {
+        return CppCompilerArgument::Vendor(CppVendorOption {
+            .value               = matched.raw_tokens[usize {}].clone(),
+            .raw_tokens          = compiler_argument_raw_tokens(matched),
+            .effect              = CppVendorOptionEffect::Unknown,
+            .preserve_raw_tokens = true,
+        });
+    }
+    auto kind = binding->kind;
+    switch (kind) {
+    case CppCompilerArgumentKind::MacroDefine:
+    case CppCompilerArgumentKind::MacroUndefine:
+        return CppCompilerArgument::Macro(CppMacroDirective {
+            .action = kind == CppCompilerArgumentKind::MacroDefine ? CppMacroAction::Define
+                                                                   : CppMacroAction::Undefine,
+            .value  = compiler_argument_value(matched).clone(),
+        });
+    case CppCompilerArgumentKind::IncludeDirectory:
+        return CppCompilerArgument::IncludeDirectory(
+            PathBuf::from(compiler_argument_value(matched).clone()));
+    case CppCompilerArgumentKind::Target:
+        return CppCompilerArgument::Target(compiler_argument_value(matched).clone());
+    case CppCompilerArgumentKind::Sysroot:
+        return CppCompilerArgument::Sysroot(compiler_argument_value(matched).clone());
+    case CppCompilerArgumentKind::OwnedLanguageStandard:
+    case CppCompilerArgumentKind::OwnedStandardLibrary:
+    case CppCompilerArgumentKind::OwnedBmiRepresentation:
+    case CppCompilerArgumentKind::OwnedRtti:
+    case CppCompilerArgumentKind::OwnedExceptions:
+    case CppCompilerArgumentKind::OwnedOptimization:
+    case CppCompilerArgumentKind::OwnedDebugInfo:
+        return CppCompilerArgument::OwnedSetting(owned_setting(kind));
+    case CppCompilerArgumentKind::LanguageMode:
+    case CppCompilerArgumentKind::AbiMode:
+    case CppCompilerArgumentKind::TargetMode:
+    case CppCompilerArgumentKind::CodegenMode: {
+        auto family = binding->family.clone();
+        if (family.is_empty()) {
+            family = dynamic_target_family(compiler_argument_value(matched).as_str());
+        }
+        return CppCompilerArgument::Family(
+            family_domain(kind), rstd::move(family), canonical_argument(matched));
+    }
+    case CppCompilerArgumentKind::Instrumentation:
+        return CppCompilerArgument::Instrumentation(canonical_argument(matched));
+    case CppCompilerArgumentKind::Diagnostic:
+        return CppCompilerArgument::Diagnostic(canonical_argument(matched));
+    case CppCompilerArgumentKind::VendorLanguage:
+        return CppCompilerArgument::Vendor(CppVendorOption {
+            .value      = canonical_argument(matched),
+            .raw_tokens = compiler_argument_raw_tokens(matched),
+            .effect     = CppVendorOptionEffect::Language,
+        });
+    case CppCompilerArgumentKind::VendorCodegen:
+        return CppCompilerArgument::Vendor(CppVendorOption {
+            .value      = canonical_argument(matched),
+            .raw_tokens = compiler_argument_raw_tokens(matched),
+            .effect     = CppVendorOptionEffect::Codegen,
+        });
+    case CppCompilerArgumentKind::VendorPreprocessorUnsupported:
+        return CppCompilerArgument::Vendor(CppVendorOption {
+            .value                           = canonical_argument(matched),
+            .raw_tokens                      = compiler_argument_raw_tokens(matched),
+            .effect                          = CppVendorOptionEffect::Preprocessor,
+            .native_preprocessor_unsupported = true,
+        });
+    }
+    return CppCompilerArgument::Vendor(CppVendorOption {
+        .value               = matched.raw_tokens[usize {}].clone(),
+        .raw_tokens          = compiler_argument_raw_tokens(matched),
+        .effect              = CppVendorOptionEffect::Unknown,
+        .preserve_raw_tokens = true,
+    });
+}
+
 } // namespace tenon
 
 export namespace tenon
 {
 
-auto clone_cpp_options(const CppCompileOptions& input) -> CppCompileOptions {
-    auto result = CppCompileOptions {
+auto CppArgumentSchema::make() -> CppArgumentSchema {
+    auto result      = CppArgumentSchema {};
+    result.schema_   = CompilerArgumentSchema::make();
+    result.bindings_ = Vec<CppCompilerArgumentBinding>::make();
+    return result;
+}
+
+auto CppArgumentSchema::add(CppCompilerArgumentKind    kind,
+                            CompilerArgumentDefinition definition,
+                            ref<str>                   family) -> void {
+    schema_.add(rstd::move(definition));
+    bindings_.push(CppCompilerArgumentBinding {
+        .kind   = kind,
+        .family = String::make(family),
+    });
+}
+
+auto CppArgumentSchema::build() && -> CppOptionResult<CppArgumentParser> {
+    auto parser = rstd_try(rstd::move(schema_).build(), [](CompilerArgumentError error) {
+        return compiler_argument_error_message(error);
+    });
+    return Ok(CppArgumentParser(rstd::move(parser), rstd::move(bindings_)));
+}
+
+auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) const
+    -> CppOptionResult<CppArgumentLayer> {
+    auto parsed = rstd_try(parser_.parse(arguments), [](CompilerArgumentError error) {
+        return compiler_argument_error_message(error);
+    });
+    auto result = CppArgumentLayer {};
+    for (auto& matched : parsed) {
+        auto binding = matched.definition.is_some()
+                           ? rstd::addressof(bindings_[*matched.definition])
+                           : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        result.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument   = make_cpp_compiler_argument(matched, binding),
+            .raw_tokens = rstd::move(matched.raw_tokens),
+            .range      = matched.range,
+            .source     = String::make(source),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto CppMacroDirective::clone() const -> CppMacroDirective {
+    return CppMacroDirective {
+        .action = action,
+        .value  = value.clone(),
+    };
+}
+
+auto CppFamilyOption::clone() const -> CppFamilyOption {
+    return CppFamilyOption {
+        .family = family.clone(),
+        .value  = value.clone(),
+    };
+}
+
+auto CppVendorOption::clone() const -> CppVendorOption {
+    return CppVendorOption {
+        .value                           = value.clone(),
+        .raw_tokens                      = as<Clone>(raw_tokens).clone(),
+        .effect                          = effect,
+        .native_preprocessor_unsupported = native_preprocessor_unsupported,
+        .preserve_raw_tokens             = preserve_raw_tokens,
+    };
+}
+
+auto CppCompilerArgument::clone() const -> CppCompilerArgument {
+    RSTD_MATCH(*this) {
+        RSTD_CASE(Macro, directive) {
+            return CppCompilerArgument::Macro(CppMacroDirective {
+                .action = directive.action,
+                .value  = directive.value.clone(),
+            });
+        }
+        RSTD_CASE(IncludeDirectory, path) {
+            return CppCompilerArgument::IncludeDirectory(path.clone());
+        }
+        RSTD_CASE(Target, value) {
+            return CppCompilerArgument::Target(value.clone());
+        }
+        RSTD_CASE(Sysroot, value) {
+            return CppCompilerArgument::Sysroot(value.clone());
+        }
+        RSTD_CASE(OwnedSetting, setting) {
+            return CppCompilerArgument::OwnedSetting(setting);
+        }
+        RSTD_CASE(Family, domain, family, value) {
+            return CppCompilerArgument::Family(domain, family.clone(), value.clone());
+        }
+        RSTD_CASE(Instrumentation, value) {
+            return CppCompilerArgument::Instrumentation(value.clone());
+        }
+        RSTD_CASE(Diagnostic, value) {
+            return CppCompilerArgument::Diagnostic(value.clone());
+        }
+        RSTD_CASE(Vendor, option) {
+            return CppCompilerArgument::Vendor(as<Clone>(option).clone());
+        }
+    }
+    rstd::unreachable();
+}
+
+auto CppCompilerArgumentOccurrence::clone() const -> CppCompilerArgumentOccurrence {
+    return CppCompilerArgumentOccurrence {
+        .argument   = as<Clone>(argument).clone(),
+        .raw_tokens = as<Clone>(raw_tokens).clone(),
+        .range      = range,
+        .source     = source.clone(),
+    };
+}
+
+auto CppArgumentLayer::clone() const -> CppArgumentLayer {
+    return CppArgumentLayer {
+        .occurrences = as<Clone>(occurrences).clone(),
+    };
+}
+
+auto CppCompileOptions::clone() const -> CppCompileOptions {
+    const auto& input  = *this;
+    auto        result = CppCompileOptions {
         .language =
             CppLanguageOptions {
                 .standard   = input.language.standard.clone(),
                 .exceptions = input.language.exceptions,
                 .rtti       = input.language.rtti,
-                .modes      = clone_family_options(input.language.modes),
+                .modes      = as<Clone>(input.language.modes).clone(),
             },
         .abi =
             CppAbiOptions {
                 .standard_library = input.abi.standard_library,
-                .modes            = clone_family_options(input.abi.modes),
+                .modes            = as<Clone>(input.abi.modes).clone(),
             },
         .preprocessor =
             CppPreprocessorOptions {
-                .include_directories = clone_paths(input.preprocessor.include_directories),
-                .macros              = macro_clone(input.preprocessor.macros),
+                .include_directories = as<Clone>(input.preprocessor.include_directories).clone(),
+                .macros              = as<Clone>(input.preprocessor.macros).clone(),
             },
         .codegen =
             CppCodegenOptions {
                 .optimization    = input.codegen.optimization,
                 .debug_info      = input.codegen.debug_info,
-                .modes           = clone_family_options(input.codegen.modes),
-                .instrumentation = clone_strings(input.codegen.instrumentation),
+                .modes           = as<Clone>(input.codegen.modes).clone(),
+                .instrumentation = as<Clone>(input.codegen.instrumentation).clone(),
             },
         .diagnostics =
             CppDiagnosticOptions {
-                .options = clone_strings(input.diagnostics.options),
+                .options = as<Clone>(input.diagnostics.options).clone(),
             },
-        .vendor = vendor_clone(input.vendor),
+        .vendor = as<Clone>(input.vendor).clone(),
     };
     if (input.target.target.is_some()) result.target.target = Some(input.target.target->clone());
     if (input.target.sysroot.is_some()) {
         result.target.sysroot = Some(input.target.sysroot->clone());
     }
-    result.target.features = clone_family_options(input.target.features);
+    result.target.features = as<Clone>(input.target.features).clone();
     return result;
 }
 
 auto cpp_public_requirements(const CppCompileOptions& input) -> CppPublicRequirements {
     return CppPublicRequirements {
-        .include_directories = clone_paths(input.preprocessor.include_directories),
-        .macros              = macro_clone(input.preprocessor.macros),
+        .include_directories = as<Clone>(input.preprocessor.include_directories).clone(),
+        .macros              = as<Clone>(input.preprocessor.macros).clone(),
     };
 }
 
-auto clone_cpp_public_requirements(const CppPublicRequirements& input) -> CppPublicRequirements {
+auto CppPublicRequirements::clone() const -> CppPublicRequirements {
+    const auto& input = *this;
     return CppPublicRequirements {
-        .include_directories = clone_paths(input.include_directories),
-        .macros              = macro_clone(input.macros),
+        .include_directories = as<Clone>(input.include_directories).clone(),
+        .macros              = as<Clone>(input.macros).clone(),
     };
 }
 
@@ -524,147 +849,45 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
         instrumentation.insert(value.clone(), empty {});
     }
 
-    for (auto index = usize {}; index < layer.options.len(); ++index) {
-        auto option     = layer.options[index].as_str();
-        auto take_value = [&](ref<str> purpose) -> CppOptionResult<String> {
-            if (index + usize(1) >= layer.options.len()) {
-                return Err(rstd::format("compiler option '{}' requires {}", option, purpose));
+    for (auto& occurrence : layer.arguments.occurrences) {
+        auto delta = rstd_try(rstd::try_from<CppOptionDelta>(rstd::move(occurrence)));
+        RSTD_MATCH(rstd::move(delta.argument)) {
+            RSTD_CASE(Macro, directive) {
+                input.preprocessor.macros.push(rstd::move(directive));
             }
-            ++index;
-            return Ok(layer.options[index].clone());
-        };
-
-        if (option == "-std"_str || option.starts_with("-std="_str) ||
-            option.starts_with("-stdlib="_str) || option == "-fmodules-reduced-bmi"_str ||
-            option == "-fno-modules-reduced-bmi"_str || option == "-frtti"_str ||
-            option == "-fno-rtti"_str || option == "-fexceptions"_str ||
-            option == "-fno-exceptions"_str || optimization(option).is_some() ||
-            option == "-g"_str || option == "-g0"_str) {
-            return option_error(
-                rstd::format("compiler option '{}' overrides a Tenon-owned setting", option));
-        }
-        if (option == "-D"_str || option == "-U"_str) {
-            auto value = take_value("a macro name"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            input.preprocessor.macros.push(CppMacroDirective {
-                .action = option == "-D"_str ? CppMacroAction::Define : CppMacroAction::Undefine,
-                .value  = rstd::move(value).unwrap(),
-            });
-            continue;
-        }
-        if (option.starts_with("-D"_str) || option.starts_with("-U"_str)) {
-            auto value = option.get(usize(2), option.len());
-            if (value.is_none() || value->is_empty()) {
-                return option_error(rstd::format("compiler option '{}' has no macro name", option));
+            RSTD_CASE(IncludeDirectory, path) {
+                append_unique(input.preprocessor.include_directories, rstd::move(path));
             }
-            input.preprocessor.macros.push(CppMacroDirective {
-                .action = option.starts_with("-D"_str) ? CppMacroAction::Define
-                                                       : CppMacroAction::Undefine,
-                .value  = String::make(*value),
-            });
-            continue;
-        }
-        if (option == "-I"_str) {
-            auto value = take_value("an include directory"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            append_unique(input.preprocessor.include_directories,
-                          PathBuf::from(rstd::move(value).unwrap()));
-            continue;
-        }
-        auto include = attached_value(option, "-I"_str);
-        if (include.is_some()) {
-            append_unique(input.preprocessor.include_directories, PathBuf::from(*include));
-            continue;
-        }
-        if (option == "--target"_str || option == "-target"_str) {
-            auto value = take_value("a target triple"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            input.target.target = Some(rstd::move(value).unwrap());
-            continue;
-        }
-        auto target = attached_value(option, "--target="_str);
-        if (target.is_none()) target = attached_value(option, "-target="_str);
-        if (target.is_some()) {
-            input.target.target = Some(String::make(*target));
-            continue;
-        }
-        if (option == "--sysroot"_str || option == "-isysroot"_str) {
-            auto value = take_value("a sysroot"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            input.target.sysroot = Some(rstd::move(value).unwrap());
-            continue;
-        }
-        auto sysroot = attached_value(option, "--sysroot="_str);
-        if (sysroot.is_none()) sysroot = attached_value(option, "-isysroot="_str);
-        if (sysroot.is_some()) {
-            input.target.sysroot = Some(String::make(*sysroot));
-            continue;
-        }
-        auto toggle = toggle_family(option);
-        if (toggle.is_some()) {
-            if (*toggle == "pic"_str) {
-                codegen_modes.insert(String::make(*toggle), layer.options[index].clone());
-            } else if (*toggle == "sized-deallocation"_str || *toggle == "char-signedness"_str ||
-                       *toggle == "short-enums"_str || *toggle == "short-wchar"_str) {
-                abi_modes.insert(String::make(*toggle), layer.options[index].clone());
-            } else {
-                language_modes.insert(String::make(*toggle), layer.options[index].clone());
+            RSTD_CASE(Target, value) {
+                input.target.target = Some(rstd::move(value));
             }
-            continue;
+            RSTD_CASE(Sysroot, value) {
+                input.target.sysroot = Some(rstd::move(value));
+            }
+            RSTD_CASE(OwnedSetting, setting) {
+                static_cast<void>(setting);
+                return option_error("invalid prevalidated Tenon-owned compiler option"_str);
+            }
+            RSTD_CASE(Family, domain, family, value) {
+                auto* modes = rstd::addressof(language_modes);
+                switch (domain) {
+                case CppOptionFamilyDomain::Language: break;
+                case CppOptionFamilyDomain::Abi: modes = rstd::addressof(abi_modes); break;
+                case CppOptionFamilyDomain::Target: modes = rstd::addressof(target_modes); break;
+                case CppOptionFamilyDomain::Codegen: modes = rstd::addressof(codegen_modes); break;
+                }
+                modes->insert(rstd::move(family), rstd::move(value));
+            }
+            RSTD_CASE(Instrumentation, value) {
+                instrumentation.insert(rstd::move(value), empty {});
+            }
+            RSTD_CASE(Diagnostic, value) {
+                append_unique(input.diagnostics.options, rstd::move(value));
+            }
+            RSTD_CASE(Vendor, option) {
+                input.vendor.push(rstd::move(option));
+            }
         }
-        if (option == "-march"_str || option == "-mcpu"_str || option == "-mtune"_str ||
-            option == "-mabi"_str) {
-            auto value = take_value("a value"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            auto canonical = rstd::format("{}={}", option, value->as_str());
-            target_modes.insert(target_option_family(canonical.as_str()), rstd::move(canonical));
-            continue;
-        }
-        if (option.starts_with("-m"_str) && option != "-mllvm"_str &&
-            ! option.starts_with("-mllvm="_str)) {
-            target_modes.insert(target_option_family(option), layer.options[index].clone());
-            continue;
-        }
-        if (option.starts_with("-fsanitize="_str) || option.starts_with("-fno-sanitize="_str) ||
-            option.starts_with("-fsanitize-trap="_str) ||
-            option.starts_with("-fno-sanitize-trap="_str) || option.starts_with("-fopenmp"_str) ||
-            option.starts_with("-fno-openmp"_str) || option.starts_with("-fptrauth"_str) ||
-            option.starts_with("-fno-ptrauth"_str)) {
-            instrumentation.insert(layer.options[index].clone(), empty {});
-            continue;
-        }
-        if (option.starts_with("-W"_str) || option == "-pedantic"_str ||
-            option == "-pedantic-errors"_str) {
-            append_unique(input.diagnostics.options, layer.options[index].clone());
-            continue;
-        }
-        if (option.starts_with("-fms-"_str) || option.starts_with("-fno-ms-"_str)) {
-            input.vendor.push(CppVendorOption {
-                .value  = layer.options[index].clone(),
-                .effect = CppVendorOptionEffect::Language,
-            });
-            continue;
-        }
-        if (option == "-mllvm"_str) {
-            auto value = take_value("an LLVM backend argument"_str);
-            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
-            input.vendor.push(CppVendorOption {
-                .value  = rstd::format("-mllvm={}", value->as_str()),
-                .effect = CppVendorOptionEffect::Codegen,
-            });
-            continue;
-        }
-        if (option.starts_with("-mllvm="_str)) {
-            input.vendor.push(CppVendorOption {
-                .value  = layer.options[index].clone(),
-                .effect = CppVendorOptionEffect::Codegen,
-            });
-            continue;
-        }
-        input.vendor.push(CppVendorOption {
-            .value  = layer.options[index].clone(),
-            .effect = CppVendorOptionEffect::Unknown,
-        });
     }
 
     input.language.modes  = family_values(rstd::move(language_modes));
@@ -687,23 +910,58 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         return option_error("cannot merge C++ contexts with different semantic or ABI options"_str);
     }
     auto layer                = CppOptionLayer {};
-    layer.include_directories = clone_paths(extra.preprocessor.include_directories);
+    layer.include_directories = as<Clone>(extra.preprocessor.include_directories).clone();
     for (const auto& macro : extra.preprocessor.macros) {
         if (macro.action == CppMacroAction::Define) {
             layer.definitions.push(macro.value.clone());
         } else {
-            auto value = String::make("-U"_str);
-            value.push_str(macro.value.as_str());
-            layer.options.push(rstd::move(value));
+            layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+                .argument = CppCompilerArgument::Macro(CppMacroDirective {
+                    .action = CppMacroAction::Undefine,
+                    .value  = macro.value.clone(),
+                }),
+            });
         }
     }
-    for (const auto& value : extra.language.modes) layer.options.push(value.value.clone());
-    for (const auto& value : extra.abi.modes) layer.options.push(value.value.clone());
-    for (const auto& value : extra.target.features) layer.options.push(value.value.clone());
-    for (const auto& value : extra.codegen.modes) layer.options.push(value.value.clone());
-    for (const auto& value : extra.codegen.instrumentation) layer.options.push(value.clone());
-    for (const auto& value : extra.diagnostics.options) layer.options.push(value.clone());
-    for (const auto& value : extra.vendor) layer.options.push(value.value.clone());
+    for (const auto& value : extra.language.modes) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Family(
+                CppOptionFamilyDomain::Language, value.family.clone(), value.value.clone()),
+        });
+    }
+    for (const auto& value : extra.abi.modes) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Family(
+                CppOptionFamilyDomain::Abi, value.family.clone(), value.value.clone()),
+        });
+    }
+    for (const auto& value : extra.target.features) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Family(
+                CppOptionFamilyDomain::Target, value.family.clone(), value.value.clone()),
+        });
+    }
+    for (const auto& value : extra.codegen.modes) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Family(
+                CppOptionFamilyDomain::Codegen, value.family.clone(), value.value.clone()),
+        });
+    }
+    for (const auto& value : extra.codegen.instrumentation) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Instrumentation(value.clone()),
+        });
+    }
+    for (const auto& value : extra.diagnostics.options) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Diagnostic(value.clone()),
+        });
+    }
+    for (const auto& value : extra.vendor) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Vendor(as<Clone>(value).clone()),
+        });
+    }
     return apply_cpp_option_layer(rstd::move(input), rstd::move(layer));
 }
 

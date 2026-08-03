@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module tenon.project;
 
 import rstd;
@@ -15,27 +18,22 @@ auto resolve_project_metadata(const PackageSelection&    selection,
                               const BuildConfiguration&  configuration,
                               const PackageSourceConfig& sources,
                               const TargetInfo&          target_info,
+                              const CppArgumentParser&   argument_parser,
                               bool                       locked,
                               PackageSelectionPurpose    purpose = PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
-    auto lock = load_lock_session(selection.root.as_path(), locked);
-    if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
-    auto lock_session  = rstd::move(lock).unwrap();
+    auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), locked));
     auto resolution    = lock_session.take_resolution_options();
     resolution.sources = sources.clone();
-    auto resolved      = resolve_package_selection(
-        selection, purpose, rstd::move(resolution), rstd::addressof(target_info));
-    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-    auto project      = rstd::move(resolved).unwrap();
-    auto synchronized = sync_lock(project.graph, rstd::move(lock_session));
-    if (synchronized.is_err()) {
-        return Err(rstd::move(synchronized).unwrap_err());
-    }
+    auto project       = rstd_try(resolve_package_selection(
+        selection, purpose, rstd::move(resolution), rstd::addressof(target_info)));
+    rstd_try(sync_lock(project.graph, rstd::move(lock_session)));
     return adapt_package_graph_metadata(rstd::move(project.graph),
                                         project.selected_package_names,
                                         project.selected_root_names,
                                         configuration,
-                                        target_info);
+                                        target_info,
+                                        argument_parser);
 }
 
 } // namespace tenon

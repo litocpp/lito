@@ -47,12 +47,14 @@ struct CppToolchainCapabilities {
     bool source_embedding { false };
 };
 
-struct BmiFormatIdentity {
+struct BmiFormatIdentity : DefaultInClass<BmiFormatIdentity, rstd::clone::Clone> {
     String         family;
     String         compiler_build;
     String         target;
     String         resource_environment;
     Option<String> format_revision;
+
+    auto clone() const -> BmiFormatIdentity;
 };
 
 enum class BmiCompatibilityField
@@ -166,8 +168,6 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
 
 auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey;
 
-auto clone_bmi_format_identity(const BmiFormatIdentity& value) -> BmiFormatIdentity;
-
 } // namespace tenon
 
 namespace tenon
@@ -261,8 +261,9 @@ auto add_difference(BmiCompatibilityResult& result,
 export namespace tenon
 {
 
-auto clone_bmi_format_identity(const BmiFormatIdentity& value) -> BmiFormatIdentity {
-    auto result = BmiFormatIdentity {
+auto BmiFormatIdentity::clone() const -> BmiFormatIdentity {
+    const auto& value  = *this;
+    auto        result = BmiFormatIdentity {
         .family               = value.family.clone(),
         .compiler_build       = value.compiler_build.clone(),
         .target               = value.target.clone(),

@@ -176,13 +176,15 @@ struct DependencySpec {
 };
 
 struct UsageRequirements {
-    Vec<PathBuf> public_include_directories;
-    Vec<PathBuf> private_include_directories;
-    Vec<String>  public_definitions;
-    Vec<String>  private_definitions;
-    Vec<String>  public_options;
-    Vec<String>  private_options;
-    Vec<String>  private_linker_options;
+    Vec<PathBuf>     public_include_directories;
+    Vec<PathBuf>     private_include_directories;
+    Vec<String>      public_definitions;
+    Vec<String>      private_definitions;
+    Vec<String>      public_options;
+    Vec<String>      private_options;
+    CppArgumentLayer public_arguments;
+    CppArgumentLayer private_arguments;
+    Vec<String>      private_linker_options;
 };
 
 struct DeclaredDependency {
@@ -263,6 +265,7 @@ struct CompileTestCase {
     PathBuf            source;
     CompileTestOutcome outcome { CompileTestOutcome::Failure };
     Vec<String>        options;
+    CppArgumentLayer   arguments;
     Vec<String>        diagnostic_contains;
     Vec<String>        diagnostic_contains_any;
 };

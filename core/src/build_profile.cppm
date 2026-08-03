@@ -1,3 +1,7 @@
+module;
+#include <rstd/enum.hpp>
+#include <rstd/macro.hpp>
+
 export module tenon.build_profile;
 
 import rstd;
@@ -16,6 +20,24 @@ auto failure(String message) -> Result<T> {
 
 } // namespace tenon
 
+export namespace rstd
+{
+
+template<>
+struct Impl<convert::TryFrom<ref<str>>, tenon::BuildProfile> {
+    using Error = tenon::Error;
+
+    static auto try_from(ref<str> name) -> Result<tenon::BuildProfile, Error> {
+        if (name == "debug"_str) return Ok(tenon::BuildProfile::Debug);
+        if (name == "release"_str) return Ok(tenon::BuildProfile::Release);
+        return Err(tenon::Error::make(
+            tenon::ErrorKind::InvalidRequest,
+            rstd::format("unknown profile '{}'; expected debug or release", name)));
+    }
+};
+
+} // namespace rstd
+
 export namespace tenon
 {
 
@@ -28,34 +50,58 @@ auto build_profile_name(BuildProfile profile) -> ref<str> {
 }
 
 auto parse_build_profile(ref<str> name) -> Result<BuildProfile> {
-    if (name == "debug"_str) return Ok(BuildProfile::Debug);
-    if (name == "release"_str) return Ok(BuildProfile::Release);
-    return failure<BuildProfile>(
-        rstd::format("unknown profile '{}'; expected debug or release", name));
-}
-
-auto is_profile_owned_option(ref<str> option) -> bool {
-    const bool optimization = option == "-O"_str || option == "-O0"_str || option == "-O1"_str ||
-                              option == "-O2"_str || option == "-O3"_str || option == "-O4"_str ||
-                              option == "-Ofast"_str || option == "-Og"_str ||
-                              option == "-Os"_str || option == "-Oz"_str;
-    const bool debug_info = option == "-g"_str || option == "-g0"_str ||
-                            option.starts_with("-gdwarf-"_str) || option.starts_with("-ggdb"_str) ||
-                            option.starts_with("-gline-"_str) || option == "-gmodules"_str ||
-                            option.starts_with("-gsplit-dwarf"_str);
-    return optimization || debug_info || option == "-DNDEBUG"_str ||
-           option.starts_with("-DNDEBUG="_str) || option == "-UNDEBUG"_str;
+    return rstd::try_from<BuildProfile>(name);
 }
 
 auto is_profile_owned_definition(ref<str> definition) -> bool {
     return definition == "NDEBUG"_str || definition.starts_with("NDEBUG="_str);
 }
 
-auto make_profile_spec(const BuildConfiguration& configuration) -> Result<ProfileSpec> {
-    for (const auto& option : configuration.options) {
-        if (is_profile_owned_option(option.as_str())) {
-            return failure<ProfileSpec>(
-                rstd::format("build option '{}' overrides the selected profile", option.as_str()));
+auto make_profile_spec(const BuildConfiguration& configuration, const CppArgumentParser& parser)
+    -> Result<ProfileSpec> {
+    auto arguments =
+        rstd_try(parser.parse(configuration.options, "build.options"_str), [](String error) {
+            return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
+        });
+    for (const auto& occurrence : arguments.occurrences) {
+        auto option = occurrence.raw_tokens[usize {}].as_str();
+        RSTD_MATCH(occurrence.argument) {
+            RSTD_CASE(Macro, directive) {
+                if (is_profile_owned_definition(directive.value.as_str())) {
+                    return failure<ProfileSpec>(
+                        rstd::format("build option '{}' overrides the selected profile", option));
+                }
+            }
+            RSTD_CASE(OwnedSetting, setting) {
+                if (setting == CppOwnedSetting::Optimization ||
+                    setting == CppOwnedSetting::DebugInfo) {
+                    return failure<ProfileSpec>(
+                        rstd::format("build option '{}' overrides the selected profile", option));
+                }
+            }
+            RSTD_CASE(IncludeDirectory, path) {
+                static_cast<void>(path);
+            }
+            RSTD_CASE(Target, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(Sysroot, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(Family, domain, family, value) {
+                static_cast<void>(domain);
+                static_cast<void>(family);
+                static_cast<void>(value);
+            }
+            RSTD_CASE(Instrumentation, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(Diagnostic, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(Vendor, value) {
+                static_cast<void>(value);
+            }
         }
     }
 
@@ -72,18 +118,18 @@ auto make_profile_spec(const BuildConfiguration& configuration) -> Result<Profil
         layer.definitions.push(String::make("NDEBUG"_str));
         break;
     }
-    for (const auto& option : configuration.options) layer.options.push(option.clone());
+    layer.arguments = rstd::move(arguments);
 
-    auto cpp = make_cpp_options(configuration.language_standard.as_str(),
-                                configuration.standard_library,
-                                configuration.exceptions,
-                                configuration.rtti,
-                                optimization,
-                                debug_info,
-                                rstd::move(layer));
-    if (cpp.is_err()) {
-        return failure<ProfileSpec>(rstd::move(cpp).unwrap_err());
-    }
+    auto cpp = rstd_try(make_cpp_options(configuration.language_standard.as_str(),
+                                         configuration.standard_library,
+                                         configuration.exceptions,
+                                         configuration.rtti,
+                                         optimization,
+                                         debug_info,
+                                         rstd::move(layer)),
+                        [](String error) {
+                            return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
+                        });
 
     return Ok(ProfileSpec {
         .name = String::make(build_profile_name(configuration.profile)),
@@ -92,7 +138,7 @@ auto make_profile_spec(const BuildConfiguration& configuration) -> Result<Profil
                 .representation   = configuration.bmi_mode,
                 .source_embedding = configuration.bmi_source_embedding,
             },
-        .cpp            = rstd::move(cpp).unwrap(),
+        .cpp            = rstd::move(cpp),
         .linker_options = configuration.linker_options.clone(),
     });
 }

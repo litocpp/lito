@@ -5,6 +5,8 @@ import tenon.frontend.lexical;
 
 using namespace rstd::prelude;
 
+using Clone = rstd::clone::Clone;
+
 export namespace tenon::frontend
 {
 
@@ -94,19 +96,25 @@ struct DocumentationUnit {
     usize                         unsupported {};
 };
 
-struct ProvidedModule {
+struct ProvidedModule : DefaultInClass<ProvidedModule, Clone> {
     String logical_name;
     bool   is_interface { false };
+
+    auto clone() const -> ProvidedModule;
 };
 
-struct DependencyLocation {
+struct DependencyLocation : DefaultInClass<DependencyLocation, Clone> {
     rstd::path::PathBuf path;
     usize               line {};
+
+    auto clone() const -> DependencyLocation;
 };
 
-struct ModuleImport {
+struct ModuleImport : DefaultInClass<ModuleImport, Clone> {
     String             logical_name;
     DependencyLocation location;
+
+    auto clone() const -> ModuleImport;
 };
 
 enum class IncludeLookupKind
@@ -132,7 +140,7 @@ struct IncludeLookupDependency {
     Option<ResolvedIncludeCandidate> resolved;
 };
 
-struct FrontendResult {
+struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     rstd::path::PathBuf      source;
     Option<ProvidedModule>   provided;
     Option<String>           implementation_module;
@@ -140,9 +148,11 @@ struct FrontendResult {
     Vec<rstd::path::PathBuf> header_inputs;
     String                   preprocessor_environment;
     usize                    input_bytes {};
+
+    auto clone() const -> FrontendResult;
 };
 
-struct FrontendSnapshot {
+struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     rstd::path::PathBuf      source;
     Option<ProvidedModule>   provided;
     Option<String>           implementation_module;
@@ -150,6 +160,8 @@ struct FrontendSnapshot {
     Vec<rstd::path::PathBuf> header_inputs;
     String                   preprocessor_environment;
     usize                    input_bytes {};
+
+    auto clone() const -> FrontendSnapshot;
 };
 
 struct UncachedFrontendAnalysis {
@@ -170,11 +182,13 @@ enum class FrontendAnalysisOrigin
     Uncacheable,
 };
 
-struct FrontendAnalysis {
+struct FrontendAnalysis : DefaultInClass<FrontendAnalysis, Clone> {
     FrontendResult         result;
     String                 context_identity;
     String                 receipt;
     FrontendAnalysisOrigin origin { FrontendAnalysisOrigin::Native };
+
+    auto clone() const -> FrontendAnalysis;
 };
 
 struct DocumentationAnalysis {
@@ -182,44 +196,58 @@ struct DocumentationAnalysis {
     DocumentationUnit documentation;
 };
 
-auto clone_provided(const Option<ProvidedModule>& provided) -> Option<ProvidedModule> {
-    if (provided.is_none()) return None();
-    return Some(ProvidedModule {
-        .logical_name = provided->logical_name.clone(),
-        .is_interface = provided->is_interface,
-    });
+auto ProvidedModule::clone() const -> ProvidedModule {
+    return ProvidedModule {
+        .logical_name = logical_name.clone(),
+        .is_interface = is_interface,
+    };
 }
 
-auto clone_imports(const Vec<ModuleImport>& imports) -> Vec<ModuleImport> {
-    auto result = Vec<ModuleImport>::with_capacity(imports.len());
-    for (const auto& imported : imports) {
-        result.push(ModuleImport {
-            .logical_name = imported.logical_name.clone(),
-            .location =
-                DependencyLocation {
-                    .path = imported.location.path.clone(),
-                    .line = imported.location.line,
-                },
-        });
-    }
-    return result;
+auto DependencyLocation::clone() const -> DependencyLocation {
+    return DependencyLocation {
+        .path = path.clone(),
+        .line = line,
+    };
 }
 
-auto clone_paths(const Vec<rstd::path::PathBuf>& paths) -> Vec<rstd::path::PathBuf> {
-    auto result = Vec<rstd::path::PathBuf>::with_capacity(paths.len());
-    for (const auto& path : paths) result.push(path.clone());
-    return result;
+auto ModuleImport::clone() const -> ModuleImport {
+    return ModuleImport {
+        .logical_name = logical_name.clone(),
+        .location     = as<Clone>(location).clone(),
+    };
+}
+
+auto FrontendResult::clone() const -> FrontendResult {
+    return FrontendResult {
+        .source                   = source.clone(),
+        .provided                 = as<Clone>(provided).clone(),
+        .implementation_module    = as<Clone>(implementation_module).clone(),
+        .imports                  = as<Clone>(imports).clone(),
+        .header_inputs            = as<Clone>(header_inputs).clone(),
+        .preprocessor_environment = preprocessor_environment.clone(),
+        .input_bytes              = input_bytes,
+    };
+}
+
+auto FrontendSnapshot::clone() const -> FrontendSnapshot {
+    return FrontendSnapshot {
+        .source                   = source.clone(),
+        .provided                 = as<Clone>(provided).clone(),
+        .implementation_module    = as<Clone>(implementation_module).clone(),
+        .imports                  = as<Clone>(imports).clone(),
+        .header_inputs            = as<Clone>(header_inputs).clone(),
+        .preprocessor_environment = preprocessor_environment.clone(),
+        .input_bytes              = input_bytes,
+    };
 }
 
 auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
     return FrontendSnapshot {
         .source                   = result.source.clone(),
-        .provided                 = clone_provided(result.provided),
-        .implementation_module    = result.implementation_module.is_some()
-                                        ? Some(result.implementation_module->clone())
-                                        : Option<String> {},
-        .imports                  = clone_imports(result.imports),
-        .header_inputs            = clone_paths(result.header_inputs),
+        .provided                 = as<Clone>(result.provided).clone(),
+        .implementation_module    = as<Clone>(result.implementation_module).clone(),
+        .imports                  = as<Clone>(result.imports).clone(),
+        .header_inputs            = as<Clone>(result.header_inputs).clone(),
         .preprocessor_environment = result.preprocessor_environment.clone(),
         .input_bytes              = result.input_bytes,
     };
@@ -271,12 +299,12 @@ auto validate(const IncludeLookupDependency& lookup) -> rstd::Result<bool, Strin
     return Ok(canonical->as_path() == lookup.resolved->canonical_path.as_path());
 }
 
-auto clone_analysis(const FrontendAnalysis& analysis) -> FrontendAnalysis {
+auto FrontendAnalysis::clone() const -> FrontendAnalysis {
     return FrontendAnalysis {
-        .result           = rstd::move(restore(snapshot(analysis.result))).unwrap_unchecked(),
-        .context_identity = analysis.context_identity.clone(),
-        .receipt          = analysis.receipt.clone(),
-        .origin           = analysis.origin,
+        .result           = as<Clone>(result).clone(),
+        .context_identity = context_identity.clone(),
+        .receipt          = receipt.clone(),
+        .origin           = origin,
     };
 }
 

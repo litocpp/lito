@@ -59,6 +59,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                               request.configuration,
                                               request.sources,
                                               toolchain.target_info(),
+                                              toolchain.argument_parser(),
                                               request.locked,
                                               request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
@@ -187,7 +188,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             auto unit = rstd::move(prepared).unwrap();
             if (source.frontend_analysis.is_some() &&
                 source.frontend_analysis->context_identity.as_str() == context->id.as_str()) {
-                unit.frontend_analysis = Some(frontend::clone_analysis(*source.frontend_analysis));
+                unit.frontend_analysis =
+                    Some(as<rstd::clone::Clone>(*source.frontend_analysis).clone());
             }
             units.push(rstd::move(unit));
             target_units[target].emplace_back(id);
@@ -369,7 +371,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 .logical_name        = scans[unit].provided->logical_name.clone(),
                 .provider_identity   = rstd::move(provider_identity),
                 .key                 = rstd::move(key),
-                .format              = clone_bmi_format_identity(toolchain.bmi_format()),
+                .format              = as<rstd::clone::Clone>(toolchain.bmi_format()).clone(),
                 .request             = units[unit].unit.context->bmi,
                 .path                = rstd::move(bmi_path),
                 .direct_dependencies = rstd::move(direct),

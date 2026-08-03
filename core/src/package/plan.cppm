@@ -46,6 +46,29 @@ auto append_unique(Vec<PathBuf>& output, const Vec<PathBuf>& input) -> void {
     }
 }
 
+auto same_tokens(const Vec<String>& left, const Vec<String>& right) -> bool {
+    if (left.len() != right.len()) return false;
+    for (auto index = usize {}; index < left.len(); ++index) {
+        if (left[index] != right[index].as_str()) return false;
+    }
+    return true;
+}
+
+auto append_unique(CppArgumentLayer& output, const CppArgumentLayer& input) -> void {
+    for (const auto& occurrence : input.occurrences) {
+        auto present = false;
+        for (const auto& existing : output.occurrences) {
+            if (same_tokens(existing.raw_tokens, occurrence.raw_tokens)) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) {
+            output.occurrences.push(as<rstd::clone::Clone>(occurrence).clone());
+        }
+    }
+}
+
 auto append_unique(Vec<TargetId>& output, TargetId value) -> bool {
     for (auto existing : output) {
         if (existing == value) return false;
@@ -59,9 +82,9 @@ auto append_unique(Vec<TargetId>& output, const Vec<TargetId>& input) -> void {
 }
 
 struct PublicUsage {
-    Vec<PathBuf> include_directories;
-    Vec<String>  definitions;
-    Vec<String>  options;
+    Vec<PathBuf>     include_directories;
+    Vec<String>      definitions;
+    CppArgumentLayer arguments;
 };
 
 auto visit_target(const PackageMetadata& package,
@@ -118,8 +141,8 @@ auto attachment_context(const CompileContext&       library,
     }
     auto result = CompileContext {
         .bmi                 = library.bmi,
-        .cpp                 = clone_cpp_options(library.cpp),
-        .public_requirements = clone_cpp_public_requirements(library.public_requirements),
+        .cpp                 = as<rstd::clone::Clone>(library.cpp).clone(),
+        .public_requirements = as<rstd::clone::Clone>(library.public_requirements).clone(),
     };
     auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
     if (merged.is_err()) {
@@ -144,12 +167,12 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
     -> Result<CompileContext> {
     auto context = CompileContext {
         .bmi                 = base.bmi,
-        .cpp                 = clone_cpp_options(base.cpp),
-        .public_requirements = clone_cpp_public_requirements(base.public_requirements),
+        .cpp                 = as<rstd::clone::Clone>(base.cpp).clone(),
+        .public_requirements = as<rstd::clone::Clone>(base.public_requirements).clone(),
     };
-    auto layer = CppOptionLayer {};
-    for (const auto& option : test.options) layer.options.push(option.clone());
-    auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(layer));
+    auto layer      = CppOptionLayer {};
+    layer.arguments = as<rstd::clone::Clone>(test.arguments).clone();
+    auto applied    = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(layer));
     if (applied.is_err()) {
         return plan_failure<CompileContext>(rstd::move(applied).unwrap_err());
     }
@@ -215,7 +238,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         auto        usage = PublicUsage {};
         append_unique(usage.include_directories, spec.manifest.usage.public_include_directories);
         append_unique(usage.definitions, spec.manifest.usage.public_definitions);
-        append_unique(usage.options, spec.manifest.usage.public_options);
+        append_unique(usage.arguments, spec.manifest.usage.public_arguments);
 
         auto exported_targets = Vec<TargetId>::make();
         append_unique(exported_targets, target);
@@ -225,7 +248,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             auto& nested_usage  = *public_usage[dependency_id];
             append_unique(usage.include_directories, nested_usage.include_directories);
             append_unique(usage.definitions, nested_usage.definitions);
-            append_unique(usage.options, nested_usage.options);
+            append_unique(usage.arguments, nested_usage.arguments);
             append_unique(exported_targets, public_visible[dependency_id]);
         }
         public_usage[target]   = Some(rstd::move(usage));
@@ -242,9 +265,9 @@ auto resolve_source_discovery(const PackageMetadata& package,
         const auto& exported_usage = *public_usage[target];
         append_unique(public_layer.include_directories, exported_usage.include_directories);
         append_unique(public_layer.definitions, exported_usage.definitions);
-        append_unique(public_layer.options, exported_usage.options);
-        auto public_cpp = apply_cpp_option_layer(clone_cpp_options(selected_profile.cpp),
-                                                 rstd::move(public_layer));
+        append_unique(public_layer.arguments, exported_usage.arguments);
+        auto public_cpp = apply_cpp_option_layer(
+            as<rstd::clone::Clone>(selected_profile.cpp).clone(), rstd::move(public_layer));
         if (public_cpp.is_err()) {
             return plan_failure<SourceDiscoveryPlan>(rstd::move(public_cpp).unwrap_err());
         }
@@ -255,7 +278,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(private_layer.include_directories,
                       spec.manifest.usage.private_include_directories);
         append_unique(private_layer.definitions, spec.manifest.usage.private_definitions);
-        append_unique(private_layer.options, spec.manifest.usage.private_options);
+        append_unique(private_layer.arguments, spec.manifest.usage.private_arguments);
 
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
@@ -267,7 +290,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             const auto& usage = *public_usage[dependency_id];
             append_unique(private_layer.include_directories, usage.include_directories);
             append_unique(private_layer.definitions, usage.definitions);
-            append_unique(private_layer.options, usage.options);
+            append_unique(private_layer.arguments, usage.arguments);
         }
         auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
         if (applied.is_err()) {

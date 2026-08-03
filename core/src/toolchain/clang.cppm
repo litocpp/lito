@@ -7,6 +7,7 @@ import tenon.frontend;
 import tenon.profiling;
 import tenon.modules;
 import tenon.build_profile;
+import :clang_arguments;
 import :clang_options;
 import :clang_preprocessor_environment;
 import :command;
@@ -194,15 +195,6 @@ auto argument_identity(ref<str> recipe, const Vec<String>& arguments) -> String 
     return identity;
 }
 
-auto unsupported_native_preprocessor_option(ref<str> option) -> bool {
-    return option == "-include"_str || option.starts_with("-include="_str) ||
-           option == "-imacros"_str || option.starts_with("-imacros="_str) ||
-           option == "-include-pch"_str || option.starts_with("-include-pch="_str) ||
-           option == "-fmodule-map-file"_str || option.starts_with("-fmodule-map-file="_str) ||
-           option.starts_with("-fmodule-file="_str) ||
-           option.starts_with("-fmodules-cache-path="_str);
-}
-
 auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
     if (triple.is_empty()) return failure<TargetInfo>("clang target triple is empty"_str);
     auto arch_end = usize {};
@@ -276,7 +268,11 @@ auto append_typed_options(Vec<String>&             command,
                               option.effect == CppVendorOptionEffect::Diagnostic)) {
             continue;
         }
-        command.push(option.value.clone());
+        if (option.preserve_raw_tokens) {
+            for (const auto& token : option.raw_tokens) command.push(token.clone());
+        } else {
+            command.push(option.value.clone());
+        }
     }
     if (! builtin_query) {
         for (const auto& option : options.diagnostics.options) command.push(option.clone());
@@ -298,6 +294,10 @@ struct ClangBuiltinContext {
 class ClangToolchain {
 public:
     static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
+        auto argument_parser = make_clang_cpp_argument_parser();
+        if (argument_parser.is_err()) {
+            return failure<ClangToolchain>(rstd::move(argument_parser).unwrap_err());
+        }
         auto configured_compiler =
             toolchain::command::resolve_tool(specification.compiler.as_path(), "clang++"_str);
         auto archiver =
@@ -437,6 +437,7 @@ public:
             rstd::move(target_info).unwrap(),
             rstd::move(format),
             capabilities,
+            rstd::move(argument_parser).unwrap(),
         });
     }
 
@@ -446,6 +447,7 @@ public:
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
     auto bmi_format() const -> const BmiFormatIdentity& { return bmi_format_; }
     auto capabilities() const noexcept -> const CppToolchainCapabilities& { return capabilities_; }
+    auto argument_parser() const noexcept -> const CppArgumentParser& { return argument_parser_; }
 
     auto validate(const CppCompileOptions& cpp, const BmiRequest& bmi) const -> Result<empty> {
         if (! is_supported_cpp_standard(cpp.language.standard.as_str())) {
@@ -512,7 +514,7 @@ public:
         frontend_service.record_analysis_build();
         auto environment_span = profiler.span(ScanProbe::Environment);
         for (const auto& option : compile_context.cpp.vendor) {
-            if (unsupported_native_preprocessor_option(option.value.as_str())) {
+            if (option.native_preprocessor_unsupported) {
                 return failure<frontend::UncachedFrontendAnalysis>(
                     rstd::format("compiler option '{}' is not supported by the native preprocessor",
                                  option.value.as_str()));
@@ -591,7 +593,7 @@ public:
         frontend_service.record_analysis_build();
         auto environment_span = profiler.span(ScanProbe::Environment);
         for (const auto& option : compile_context.cpp.vendor) {
-            if (unsupported_native_preprocessor_option(option.value.as_str())) {
+            if (option.native_preprocessor_unsupported) {
                 return failure<frontend::UncachedDocumentationAnalysis>(
                     rstd::format("compiler option '{}' is not supported by the native preprocessor",
                                  option.value.as_str()));
@@ -909,14 +911,16 @@ private:
                    CompilerIdentity         identity,
                    TargetInfo               target_info,
                    BmiFormatIdentity        format,
-                   CppToolchainCapabilities capabilities)
+                   CppToolchainCapabilities capabilities,
+                   CppArgumentParser        argument_parser)
         : compiler_(rstd::move(compiler)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
           target_info_(rstd::move(target_info)),
           bmi_format_(rstd::move(format)),
-          capabilities_(capabilities) {}
+          capabilities_(capabilities),
+          argument_parser_(rstd::move(argument_parser)) {}
 
     auto environment_for(const CompileContext& compile_context,
                          ref<rstd::path::Path> working_directory) const
@@ -1064,6 +1068,7 @@ private:
     TargetInfo                                                    target_info_;
     BmiFormatIdentity                                             bmi_format_;
     CppToolchainCapabilities                                      capabilities_;
+    CppArgumentParser                                             argument_parser_;
     mutable ToolchainStatistics                                   toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot> builtin_environment_snapshots_;
     mutable Vec<toolchain::PreprocessorEnvironment>               preprocessor_environments_;

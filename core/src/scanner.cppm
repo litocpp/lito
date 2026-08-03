@@ -86,6 +86,7 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                               request.configuration,
                                               request.sources,
                                               toolchain.target_info(),
+                                              toolchain.argument_parser(),
                                               request.locked,
                                               PackageSelectionPurpose::All);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());

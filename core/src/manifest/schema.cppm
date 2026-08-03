@@ -522,20 +522,6 @@ auto resolve_directories(Option<ref<Toml>> value, ref<rstd::path::Path> root, re
     return Ok(rstd::move(result));
 }
 
-auto validate_options(const Vec<String>& options, ref<str> context) -> Result<empty> {
-    for (const auto& option : options) {
-        auto value = option.as_str();
-        if (value == "-frtti"_str || value == "-fno-rtti"_str || value == "-fexceptions"_str ||
-            value == "-fno-exceptions"_str || value.starts_with("-stdlib="_str) ||
-            value.starts_with("-std="_str) || value == "-fmodules-reduced-bmi"_str ||
-            value == "-fno-modules-reduced-bmi"_str || is_profile_owned_option(value)) {
-            return failure<empty>(
-                rstd::format("{} option '{}' overrides a Tenon-owned setting", context, value));
-        }
-    }
-    return Ok(empty {});
-}
-
 auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>> {
     auto result = Vec<CompileTestCase>::make();
     if (value.is_none()) return Ok(rstd::move(result));
@@ -596,9 +582,7 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
             return failure<Vec<CompileTestCase>>(
                 rstd::format("{}.outcome must be success or failure", context.as_str()));
         }
-        auto option_values = rstd::move(options).unwrap();
-        auto options_valid = validate_options(option_values, context.as_str());
-        if (options_valid.is_err()) return Err(rstd::move(options_valid).unwrap_err());
+        auto option_values       = rstd::move(options).unwrap();
         auto contains_values     = rstd::move(contains).unwrap();
         auto contains_any_values = rstd::move(contains_any).unwrap();
         if (expected == CompileTestOutcome::Success &&
@@ -685,8 +669,6 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<
         validate_definitions(public_definition_values, "usage.public-definitions"_str);
     auto private_definitions_valid =
         validate_definitions(private_definition_values, "usage.private-definitions"_str);
-    auto public_valid  = validate_options(public_option_values, "usage.public-options"_str);
-    auto private_valid = validate_options(private_option_values, "usage.private-options"_str);
     auto private_linker_valid =
         validate_linker_options(private_linker_option_values, "usage.private-linker-options"_str);
     if (public_definitions_valid.is_err()) {
@@ -695,8 +677,6 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<
     if (private_definitions_valid.is_err()) {
         return Err(rstd::move(private_definitions_valid).unwrap_err());
     }
-    if (public_valid.is_err()) return Err(rstd::move(public_valid).unwrap_err());
-    if (private_valid.is_err()) return Err(rstd::move(private_valid).unwrap_err());
     if (private_linker_valid.is_err()) {
         return Err(rstd::move(private_linker_valid).unwrap_err());
     }

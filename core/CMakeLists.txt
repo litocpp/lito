@@ -9,6 +9,7 @@ target_sources(
          CXX_MODULES
          FILES
          src/profiling.cppm
+         src/compiler/arguments.cppm
          src/cpp.cppm
          src/bmi.cppm
          src/model.cppm
@@ -36,6 +37,7 @@ target_sources(
          src/lock_store.cppm
          src/project.cppm
          src/toolchain/command.cppm
+         src/toolchain/clang_arguments.cppm
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
          src/toolchain/clang_format.cppm

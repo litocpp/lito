@@ -14,13 +14,19 @@ namespace
 auto context_with(tenon::Vec<String> options,
                   CppOptimization    optimization = CppOptimization::Default,
                   CppDebugInfo       debug_info   = CppDebugInfo::None) -> CompileContext {
+    auto parser = make_clang_cpp_argument_parser();
+    if (parser.is_err()) return CompileContext {};
+    auto arguments = parser->parse(options, "clang-builtin-context-test"_str);
+    if (arguments.is_err()) return CompileContext {};
     auto normalized = make_cpp_options("c++20"_str,
                                        StandardLibrary::Libcxx,
                                        false,
                                        false,
                                        optimization,
                                        debug_info,
-                                       CppOptionLayer { .options = rstd::move(options) });
+                                       CppOptionLayer {
+                                           .arguments = rstd::move(arguments).unwrap(),
+                                       });
     if (normalized.is_err()) return CompileContext {};
     return CompileContext {
         .cpp = rstd::move(normalized).unwrap(),
