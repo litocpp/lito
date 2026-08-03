@@ -23,18 +23,16 @@ export namespace tenon::toolchain
 
 class ClangFormat {
 public:
-    static auto create(ref<rstd::path::Path> formatter_path)
-        -> Result<ClangFormat> {
+    static auto create(ref<rstd::path::Path> formatter_path) -> Result<ClangFormat> {
         auto canonical = command::resolve_tool(formatter_path, "clang-format"_str);
         if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
         auto path = rstd::move(canonical).unwrap();
 
         auto arguments = Vec<String>::make();
-        auto pushed = command::push_path(arguments, path.as_path());
+        auto pushed    = command::push_path(arguments, path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_format_options::VERSION);
-        auto version = command::tool_output(
-            rstd::move(arguments), "clang-format --version"_str);
+        auto version = command::tool_output(rstd::move(arguments), "clang-format --version"_str);
         if (version.is_err()) return Err(rstd::move(version).unwrap_err());
         if (! version->as_str().contains("clang-format version"_str)) {
             return clang_format_failure<ClangFormat>(
@@ -52,7 +50,7 @@ public:
 
     auto format(ref<rstd::path::Path> source) const -> Result<empty> {
         auto arguments = Vec<String>::make();
-        auto pushed = command::push_path(arguments, path_.as_path());
+        auto pushed    = command::push_path(arguments, path_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_format_options::IN_PLACE);
         pushed = command::push_path(arguments, source);

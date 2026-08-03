@@ -39,8 +39,7 @@ auto selected_by_purpose(ArtifactKind kind, PackageSelectionPurpose purpose) -> 
 
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>&          selected_roots,
-                      const TargetInfo*           target)
-    -> Result<Vec<String>> {
+                      const TargetInfo*           target) -> Result<Vec<String>> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
@@ -57,10 +56,9 @@ auto selected_closure(const ResolvedPackageGraph& graph,
                 "selected package '{}' is missing from resolved graph", current.as_str()));
         }
         if (target != nullptr && ! graph.packages[**index].manifest.target.matches(*target)) {
-            return failure<Vec<String>>(rstd::format(
-                "package '{}' does not support target '{}'",
-                current.as_str(),
-                target->triple.as_str()));
+            return failure<Vec<String>>(rstd::format("package '{}' does not support target '{}'",
+                                                     current.as_str(),
+                                                     target->triple.as_str()));
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
@@ -85,7 +83,7 @@ export namespace tenon
 auto resolve_package_selection(const PackageSelection&  selection,
                                PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
                                PackageResolutionOptions options = {},
-                               const TargetInfo*        target = nullptr)
+                               const TargetInfo*        target  = nullptr)
     -> Result<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph(selection.root.as_path(), rstd::move(options));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -106,7 +104,7 @@ auto resolve_package_selection(const PackageSelection&  selection,
     auto selected_roots = Vec<String>::make();
     if (selection.packages.is_empty()) {
         for (const auto& name : graph.root_names) {
-            auto kind = root_kinds.get(name.as_str());
+            auto kind      = root_kinds.get(name.as_str());
             auto supported = true;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
@@ -147,10 +145,10 @@ auto resolve_package_selection(const PackageSelection&  selection,
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str() &&
                         ! package.manifest.target.matches(*target)) {
-                        return failure<ResolvedPackageSelection>(rstd::format(
-                            "package '{}' does not support target '{}'",
-                            name.as_str(),
-                            target->triple.as_str()));
+                        return failure<ResolvedPackageSelection>(
+                            rstd::format("package '{}' does not support target '{}'",
+                                         name.as_str(),
+                                         target->triple.as_str()));
                     }
                 }
             }

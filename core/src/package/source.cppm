@@ -590,8 +590,8 @@ public:
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)
         -> Result<usize> {
         if (requirement.is_Git()) {
-            const auto& git = requirement.as_Git();
-            auto patch = patched_path(git.url.as_str());
+            const auto& git   = requirement.as_Git();
+            auto        patch = patched_path(git.url.as_str());
             if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
             if (patch->is_some()) return acquire_path(**patch);
             return acquire_git(git.url.as_str(), git.reference);

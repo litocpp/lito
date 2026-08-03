@@ -59,35 +59,34 @@ auto run_clang_builtin_context_test() -> int {
         return 3;
     }
 
-    auto optimized = toolchain.builtin_context(
-        context_with(options("-O0"_str, "-O3"_str, "-fPIC"_str)));
-    auto optimized_direct = toolchain.builtin_context(
-        context_with(options("-O3"_str, "-fPIC"_str)));
+    auto optimized =
+        toolchain.builtin_context(context_with(options("-O0"_str, "-O3"_str, "-fPIC"_str)));
+    auto optimized_direct =
+        toolchain.builtin_context(context_with(options("-O3"_str, "-fPIC"_str)));
     if (optimized.is_err() || optimized_direct.is_err()) return 4;
     if (optimized->key.as_str() != optimized_direct->key.as_str() ||
         optimized->key.as_str() == debug->key.as_str()) {
         return 5;
     }
 
-    auto target_attached = toolchain.builtin_context(context_with(
-        options("--target=x86_64-pc-linux-gnu"_str, "-fPIC"_str, "-fno-PIC"_str)));
-    auto target_separate = toolchain.builtin_context(context_with(
-        options("-target"_str, "x86_64-pc-linux-gnu"_str, "-fno-PIC"_str)));
+    auto target_attached = toolchain.builtin_context(
+        context_with(options("--target=x86_64-pc-linux-gnu"_str, "-fPIC"_str, "-fno-PIC"_str)));
+    auto target_separate = toolchain.builtin_context(
+        context_with(options("-target"_str, "x86_64-pc-linux-gnu"_str, "-fno-PIC"_str)));
     if (target_attached.is_err() || target_separate.is_err()) return 6;
     if (target_attached->key.as_str() != target_separate->key.as_str() ||
         ! same_command(target_attached->query_command, target_separate->query_command)) {
         return 7;
     }
 
-    auto target_feature = toolchain.builtin_context(
-        context_with(options("-msse2"_str, "-mno-sse2"_str)));
-    auto target_feature_direct =
-        toolchain.builtin_context(context_with(options("-mno-sse2"_str)));
+    auto target_feature =
+        toolchain.builtin_context(context_with(options("-msse2"_str, "-mno-sse2"_str)));
+    auto target_feature_direct = toolchain.builtin_context(context_with(options("-mno-sse2"_str)));
     if (target_feature.is_err() || target_feature_direct.is_err()) return 8;
     if (target_feature->key.as_str() != target_feature_direct->key.as_str()) return 9;
 
-    auto llvm_debug = toolchain.builtin_context(
-        context_with(options("-mllvm=tenon-ignored"_str, "-g"_str)));
+    auto llvm_debug =
+        toolchain.builtin_context(context_with(options("-mllvm=tenon-ignored"_str, "-g"_str)));
     auto llvm_debug_direct = toolchain.builtin_context(context_with(options("-g0"_str)));
     if (llvm_debug.is_err() || llvm_debug_direct.is_err()) return 10;
     if (llvm_debug->key.as_str() != llvm_debug_direct->key.as_str() ||

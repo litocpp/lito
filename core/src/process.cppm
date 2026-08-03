@@ -12,8 +12,8 @@ namespace tenon
 auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
     auto decoded = String::from_utf8(rstd::move(bytes));
     if (decoded.is_err()) {
-        return Err(Error::make(
-            ErrorKind::Toolchain, rstd::format("{} is not valid UTF-8", context)));
+        return Err(
+            Error::make(ErrorKind::Toolchain, rstd::format("{} is not valid UTF-8", context)));
     }
     return Ok(rstd::move(decoded).unwrap());
 }
@@ -39,14 +39,14 @@ auto decode_command_output(rstd::process::Output value, rstd::time::Duration ela
 
     auto code = value.status.code();
     return Ok(CommandOutput {
-        .exit_code = code.is_some() ? *code : i32(-1),
+        .exit_code       = code.is_some() ? *code : i32(-1),
         .standard_output = rstd::move(stdout_text).unwrap(),
-        .standard_error = rstd::move(stderr_text).unwrap(),
-        .elapsed = elapsed,
+        .standard_error  = rstd::move(stderr_text).unwrap(),
+        .elapsed         = elapsed,
     });
 }
 
-auto run_command(const Vec<String>& arguments,
+auto run_command(const Vec<String>&            arguments,
                  Option<ref<rstd::path::Path>> working_directory = None())
     -> Result<CommandOutput> {
     if (arguments.is_empty()) {
@@ -66,18 +66,17 @@ auto run_command(const Vec<String>& arguments,
     auto output  = command.output();
     auto elapsed = started.elapsed();
     if (output.is_err()) {
-        return Err(Error::make(
-            ErrorKind::Toolchain,
-            rstd::format("failed to execute '{}': {}",
-                         arguments[usize {}].as_str(),
-                         rstd::move(output).unwrap_err())));
+        return Err(Error::make(ErrorKind::Toolchain,
+                               rstd::format("failed to execute '{}': {}",
+                                            arguments[usize {}].as_str(),
+                                            rstd::move(output).unwrap_err())));
     }
 
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
 
-auto run_command_with_input(const Vec<String>& arguments,
-                            ref<str>           standard_input,
+auto run_command_with_input(const Vec<String>&            arguments,
+                            ref<str>                      standard_input,
                             Option<ref<rstd::path::Path>> working_directory = None())
     -> Result<CommandOutput> {
     if (arguments.is_empty()) {
@@ -96,11 +95,10 @@ auto run_command_with_input(const Vec<String>& arguments,
     auto started = rstd::time::Instant::now();
     auto spawned = command.spawn();
     if (spawned.is_err()) {
-        return Err(Error::make(
-            ErrorKind::Toolchain,
-            rstd::format("failed to execute '{}': {}",
-                         arguments[usize {}].as_str(),
-                         rstd::move(spawned).unwrap_err())));
+        return Err(Error::make(ErrorKind::Toolchain,
+                               rstd::format("failed to execute '{}': {}",
+                                            arguments[usize {}].as_str(),
+                                            rstd::move(spawned).unwrap_err())));
     }
     auto child = rstd::move(spawned).unwrap();
     {
@@ -117,9 +115,9 @@ auto run_command_with_input(const Vec<String>& arguments,
     }
     auto output = child.wait_with_output();
     if (output.is_err()) {
-        return Err(Error::make(ErrorKind::Toolchain,
-                               rstd::format("failed to collect command output: {}",
-                                            rstd::move(output).unwrap_err())));
+        return Err(Error::make(
+            ErrorKind::Toolchain,
+            rstd::format("failed to collect command output: {}", rstd::move(output).unwrap_err())));
     }
     return decode_command_output(rstd::move(output).unwrap(), started.elapsed());
 }

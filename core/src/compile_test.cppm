@@ -13,7 +13,7 @@ auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept
     return left.starts_with(right) && right.starts_with(left);
 }
 
-}
+} // namespace tenon
 
 export namespace tenon
 {
@@ -26,10 +26,10 @@ auto compile_test_for_source(const TargetSpec& target, ref<rstd::path::Path> sou
     return None();
 }
 
-auto evaluate_compile_test(ref<str>                  package,
-                           const CompileTestCase&    test,
-                           ref<rstd::path::Path>     source,
-                           CompileCommandResult      output) -> CompileTestExecution {
+auto evaluate_compile_test(ref<str>               package,
+                           const CompileTestCase& test,
+                           ref<rstd::path::Path>  source,
+                           CompileCommandResult   output) -> CompileTestExecution {
     auto mismatch = Option<String> {};
     if (test.outcome == CompileTestOutcome::Success && output.exit_code != i32 {}) {
         mismatch = Some(rstd::format("expected compilation to succeed, but clang exited with {}",
@@ -40,7 +40,8 @@ auto evaluate_compile_test(ref<str>                  package,
     if (mismatch.is_none() && output.exit_code != i32 {}) {
         for (const auto& required : test.diagnostic_contains) {
             if (! output.standard_error.as_str().contains(required.as_str())) {
-                mismatch = Some(rstd::format("missing required diagnostic '{}'", required.as_str()));
+                mismatch =
+                    Some(rstd::format("missing required diagnostic '{}'", required.as_str()));
                 break;
             }
         }
@@ -53,8 +54,8 @@ auto evaluate_compile_test(ref<str>                  package,
                 }
             }
             if (! matched) {
-                mismatch = Some(String::make(
-                    "none of the alternative diagnostics were present"_str));
+                mismatch =
+                    Some(String::make("none of the alternative diagnostics were present"_str));
             }
         }
     }
@@ -71,4 +72,4 @@ auto evaluate_compile_test(ref<str>                  package,
     };
 }
 
-}
+} // namespace tenon

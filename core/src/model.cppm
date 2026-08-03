@@ -272,20 +272,20 @@ struct CompileTestCase {
 };
 
 struct PackageManifest {
-    String                  name;
-    PackageVersion          version;
-    Option<String>          root_module;
-    PathBuf                 root;
-    PathBuf                 manifest_path;
-    ArtifactKind            artifact_kind { ArtifactKind::StaticLibrary };
-    String                  artifact_name;
-    SourceDiscoveryMode     discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>            declared_sources;
+    String                      name;
+    PackageVersion              version;
+    Option<String>              root_module;
+    PathBuf                     root;
+    PathBuf                     manifest_path;
+    ArtifactKind                artifact_kind { ArtifactKind::StaticLibrary };
+    String                      artifact_name;
+    SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>                declared_sources;
     Vec<ConditionalSourceGroup> conditional_source_groups;
-    TargetPredicate         target;
-    Vec<CompileTestCase>    compile_tests;
-    UsageRequirements       usage;
-    Vec<DeclaredDependency> dependencies;
+    TargetPredicate             target;
+    Vec<CompileTestCase>        compile_tests;
+    UsageRequirements           usage;
+    Vec<DeclaredDependency>     dependencies;
 };
 
 struct WorkspacePackageDefaults {
@@ -319,7 +319,7 @@ struct ManifestLocation {
 
 using ProvidedModule = frontend::ProvidedModule;
 using SourceLocation = frontend::DependencyLocation;
-using ModuleImport = frontend::ModuleImport;
+using ModuleImport   = frontend::ModuleImport;
 using FrontendResult = frontend::FrontendResult;
 
 struct ResolvedSource {
@@ -433,14 +433,14 @@ struct PackageMetadata {
 };
 
 struct TargetSpec {
-    String              name;
-    ArtifactKind        artifact_kind { ArtifactKind::StaticLibrary };
-    String              artifact_name;
-    Option<String>      module_affiliation;
-    PathBuf             root;
-    Vec<TargetSource>   sources;
-    Vec<DependencySpec> dependencies;
-    UsageRequirements   usage;
+    String               name;
+    ArtifactKind         artifact_kind { ArtifactKind::StaticLibrary };
+    String               artifact_name;
+    Option<String>       module_affiliation;
+    PathBuf              root;
+    Vec<TargetSource>    sources;
+    Vec<DependencySpec>  dependencies;
+    UsageRequirements    usage;
     Vec<CompileTestCase> compile_tests;
 };
 
@@ -509,15 +509,15 @@ struct PackagePlan {
 };
 
 struct UnitSpec {
-    UnitId                id {};
-    TargetId              target {};
-    PathBuf               relative_source;
-    PathBuf               source;
-    PathBuf               object;
-    PathBuf               cache_record;
-    Option<PathBuf>       compile_test_record;
-    Option<PathBuf>       bmi;
-    const CompileContext* context {};
+    UnitId                 id {};
+    TargetId               target {};
+    PathBuf                relative_source;
+    PathBuf                source;
+    PathBuf                object;
+    PathBuf                cache_record;
+    Option<PathBuf>        compile_test_record;
+    Option<PathBuf>        bmi;
+    const CompileContext*  context {};
     const CompileTestCase* compile_test {};
 };
 
@@ -602,14 +602,14 @@ struct BuiltArtifact {
 };
 
 struct CompileTestExecution {
-    String             package;
-    String             name;
-    PathBuf            source;
-    CompileTestOutcome expected { CompileTestOutcome::Failure };
-    i32                exit_code {};
-    String             standard_output;
-    String             standard_error;
-    Option<String>     mismatch;
+    String               package;
+    String               name;
+    PathBuf              source;
+    CompileTestOutcome   expected { CompileTestOutcome::Failure };
+    i32                  exit_code {};
+    String               standard_output;
+    String               standard_error;
+    Option<String>       mismatch;
     rstd::time::Duration elapsed;
 
     auto success() const noexcept -> bool { return mismatch.is_none(); }

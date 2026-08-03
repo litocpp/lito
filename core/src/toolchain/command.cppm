@@ -21,12 +21,11 @@ export namespace tenon::toolchain::command
 
 auto is_searchable_tool_name(ref<rstd::path::Path> path) -> bool {
     auto components = path.components();
-    auto first = components.next();
+    auto first      = components.next();
     return first.is_some() && first->is_normal() && components.next().is_none();
 }
 
-auto resolve_tool(ref<rstd::path::Path> path, ref<str> name)
-    -> Result<PathBuf> {
+auto resolve_tool(ref<rstd::path::Path> path, ref<str> name) -> Result<PathBuf> {
     if (is_searchable_tool_name(path)) return Ok(PathBuf::from(path));
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
@@ -36,24 +35,20 @@ auto resolve_tool(ref<rstd::path::Path> path, ref<str> name)
     return Ok(rstd::move(canonical).unwrap());
 }
 
-auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path)
-    -> Result<empty> {
+auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Result<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(
-            rstd::format("tool path '{}' is not valid UTF-8", path));
+        return failure<empty>(rstd::format("tool path '{}' is not valid UTF-8", path));
     }
     arguments.push(String::make(*text));
     return Ok(empty {});
 }
 
-auto push_path_option(Vec<String>& arguments,
-                      ref<str> prefix,
-                      ref<rstd::path::Path> path) -> Result<empty> {
+auto push_path_option(Vec<String>& arguments, ref<str> prefix, ref<rstd::path::Path> path)
+    -> Result<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
-        return failure<empty>(
-            rstd::format("tool option path '{}' is not valid UTF-8", path));
+        return failure<empty>(rstd::format("tool option path '{}' is not valid UTF-8", path));
     }
     arguments.push(rstd::format("{}{}", prefix, *text));
     return Ok(empty {});
@@ -68,11 +63,10 @@ auto tool_output(Vec<String> arguments, ref<str> description) -> Result<String> 
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
-        return failure<String>(rstd::format(
-            "{} failed with exit code {}:\n{}",
-            description,
-            value.exit_code,
-            value.standard_error.as_str()));
+        return failure<String>(rstd::format("{} failed with exit code {}:\n{}",
+                                            description,
+                                            value.exit_code,
+                                            value.standard_error.as_str()));
     }
     return Ok(trim_ascii(rstd::move(value.standard_output)));
 }

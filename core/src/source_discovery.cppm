@@ -239,9 +239,9 @@ export namespace tenon
 {
 
 auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
-    auto seen    = StringSet::make();
-    auto entries = Vec<SourceEntry>::make();
-    const auto append = [&](const PathBuf& declared) -> Result<empty> {
+    auto       seen    = StringSet::make();
+    auto       entries = Vec<SourceEntry>::make();
+    const auto append  = [&](const PathBuf& declared) -> Result<empty> {
         auto resolved = resolve_declared_source(manifest, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
@@ -336,8 +336,8 @@ auto discover_package_sources(const PackageMetadata&       package,
             candidate.source.canonical_path.as_path(),
             ScanSourceOrigin::Discovery);
         if (source_frame.is_err()) {
-            return Err(Error::make(ErrorKind::Artifact,
-                                   rstd::move(source_frame).unwrap_err_unchecked()));
+            return Err(
+                Error::make(ErrorKind::Artifact, rstd::move(source_frame).unwrap_err_unchecked()));
         }
         auto facts           = analysis_service.analyze(target.manifest.name.as_str(),
                                                         candidate.source.relative_path.as_path(),

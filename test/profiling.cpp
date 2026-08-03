@@ -25,12 +25,12 @@ struct ManualClock {
 
 auto run_profiling_test() -> int {
     auto registry = rstd::bench::probe::ProbeRegistry::new_();
-    auto probe = registry.register_probe(tenon::scan_probe_label(tenon::ScanProbe::Preprocessor))
-                     .unwrap();
-    auto schema = rstd::move(registry).freeze();
-    auto now     = u64();
-    auto session = rstd::bench::probe::BasicProbeSession<ManualClock>(
-        schema.clone(), ManualClock { .now = &now });
+    auto probe =
+        registry.register_probe(tenon::scan_probe_label(tenon::ScanProbe::Preprocessor)).unwrap();
+    auto schema   = rstd::move(registry).freeze();
+    auto now      = u64();
+    auto session  = rstd::bench::probe::BasicProbeSession<ManualClock>(schema.clone(),
+                                                                       ManualClock { .now = &now });
     auto recorder = session.recorder();
 
     recorder.begin_frame(u64(1)).unwrap();
@@ -57,7 +57,7 @@ auto run_profiling_test() -> int {
     auto aggregate_batch = aggregate_recorder.drain().unwrap();
     auto aggregate       = rstd::bench::probe::ProbeCollector::new_(schema.clone());
     aggregate.ingest(aggregate_batch).unwrap();
-    auto frames     = Vec<tenon::ScanSourceFrame>::make();
+    auto frames = Vec<tenon::ScanSourceFrame>::make();
     frames.push(tenon::ScanSourceFrame {
         .id     = u64(1),
         .target = String::make("first"_str),
@@ -70,9 +70,8 @@ auto run_profiling_test() -> int {
         .source = rstd::path::PathBuf::from("/second.cpp"_str),
         .origin = tenon::ScanSourceOrigin::Classify,
     });
-    auto report = tenon::ScanProfileReport(rstd::move(aggregate).finish(),
-                                           rstd::move(source_collector).finish(),
-                                           rstd::move(frames));
+    auto report = tenon::ScanProfileReport(
+        rstd::move(aggregate).finish(), rstd::move(source_collector).finish(), rstd::move(frames));
 
     auto slow = report.slow_sources(tenon::ScanProbe::Preprocessor, usize(1));
     if (slow.len() != usize(1) || slow[usize()].frame != u64(2)) return 1;
@@ -96,8 +95,7 @@ auto run_profiling_test() -> int {
                         rstd::time::Duration::from_micros(u64(100)));
     build_timing.record(tenon::BuildOperation::Compile,
                         rstd::time::Duration::from_micros(u64(250)));
-    build_timing.record(tenon::BuildOperation::Archive,
-                        rstd::time::Duration::from_micros(u64(50)));
+    build_timing.record(tenon::BuildOperation::Archive, rstd::time::Duration::from_micros(u64(50)));
     const auto& compile = build_timing.timing(tenon::BuildOperation::Compile);
     const auto& archive = build_timing.timing(tenon::BuildOperation::Archive);
     const auto& link    = build_timing.timing(tenon::BuildOperation::Link);

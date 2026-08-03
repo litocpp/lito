@@ -1097,14 +1097,14 @@ public:
         root.insert(String::make("compile"_str), decision.complete_.clone());
         root.insert(String::make("expected"_str),
                     cache_string(test.outcome == CompileTestOutcome::Success ? "success"_str
-                                                                            : "failure"_str));
+                                                                             : "failure"_str));
         root.insert(String::make("state"_str), cache_string("running"_str));
         root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
-    auto record_compile_test(const CacheDecision&       decision,
-                             ref<rstd::path::Path>      record,
+    auto record_compile_test(const CacheDecision&        decision,
+                             ref<rstd::path::Path>       record,
                              const CompileTestExecution& execution) -> Result<empty> {
         auto mismatch = Json::Null();
         if (execution.mismatch.is_some()) {
@@ -1117,11 +1117,10 @@ public:
         result.insert(String::make("mismatch"_str), rstd::move(mismatch));
         result.insert(String::make("stderr-bytes"_str),
                       cache_u64(rstd::as_cast<u64>(execution.standard_error.len())));
-        result.insert(
-            String::make("stderr-fingerprint"_str),
-            cache_string(cache::text_identity("tenon-compile-test-stderr-v1"_str,
-                                              execution.standard_error.as_str())
-                             .as_str()));
+        result.insert(String::make("stderr-fingerprint"_str),
+                      cache_string(cache::text_identity("tenon-compile-test-stderr-v1"_str,
+                                                        execution.standard_error.as_str())
+                                       .as_str()));
         result.insert(String::make("stdout-bytes"_str),
                       cache_u64(rstd::as_cast<u64>(execution.standard_output.len())));
 
@@ -1129,8 +1128,9 @@ public:
         root.insert(String::make("case"_str), cache_string(execution.name.as_str()));
         root.insert(String::make("compile"_str), decision.complete_.clone());
         root.insert(String::make("expected"_str),
-                    cache_string(execution.expected == CompileTestOutcome::Success ? "success"_str
-                                                                                   : "failure"_str));
+                    cache_string(execution.expected == CompileTestOutcome::Success
+                                     ? "success"_str
+                                     : "failure"_str));
         root.insert(String::make("result"_str), Json::Object(rstd::move(result)));
         root.insert(String::make("state"_str), cache_string("complete"_str));
         root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));

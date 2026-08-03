@@ -1,0 +1,65 @@
+﻿---
+BasedOnStyle: LLVM
+
+AccessModifierOffset: -4
+
+AlignAfterOpenBracket: Align
+AlignConsecutiveMacros: true
+AlignConsecutiveAssignments: true
+AlignConsecutiveDeclarations: true
+AlignEscapedNewlines: Left
+AlignOperands: true
+AlignTrailingComments: true
+
+AllowAllParametersOfDeclarationOnNextLine: false
+AllowShortBlocksOnASingleLine: false
+AllowShortCaseLabelsOnASingleLine: true
+AllowShortIfStatementsOnASingleLine: true
+AllowShortLoopsOnASingleLine: true
+AllowShortLambdasOnASingleLine: false
+AllowShortFunctionsOnASingleLine: InlineOnly
+
+AlwaysBreakAfterReturnType: None
+AlwaysBreakTemplateDeclarations: true
+
+BreakBeforeBraces: Custom
+BraceWrapping:
+  AfterEnum: true
+  AfterNamespace: true
+  SplitEmptyFunction: false
+  SplitEmptyRecord: false
+BinPackArguments: false
+BinPackParameters: OnePerLine
+CompactNamespaces: false
+ConstructorInitializerAllOnOneLineOrOnePerLine: true
+Cpp11BracedListStyle: false
+IndentCaseLabels: false
+IndentPPDirectives: None
+IndentWidth: 4
+IndentWrappedFunctionNames: false
+KeepEmptyLinesAtTheStartOfBlocks: false
+Language: Cpp
+PointerAlignment: Left
+ReflowComments: false
+SortIncludes: Never
+SortUsingDeclarations: Never
+SpaceAfterCStyleCast: false
+SpaceAfterLogicalNot: true
+SpaceAfterTemplateKeyword: false
+SpaceBeforeAssignmentOperators: true
+SpaceBeforeCpp11BracedList: true
+SpaceBeforeCtorInitializerColon: false
+SpaceBeforeInheritanceColon: true
+SpaceBeforeRangeBasedForLoopColon: true
+SpaceInEmptyParentheses: false
+SpacesInAngles: false
+SpacesInCStyleCastParentheses: false
+SpacesInContainerLiterals: false
+SpacesInParentheses: false
+SpacesInSquareBrackets: false
+Standard: Latest
+TabWidth: 4
+UseTab: Never
+ColumnLimit: 100
+
+BreakAfterAttributes: Always

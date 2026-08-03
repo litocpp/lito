@@ -26,9 +26,8 @@ using CoordinateMap = rstd::collections::BTreeMap<String, PackageCoordinate>;
 
 auto package_coordinate(const SelectedSourcePackage& selected) -> Result<PackageCoordinate> {
     if (selected.package.version.value.is_none()) {
-        return failure<PackageCoordinate>(
-            rstd::format("package '{}' has an unresolved workspace version",
-                         selected.package.name.as_str()));
+        return failure<PackageCoordinate>(rstd::format(
+            "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
     }
     return Ok(PackageCoordinate {
         .version         = selected.package.version.value->clone(),
@@ -37,7 +36,7 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
     });
 }
 
-auto package_conflict(ref<str>                  name,
+auto package_conflict(ref<str>                 name,
                       const PackageCoordinate& existing,
                       const PackageCoordinate& candidate) -> Error {
     return Error::make(
@@ -107,11 +106,12 @@ public:
             return Err(package_conflict(expected_name, **existing, candidate));
         }
 
-        coordinates_.insert(loaded.package.name.clone(), PackageCoordinate {
-            .version         = candidate.version.clone(),
-            .source_identity = candidate.source_identity.clone(),
-            .manifest        = candidate.manifest.clone(),
-        });
+        coordinates_.insert(loaded.package.name.clone(),
+                            PackageCoordinate {
+                                .version         = candidate.version.clone(),
+                                .source_identity = candidate.source_identity.clone(),
+                                .manifest        = candidate.manifest.clone(),
+                            });
         active_.insert(loaded.package.name.clone(), empty {});
 
         auto dependencies = Vec<ResolvedDependency>::make();

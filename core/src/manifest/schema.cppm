@@ -111,8 +111,7 @@ auto workspace_root_key(ref<str> key) -> bool {
 }
 
 auto package_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "version"_str || key == "module"_str ||
-           key == "target"_str;
+    return key == "name"_str || key == "version"_str || key == "module"_str || key == "target"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
@@ -125,11 +124,12 @@ auto executable_key(ref<str> key) -> bool {
            key == "source-groups"_str;
 }
 
-auto compile_test_key(ref<str> key) -> bool { return key == "cases"_str; }
+auto compile_test_key(ref<str> key) -> bool {
+    return key == "cases"_str;
+}
 
 auto target_predicate_key(ref<str> key) -> bool {
-    return key == "family"_str || key == "os"_str || key == "not-family"_str ||
-           key == "not-os"_str;
+    return key == "family"_str || key == "os"_str || key == "not-family"_str || key == "not-os"_str;
 }
 
 auto source_group_key(ref<str> key) -> bool {
@@ -297,8 +297,7 @@ auto predicate_values(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<S
     return Ok(rstd::move(result));
 }
 
-auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context)
-    -> Result<TargetPredicate> {
+auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context) -> Result<TargetPredicate> {
     if (value.is_none()) return Ok(TargetPredicate {});
     auto table = table_value(**value, context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
@@ -306,13 +305,12 @@ auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context)
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
     auto families = predicate_values(member(**value, "family"_str),
                                      rstd::format("{}.family", context).as_str());
-    auto operating_systems = predicate_values(member(**value, "os"_str),
-                                               rstd::format("{}.os", context).as_str());
+    auto operating_systems =
+        predicate_values(member(**value, "os"_str), rstd::format("{}.os", context).as_str());
     auto excluded_families = predicate_values(member(**value, "not-family"_str),
                                               rstd::format("{}.not-family", context).as_str());
-    auto excluded_operating_systems =
-        predicate_values(member(**value, "not-os"_str),
-                         rstd::format("{}.not-os", context).as_str());
+    auto excluded_operating_systems = predicate_values(member(**value, "not-os"_str),
+                                                       rstd::format("{}.not-os", context).as_str());
     if (families.is_err()) return Err(rstd::move(families).unwrap_err());
     if (operating_systems.is_err()) {
         return Err(rstd::move(operating_systems).unwrap_err());
@@ -369,21 +367,20 @@ auto parse_source_groups(Option<ref<Toml>> value, ref<str> context)
     if (value.is_none()) return Ok(rstd::move(result));
     auto groups = (**value).as_array();
     if (groups.is_none()) {
-        return failure<Vec<ConditionalSourceGroup>>(
-            rstd::format("{} must be an array", context));
+        return failure<Vec<ConditionalSourceGroup>>(rstd::format("{} must be an array", context));
     }
     for (usize index {}; index < (**groups).len(); ++index) {
         const auto item_context = rstd::format("{}[{}]", context, index);
-        auto table = table_value((**groups)[index], item_context.as_str());
+        auto       table        = table_value((**groups)[index], item_context.as_str());
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, item_context.as_str(), source_group_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         auto sources = declared_paths(member((**groups)[index], "sources"_str),
                                       rstd::format("{}.sources", item_context.as_str()).as_str(),
                                       true);
-        auto predicate = parse_target_predicate(
-            member((**groups)[index], "target"_str),
-            rstd::format("{}.target", item_context.as_str()).as_str());
+        auto predicate =
+            parse_target_predicate(member((**groups)[index], "target"_str),
+                                   rstd::format("{}.target", item_context.as_str()).as_str());
         if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
         if (predicate.is_err()) return Err(rstd::move(predicate).unwrap_err());
         result.push(ConditionalSourceGroup {
@@ -449,9 +446,9 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
     auto names   = rstd::collections::BTreeMap<String, empty>::make();
     auto sources = rstd::collections::BTreeMap<String, empty>::make();
     for (usize index {}; index < (**cases).len(); ++index) {
-        const auto context = rstd::format("compile-test.cases[{}]", index);
-        const auto& value  = (**cases)[index];
-        auto table = table_value(value, context.as_str());
+        const auto  context = rstd::format("compile-test.cases[{}]", index);
+        const auto& value   = (**cases)[index];
+        auto        table   = table_value(value, context.as_str());
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, context.as_str(), compile_test_case_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
@@ -460,12 +457,12 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
         auto outcome = required_string(value, "outcome"_str, context.as_str());
         auto options = string_array(member(value, "options"_str),
                                     rstd::format("{}.options", context.as_str()).as_str());
-        auto contains = string_array(
-            member(value, "diagnostic-contains"_str),
-            rstd::format("{}.diagnostic-contains", context.as_str()).as_str());
-        auto contains_any = string_array(
-            member(value, "diagnostic-contains-any"_str),
-            rstd::format("{}.diagnostic-contains-any", context.as_str()).as_str());
+        auto contains =
+            string_array(member(value, "diagnostic-contains"_str),
+                         rstd::format("{}.diagnostic-contains", context.as_str()).as_str());
+        auto contains_any =
+            string_array(member(value, "diagnostic-contains-any"_str),
+                         rstd::format("{}.diagnostic-contains-any", context.as_str()).as_str());
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
         if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());
@@ -489,9 +486,8 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
                 rstd::format("{}.source is not valid UTF-8", context.as_str()));
         }
         if (sources.contains_key(*source_text)) {
-            return failure<Vec<CompileTestCase>>(
-                rstd::format("compile-test source '{}' is used by more than one case",
-                             relative->as_path()));
+            return failure<Vec<CompileTestCase>>(rstd::format(
+                "compile-test source '{}' is used by more than one case", relative->as_path()));
         }
         auto expected = CompileTestOutcome::Failure;
         if (outcome->as_str() == "success"_str) {
@@ -828,11 +824,11 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
     if (package_known.is_err()) return Err(rstd::move(package_known).unwrap_err());
 
-    auto library_value_option    = member(document, "library"_str);
-    auto executable_value_option = member(document, "executable"_str);
-    auto test_value_option       = member(document, "test"_str);
+    auto library_value_option      = member(document, "library"_str);
+    auto executable_value_option   = member(document, "executable"_str);
+    auto test_value_option         = member(document, "test"_str);
     auto compile_test_value_option = member(document, "compile-test"_str);
-    auto artifact_count          = usize {};
+    auto artifact_count            = usize {};
     if (library_value_option.is_some()) ++artifact_count;
     if (executable_value_option.is_some()) ++artifact_count;
     if (test_value_option.is_some()) ++artifact_count;
@@ -851,8 +847,8 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
                                  : test_value_option.is_some()       ? **test_value_option
                                                                      : **compile_test_value_option;
     const auto  artifact_context =
-        artifact_kind == ArtifactKind::StaticLibrary ? "manifest.library"_str
-        : artifact_kind == ArtifactKind::Executable  ? "manifest.executable"_str
+        artifact_kind == ArtifactKind::StaticLibrary    ? "manifest.library"_str
+        : artifact_kind == ArtifactKind::Executable     ? "manifest.executable"_str
         : artifact_kind == ArtifactKind::TestExecutable ? "manifest.test"_str
                                                         : "manifest.compile-test"_str;
     auto artifact_table = table_value(artifact_value, artifact_context);
@@ -884,10 +880,10 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     }
     Result<String> artifact_name = Ok(name->clone());
     if (artifact_kind != ArtifactKind::CompileTest) {
-        artifact_name = required_string(
-            artifact_value,
-            artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str,
-            artifact_context);
+        artifact_name = required_string(artifact_value,
+                                        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str
+                                                                                     : "name"_str,
+                                        artifact_context);
     }
     if (artifact_name.is_err()) return Err(rstd::move(artifact_name).unwrap_err());
     if (! valid_artifact_name(artifact_name->as_str())) {
@@ -907,12 +903,11 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
         return failure<ManifestDocument>(
             rstd::format("{}.discovery must be explicit or module", artifact_context));
     }
-    Result<Vec<ConditionalSourceGroup>> source_groups =
-        Ok(Vec<ConditionalSourceGroup>::make());
+    Result<Vec<ConditionalSourceGroup>> source_groups = Ok(Vec<ConditionalSourceGroup>::make());
     if (artifact_kind != ArtifactKind::CompileTest) {
-        source_groups = parse_source_groups(
-            member(artifact_value, "source-groups"_str),
-            rstd::format("{}.source-groups", artifact_context).as_str());
+        source_groups =
+            parse_source_groups(member(artifact_value, "source-groups"_str),
+                                rstd::format("{}.source-groups", artifact_context).as_str());
     }
     if (source_groups.is_err()) return Err(rstd::move(source_groups).unwrap_err());
     Result<Vec<CompileTestCase>> compile_tests = Ok(Vec<CompileTestCase>::make());
@@ -924,12 +919,12 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     if (artifact_kind == ArtifactKind::CompileTest) {
         for (const auto& item : *compile_tests) sources.push(item.source.clone());
     } else {
-        auto parsed_sources = declared_paths(
-            member(artifact_value, "sources"_str),
-            artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
-            : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
-                                                         : "test.sources"_str,
-            explicit_discovery && source_groups->is_empty());
+        auto parsed_sources =
+            declared_paths(member(artifact_value, "sources"_str),
+                           artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
+                           : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
+                                                                        : "test.sources"_str,
+                           explicit_discovery && source_groups->is_empty());
         if (parsed_sources.is_err()) return Err(rstd::move(parsed_sources).unwrap_err());
         sources = rstd::move(parsed_sources).unwrap();
     }

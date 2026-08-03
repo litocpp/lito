@@ -39,10 +39,8 @@ void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
 void observe_test(void* raw_context, const tenon::TestEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose) return;
-    rstd::io::println("[run] {} {} (cwd {})",
-                      event.package,
-                      event.executable,
-                      event.working_directory);
+    rstd::io::println(
+        "[run] {} {} (cwd {})", event.package, event.executable, event.working_directory);
     for (const auto& argument : event.arguments) {
         rstd::io::println("  [arg] {}", argument.as_str());
     }
@@ -77,10 +75,9 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
     return counts;
 }
 
-auto make_timing_output(ref<rstd::path::Path> root,
+auto make_timing_output(ref<rstd::path::Path>       root,
                         Option<rstd::path::PathBuf> file,
-                        bool standard_output)
-    -> tenon::timing_output::OutputOptions {
+                        bool standard_output) -> tenon::timing_output::OutputOptions {
     if (file.is_none()) {
         return tenon::timing_output::OutputOptions {
             .standard_output = standard_output,
@@ -165,14 +162,14 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Test()) {
-        auto options                     = rstd::move(invocation.command).as_Test().options;
-        auto timing = make_timing_output(project.root.as_path(),
-                                         rstd::move(options.timing_file),
-                                         options.verbose && ! options.no_timing);
-        auto request                     = tenon::TestRequest {};
-        request.build.selection.root     = rstd::move(project.root);
-        request.build.configuration      = build_configuration(rstd::move(project.toolchain));
-        request.build.sources            = rstd::move(project.sources);
+        auto options                 = rstd::move(invocation.command).as_Test().options;
+        auto timing                  = make_timing_output(project.root.as_path(),
+                                                          rstd::move(options.timing_file),
+                                                          options.verbose && ! options.no_timing);
+        auto request                 = tenon::TestRequest {};
+        request.build.selection.root = rstd::move(project.root);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain));
+        request.build.sources        = rstd::move(project.sources);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.locked             = options.locked;
         request.arguments                = rstd::move(options.arguments);
@@ -184,7 +181,7 @@ extern "C++" int main() {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
-        request.observer = Some(tenon::TestObserver {
+        request.observer       = Some(tenon::TestObserver {
             .context = rstd::addressof(event_context),
             .notify  = observe_test,
         });
@@ -271,9 +268,9 @@ extern "C++" int main() {
     }
 
     auto options               = rstd::move(invocation.command).as_Build().options;
-    auto timing = make_timing_output(project.root.as_path(),
-                                     rstd::move(options.timing_file),
-                                     options.verbose && ! options.no_timing);
+    auto timing                = make_timing_output(project.root.as_path(),
+                                                    rstd::move(options.timing_file),
+                                                    options.verbose && ! options.no_timing);
     auto request               = tenon::BuildRequest {};
     request.selection.root     = rstd::move(project.root);
     request.configuration      = build_configuration(rstd::move(project.toolchain));

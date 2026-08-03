@@ -21,7 +21,9 @@ auto root(ref<str> relative) -> PathBuf {
     return rstd::fs::canonicalize(PathBuf::from(relative).as_path()).unwrap();
 }
 
-auto project_root() -> PathBuf { return root("project"_str); }
+auto project_root() -> PathBuf {
+    return root("project"_str);
+}
 
 auto output_root(ref<str> name) -> PathBuf {
     auto directory = rstd::format("tenon-test-{}-{}", rstd::process::id(), name);
@@ -38,11 +40,12 @@ auto configuration(tenon::BuildProfile profile = tenon::BuildProfile::Debug)
     -> tenon::BuildConfiguration {
     return tenon::BuildConfiguration {
         .profile = profile,
-        .toolchain = tenon::ToolchainSpec {
-            .compiler  = PathBuf::from("clang++"_str),
-            .archiver  = PathBuf::from("llvm-ar"_str),
-            .formatter = PathBuf::from("clang-format"_str),
-        },
+        .toolchain =
+            tenon::ToolchainSpec {
+                .compiler  = PathBuf::from("clang++"_str),
+                .archiver  = PathBuf::from("llvm-ar"_str),
+                .formatter = PathBuf::from("clang-format"_str),
+            },
         .standard_library  = tenon::StandardLibrary::Libcxx,
         .bmi_mode          = tenon::BmiMode::Reduced,
         .language_standard = String::make("c++20"_str),
@@ -55,10 +58,11 @@ auto build_request(ref<rstd::path::Path> root,
                    tenon::BuildProfile   profile = tenon::BuildProfile::Debug)
     -> tenon::BuildRequest {
     return tenon::BuildRequest {
-        .selection = tenon::PackageSelection {
-            .root     = PathBuf::from(root),
-            .packages = rstd::move(packages),
-        },
+        .selection =
+            tenon::PackageSelection {
+                .root     = PathBuf::from(root),
+                .packages = rstd::move(packages),
+            },
         .output        = PathBuf::from(output),
         .configuration = configuration(profile),
         .locked        = true,

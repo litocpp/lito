@@ -7,266 +7,250 @@ import tenon.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using Toml = rstd::toml::Value;
+using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
 
-namespace tenon {
+namespace tenon
+{
 
-template <typename T> auto config_failure(String message) -> Result<T> {
-  return Err(Error::make(ErrorKind::Config, rstd::move(message)));
+template<typename T>
+auto config_failure(String message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Config, rstd::move(message)));
 }
 
-template <typename T> auto config_failure(ref<str> message) -> Result<T> {
-  return Err(Error::make(ErrorKind::Config, message));
+template<typename T>
+auto config_failure(ref<str> message) -> Result<T> {
+    return Err(Error::make(ErrorKind::Config, message));
 }
 
-auto config_member(const Toml &value, ref<str> key) -> Option<ref<Toml>> {
-  return value.get(key);
+auto config_member(const Toml& value, ref<str> key) -> Option<ref<Toml>> {
+    return value.get(key);
 }
 
-auto config_table(const Toml &value, ref<str> context) -> Result<ref<Table>> {
-  auto table = value.as_table();
-  if (table.is_none()) {
-    return config_failure<ref<Table>>(
-        rstd::format("{} must be a table", context));
-  }
-  return Ok(*table);
+auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
+    auto table = value.as_table();
+    if (table.is_none()) {
+        return config_failure<ref<Table>>(rstd::format("{} must be a table", context));
+    }
+    return Ok(*table);
 }
 
 auto root_config_key(ref<str> key) -> bool {
-  return key == "toolchain"_str || key == "patch"_str;
+    return key == "toolchain"_str || key == "patch"_str;
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
-  return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str;
+    return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str;
 }
 
-auto patch_config_key(ref<str> key) -> bool { return key == "path"_str; }
+auto patch_config_key(ref<str> key) -> bool {
+    return key == "path"_str;
+}
 
-auto reject_config_unknown(const Table &table, ref<str> context,
-                           bool (*allowed)(ref<str>)) -> Result<empty> {
-  auto keys = table.keys();
-  for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-    if (!allowed((**key).as_str())) {
-      return config_failure<empty>(rstd::format(
-          "{} contains unknown field '{}'", context, (**key).as_str()));
+auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
+    -> Result<empty> {
+    auto keys = table.keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        if (! allowed((**key).as_str())) {
+            return config_failure<empty>(
+                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+        }
     }
-  }
-  return Ok(empty{});
+    return Ok(empty {});
 }
 
-auto configured_tool(const Toml &toolchain_value, ref<str> key,
-                     ref<str> fallback)
+auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback)
     -> Result<PathBuf> {
-  auto value = config_member(toolchain_value, key);
-  if (value.is_none())
-    return Ok(PathBuf::from(fallback));
-  auto text = (**value).as_str();
-  if (text.is_none()) {
-    return config_failure<PathBuf>(
-        rstd::format("config.toolchain.{} must be a string", key));
-  }
-  if (text->is_empty()) {
-    return config_failure<PathBuf>(
-        rstd::format("config.toolchain.{} must not be empty", key));
-  }
-  auto path = PathBuf::from(*text);
-  if (!path.as_path().is_absolute() &&
-      !toolchain::command::is_searchable_tool_name(path.as_path())) {
-    return config_failure<PathBuf>(rstd::format(
-        "config.toolchain.{} must be an executable name or absolute path",
-        key));
-  }
-  return Ok(rstd::move(path));
+    auto value = config_member(toolchain_value, key);
+    if (value.is_none()) return Ok(PathBuf::from(fallback));
+    auto text = (**value).as_str();
+    if (text.is_none()) {
+        return config_failure<PathBuf>(rstd::format("config.toolchain.{} must be a string", key));
+    }
+    if (text->is_empty()) {
+        return config_failure<PathBuf>(rstd::format("config.toolchain.{} must not be empty", key));
+    }
+    auto path = PathBuf::from(*text);
+    if (! path.as_path().is_absolute() &&
+        ! toolchain::command::is_searchable_tool_name(path.as_path())) {
+        return config_failure<PathBuf>(
+            rstd::format("config.toolchain.{} must be an executable name or absolute path", key));
+    }
+    return Ok(rstd::move(path));
 }
 
 auto default_toolchain() -> ToolchainSpec {
-  return ToolchainSpec{
-      .compiler = PathBuf::from("clang++"_str),
-      .archiver = PathBuf::from("llvm-ar"_str),
-      .formatter = PathBuf::from("clang-format"_str),
-  };
+    return ToolchainSpec {
+        .compiler  = PathBuf::from("clang++"_str),
+        .archiver  = PathBuf::from("llvm-ar"_str),
+        .formatter = PathBuf::from("clang-format"_str),
+    };
 }
 
-auto configured_sources(const Toml &document,
-                        ref<rstd::path::Path> project_root)
+auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root)
     -> Result<PackageSourceConfig> {
-  auto patches = Vec<GitSourcePatch>::make();
-  auto patch_value = config_member(document, "patch"_str);
-  if (patch_value.is_none()) {
-    return Ok(PackageSourceConfig{.patches = rstd::move(patches)});
-  }
-
-  auto patch_table = config_table(**patch_value, "config.patch"_str);
-  if (patch_table.is_err())
-    return Err(rstd::move(patch_table).unwrap_err());
-  auto keys = (**patch_table).keys();
-  for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-    const auto &url = **key;
-    if (url.is_empty()) {
-      return config_failure<PackageSourceConfig>(
-          "config.patch Git URL must not be empty"_str);
-    }
-    if (url.as_str().starts_with("-"_str)) {
-      return config_failure<PackageSourceConfig>(rstd::format(
-          "config.patch Git URL '{}' must not start with '-'", url.as_str()));
-    }
-    if (url.as_str().contains("#"_str)) {
-      return config_failure<PackageSourceConfig>(rstd::format(
-          "config.patch Git URL '{}' must not contain a URL fragment",
-          url.as_str()));
+    auto patches     = Vec<GitSourcePatch>::make();
+    auto patch_value = config_member(document, "patch"_str);
+    if (patch_value.is_none()) {
+        return Ok(PackageSourceConfig { .patches = rstd::move(patches) });
     }
 
-    auto specification = (**patch_table).get(url.as_str());
-    auto context = rstd::format("config.patch.'{}'", url.as_str());
-    auto table = config_table(**specification, context.as_str());
-    if (table.is_err())
-      return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, context.as_str(), patch_config_key);
-    if (known.is_err())
-      return Err(rstd::move(known).unwrap_err());
-    auto value = config_member(**specification, "path"_str);
-    if (value.is_none()) {
-      return config_failure<PackageSourceConfig>(
-          rstd::format("{} is missing 'path'", context.as_str()));
-    }
-    auto text = (**value).as_str();
-    if (text.is_none()) {
-      return config_failure<PackageSourceConfig>(
-          rstd::format("{}.path must be a string", context.as_str()));
-    }
-    if (text->is_empty()) {
-      return config_failure<PackageSourceConfig>(
-          rstd::format("{}.path must not be empty", context.as_str()));
-    }
+    auto patch_table = config_table(**patch_value, "config.patch"_str);
+    if (patch_table.is_err()) return Err(rstd::move(patch_table).unwrap_err());
+    auto keys = (**patch_table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& url = **key;
+        if (url.is_empty()) {
+            return config_failure<PackageSourceConfig>(
+                "config.patch Git URL must not be empty"_str);
+        }
+        if (url.as_str().starts_with("-"_str)) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("config.patch Git URL '{}' must not start with '-'", url.as_str()));
+        }
+        if (url.as_str().contains("#"_str)) {
+            return config_failure<PackageSourceConfig>(rstd::format(
+                "config.patch Git URL '{}' must not contain a URL fragment", url.as_str()));
+        }
 
-    auto requested = PathBuf::from(*text);
-    if (requested.as_path().is_relative()) {
-      requested = PathBuf::from(project_root).join(requested.as_path());
+        auto specification = (**patch_table).get(url.as_str());
+        auto context       = rstd::format("config.patch.'{}'", url.as_str());
+        auto table         = config_table(**specification, context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_config_unknown(**table, context.as_str(), patch_config_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto value = config_member(**specification, "path"_str);
+        if (value.is_none()) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("{} is missing 'path'", context.as_str()));
+        }
+        auto text = (**value).as_str();
+        if (text.is_none()) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("{}.path must be a string", context.as_str()));
+        }
+        if (text->is_empty()) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("{}.path must not be empty", context.as_str()));
+        }
+
+        auto requested = PathBuf::from(*text);
+        if (requested.as_path().is_relative()) {
+            requested = PathBuf::from(project_root).join(requested.as_path());
+        }
+        auto canonical = rstd::fs::canonicalize(requested.as_path());
+        if (canonical.is_err()) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("cannot resolve {}.path '{}': {}",
+                             context.as_str(),
+                             requested.as_path(),
+                             rstd::move(canonical).unwrap_err()));
+        }
+        auto resolved = rstd::move(canonical).unwrap();
+        auto metadata = rstd::fs::metadata(resolved.as_path());
+        if (metadata.is_err()) {
+            return config_failure<PackageSourceConfig>(
+                rstd::format("cannot inspect {}.path '{}': {}",
+                             context.as_str(),
+                             resolved.as_path(),
+                             rstd::move(metadata).unwrap_err()));
+        }
+        if (! metadata->is_dir()) {
+            return config_failure<PackageSourceConfig>(rstd::format(
+                "{}.path '{}' is not a directory", context.as_str(), resolved.as_path()));
+        }
+        patches.push(GitSourcePatch {
+            .git  = url.clone(),
+            .path = rstd::move(resolved),
+        });
     }
-    auto canonical = rstd::fs::canonicalize(requested.as_path());
-    if (canonical.is_err()) {
-      return config_failure<PackageSourceConfig>(rstd::format(
-          "cannot resolve {}.path '{}': {}", context.as_str(), requested.as_path(),
-          rstd::move(canonical).unwrap_err()));
-    }
-    auto resolved = rstd::move(canonical).unwrap();
-    auto metadata = rstd::fs::metadata(resolved.as_path());
-    if (metadata.is_err()) {
-      return config_failure<PackageSourceConfig>(rstd::format(
-          "cannot inspect {}.path '{}': {}", context.as_str(), resolved.as_path(),
-          rstd::move(metadata).unwrap_err()));
-    }
-    if (!metadata->is_dir()) {
-      return config_failure<PackageSourceConfig>(rstd::format(
-          "{}.path '{}' is not a directory", context.as_str(), resolved.as_path()));
-    }
-    patches.push(GitSourcePatch{
-        .git = url.clone(),
-        .path = rstd::move(resolved),
-    });
-  }
-  return Ok(PackageSourceConfig{.patches = rstd::move(patches)});
+    return Ok(PackageSourceConfig { .patches = rstd::move(patches) });
 }
 
 } // namespace tenon
 
-export namespace tenon {
+export namespace tenon
+{
 
-auto load_project_config(ref<rstd::path::Path> requested_root)
-    -> Result<ProjectConfig> {
-  auto canonical = rstd::fs::canonicalize(requested_root);
-  if (canonical.is_err()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("cannot resolve project root '{}': {}", requested_root,
-                     rstd::move(canonical).unwrap_err()));
-  }
-  auto root = rstd::move(canonical).unwrap();
-  auto metadata = rstd::fs::metadata(root.as_path());
-  if (metadata.is_err()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("cannot inspect project root '{}': {}", root.as_path(),
-                     rstd::move(metadata).unwrap_err()));
-  }
-  if (!metadata->is_dir()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("project root '{}' is not a directory", root.as_path()));
-  }
+auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<ProjectConfig> {
+    auto canonical = rstd::fs::canonicalize(requested_root);
+    if (canonical.is_err()) {
+        return config_failure<ProjectConfig>(rstd::format("cannot resolve project root '{}': {}",
+                                                          requested_root,
+                                                          rstd::move(canonical).unwrap_err()));
+    }
+    auto root     = rstd::move(canonical).unwrap();
+    auto metadata = rstd::fs::metadata(root.as_path());
+    if (metadata.is_err()) {
+        return config_failure<ProjectConfig>(rstd::format("cannot inspect project root '{}': {}",
+                                                          root.as_path(),
+                                                          rstd::move(metadata).unwrap_err()));
+    }
+    if (! metadata->is_dir()) {
+        return config_failure<ProjectConfig>(
+            rstd::format("project root '{}' is not a directory", root.as_path()));
+    }
 
-  auto config_path =
-      root.join(PathBuf::from(".tenon/config.toml"_str).as_path());
-  auto exists = rstd::fs::exists(config_path.as_path());
-  if (exists.is_err()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("cannot inspect config '{}': {}", config_path.as_path(),
-                     rstd::move(exists).unwrap_err()));
-  }
-  if (!*exists) {
-    return Ok(ProjectConfig{
-        .root = rstd::move(root),
-        .toolchain = default_toolchain(),
+    auto config_path = root.join(PathBuf::from(".tenon/config.toml"_str).as_path());
+    auto exists      = rstd::fs::exists(config_path.as_path());
+    if (exists.is_err()) {
+        return config_failure<ProjectConfig>(rstd::format("cannot inspect config '{}': {}",
+                                                          config_path.as_path(),
+                                                          rstd::move(exists).unwrap_err()));
+    }
+    if (! *exists) {
+        return Ok(ProjectConfig {
+            .root      = rstd::move(root),
+            .toolchain = default_toolchain(),
+        });
+    }
+
+    auto contents = rstd::fs::read_to_string(config_path.as_path());
+    if (contents.is_err()) {
+        return config_failure<ProjectConfig>(rstd::format("cannot read config '{}': {}",
+                                                          config_path.as_path(),
+                                                          rstd::move(contents).unwrap_err()));
+    }
+    auto parsed = rstd::toml::from_str(contents->as_str());
+    if (parsed.is_err()) {
+        return config_failure<ProjectConfig>(rstd::format("cannot parse config '{}': {}",
+                                                          config_path.as_path(),
+                                                          rstd::move(parsed).unwrap_err()));
+    }
+    auto document   = rstd::move(parsed).unwrap();
+    auto root_table = config_table(document, "config root"_str);
+    if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
+    auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
+    if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
+
+    auto toolchain       = default_toolchain();
+    auto toolchain_value = config_member(document, "toolchain"_str);
+    if (toolchain_value.is_some()) {
+        auto table = config_table(**toolchain_value, "config.toolchain"_str);
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto compiler  = configured_tool(**toolchain_value, "compiler"_str, "clang++"_str);
+        auto archiver  = configured_tool(**toolchain_value, "archiver"_str, "llvm-ar"_str);
+        auto formatter = configured_tool(**toolchain_value, "formatter"_str, "clang-format"_str);
+        if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
+        if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
+        if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
+        toolchain = ToolchainSpec {
+            .compiler  = rstd::move(compiler).unwrap(),
+            .archiver  = rstd::move(archiver).unwrap(),
+            .formatter = rstd::move(formatter).unwrap(),
+        };
+    }
+
+    auto sources = configured_sources(document, root.as_path());
+    if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
+
+    return Ok(ProjectConfig {
+        .root      = rstd::move(root),
+        .toolchain = rstd::move(toolchain),
+        .sources   = rstd::move(sources).unwrap(),
     });
-  }
-
-  auto contents = rstd::fs::read_to_string(config_path.as_path());
-  if (contents.is_err()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("cannot read config '{}': {}", config_path.as_path(),
-                     rstd::move(contents).unwrap_err()));
-  }
-  auto parsed = rstd::toml::from_str(contents->as_str());
-  if (parsed.is_err()) {
-    return config_failure<ProjectConfig>(
-        rstd::format("cannot parse config '{}': {}", config_path.as_path(),
-                     rstd::move(parsed).unwrap_err()));
-  }
-  auto document = rstd::move(parsed).unwrap();
-  auto root_table = config_table(document, "config root"_str);
-  if (root_table.is_err())
-    return Err(rstd::move(root_table).unwrap_err());
-  auto root_known =
-      reject_config_unknown(**root_table, "config root"_str, root_config_key);
-  if (root_known.is_err())
-    return Err(rstd::move(root_known).unwrap_err());
-
-  auto toolchain = default_toolchain();
-  auto toolchain_value = config_member(document, "toolchain"_str);
-  if (toolchain_value.is_some()) {
-    auto table = config_table(**toolchain_value, "config.toolchain"_str);
-    if (table.is_err())
-      return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.toolchain"_str,
-                                       toolchain_config_key);
-    if (known.is_err())
-      return Err(rstd::move(known).unwrap_err());
-    auto compiler =
-        configured_tool(**toolchain_value, "compiler"_str, "clang++"_str);
-    auto archiver =
-        configured_tool(**toolchain_value, "archiver"_str, "llvm-ar"_str);
-    auto formatter =
-        configured_tool(**toolchain_value, "formatter"_str, "clang-format"_str);
-    if (compiler.is_err())
-      return Err(rstd::move(compiler).unwrap_err());
-    if (archiver.is_err())
-      return Err(rstd::move(archiver).unwrap_err());
-    if (formatter.is_err())
-      return Err(rstd::move(formatter).unwrap_err());
-    toolchain = ToolchainSpec{
-        .compiler = rstd::move(compiler).unwrap(),
-        .archiver = rstd::move(archiver).unwrap(),
-        .formatter = rstd::move(formatter).unwrap(),
-    };
-  }
-
-  auto sources = configured_sources(document, root.as_path());
-  if (sources.is_err())
-    return Err(rstd::move(sources).unwrap_err());
-
-  return Ok(ProjectConfig{
-      .root = rstd::move(root),
-      .toolchain = rstd::move(toolchain),
-      .sources = rstd::move(sources).unwrap(),
-  });
 }
 
 } // namespace tenon

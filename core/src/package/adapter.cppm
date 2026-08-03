@@ -45,8 +45,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
                                   const Vec<String>&        selected_package_names,
                                   const Vec<String>&        selected_root_names,
                                   const BuildConfiguration& configuration,
-                                  const TargetInfo&         target_info)
-    -> Result<PackageMetadata> {
+                                  const TargetInfo& target_info) -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {

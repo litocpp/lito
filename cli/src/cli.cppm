@@ -135,10 +135,10 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto test_timing_file = test.add_arg(timing_file_arg());
     auto test_no_timing   = test.add_arg(no_timing_arg());
-    auto test_arguments = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
-                                           .value_name("ARGS"_str)
-                                           .num_args(NumArgs::any())
-                                           .allow_hyphen_values());
+    auto test_arguments   = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                             .value_name("ARGS"_str)
+                                             .num_args(NumArgs::any())
+                                             .allow_hyphen_values());
 
     auto scan = Command::make("scan"_str);
     scan.about("Scan one source file"_str);
@@ -170,31 +170,31 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
-        .directory      = directory,
-        .build_package  = build_package,
-        .build_profile  = build_profile,
-        .build_target   = build_target,
-        .build_output   = build_output,
-        .build_locked   = build_locked,
-        .build_verbose  = build_verbose,
+        .directory         = directory,
+        .build_package     = build_package,
+        .build_profile     = build_profile,
+        .build_target      = build_target,
+        .build_output      = build_output,
+        .build_locked      = build_locked,
+        .build_verbose     = build_verbose,
         .build_timing_file = build_timing_file,
         .build_no_timing   = build_no_timing,
-        .test_package   = test_package,
-        .test_profile   = test_profile,
-        .test_output    = test_output,
-        .test_locked    = test_locked,
-        .test_no_run    = test_no_run,
-        .test_verbose   = test_verbose,
-        .test_timing_file = test_timing_file,
-        .test_no_timing   = test_no_timing,
-        .test_arguments = test_arguments,
-        .scan_source    = scan_source,
-        .scan_package   = scan_package,
-        .scan_profile   = scan_profile,
-        .scan_target    = scan_target,
-        .scan_locked    = scan_locked,
-        .format_package = format_package,
-        .parser         = rstd::move(parser).unwrap(),
+        .test_package      = test_package,
+        .test_profile      = test_profile,
+        .test_output       = test_output,
+        .test_locked       = test_locked,
+        .test_no_run       = test_no_run,
+        .test_verbose      = test_verbose,
+        .test_timing_file  = test_timing_file,
+        .test_no_timing    = test_no_timing,
+        .test_arguments    = test_arguments,
+        .scan_source       = scan_source,
+        .scan_package      = scan_package,
+        .scan_profile      = scan_profile,
+        .scan_target       = scan_target,
+        .scan_locked       = scan_locked,
+        .format_package    = format_package,
+        .parser            = rstd::move(parser).unwrap(),
     });
 }
 
@@ -303,9 +303,9 @@ auto parse() -> CliOutcome {
     auto working_directory = PathBuf::from((**directory_value).clone());
     auto subcommand        = matches.subcommand();
     if (subcommand->get<0>() == "build"_str) {
-        auto child   = subcommand->get<1>();
-        auto profile = optional_value(*child, schema.build_profile);
-        auto output  = optional_value(*child, schema.build_output);
+        auto child       = subcommand->get<1>();
+        auto profile     = optional_value(*child, schema.build_profile);
+        auto output      = optional_value(*child, schema.build_output);
         auto timing_file = optional_value(*child, schema.build_timing_file);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
@@ -316,9 +316,8 @@ auto parse() -> CliOutcome {
                 .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
                 .locked   = flag_value(*child, schema.build_locked),
                 .verbose  = flag_value(*child, schema.build_verbose),
-                .timing_file = timing_file.is_some()
-                                   ? Some(PathBuf::from((**timing_file).clone()))
-                                   : None(),
+                .timing_file =
+                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.build_no_timing),
             }));
     }
@@ -337,9 +336,9 @@ auto parse() -> CliOutcome {
             }));
     }
     if (subcommand->get<0>() == "test"_str) {
-        auto child   = subcommand->get<1>();
-        auto profile = optional_value(*child, schema.test_profile);
-        auto output  = optional_value(*child, schema.test_output);
+        auto child       = subcommand->get<1>();
+        auto profile     = optional_value(*child, schema.test_profile);
+        auto output      = optional_value(*child, schema.test_output);
         auto timing_file = optional_value(*child, schema.test_timing_file);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
@@ -351,9 +350,8 @@ auto parse() -> CliOutcome {
                 .locked    = flag_value(*child, schema.test_locked),
                 .no_run    = flag_value(*child, schema.test_no_run),
                 .verbose   = flag_value(*child, schema.test_verbose),
-                .timing_file = timing_file.is_some()
-                                   ? Some(PathBuf::from((**timing_file).clone()))
-                                   : None(),
+                .timing_file =
+                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
             }));
     }

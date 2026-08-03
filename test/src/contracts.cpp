@@ -141,15 +141,15 @@ TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {
     ASSERT_TRUE(clear_output(output.as_path()));
     for (const auto path : VALID_BUILD_CASES) {
         auto directory = root(path);
-        auto built = tenon::build(
-            build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+        auto built =
+            tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
         if (built.is_err()) rstd::io::eprintln("unexpected build failure: {}", path);
         EXPECT_TRUE(built.is_ok());
     }
     for (const auto path : INVALID_BUILD_CASES) {
         auto directory = root(path);
-        auto built = tenon::build(
-            build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+        auto built =
+            tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
         if (built.is_ok()) rstd::io::eprintln("unexpected build success: {}", path);
         EXPECT_TRUE(built.is_err());
     }
@@ -161,9 +161,8 @@ TEST(Contracts, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     auto output    = output_root("profile"_str);
     ASSERT_TRUE(clear_output(output.as_path()));
 
-    auto debug = tenon::build(build_request(directory.as_path(),
-                                            output.as_path(),
-                                            Vec<String>::make()));
+    auto debug =
+        tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
     ASSERT_TRUE(debug.is_ok());
     auto debug_executable = executable(*debug);
     ASSERT_TRUE(debug_executable.is_some());
@@ -174,10 +173,8 @@ TEST(Contracts, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     ASSERT_TRUE(debug_status->code().is_some());
     EXPECT_EQ(*debug_status->code(), i32(1));
 
-    auto release = tenon::build(build_request(directory.as_path(),
-                                              output.as_path(),
-                                              Vec<String>::make(),
-                                              tenon::BuildProfile::Release));
+    auto release = tenon::build(build_request(
+        directory.as_path(), output.as_path(), Vec<String>::make(), tenon::BuildProfile::Release));
     ASSERT_TRUE(release.is_ok());
     auto release_executable = executable(*release);
     ASSERT_TRUE(release_executable.is_some());

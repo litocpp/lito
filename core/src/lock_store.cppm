@@ -169,8 +169,7 @@ auto path_source_key_v4(ref<str> key) -> bool {
 }
 
 auto git_source_key_v4(ref<str> key) -> bool {
-    return key == "commit"_str || key == "kind"_str || key == "reference"_str ||
-           key == "url"_str;
+    return key == "commit"_str || key == "kind"_str || key == "reference"_str || key == "url"_str;
 }
 
 auto reference_key_v3(ref<str> key) -> bool {
@@ -632,14 +631,13 @@ auto validate_lock_v4(const Json& document) -> Result<empty> {
                 return failure<empty>(
                     "lock Git reference value must be empty only for default"_str);
             }
-            auto requirement = rstd::format(
-                "{}\n{}\n{}", *url, *reference_kind, *reference_value);
+            auto requirement = rstd::format("{}\n{}\n{}", *url, *reference_kind, *reference_value);
             if (git_requirements.contains_key(requirement.as_str())) {
-                return failure<empty>(rstd::format(
-                    "lock repeats Git source requirement '{}', kind '{}', value '{}'",
-                    *url,
-                    *reference_kind,
-                    *reference_value));
+                return failure<empty>(
+                    rstd::format("lock repeats Git source requirement '{}', kind '{}', value '{}'",
+                                 *url,
+                                 *reference_kind,
+                                 *reference_value));
             }
             git_requirements.insert(rstd::move(requirement), empty {});
             identity = git_source_identity(*url, *commit);

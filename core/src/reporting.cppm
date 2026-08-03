@@ -45,13 +45,15 @@ void append_line(String& output, ref<str> line) {
     output.push_ascii('\n');
 }
 
-void append_line(String& output, String line) { append_line(output, line.as_str()); }
+void append_line(String& output, String line) {
+    append_line(output, line.as_str());
+}
 
 void append_metric(String& output, ref<str> name, usize value) {
     append_line(output, rstd::format("  {:<38} {}", name, value));
 }
 
-void append_preprocessor(String& output,
+void append_preprocessor(String&                                               output,
                          const frontend::preprocessor::PreprocessorStatistics& statistics) {
     append_metric(output, "files"_str, statistics.files);
     append_metric(output, "source tokens"_str, statistics.source_tokens);
@@ -100,31 +102,38 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "scan miss receipt"_str, summary.frontend.persistent_scan_receipt);
 
     append_line(output, "\ntoolchain"_str);
-    append_metric(output, "preprocessor environment entries"_str,
+    append_metric(output,
+                  "preprocessor environment entries"_str,
                   summary.toolchain.preprocessor_environment_entries);
-    append_metric(output, "preprocessor environment queries"_str,
+    append_metric(output,
+                  "preprocessor environment queries"_str,
                   summary.toolchain.preprocessor_environment_queries);
-    append_metric(output, "preprocessor environment hits"_str,
+    append_metric(output,
+                  "preprocessor environment hits"_str,
                   summary.toolchain.preprocessor_environment_hits);
     append_metric(output, "target queries"_str, summary.toolchain.target_queries);
     append_line(output, "  builtin cache key version              3"_str);
-    append_line(output, rstd::format("  {:<38} {}", "stdlib capability catalog"_str,
-                                     toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "stdlib capability catalog"_str,
+                             toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID));
     append_metric(output, "builtin snapshots"_str, summary.toolchain.builtin_snapshots);
     append_metric(output, "builtin refreshes"_str, summary.toolchain.builtin_refreshes);
     append_metric(output, "builtin hits"_str, summary.toolchain.builtin_hits);
     append_metric(output, "builtin macro processes"_str, summary.toolchain.builtin_macro_processes);
-    append_metric(output, "builtin capability processes"_str,
-                  summary.toolchain.builtin_capability_processes);
+    append_metric(
+        output, "builtin capability processes"_str, summary.toolchain.builtin_capability_processes);
     append_metric(output, "clang macros"_str, summary.toolchain.clang_macros);
     append_metric(output, "native macro owners"_str, summary.toolchain.native_macro_owners);
     append_metric(output, "clang capabilities"_str, summary.toolchain.clang_capabilities);
     append_metric(output, "native capabilities"_str, summary.toolchain.native_capabilities);
-    append_metric(output, "builtin macro output bytes"_str,
-                  summary.toolchain.builtin_macro_output_bytes);
-    append_metric(output, "builtin capability input bytes"_str,
+    append_metric(
+        output, "builtin macro output bytes"_str, summary.toolchain.builtin_macro_output_bytes);
+    append_metric(output,
+                  "builtin capability input bytes"_str,
                   summary.toolchain.builtin_capability_input_bytes);
-    append_metric(output, "builtin capability output bytes"_str,
+    append_metric(output,
+                  "builtin capability output bytes"_str,
                   summary.toolchain.builtin_capability_output_bytes);
     append_metric(output, "ignored builtin options"_str, summary.toolchain.ignored_builtin_options);
 
@@ -135,45 +144,58 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_line(output, "  name | calls | total_us"_str);
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);
-        append_line(output, rstd::format("  {} | {} | {}",
-                                         build_operation_label(operation),
-                                         timing.count,
-                                         timing.total.as_micros()));
+        append_line(output,
+                    rstd::format("  {} | {} | {}",
+                                 build_operation_label(operation),
+                                 timing.count,
+                                 timing.total.as_micros()));
     }
 
     append_line(output, "\naggregate timing"_str);
-    append_line(output, "  name | calls | total_us | self_us | min_us | mean_us "
-                        "| median_us | p95_us | "
-                        "max_us"_str);
+    append_line(output,
+                "  name | calls | total_us | self_us | min_us | mean_us "
+                "| median_us | p95_us | "
+                "max_us"_str);
     const auto& aggregate = summary.scan_profile.aggregate();
     for (const auto& timing : aggregate.overall()) {
         auto label = aggregate.schema()->label(timing.probe);
         if (label.is_none()) continue;
-        append_line(output, rstd::format(
-                                "  {} | {} | {} | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3}",
-                                *label, timing.count, timing.inclusive_total.as_micros(),
-                                timing.exclusive_total.as_micros(), timing.minimum_ns / f64(1000.0),
-                                timing.mean_ns / f64(1000.0), timing.median_ns / f64(1000.0),
-                                timing.p95_ns / f64(1000.0), timing.maximum_ns / f64(1000.0)));
+        append_line(output,
+                    rstd::format("  {} | {} | {} | {} | {:.3} | {:.3} | {:.3} | {:.3} | {:.3}",
+                                 *label,
+                                 timing.count,
+                                 timing.inclusive_total.as_micros(),
+                                 timing.exclusive_total.as_micros(),
+                                 timing.minimum_ns / f64(1000.0),
+                                 timing.mean_ns / f64(1000.0),
+                                 timing.median_ns / f64(1000.0),
+                                 timing.p95_ns / f64(1000.0),
+                                 timing.maximum_ns / f64(1000.0)));
     }
-    append_line(output, rstd::format("  dropped: {}; diagnostics: {}", aggregate.dropped_samples(),
-                                     aggregate.diagnostics().len()));
+    append_line(output,
+                rstd::format("  dropped: {}; diagnostics: {}",
+                             aggregate.dropped_samples(),
+                             aggregate.diagnostics().len()));
 
     append_line(output, "\nslow preprocessor sources"_str);
     auto slow_sources = summary.scan_profile.slow_sources(ScanProbe::Preprocessor, usize(10));
     for (const auto& timing : slow_sources) {
         const auto* frame = summary.scan_profile.frame(timing.frame);
         if (frame == nullptr) continue;
-        append_line(output, rstd::format("  {} | {} | {} | {}",
-                                         display_duration(timing.summary.inclusive_total).as_str(),
-                                         scan_source_origin_label(frame->origin),
-                                         frame->target.as_str(), frame->source.as_path()));
+        append_line(output,
+                    rstd::format("  {} | {} | {} | {}",
+                                 display_duration(timing.summary.inclusive_total).as_str(),
+                                 scan_source_origin_label(frame->origin),
+                                 frame->target.as_str(),
+                                 frame->source.as_path()));
         append_preprocessor(output, frame->preprocessor);
     }
     const auto& sources = summary.scan_profile.sources();
-    append_line(output, rstd::format("  frames: {}; dropped: {}; diagnostics: {}",
-                                     summary.scan_profile.frames().len(), sources.dropped_samples(),
-                                     sources.diagnostics().len()));
+    append_line(output,
+                rstd::format("  frames: {}; dropped: {}; diagnostics: {}",
+                             summary.scan_profile.frames().len(),
+                             sources.dropped_samples(),
+                             sources.diagnostics().len()));
     return output;
 }
 
@@ -208,7 +230,7 @@ void print_summary(const BuildSummary& summary) {
     rstd::io::println("    {:<24} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);
-        auto total         = display_duration(timing.total);
+        auto        total  = display_duration(timing.total);
         rstd::io::println("    {:<24} {:>12} {:>8}",
                           build_operation_label(operation),
                           total.as_str(),
@@ -224,16 +246,17 @@ auto write_details(ref<rstd::path::Path> path, const BuildSummary& summary)
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return Err(rstd::format("cannot create timing report directory '{}': {}", *parent,
+        return Err(rstd::format("cannot create timing report directory '{}': {}",
+                                *parent,
                                 rstd::move(created).unwrap_err()));
     }
-    auto report = detailed_report(summary);
+    auto report  = detailed_report(summary);
     auto written = rstd::fs::write_atomic(path, report.as_str().as_bytes());
     if (written.is_err()) {
-        return Err(rstd::format("cannot write timing report '{}': {}", path,
-                                rstd::move(written).unwrap_err()));
+        return Err(rstd::format(
+            "cannot write timing report '{}': {}", path, rstd::move(written).unwrap_err()));
     }
-    return Ok(empty{});
+    return Ok(empty {});
 }
 
 } // namespace tenon::timing_output
@@ -241,9 +264,8 @@ auto write_details(ref<rstd::path::Path> path, const BuildSummary& summary)
 export namespace tenon::timing_output
 {
 
-struct OutputOptions
-{
-    bool standard_output{};
+struct OutputOptions {
+    bool            standard_output {};
     Option<PathBuf> file;
 };
 
@@ -251,7 +273,7 @@ auto emit(const BuildSummary& summary, const OutputOptions& options)
     -> rstd::Result<empty, String> {
     if (options.standard_output) print_summary(summary);
     if (options.file.is_some()) return write_details(options.file->as_path(), summary);
-    return Ok(empty{});
+    return Ok(empty {});
 }
 
 } // namespace tenon::timing_output

@@ -55,14 +55,14 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
-    auto loaded = resolve_project_metadata(request.selection,
-                                           request.configuration,
-                                           request.sources,
-                                           toolchain.target_info(),
-                                           request.locked,
-                                           request.purpose);
+    auto loaded    = resolve_project_metadata(request.selection,
+                                              request.configuration,
+                                              request.sources,
+                                              toolchain.target_info(),
+                                              request.locked,
+                                              request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
-    auto metadata = rstd::move(loaded).unwrap();
+    auto metadata         = rstd::move(loaded).unwrap();
     auto created_profiler = ScanProfiler::create();
     if (created_profiler.is_err()) {
         return failure<BuildSummary>(ErrorKind::Artifact,
@@ -70,9 +70,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
-    auto frontend_service  =
-        frontend::FrontendService::make(Some(frontend_observer.observer()));
-    auto scan_span        = profiler.span(ScanProbe::Total);
+    auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
+    auto scan_span         = profiler.span(ScanProbe::Total);
 
     auto resolved = profiler.measure(ScanProbe::Plan, [&] {
         return resolve_source_discovery(
@@ -119,15 +118,16 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         target_units.emplace_back();
     }
     auto compile_contexts = Vec<Box<CompileContext>>::make();
-    auto units = Vec<PreparedUnit>::make();
-    auto prepare_span = profiler.span(ScanProbe::PrepareUnits);
+    auto units            = Vec<PreparedUnit>::make();
+    auto prepare_span     = profiler.span(ScanProbe::PrepareUnits);
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         for (const auto& source : target_spec.sources) {
             const auto* compile_test = static_cast<const CompileTestCase*>(nullptr);
             const auto* context      = rstd::addressof(package_plan.contexts[target]);
             if (target_spec.artifact_kind == ArtifactKind::CompileTest) {
-                auto selected = compile_test_for_source(target_spec, source.relative_path.as_path());
+                auto selected =
+                    compile_test_for_source(target_spec, source.relative_path.as_path());
                 if (selected.is_none()) {
                     return failure<BuildSummary>(
                         ErrorKind::Manifest,
@@ -156,15 +156,15 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             auto id       = units.len();
             auto prepared = toolchain.prepare(
                 UnitSpec {
-                    .id              = id,
-                    .target          = target,
-                    .relative_source = source.relative_path.clone(),
-                    .source          = source.path.clone(),
-                    .object          = rstd::move(object).unwrap(),
-                    .cache_record    = rstd::move(cache_record).unwrap(),
+                    .id                  = id,
+                    .target              = target,
+                    .relative_source     = source.relative_path.clone(),
+                    .source              = source.path.clone(),
+                    .object              = rstd::move(object).unwrap(),
+                    .cache_record        = rstd::move(cache_record).unwrap(),
                     .compile_test_record = rstd::move(compile_test_record),
-                    .context         = context,
-                    .compile_test    = compile_test,
+                    .context             = context,
+                    .compile_test        = compile_test,
                 },
                 target_spec.root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
@@ -183,7 +183,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                      rstd::move(prepared_units).unwrap_err_unchecked());
     }
 
-    auto scans = Vec<ScanResult>::with_capacity(units.len());
+    auto scans         = Vec<ScanResult>::with_capacity(units.len());
     auto classify_span = profiler.span(ScanProbe::ClassifyUnits);
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         const auto target          = units[unit].unit.target;
@@ -193,9 +193,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                                             units[unit].unit.source.as_path(),
                                                             ScanSourceOrigin::Classify);
             if (source_frame.is_err()) {
-                return failure<BuildSummary>(
-                    ErrorKind::Artifact,
-                    rstd::move(source_frame).unwrap_err_unchecked());
+                return failure<BuildSummary>(ErrorKind::Artifact,
+                                             rstd::move(source_frame).unwrap_err_unchecked());
             }
             auto analyzed = analysis_service.analyze(package.targets[target].name.as_str(),
                                                      units[unit].unit.relative_source.as_path(),
@@ -321,23 +320,19 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                      BuildEventKind::Reuse,
                      package.targets[target].name.as_str(),
                      units[unit].unit.source.as_path());
-                auto execution = evaluate_compile_test(
-                    package.targets[target].name.as_str(),
-                    test,
-                    units[unit].unit.source.as_path(),
-                    CompileCommandResult {});
-                auto recorded = cache.record_compile_test(
-                    cache_decision,
-                    (*units[unit].unit.compile_test_record).as_path(),
-                    execution);
+                auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
+                                                       test,
+                                                       units[unit].unit.source.as_path(),
+                                                       CompileCommandResult {});
+                auto recorded  = cache.record_compile_test(
+                    cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
                 if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
                 compile_tests.push(rstd::move(execution));
                 keys[unit] = String::make(cache_decision.artifact());
                 continue;
             }
-            auto begun = cache.begin_compile_test(cache_decision,
-                                                  (*units[unit].unit.compile_test_record).as_path(),
-                                                  test);
+            auto begun = cache.begin_compile_test(
+                cache_decision, (*units[unit].unit.compile_test_record).as_path(), test);
             if (begun.is_err()) return Err(rstd::move(begun).unwrap_err());
             emit(request,
                  BuildEventKind::Compile,
@@ -348,20 +343,17 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
             auto command_output = rstd::move(output).unwrap();
             auto elapsed        = command_output.elapsed;
             build_timing.record(BuildOperation::Compile, elapsed);
-            auto execution = evaluate_compile_test(
-                package.targets[target].name.as_str(),
-                test,
-                units[unit].unit.source.as_path(),
-                rstd::move(command_output));
+            auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
+                                                   test,
+                                                   units[unit].unit.source.as_path(),
+                                                   rstd::move(command_output));
             if (execution.exit_code == i32 {}) {
                 auto committed = cache.commit_success(units[unit], cache_decision);
                 if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
                 keys[unit] = String::make(cache_decision.artifact());
             }
             auto recorded = cache.record_compile_test(
-                cache_decision,
-                (*units[unit].unit.compile_test_record).as_path(),
-                execution);
+                cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
             if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
             compile_tests.push(rstd::move(execution));
             ++compiled;
@@ -478,17 +470,17 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
 
     return Ok(BuildSummary {
-        .package   = package.name.clone(),
-        .profile   = package_plan.profile->name.clone(),
-        .output    = PathBuf::from(layout.output()),
-        .scanned   = scans.len(),
-        .compiled  = compiled,
-        .reused    = reused,
-        .artifacts = rstd::move(artifacts),
-        .frontend  = frontend_statistics,
-        .toolchain = toolchain.statistics(),
-        .scan_profile = rstd::move(scan_profile),
-        .build_timing = rstd::move(build_timing),
+        .package       = package.name.clone(),
+        .profile       = package_plan.profile->name.clone(),
+        .output        = PathBuf::from(layout.output()),
+        .scanned       = scans.len(),
+        .compiled      = compiled,
+        .reused        = reused,
+        .artifacts     = rstd::move(artifacts),
+        .frontend      = frontend_statistics,
+        .toolchain     = toolchain.statistics(),
+        .scan_profile  = rstd::move(scan_profile),
+        .build_timing  = rstd::move(build_timing),
         .compile_tests = rstd::move(compile_tests),
     });
 }

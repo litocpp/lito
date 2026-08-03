@@ -261,7 +261,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             colors.emplace_back(uint8_t {});
         }
         auto dependency_order = Vec<TargetId>::make();
-        auto ordered = visit_target(package, target_ids, target, colors, dependency_order);
+        auto ordered          = visit_target(package, target_ids, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& dependencies = link_dependencies[target];
         for (auto index = dependency_order.len(); index > usize {}; --index) {
@@ -309,11 +309,10 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
     });
 }
 
-auto resolve_source_target(const PackageMetadata&      package,
+auto resolve_source_target(const PackageMetadata&     package,
                            const SourceDiscoveryPlan& discovery,
-                           ref<rstd::path::Path>      source)
-    -> Result<TargetId> {
-    auto selected            = Option<TargetId> {};
+                           ref<rstd::path::Path>      source) -> Result<TargetId> {
+    auto selected             = Option<TargetId> {};
     auto selected_root_length = usize {};
     for (auto target : discovery.target_order) {
         const auto root = package.targets[target].manifest.root.as_path();
@@ -332,13 +331,12 @@ auto resolve_source_target(const PackageMetadata&      package,
         return plan_failure<TargetId>(
             rstd::format("source '{}' is outside the selected package targets", source));
     }
-    auto relative =
-        source.strip_prefix(package.targets[*selected].manifest.root.as_path());
+    auto relative = source.strip_prefix(package.targets[*selected].manifest.root.as_path());
     if (relative.is_none() || relative->is_empty()) {
-        return plan_failure<TargetId>(rstd::format(
-            "source '{}' does not name a file inside target '{}'",
-            source,
-            package.targets[*selected].manifest.name.as_str()));
+        return plan_failure<TargetId>(
+            rstd::format("source '{}' does not name a file inside target '{}'",
+                         source,
+                         package.targets[*selected].manifest.name.as_str()));
     }
     return Ok(*selected);
 }

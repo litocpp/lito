@@ -162,22 +162,22 @@ auto scan_probe_label(ScanProbe probe) noexcept -> ref<str> {
 }
 
 struct ScanSourceFrame {
-    u64                 id;
-    rstd::string::String target;
-    rstd::path::PathBuf  source;
-    ScanSourceOrigin     origin { ScanSourceOrigin::Discovery };
+    u64                                            id;
+    rstd::string::String                           target;
+    rstd::path::PathBuf                            source;
+    ScanSourceOrigin                               origin { ScanSourceOrigin::Discovery };
     frontend::preprocessor::PreprocessorStatistics preprocessor;
 };
 
 struct ScanSourceTiming {
-    u64                             frame;
+    u64                              frame;
     rstd::bench::probe::ProbeSummary summary;
 };
 
 class ScanProfileReport {
     rstd::bench::probe::ProbeReport aggregate_;
     rstd::bench::probe::ProbeReport sources_;
-    Vec<ScanSourceFrame>             frames_;
+    Vec<ScanSourceFrame>            frames_;
 
     auto exclusive(ScanProbe probe) const noexcept -> rstd::time::Duration {
         const auto* value = timing(probe);
@@ -187,14 +187,12 @@ class ScanProfileReport {
 public:
     ScanProfileReport(rstd::bench::probe::ProbeReport aggregate,
                       rstd::bench::probe::ProbeReport sources,
-                      Vec<ScanSourceFrame>             frames)
+                      Vec<ScanSourceFrame>            frames)
         : aggregate_(rstd::move(aggregate)),
           sources_(rstd::move(sources)),
           frames_(rstd::move(frames)) {}
 
-    auto aggregate() const noexcept -> const rstd::bench::probe::ProbeReport& {
-        return aggregate_;
-    }
+    auto aggregate() const noexcept -> const rstd::bench::probe::ProbeReport& { return aggregate_; }
 
     auto sources() const noexcept -> const rstd::bench::probe::ProbeReport& { return sources_; }
 
@@ -207,8 +205,7 @@ public:
         return nullptr;
     }
 
-    auto timing(ScanProbe probe) const noexcept
-        -> const rstd::bench::probe::ProbeSummary* {
+    auto timing(ScanProbe probe) const noexcept -> const rstd::bench::probe::ProbeSummary* {
         for (const auto& value : aggregate_.overall()) {
             auto label = aggregate_.schema()->label(value.probe);
             if (label.is_some() && *label == scan_probe_label(probe)) {
@@ -223,10 +220,11 @@ public:
         return value == nullptr ? rstd::time::Duration {} : value->inclusive_total;
     }
 
-    auto category_timing(ScanTimingCategory category) const noexcept
-        -> rstd::time::Duration {
+    auto category_timing(ScanTimingCategory category) const noexcept -> rstd::time::Duration {
         auto result = rstd::time::Duration {};
-        auto add    = [&](ScanProbe probe) { result = result.saturating_add(exclusive(probe)); };
+        auto add    = [&](ScanProbe probe) {
+            result = result.saturating_add(exclusive(probe));
+        };
         switch (category) {
         case ScanTimingCategory::Orchestration:
             add(ScanProbe::Total);
@@ -282,10 +280,10 @@ public:
                   rstd::bench::probe::SpanGuard source) noexcept
         : aggregate_(rstd::move(aggregate)), source_(rstd::move(source)) {}
 
-    ScanSpanGuard()                                    = default;
-    ScanSpanGuard(const ScanSpanGuard&)                = delete;
-    auto operator=(const ScanSpanGuard&) -> ScanSpanGuard& = delete;
-    ScanSpanGuard(ScanSpanGuard&&) noexcept             = default;
+    ScanSpanGuard()                                            = default;
+    ScanSpanGuard(const ScanSpanGuard&)                        = delete;
+    auto operator=(const ScanSpanGuard&) -> ScanSpanGuard&     = delete;
+    ScanSpanGuard(ScanSpanGuard&&) noexcept                    = default;
     auto operator=(ScanSpanGuard&&) noexcept -> ScanSpanGuard& = default;
 
     auto finish() noexcept -> rstd::Result<empty, rstd::bench::probe::ProbeError> {
@@ -301,9 +299,9 @@ class ScanProfiler {
     rstd::bench::probe::ProbeRecorder  source_recorder_;
     rstd::bench::probe::ProbeCollector source_collector_;
     Vec<rstd::bench::probe::ProbeId>   probes_;
-    Vec<ScanSourceFrame>                source_frames_;
-    u64                                 next_source_frame_ { u64(1) };
-    bool                                source_frame_active_ {};
+    Vec<ScanSourceFrame>               source_frames_;
+    u64                                next_source_frame_ { u64(1) };
+    bool                               source_frame_active_ {};
 
     ScanProfiler(rstd::bench::probe::ProbeRecorder  aggregate_recorder,
                  rstd::bench::probe::ProbeRecorder  source_recorder,
@@ -333,11 +331,11 @@ public:
             }
             probes.push(rstd::move(registered).unwrap_unchecked());
         }
-        auto schema  = rstd::move(registry).freeze();
-        auto session = rstd::bench::probe::ProbeSession::new_(schema.clone());
-        auto config  = rstd::bench::probe::RecorderConfig {};
-        config.overflow = rstd::bench::probe::OverflowPolicy::Grow();
-        auto source_config     = config;
+        auto schema             = rstd::move(registry).freeze();
+        auto session            = rstd::bench::probe::ProbeSession::new_(schema.clone());
+        auto config             = rstd::bench::probe::RecorderConfig {};
+        config.overflow         = rstd::bench::probe::OverflowPolicy::Grow();
+        auto source_config      = config;
         auto aggregate_recorder = session.recorder(rstd::move(config));
         auto source_recorder    = session.recorder(rstd::move(source_config));
         auto source_collector   = rstd::bench::probe::ProbeCollector::new_(schema.clone());
@@ -367,9 +365,8 @@ public:
         return Ok(empty {});
     }
 
-    auto begin_source_frame(ref<str>              target,
-                            ref<rstd::path::Path> source,
-                            ScanSourceOrigin      origin) -> rstd::Result<empty, String> {
+    auto begin_source_frame(ref<str> target, ref<rstd::path::Path> source, ScanSourceOrigin origin)
+        -> rstd::Result<empty, String> {
         if (next_source_frame_ == u64::MAX) {
             return Err(String::make("scan source frame id exhausted"_str));
         }
