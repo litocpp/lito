@@ -61,6 +61,37 @@ TEST(Integration, BuildSelectsProductionArtifacts) {
     clear_output(output.as_path());
 }
 
+TEST(Integration, TestAttachmentKeepsProductionArtifactsIsolated) {
+    auto root   = project_root();
+    auto output = output_root("test-attachment"_str);
+    ASSERT_TRUE(clear_output(output.as_path()));
+
+    auto production = tenon::build(
+        build_request(root.as_path(), output.as_path(), strings("fixture-test-attach-lib"_str)));
+    ASSERT_TRUE(production.is_ok());
+    EXPECT_EQ(artifact_count(*production, tenon::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*production, tenon::ArtifactKind::TestAttachmentArchive), usize {});
+    auto attachment_directory = output.join(
+        PathBuf::from("test/fixture-test-attach/attach/fixture-test-attach-lib"_str).as_path());
+    EXPECT_FALSE(rstd::fs::exists(attachment_directory.as_path()).unwrap());
+
+    auto tested = tenon::test(tenon::TestRequest {
+        .build =
+            build_request(root.as_path(), output.as_path(), strings("fixture-test-attach"_str)),
+    });
+    ASSERT_TRUE(tested.is_ok());
+    EXPECT_TRUE(tested->success());
+    EXPECT_EQ(artifact_count(tested->build, tenon::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(tested->build, tenon::ArtifactKind::TestAttachmentArchive), usize(1));
+    EXPECT_EQ(artifact_count(tested->build, tenon::ArtifactKind::TestExecutable), usize(1));
+    EXPECT_TRUE(
+        rstd::fs::exists(
+            attachment_directory.join(PathBuf::from("libfixture_test_attach.test.a"_str).as_path())
+                .as_path())
+            .unwrap());
+    ASSERT_TRUE(clear_output(output.as_path()));
+}
+
 TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     auto project = project_root();
     auto output  = output_root("doc"_str);

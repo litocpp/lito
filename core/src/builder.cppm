@@ -140,9 +140,20 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     compile_test_context(package_plan.contexts[target], *compile_test)));
                 context = compile_contexts[compile_contexts.len() - usize(1)].get();
             }
-            auto object = layout.object(target_spec.name.as_str(), source.relative_path.as_path());
+            auto object =
+                target_spec.test_attachment.is_some()
+                    ? layout.test_attachment_object(
+                          target_spec.test_attachment->test_target.as_str(),
+                          target_spec.test_attachment->library_target.as_str(),
+                          source.relative_path.as_path())
+                    : layout.object(target_spec.name.as_str(), source.relative_path.as_path());
             auto cache_record =
-                layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
+                target_spec.test_attachment.is_some()
+                    ? layout.test_attachment_cache_unit(
+                          target_spec.test_attachment->test_target.as_str(),
+                          target_spec.test_attachment->library_target.as_str(),
+                          source.relative_path.as_path())
+                    : layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
             if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
             auto compile_test_record = Option<PathBuf> {};
@@ -222,7 +233,14 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
-            units[unit].unit.bmi = Some(layout.bmi((*result.provided).logical_name.as_str()));
+            const auto& target_spec = package.targets[target];
+            units[unit].unit.bmi =
+                Some(target_spec.test_attachment.is_some()
+                         ? layout.test_attachment_bmi(
+                               target_spec.test_attachment->test_target.as_str(),
+                               target_spec.test_attachment->library_target.as_str(),
+                               (*result.provided).logical_name.as_str())
+                         : layout.bmi((*result.provided).logical_name.as_str()));
         }
         scans.push(rstd::move(result));
     }
@@ -298,12 +316,18 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 .artifact     = keys[input].clone(),
             });
         }
-        const auto target               = units[unit].unit.target;
-        auto       prebuilt_module_path = Option<ref<rstd::path::Path>> {};
+        const auto target                = units[unit].unit.target;
+        auto       prebuilt_module_paths = Vec<PathBuf>::make();
         if (! module_plan.direct_inputs[unit].is_empty()) {
-            prebuilt_module_path = Some(bmi_directory.as_path());
+            prebuilt_module_paths.push(bmi_directory.clone());
+            const auto& attachment = package.targets[target].test_attachment;
+            if (attachment.is_some()) {
+                prebuilt_module_paths.push(layout.test_attachment_bmi_directory(
+                    attachment->test_target.as_str(), attachment->library_target.as_str()));
+            }
         }
-        auto invocation = toolchain.prepare_compile(units[unit], scans[unit], prebuilt_module_path);
+        auto invocation =
+            toolchain.prepare_compile(units[unit], scans[unit], prebuilt_module_paths);
         if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
         auto decision = cache.evaluate(package.targets[target].name.as_str(),
                                        units[unit],
@@ -393,8 +417,17 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 records.push((*units[unit].unit.compile_test_record).clone());
             }
         }
-        auto finished = cache.finish_target(layout, package.targets[target].name.as_str(), records);
-        if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
+        const auto& attachment = package.targets[target].test_attachment;
+        if (attachment.is_some()) {
+            auto directory = layout.test_attachment_cache_directory(
+                attachment->test_target.as_str(), attachment->library_target.as_str());
+            auto finished = cache.finish_directory(directory.as_path(), records);
+            if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
+        } else {
+            auto finished =
+                cache.finish_target(layout, package.targets[target].name.as_str(), records);
+            if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
+        }
     }
 
     auto artifacts     = Vec<BuiltArtifact>::make();
@@ -404,9 +437,17 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
-        if (target_spec.artifact_kind != ArtifactKind::StaticLibrary) continue;
+        if (target_spec.artifact_kind != ArtifactKind::StaticLibrary &&
+            target_spec.artifact_kind != ArtifactKind::TestAttachmentArchive) {
+            continue;
+        }
         auto archive_path =
-            layout.archive(target_spec.name.as_str(), target_spec.artifact_name.as_str());
+            target_spec.test_attachment.is_some()
+                ? layout.test_attachment_archive(
+                      target_spec.test_attachment->test_target.as_str(),
+                      target_spec.test_attachment->library_target.as_str(),
+                      target_spec.archive_stem.as_str())
+                : layout.archive(target_spec.name.as_str(), target_spec.artifact_name.as_str());
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
         emit(request, BuildEventKind::Archive, target_spec.name.as_str(), archive_path.as_path());
@@ -416,8 +457,12 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         build_timing.record(BuildOperation::Archive, *archived);
         archive_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
-            .package      = target_spec.name.clone(),
-            .target       = target_spec.name.clone(),
+            .package      = target_spec.test_attachment.is_some()
+                                ? target_spec.test_attachment->test_target.clone()
+                                : target_spec.name.clone(),
+            .target       = target_spec.test_attachment.is_some()
+                                ? target_spec.test_attachment->library_target.clone()
+                                : target_spec.name.clone(),
             .kind         = target_spec.artifact_kind,
             .path         = rstd::move(archive_path),
             .package_root = target_spec.root.clone(),
@@ -427,13 +472,33 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
         if (target_spec.artifact_kind == ArtifactKind::StaticLibrary ||
+            target_spec.artifact_kind == ArtifactKind::TestAttachmentArchive ||
             target_spec.artifact_kind == ArtifactKind::CompileTest) {
             continue;
         }
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
-        auto linked_archives =
-            Vec<PathBuf>::with_capacity(package_plan.link_dependencies[target].len());
+        auto linked_archives = Vec<LinkArchive>::make();
+        if (target_spec.artifact_kind == ArtifactKind::TestExecutable) {
+            for (auto candidate : package_plan.target_order) {
+                const auto& candidate_spec = package.targets[candidate];
+                if (candidate_spec.test_attachment.is_none() ||
+                    candidate_spec.test_attachment->test_target != target_spec.name.as_str()) {
+                    continue;
+                }
+                if (archive_paths[candidate].is_none()) {
+                    return failure<BuildSummary>(
+                        ErrorKind::Artifact,
+                        rstd::format("test target '{}' has no attachment archive for '{}'",
+                                     target_spec.name.as_str(),
+                                     candidate_spec.test_attachment->library_target.as_str()));
+                }
+                linked_archives.push(LinkArchive {
+                    .path = (*archive_paths[candidate]).clone(),
+                    .mode = LinkArchiveMode::Whole,
+                });
+            }
+        }
         for (auto dependency : package_plan.link_dependencies[target]) {
             const auto& dependency_spec = package.targets[dependency];
             if (dependency_spec.artifact_kind != ArtifactKind::StaticLibrary ||
@@ -445,7 +510,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                  target_spec.name.as_str(),
                                  dependency_spec.name.as_str()));
             }
-            linked_archives.push((*archive_paths[dependency]).clone());
+            linked_archives.push(LinkArchive {
+                .path = (*archive_paths[dependency]).clone(),
+                .mode = LinkArchiveMode::Normal,
+            });
         }
         auto executable_path =
             target_spec.artifact_kind == ArtifactKind::TestExecutable

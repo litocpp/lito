@@ -664,9 +664,9 @@ public:
         });
     }
 
-    auto prepare_compile(const PreparedUnit&           prepared,
-                         const ScanResult&             scan_result,
-                         Option<ref<rstd::path::Path>> prebuilt_module_path) const
+    auto prepare_compile(const PreparedUnit& prepared,
+                         const ScanResult&   scan_result,
+                         const Vec<PathBuf>& prebuilt_module_paths) const
         -> Result<CompileInvocation> {
         auto command = Vec<String>::make();
         auto context = append_compile_context(command, *prepared.unit.context);
@@ -691,9 +691,11 @@ public:
                 toolchain::command::push_option(command, toolchain::clang_options::CXX_SOURCE);
             }
         }
-        if (prebuilt_module_path.is_some()) {
-            auto pushed = toolchain::command::push_path_option(
-                command, toolchain::clang_options::PREBUILT_MODULE_PATH, *prebuilt_module_path);
+        for (const auto& prebuilt_module_path : prebuilt_module_paths) {
+            auto pushed =
+                toolchain::command::push_path_option(command,
+                                                     toolchain::clang_options::PREBUILT_MODULE_PATH,
+                                                     prebuilt_module_path.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         toolchain::command::push_option(command, toolchain::clang_options::COMPILE);
@@ -784,12 +786,12 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(ref<rstd::path::Path> output_path,
-                         const Vec<PathBuf>&   objects,
-                         const Vec<PathBuf>&   archives,
-                         StandardLibrary       standard_library,
-                         const Vec<String>&    linker_options,
-                         ref<rstd::path::Path> working_directory) const
+    auto link_executable(ref<rstd::path::Path>   output_path,
+                         const Vec<PathBuf>&     objects,
+                         const Vec<LinkArchive>& archives,
+                         StandardLibrary         standard_library,
+                         const Vec<String>&      linker_options,
+                         ref<rstd::path::Path>   working_directory) const
         -> Result<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -804,8 +806,40 @@ public:
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         for (const auto& archive : archives) {
-            pushed = toolchain::command::push_path(command, archive.as_path());
+            if (archive.mode == LinkArchiveMode::Normal) {
+                pushed = toolchain::command::push_path(command, archive.path.as_path());
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+                continue;
+            }
+            if (target_info_.os.as_str() == "macos"_str) {
+                toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+                toolchain::command::push_option(command, toolchain::clang_options::FORCE_LOAD);
+                toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+                pushed = toolchain::command::push_path(command, archive.path.as_path());
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+                continue;
+            }
+            if (target_info_.family == TargetFamily::Windows) {
+                auto text = archive.path.as_path().to_str();
+                if (text.is_none()) {
+                    return failure<rstd::time::Duration>(rstd::format(
+                        "whole-archive path '{}' is not valid UTF-8", archive.path.as_path()));
+                }
+                auto option = String::make("/WHOLEARCHIVE:"_str);
+                option.push_str(*text);
+                toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+                command.push(rstd::move(option));
+                continue;
+            }
+            if (target_info_.family != TargetFamily::Unix) {
+                return failure<rstd::time::Duration>(
+                    rstd::format("whole-archive linking is unsupported for target '{}'",
+                                 target_info_.triple.as_str()));
+            }
+            toolchain::command::push_option(command, toolchain::clang_options::WHOLE_ARCHIVE);
+            pushed = toolchain::command::push_path(command, archive.path.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            toolchain::command::push_option(command, toolchain::clang_options::NO_WHOLE_ARCHIVE);
         }
         toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = toolchain::command::push_path(command, output_path);

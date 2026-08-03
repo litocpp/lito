@@ -5,6 +5,7 @@ import rstd.json;
 import tenon.model;
 import tenon.project;
 import tenon.package;
+import tenon.source_discovery;
 import tenon.toolchain;
 import tenon.frontend;
 import tenon.profiling;

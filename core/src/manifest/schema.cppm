@@ -124,6 +124,10 @@ auto executable_key(ref<str> key) -> bool {
            key == "source-groups"_str;
 }
 
+auto test_key(ref<str> key) -> bool {
+    return executable_key(key) || key == "attach"_str;
+}
+
 auto compile_test_key(ref<str> key) -> bool {
     return key == "cases"_str;
 }
@@ -134,6 +138,10 @@ auto target_predicate_key(ref<str> key) -> bool {
 
 auto source_group_key(ref<str> key) -> bool {
     return key == "sources"_str || key == "target"_str;
+}
+
+auto test_attachment_key(ref<str> key) -> bool {
+    return key == "package"_str || key == "sources"_str || key == "source-groups"_str;
 }
 
 auto compile_test_case_key(ref<str> key) -> bool {
@@ -387,6 +395,98 @@ auto parse_source_groups(Option<ref<Toml>> value, ref<str> context)
             .predicate = rstd::move(predicate).unwrap(),
             .sources   = rstd::move(sources).unwrap(),
         });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto path_repeated(const Vec<PathBuf>& paths, ref<rstd::path::Path> candidate) -> bool {
+    for (const auto& path : paths) {
+        if (path.as_path() == candidate) return true;
+    }
+    return false;
+}
+
+auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source, ref<str> context)
+    -> Result<empty> {
+    if (path_repeated(attachment.sources, source.as_path())) {
+        return failure<empty>(rstd::format("{} repeats source '{}'", context, source.as_path()));
+    }
+    attachment.sources.push(rstd::move(source));
+    return Ok(empty {});
+}
+
+auto append_attachment_group(TestAttachmentManifest& attachment,
+                             ConditionalSourceGroup  group,
+                             ref<str>                context) -> Result<empty> {
+    for (usize index {}; index < group.sources.len(); ++index) {
+        for (usize prior {}; prior < index; ++prior) {
+            if (group.sources[prior].as_path() == group.sources[index].as_path()) {
+                return failure<empty>(rstd::format(
+                    "{} repeats source '{}'", context, group.sources[index].as_path()));
+            }
+        }
+    }
+    attachment.conditional_source_groups.push(rstd::move(group));
+    return Ok(empty {});
+}
+
+auto parse_test_attachments(Option<ref<Toml>> value) -> Result<Vec<TestAttachmentManifest>> {
+    auto result = Vec<TestAttachmentManifest>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none()) {
+        return failure<Vec<TestAttachmentManifest>>("test.attach must be an array"_str);
+    }
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto context = rstd::format("test.attach[{}]", index);
+        auto       table   = table_value((**entries)[index], context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, context.as_str(), test_attachment_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto package = required_string((**entries)[index], "package"_str, context.as_str());
+        auto sources = declared_paths(member((**entries)[index], "sources"_str),
+                                      rstd::format("{}.sources", context.as_str()).as_str(),
+                                      false);
+        auto groups =
+            parse_source_groups(member((**entries)[index], "source-groups"_str),
+                                rstd::format("{}.source-groups", context.as_str()).as_str());
+        if (package.is_err()) return Err(rstd::move(package).unwrap_err());
+        if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
+        if (groups.is_err()) return Err(rstd::move(groups).unwrap_err());
+        if (! package_name_is_valid(package->as_str())) {
+            return failure<Vec<TestAttachmentManifest>>(
+                rstd::format("{}.package must name a valid package", context.as_str()));
+        }
+        if (sources->is_empty() && groups->is_empty()) {
+            return failure<Vec<TestAttachmentManifest>>(
+                rstd::format("{} must contain sources or source-groups", context.as_str()));
+        }
+
+        auto position = Option<usize> {};
+        for (usize candidate {}; candidate < result.len(); ++candidate) {
+            if (result[candidate].package == package->as_str()) {
+                position = Some(candidate);
+                break;
+            }
+        }
+        if (position.is_none()) {
+            result.push(TestAttachmentManifest { .package = rstd::move(package).unwrap() });
+            position = Some(result.len() - usize(1));
+        }
+        auto& attachment = result[*position];
+        for (auto& source : *sources) {
+            auto appended =
+                append_attachment_source(attachment, rstd::move(source), context.as_str());
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
+        for (auto& group : *groups) {
+            auto appended =
+                append_attachment_group(attachment, rstd::move(group), context.as_str());
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
+    }
+    if (result.is_empty()) {
+        return failure<Vec<TestAttachmentManifest>>("test.attach must not be empty"_str);
     }
     return Ok(rstd::move(result));
 }
@@ -856,9 +956,10 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto artifact_known =
         reject_unknown(**artifact_table,
                        artifact_context,
-                       artifact_kind == ArtifactKind::StaticLibrary ? library_key
-                       : artifact_kind == ArtifactKind::CompileTest ? compile_test_key
-                                                                    : executable_key);
+                       artifact_kind == ArtifactKind::StaticLibrary    ? library_key
+                       : artifact_kind == ArtifactKind::CompileTest    ? compile_test_key
+                       : artifact_kind == ArtifactKind::TestExecutable ? test_key
+                                                                       : executable_key);
     if (artifact_known.is_err()) return Err(rstd::move(artifact_known).unwrap_err());
 
     const auto& package_value = **member(document, "package"_str);
@@ -910,6 +1011,13 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
                                 rstd::format("{}.source-groups", artifact_context).as_str());
     }
     if (source_groups.is_err()) return Err(rstd::move(source_groups).unwrap_err());
+    Result<Vec<TestAttachmentManifest>> test_attachments = Ok(Vec<TestAttachmentManifest>::make());
+    if (artifact_kind == ArtifactKind::TestExecutable) {
+        test_attachments = parse_test_attachments(member(artifact_value, "attach"_str));
+    }
+    if (test_attachments.is_err()) {
+        return Err(rstd::move(test_attachments).unwrap_err());
+    }
     Result<Vec<CompileTestCase>> compile_tests = Ok(Vec<CompileTestCase>::make());
     if (artifact_kind == ArtifactKind::CompileTest) {
         compile_tests = parse_compile_tests(member(artifact_value, "cases"_str));
@@ -950,6 +1058,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
                 explicit_discovery ? SourceDiscoveryMode::Explicit : SourceDiscoveryMode::Module,
             .declared_sources          = rstd::move(sources),
             .conditional_source_groups = rstd::move(source_groups).unwrap(),
+            .test_attachments          = rstd::move(test_attachments).unwrap(),
             .target                    = rstd::move(target).unwrap(),
             .compile_tests             = rstd::move(compile_tests).unwrap(),
             .usage                     = rstd::move(usage).unwrap(),

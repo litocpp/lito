@@ -1,0 +1,12 @@
+[package]
+name = "invalid-test-attach"
+
+[test]
+name = "invalid-test-attach"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[[test.attach]]
+package = "fixture-library"
+sources = ["attached.cppm"]
+unknown = true

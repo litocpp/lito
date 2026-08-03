@@ -5,6 +5,8 @@ members = [
   "test-pass",
   "test-fail",
   "test-signal",
+  "test-attach-lib",
+  "test-attach",
   "compile-lib",
   "compile-pass",
   "compile-mismatch",

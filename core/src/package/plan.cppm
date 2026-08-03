@@ -127,6 +127,27 @@ auto context_id(const CompileContext& context) -> String {
     return result;
 }
 
+auto attachment_context(const CompileContext&       library,
+                        const CompileContext&       test,
+                        const TestAttachmentTarget& attachment) -> CompileContext {
+    auto result = CompileContext {
+        .standard_library  = library.standard_library,
+        .bmi_mode          = library.bmi_mode,
+        .language_standard = library.language_standard.clone(),
+    };
+    append_unique(result.include_directories, library.include_directories);
+    append_unique(result.include_directories, test.include_directories);
+    append_unique(result.definitions, library.definitions);
+    append_unique(result.definitions, test.definitions);
+    append_unique(result.options, library.options);
+    append_unique(result.options, test.options);
+    result.id = rstd::format("tenon-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
+                             attachment.test_target.as_str(),
+                             attachment.library_target.as_str(),
+                             context_id(result).as_str());
+    return result;
+}
+
 } // namespace tenon
 
 export namespace tenon
@@ -255,6 +276,39 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(linker_options[target], spec.manifest.usage.private_linker_options);
     }
 
+    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+        const auto& attachment = package.targets[target].test_attachment;
+        if (attachment.is_none()) continue;
+        auto test_id    = target_ids.get(attachment->test_target.as_str());
+        auto library_id = target_ids.get(attachment->library_target.as_str());
+        if (test_id.is_none() || library_id.is_none()) {
+            return plan_failure<SourceDiscoveryPlan>(
+                "test attachment references an unknown target"_str);
+        }
+        if (! append_unique(visible_targets[target], target)) {
+            return plan_failure<SourceDiscoveryPlan>(
+                "test attachment target is repeated in the build graph"_str);
+        }
+        append_unique(visible_targets[target], visible_targets[**library_id]);
+        append_unique(visible_targets[target], visible_targets[**test_id]);
+        contexts[target] =
+            attachment_context(contexts[**library_id], contexts[**test_id], *attachment);
+    }
+
+    auto expanded_target_order = Vec<TargetId>::with_capacity(package.targets.len());
+    for (auto selected_target : target_order) {
+        for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
+            const auto& attachment = package.targets[candidate].test_attachment;
+            if (attachment.is_some() &&
+                attachment->test_target ==
+                    package.targets[selected_target].manifest.name.as_str()) {
+                expanded_target_order.emplace_back(candidate);
+            }
+        }
+        expanded_target_order.emplace_back(selected_target);
+    }
+    target_order = rstd::move(expanded_target_order);
+
     for (auto target : target_order) {
         auto colors = Vec<uint8_t>::with_capacity(package.targets.len());
         for (auto id = TargetId {}; id < package.targets.len(); ++id) {
@@ -307,38 +361,6 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
         .link_dependencies = rstd::move(discovery.link_dependencies),
         .linker_options    = rstd::move(discovery.linker_options),
     });
-}
-
-auto resolve_source_target(const PackageMetadata&     package,
-                           const SourceDiscoveryPlan& discovery,
-                           ref<rstd::path::Path>      source) -> Result<TargetId> {
-    auto selected             = Option<TargetId> {};
-    auto selected_root_length = usize {};
-    for (auto target : discovery.target_order) {
-        const auto root = package.targets[target].manifest.root.as_path();
-        if (source.strip_prefix(root).is_none()) continue;
-        auto root_length = root.as_os_str().as_encoded_bytes().len();
-        if (selected.is_some() && root_length == selected_root_length) {
-            return plan_failure<TargetId>(
-                rstd::format("source '{}' belongs to multiple selected targets", source));
-        }
-        if (selected.is_none() || root_length > selected_root_length) {
-            selected             = Some(target);
-            selected_root_length = root_length;
-        }
-    }
-    if (selected.is_none()) {
-        return plan_failure<TargetId>(
-            rstd::format("source '{}' is outside the selected package targets", source));
-    }
-    auto relative = source.strip_prefix(package.targets[*selected].manifest.root.as_path());
-    if (relative.is_none() || relative->is_empty()) {
-        return plan_failure<TargetId>(
-            rstd::format("source '{}' does not name a file inside target '{}'",
-                         source,
-                         package.targets[*selected].manifest.name.as_str()));
-    }
-    return Ok(*selected);
 }
 
 } // namespace tenon

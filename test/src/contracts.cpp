@@ -18,6 +18,7 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/git/url-fragment"_str,
     "manifest/package-name-dot"_str,
     "manifest/package-name-empty"_str,
+    "manifest/test-attach-unknown-key"_str,
     "manifest/toml-explicit/dependency"_str,
     "manifest/toml-explicit/version-workspace-false"_str,
     "profile/owned-definition"_str,
@@ -124,6 +125,18 @@ TEST(Contracts, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
         if (discovered.is_ok()) rstd::io::eprintln("unexpected valid sources: {}", path);
         EXPECT_TRUE(discovered.is_err());
     }
+}
+
+TEST(Contracts, TestAttachmentRequiresADirectLibraryDependency) {
+    auto directory = root("manifest/test-attach-not-direct"_str);
+    auto output    = output_root("test-attach-not-direct"_str);
+    auto tested    = tenon::test(tenon::TestRequest {
+        .build  = build_request(directory.as_path(), output.as_path(), Vec<String>::make()),
+        .no_run = true,
+    });
+    ASSERT_TRUE(tested.is_err());
+    EXPECT_TRUE(tested.unwrap_err().message.as_str().contains("direct dependency"_str));
+    EXPECT_TRUE(clear_output(output.as_path()));
 }
 
 TEST(Contracts, LockValidationAndMigrationAreOwnedByLockStore) {

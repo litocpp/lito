@@ -60,6 +60,22 @@
     },
     {
       "dependencies": [
+        "fixture-test-attach-lib"
+      ],
+      "manifest": "test-attach/tenon.toml",
+      "name": "fixture-test-attach",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [],
+      "manifest": "test-attach-lib/tenon.toml",
+      "name": "fixture-test-attach-lib",
+      "source": "path+.",
+      "version": "0.1.0"
+    },
+    {
+      "dependencies": [
         "fixture-test-lib"
       ],
       "manifest": "test-fail/tenon.toml",
@@ -107,6 +123,8 @@
     "fixture-preprocessor-native",
     "fixture-scan-definitions",
     "fixture-test-app",
+    "fixture-test-attach",
+    "fixture-test-attach-lib",
     "fixture-test-fail",
     "fixture-test-lib",
     "fixture-test-pass",

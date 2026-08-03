@@ -70,6 +70,12 @@ class BuildLayout {
         return Ok(directory.join(PathBuf::from(rstd::move(relative).unwrap()).as_path()));
     }
 
+    auto test_attachment_directory(ref<str> test_target, ref<str> library_target) const -> PathBuf {
+        auto test_directory = join(join(output_.as_path(), "test"_str).as_path(), test_target);
+        auto attach         = join(test_directory.as_path(), "attach"_str);
+        return join(attach.as_path(), library_target);
+    }
+
 public:
     static auto create(ref<rstd::path::Path> owner_root,
                        ref<rstd::path::Path> requested_output,
@@ -142,6 +148,49 @@ public:
 
     auto bmi(ref<str> logical_name) const -> PathBuf {
         return bmi_directory().join(PathBuf::from(module_filename(logical_name)).as_path());
+    }
+
+    auto test_attachment_object(ref<str>              test_target,
+                                ref<str>              library_target,
+                                ref<rstd::path::Path> relative_source) const -> Result<PathBuf> {
+        auto directory =
+            join(test_attachment_directory(test_target, library_target).as_path(), "obj"_str);
+        return source_path(directory.as_path(), ""_str, relative_source, ".o"_str);
+    }
+
+    auto test_attachment_cache_unit(ref<str>              test_target,
+                                    ref<str>              library_target,
+                                    ref<rstd::path::Path> relative_source) const
+        -> Result<PathBuf> {
+        auto directory = test_attachment_cache_directory(test_target, library_target);
+        return source_path(directory.as_path(), ""_str, relative_source, ".json"_str);
+    }
+
+    auto test_attachment_cache_directory(ref<str> test_target, ref<str> library_target) const
+        -> PathBuf {
+        return join(test_attachment_directory(test_target, library_target).as_path(), "cache"_str);
+    }
+
+    auto test_attachment_bmi_directory(ref<str> test_target, ref<str> library_target) const
+        -> PathBuf {
+        return join(test_attachment_directory(test_target, library_target).as_path(), "bmi"_str);
+    }
+
+    auto test_attachment_bmi(ref<str> test_target,
+                             ref<str> library_target,
+                             ref<str> logical_name) const -> PathBuf {
+        return test_attachment_bmi_directory(test_target, library_target)
+            .join(PathBuf::from(module_filename(logical_name)).as_path());
+    }
+
+    auto test_attachment_archive(ref<str> test_target,
+                                 ref<str> library_target,
+                                 ref<str> archive_stem) const -> PathBuf {
+        auto filename = String::make("lib"_str);
+        filename.push_str(archive_stem);
+        filename.push_str(".test.a"_str);
+        return test_attachment_directory(test_target, library_target)
+            .join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
     auto archive(ref<str> target, ref<str> artifact_name) const -> PathBuf {

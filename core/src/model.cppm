@@ -116,6 +116,7 @@ enum class SourceOrigin
 enum class ArtifactKind
 {
     StaticLibrary,
+    TestAttachmentArchive,
     Executable,
     TestExecutable,
     CompileTest,
@@ -257,6 +258,12 @@ struct ConditionalSourceGroup {
     Vec<PathBuf>    sources;
 };
 
+struct TestAttachmentManifest {
+    String                      package;
+    Vec<PathBuf>                sources;
+    Vec<ConditionalSourceGroup> conditional_source_groups;
+};
+
 enum class CompileTestOutcome
 {
     Success,
@@ -283,6 +290,7 @@ struct PackageManifest {
     SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
     Vec<PathBuf>                declared_sources;
     Vec<ConditionalSourceGroup> conditional_source_groups;
+    Vec<TestAttachmentManifest> test_attachments;
     TargetPredicate             target;
     Vec<CompileTestCase>        compile_tests;
     UsageRequirements           usage;
@@ -419,9 +427,15 @@ struct TargetSource {
     Option<frontend::DocumentationUnit> documentation;
 };
 
+struct TestAttachmentTarget {
+    String test_target;
+    String library_target;
+};
+
 struct TargetMetadata {
-    PackageManifest     manifest;
-    Vec<DependencySpec> dependencies;
+    PackageManifest              manifest;
+    Vec<DependencySpec>          dependencies;
+    Option<TestAttachmentTarget> test_attachment;
 };
 
 struct PackageMetadata {
@@ -436,15 +450,17 @@ struct PackageMetadata {
 };
 
 struct TargetSpec {
-    String               name;
-    ArtifactKind         artifact_kind { ArtifactKind::StaticLibrary };
-    String               artifact_name;
-    Option<String>       module_affiliation;
-    PathBuf              root;
-    Vec<TargetSource>    sources;
-    Vec<DependencySpec>  dependencies;
-    UsageRequirements    usage;
-    Vec<CompileTestCase> compile_tests;
+    String                       name;
+    ArtifactKind                 artifact_kind { ArtifactKind::StaticLibrary };
+    String                       artifact_name;
+    String                       archive_stem;
+    Option<String>               module_affiliation;
+    PathBuf                      root;
+    Vec<TargetSource>            sources;
+    Vec<DependencySpec>          dependencies;
+    UsageRequirements            usage;
+    Vec<CompileTestCase>         compile_tests;
+    Option<TestAttachmentTarget> test_attachment;
 };
 
 struct PackageSpec {
@@ -489,6 +505,17 @@ struct CompileInvocation {
     Vec<String> arguments;
     PathBuf     working_directory;
     String      identity;
+};
+
+enum class LinkArchiveMode
+{
+    Normal,
+    Whole,
+};
+
+struct LinkArchive {
+    PathBuf         path;
+    LinkArchiveMode mode { LinkArchiveMode::Normal };
 };
 
 struct SourceDiscoveryPlan {

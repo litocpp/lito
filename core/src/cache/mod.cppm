@@ -1158,14 +1158,19 @@ public:
     auto finish_target(const BuildLayout&  layout,
                        ref<str>            target,
                        const Vec<PathBuf>& current_records) -> Result<empty> {
+        auto directory = layout.cache_target_directory(target);
+        return finish_directory(directory.as_path(), current_records);
+    }
+
+    auto finish_directory(ref<rstd::path::Path> directory, const Vec<PathBuf>& current_records)
+        -> Result<empty> {
         auto current = rstd::collections::BTreeMap<String, empty>::make();
         for (const auto& record : current_records) {
             auto path = path_string(record.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
             current.insert(rstd::move(path).unwrap(), empty {});
         }
-        auto directory = layout.cache_target_directory(target);
-        return collect_stale_records(directory.as_path(), current);
+        return collect_stale_records(directory, current);
     }
 };
 

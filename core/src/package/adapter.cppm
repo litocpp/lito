@@ -29,11 +29,20 @@ auto validate_options(const Vec<String>& options) -> Result<empty> {
 }
 
 auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
-    if (kind != ArtifactKind::StaticLibrary) return String::make(declared_name);
+    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::TestAttachmentArchive) {
+        return String::make(declared_name);
+    }
     auto result = String::make("lib"_str);
     result.push_str(declared_name);
-    result.push_str(".a"_str);
+    result.push_str(kind == ArtifactKind::StaticLibrary ? ".a"_str : ".test.a"_str);
     return result;
+}
+
+auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidate) -> bool {
+    for (const auto& source : sources) {
+        if (source.as_path() == candidate) return true;
+    }
+    return false;
 }
 
 } // namespace tenon
@@ -57,10 +66,12 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
     auto profile = make_profile_spec(configuration);
     if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
 
-    auto selected = rstd::collections::BTreeMap<String, empty>::make();
-    auto roots    = rstd::collections::BTreeMap<String, empty>::make();
+    auto selected        = rstd::collections::BTreeMap<String, empty>::make();
+    auto roots           = rstd::collections::BTreeMap<String, empty>::make();
+    auto requested_roots = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
     for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
+    for (const auto& name : selected_root_names) requested_roots.insert(name.clone(), empty {});
 
     auto artifact_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
     for (const auto& package : graph.packages) {
@@ -99,6 +110,15 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
             }
         }
         package.manifest.conditional_source_groups.clear();
+        for (auto& attachment : package.manifest.test_attachments) {
+            for (auto& group : attachment.conditional_source_groups) {
+                if (! group.predicate.matches(target_info)) continue;
+                for (auto& source : group.sources) {
+                    attachment.sources.push(rstd::move(source));
+                }
+            }
+            attachment.conditional_source_groups.clear();
+        }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         for (const auto& dependency : package.dependencies) {
             if (! selected.contains_key(dependency.name.as_str())) {
@@ -115,6 +135,85 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
             .dependencies = rstd::move(dependencies),
         });
     }
+
+    auto target_ids = rstd::collections::BTreeMap<String, usize>::make();
+    for (usize index {}; index < targets.len(); ++index) {
+        target_ids.insert(targets[index].manifest.name.clone(), index);
+    }
+    const auto real_target_count = targets.len();
+    auto       attachments       = Vec<TargetMetadata>::make();
+    for (usize test_index {}; test_index < real_target_count; ++test_index) {
+        const auto& test = targets[test_index];
+        if (test.manifest.artifact_kind != ArtifactKind::TestExecutable ||
+            ! requested_roots.contains_key(test.manifest.name.as_str())) {
+            continue;
+        }
+        for (const auto& declaration : test.manifest.test_attachments) {
+            auto direct = false;
+            for (const auto& dependency : test.dependencies) {
+                if (dependency.target == declaration.package.as_str()) {
+                    direct = true;
+                    break;
+                }
+            }
+            if (! direct) {
+                return adapter_failure<PackageMetadata>(rstd::format(
+                    "test package '{}' can only attach a direct dependency, but '{}' is not one",
+                    test.manifest.name.as_str(),
+                    declaration.package.as_str()));
+            }
+            auto library_index = target_ids.get(declaration.package.as_str());
+            if (library_index.is_none()) {
+                return adapter_failure<PackageMetadata>(rstd::format(
+                    "test attachment dependency '{}' is missing", declaration.package.as_str()));
+            }
+            const auto& library = targets[**library_index];
+            if (library.manifest.artifact_kind != ArtifactKind::StaticLibrary) {
+                return adapter_failure<PackageMetadata>(
+                    rstd::format("test package '{}' cannot attach non-library package '{}'",
+                                 test.manifest.name.as_str(),
+                                 declaration.package.as_str()));
+            }
+            auto sources = Vec<PathBuf>::make();
+            for (const auto& source : declaration.sources) {
+                if (contains_source(sources, source.as_path())) {
+                    return adapter_failure<PackageMetadata>(
+                        rstd::format("test attachment '{}' repeats source '{}'",
+                                     declaration.package.as_str(),
+                                     source.as_path()));
+                }
+                if (contains_source(test.manifest.declared_sources, source.as_path())) {
+                    return adapter_failure<PackageMetadata>(
+                        rstd::format("test source '{}' cannot also attach to package '{}'",
+                                     source.as_path(),
+                                     declaration.package.as_str()));
+                }
+                sources.push(source.clone());
+            }
+            if (sources.is_empty()) continue;
+            auto synthetic_name = rstd::format(
+                "{}@test-attach@{}", test.manifest.name.as_str(), library.manifest.name.as_str());
+            attachments.push(TargetMetadata {
+                .manifest =
+                    PackageManifest {
+                        .name             = rstd::move(synthetic_name),
+                        .version          = PackageVersion {},
+                        .root_module      = library.manifest.root_module.clone(),
+                        .root             = test.manifest.root.clone(),
+                        .manifest_path    = test.manifest.manifest_path.clone(),
+                        .artifact_kind    = ArtifactKind::TestAttachmentArchive,
+                        .artifact_name    = library.manifest.artifact_name.clone(),
+                        .discovery        = SourceDiscoveryMode::Explicit,
+                        .declared_sources = rstd::move(sources),
+                    },
+                .test_attachment = Some(TestAttachmentTarget {
+                    .test_target    = test.manifest.name.clone(),
+                    .library_target = library.manifest.name.clone(),
+                }),
+            });
+        }
+    }
+    for (auto& attachment : attachments) targets.push(rstd::move(attachment));
 
     auto default_targets = Vec<String>::make();
     for (const auto& name : selected_root_names) {
@@ -185,17 +284,20 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
         }
         auto artifact_name =
             output_name(target.manifest.artifact_kind, target.manifest.artifact_name.as_str());
+        auto archive_stem  = target.manifest.artifact_name.clone();
         auto compile_tests = rstd::move(target.manifest.compile_tests);
         targets.push(TargetSpec {
             .name               = rstd::move(target.manifest.name),
             .artifact_kind      = target.manifest.artifact_kind,
             .artifact_name      = rstd::move(artifact_name),
+            .archive_stem       = rstd::move(archive_stem),
             .module_affiliation = rstd::move(target.manifest.root_module),
             .root               = rstd::move(target.manifest.root),
             .sources            = rstd::move(sources),
             .dependencies       = rstd::move(target.dependencies),
             .usage              = rstd::move(target.manifest.usage),
             .compile_tests      = rstd::move(compile_tests),
+            .test_attachment    = rstd::move(target.test_attachment),
         });
     }
 

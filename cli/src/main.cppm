@@ -67,6 +67,7 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
     for (const auto& artifact : summary.artifacts) {
         switch (artifact.kind) {
         case tenon::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case tenon::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
         case tenon::ArtifactKind::Executable: ++counts.executables; break;
         case tenon::ArtifactKind::TestExecutable: ++counts.tests; break;
         case tenon::ArtifactKind::CompileTest: ++counts.compile_tests; break;

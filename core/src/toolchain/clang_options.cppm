@@ -38,6 +38,10 @@ inline constexpr auto PREBUILT_MODULE_PATH = "-fprebuilt-module-path="_str;
 inline constexpr auto COMPILE              = "-c"_str;
 inline constexpr auto OUTPUT               = "-o"_str;
 inline constexpr auto ARCHIVE_CREATE       = "rcs"_str;
+inline constexpr auto WHOLE_ARCHIVE        = "-Wl,--whole-archive"_str;
+inline constexpr auto NO_WHOLE_ARCHIVE     = "-Wl,--no-whole-archive"_str;
+inline constexpr auto LINKER_ARGUMENT      = "-Xlinker"_str;
+inline constexpr auto FORCE_LOAD           = "-force_load"_str;
 
 constexpr auto standard_library(StandardLibrary value) noexcept -> ref<str> {
     return value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str : "-stdlib=libc++"_str;

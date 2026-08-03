@@ -235,10 +235,12 @@ auto import_owner(const PackageMetadata&     package,
 
 } // namespace tenon
 
-export namespace tenon
+namespace tenon
 {
 
-auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
+static auto discover_explicit_sources_impl(const PackageManifest& manifest,
+                                           bool                   include_test_attachments)
+    -> Result<ResolvedSourceSet> {
     auto       seen    = StringSet::make();
     auto       entries = Vec<SourceEntry>::make();
     const auto append  = [&](const PathBuf& declared) -> Result<empty> {
@@ -266,6 +268,20 @@ auto discover_explicit_sources(const PackageManifest& manifest) -> Result<Resolv
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
+    if (include_test_attachments) {
+        for (const auto& attachment : manifest.test_attachments) {
+            for (const auto& declared : attachment.sources) {
+                auto appended = append(declared);
+                if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+            }
+            for (const auto& group : attachment.conditional_source_groups) {
+                for (const auto& declared : group.sources) {
+                    auto appended = append(declared);
+                    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+                }
+            }
+        }
+    }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
                                        return left.key < right.key;
@@ -275,14 +291,49 @@ auto discover_explicit_sources(const PackageManifest& manifest) -> Result<Resolv
     return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
+} // namespace tenon
+
+export namespace tenon
+{
+
+auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
+    return discover_explicit_sources_impl(manifest, false);
+}
+
 auto discover_format_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
     if (manifest.discovery == SourceDiscoveryMode::Explicit) {
-        return discover_explicit_sources(manifest);
+        return discover_explicit_sources_impl(manifest, true);
     }
     auto source_root = manifest.root.join(PathBuf::from("src"_str).as_path());
     auto entries     = Vec<SourceEntry>::make();
     auto collected   = collect_format_directory(manifest, source_root.as_path(), entries);
     if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
+    auto seen = StringSet::make();
+    for (const auto& entry : entries) seen.insert(entry.key.clone(), empty {});
+    const auto append_attachment = [&](const PathBuf& declared) -> Result<empty> {
+        auto resolved = resolve_declared_source(manifest, declared.as_path());
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        auto source = rstd::move(resolved).unwrap();
+        auto key    = path_text(source.relative_path.as_path());
+        if (key.is_err()) return Err(rstd::move(key).unwrap_err());
+        auto source_key = rstd::move(key).unwrap();
+        if (seen.contains_key(source_key.as_str())) return Ok(empty {});
+        seen.insert(source_key.clone(), empty {});
+        entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
+        return Ok(empty {});
+    };
+    for (const auto& attachment : manifest.test_attachments) {
+        for (const auto& declared : attachment.sources) {
+            auto appended = append_attachment(declared);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
+        for (const auto& group : attachment.conditional_source_groups) {
+            for (const auto& declared : group.sources) {
+                auto appended = append_attachment(declared);
+                if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+            }
+        }
+    }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
                                        return left.key < right.key;
@@ -290,6 +341,56 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
     auto sources = Vec<ResolvedSource>::with_capacity(entries.len());
     for (auto& entry : entries) sources.push(rstd::move(entry.source));
     return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
+}
+
+auto resolve_source_target(const PackageMetadata&     package,
+                           const SourceDiscoveryPlan& discovery,
+                           ref<rstd::path::Path>      source) -> Result<TargetId> {
+    auto exact = Option<TargetId> {};
+    for (auto target : discovery.target_order) {
+        const auto& manifest = package.targets[target].manifest;
+        if (manifest.discovery != SourceDiscoveryMode::Explicit) continue;
+        auto discovered = discover_explicit_sources(manifest);
+        if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
+        for (const auto& candidate : discovered->sources) {
+            if (candidate.canonical_path.as_path() != source) continue;
+            if (exact.is_some() && *exact != target) {
+                return discovery_failure<TargetId>(
+                    rstd::format("source '{}' belongs to multiple selected targets", source));
+            }
+            exact = Some(target);
+        }
+    }
+    if (exact.is_some()) return Ok(*exact);
+
+    auto selected             = Option<TargetId> {};
+    auto selected_root_length = usize {};
+    for (auto target : discovery.target_order) {
+        if (package.targets[target].test_attachment.is_some()) continue;
+        const auto root = package.targets[target].manifest.root.as_path();
+        if (source.strip_prefix(root).is_none()) continue;
+        auto root_length = root.as_os_str().as_encoded_bytes().len();
+        if (selected.is_some() && root_length == selected_root_length) {
+            return discovery_failure<TargetId>(
+                rstd::format("source '{}' belongs to multiple selected targets", source));
+        }
+        if (selected.is_none() || root_length > selected_root_length) {
+            selected             = Some(target);
+            selected_root_length = root_length;
+        }
+    }
+    if (selected.is_none()) {
+        return discovery_failure<TargetId>(
+            rstd::format("source '{}' is outside the selected package targets", source));
+    }
+    auto relative = source.strip_prefix(package.targets[*selected].manifest.root.as_path());
+    if (relative.is_none() || relative->is_empty()) {
+        return discovery_failure<TargetId>(
+            rstd::format("source '{}' does not name a file inside target '{}'",
+                         source,
+                         package.targets[*selected].manifest.name.as_str()));
+    }
+    return Ok(*selected);
 }
 
 } // namespace tenon
