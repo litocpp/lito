@@ -29,8 +29,7 @@ auto compile_test_for_source(const TargetSpec& target, ref<rstd::path::Path> sou
 auto evaluate_compile_test(ref<str>                  package,
                            const CompileTestCase&    test,
                            ref<rstd::path::Path>     source,
-                           CompileCommandResult      output,
-                           rstd::time::Duration      elapsed) -> CompileTestExecution {
+                           CompileCommandResult      output) -> CompileTestExecution {
     auto mismatch = Option<String> {};
     if (test.outcome == CompileTestOutcome::Success && output.exit_code != i32 {}) {
         mismatch = Some(rstd::format("expected compilation to succeed, but clang exited with {}",
@@ -68,7 +67,7 @@ auto evaluate_compile_test(ref<str>                  package,
         .standard_output = rstd::move(output.standard_output),
         .standard_error  = rstd::move(output.standard_error),
         .mismatch        = rstd::move(mismatch),
-        .elapsed         = elapsed,
+        .elapsed         = output.elapsed,
     };
 }
 

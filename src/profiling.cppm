@@ -61,6 +61,76 @@ enum class ScanSourceOrigin
     Classify,
 };
 
+enum class BuildOperation
+{
+    Compile,
+    Archive,
+    Link,
+};
+
+enum class ScanTimingCategory
+{
+    Orchestration,
+    Environment,
+    Preprocessor,
+    Source,
+};
+
+auto scan_timing_category_label(ScanTimingCategory category) noexcept -> ref<str> {
+    switch (category) {
+    case ScanTimingCategory::Orchestration: return "scan.orchestration"_str;
+    case ScanTimingCategory::Environment: return "scan.environment"_str;
+    case ScanTimingCategory::Preprocessor: return "scan.preprocessor"_str;
+    case ScanTimingCategory::Source: return "scan.source"_str;
+    }
+    return "scan.unknown"_str;
+}
+
+auto build_operation_label(BuildOperation operation) noexcept -> ref<str> {
+    switch (operation) {
+    case BuildOperation::Compile: return "build.compile"_str;
+    case BuildOperation::Archive: return "build.archive"_str;
+    case BuildOperation::Link: return "build.link"_str;
+    }
+    return "build.unknown"_str;
+}
+
+struct BuildOperationTiming {
+    usize                count {};
+    rstd::time::Duration total;
+};
+
+class BuildTimingReport {
+    BuildOperationTiming compile_;
+    BuildOperationTiming archive_;
+    BuildOperationTiming link_;
+
+    auto timing_mut(BuildOperation operation) noexcept -> BuildOperationTiming& {
+        switch (operation) {
+        case BuildOperation::Compile: return compile_;
+        case BuildOperation::Archive: return archive_;
+        case BuildOperation::Link: return link_;
+        }
+        return link_;
+    }
+
+public:
+    void record(BuildOperation operation, rstd::time::Duration elapsed) noexcept {
+        auto& timing = timing_mut(operation);
+        if (timing.count != usize::MAX) ++timing.count;
+        timing.total = timing.total.saturating_add(elapsed);
+    }
+
+    auto timing(BuildOperation operation) const noexcept -> const BuildOperationTiming& {
+        switch (operation) {
+        case BuildOperation::Compile: return compile_;
+        case BuildOperation::Archive: return archive_;
+        case BuildOperation::Link: return link_;
+        }
+        return link_;
+    }
+};
+
 auto scan_source_origin_label(ScanSourceOrigin origin) noexcept -> ref<str> {
     switch (origin) {
     case ScanSourceOrigin::Discovery: return "discovery"_str;
@@ -109,6 +179,11 @@ class ScanProfileReport {
     rstd::bench::probe::ProbeReport sources_;
     Vec<ScanSourceFrame>             frames_;
 
+    auto exclusive(ScanProbe probe) const noexcept -> rstd::time::Duration {
+        const auto* value = timing(probe);
+        return value == nullptr ? rstd::time::Duration {} : value->exclusive_total;
+    }
+
 public:
     ScanProfileReport(rstd::bench::probe::ProbeReport aggregate,
                       rstd::bench::probe::ProbeReport sources,
@@ -130,6 +205,52 @@ public:
             if (value.id == id) return rstd::addressof(value);
         }
         return nullptr;
+    }
+
+    auto timing(ScanProbe probe) const noexcept
+        -> const rstd::bench::probe::ProbeSummary* {
+        for (const auto& value : aggregate_.overall()) {
+            auto label = aggregate_.schema()->label(value.probe);
+            if (label.is_some() && *label == scan_probe_label(probe)) {
+                return rstd::addressof(value);
+            }
+        }
+        return nullptr;
+    }
+
+    auto total() const noexcept -> rstd::time::Duration {
+        const auto* value = timing(ScanProbe::Total);
+        return value == nullptr ? rstd::time::Duration {} : value->inclusive_total;
+    }
+
+    auto category_timing(ScanTimingCategory category) const noexcept
+        -> rstd::time::Duration {
+        auto result = rstd::time::Duration {};
+        auto add    = [&](ScanProbe probe) { result = result.saturating_add(exclusive(probe)); };
+        switch (category) {
+        case ScanTimingCategory::Orchestration:
+            add(ScanProbe::Total);
+            add(ScanProbe::Plan);
+            add(ScanProbe::Discovery);
+            add(ScanProbe::PrepareUnits);
+            add(ScanProbe::ClassifyUnits);
+            add(ScanProbe::Conventions);
+            add(ScanProbe::ModuleGraph);
+            add(ScanProbe::Frontend);
+            break;
+        case ScanTimingCategory::Environment: add(ScanProbe::Environment); break;
+        case ScanTimingCategory::Preprocessor:
+            add(ScanProbe::Preprocessor);
+            add(ScanProbe::PredefinedMacros);
+            add(ScanProbe::TranslationUnit);
+            break;
+        case ScanTimingCategory::Source:
+            add(ScanProbe::SourceResolve);
+            add(ScanProbe::SourceRead);
+            add(ScanProbe::Lex);
+            break;
+        }
+        return result;
     }
 
     auto slow_sources(ScanProbe probe, usize limit) const -> Vec<ScanSourceTiming> {

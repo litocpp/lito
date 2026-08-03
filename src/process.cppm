@@ -24,12 +24,14 @@ export namespace tenon
 {
 
 struct CommandOutput {
-    i32 exit_code {};
-    String    standard_output;
-    String    standard_error;
+    i32                  exit_code {};
+    String               standard_output;
+    String               standard_error;
+    rstd::time::Duration elapsed;
 };
 
-auto decode_command_output(rstd::process::Output value) -> Result<CommandOutput> {
+auto decode_command_output(rstd::process::Output value, rstd::time::Duration elapsed)
+    -> Result<CommandOutput> {
     auto stdout_text = output_text(rstd::move(value.stdout_buf), "command stdout"_str);
     if (stdout_text.is_err()) return Err(rstd::move(stdout_text).unwrap_err());
     auto stderr_text = output_text(rstd::move(value.stderr_buf), "command stderr"_str);
@@ -40,6 +42,7 @@ auto decode_command_output(rstd::process::Output value) -> Result<CommandOutput>
         .exit_code = code.is_some() ? *code : i32(-1),
         .standard_output = rstd::move(stdout_text).unwrap(),
         .standard_error = rstd::move(stderr_text).unwrap(),
+        .elapsed = elapsed,
     });
 }
 
@@ -59,7 +62,9 @@ auto run_command(const Vec<String>& arguments,
         command.current_dir(*working_directory);
     }
 
-    auto output = command.output();
+    auto started = rstd::time::Instant::now();
+    auto output  = command.output();
+    auto elapsed = started.elapsed();
     if (output.is_err()) {
         return Err(Error::make(
             ErrorKind::Toolchain,
@@ -68,7 +73,7 @@ auto run_command(const Vec<String>& arguments,
                          rstd::move(output).unwrap_err())));
     }
 
-    return decode_command_output(rstd::move(output).unwrap());
+    return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
 
 auto run_command_with_input(const Vec<String>& arguments,
@@ -88,6 +93,7 @@ auto run_command_with_input(const Vec<String>& arguments,
     command.set_stdout(rstd::process::Stdio::piped());
     command.set_stderr(rstd::process::Stdio::piped());
 
+    auto started = rstd::time::Instant::now();
     auto spawned = command.spawn();
     if (spawned.is_err()) {
         return Err(Error::make(
@@ -115,7 +121,7 @@ auto run_command_with_input(const Vec<String>& arguments,
                                rstd::format("failed to collect command output: {}",
                                             rstd::move(output).unwrap_err())));
     }
-    return decode_command_output(rstd::move(output).unwrap());
+    return decode_command_output(rstd::move(output).unwrap(), started.elapsed());
 }
 
 auto command_text(const Vec<String>& arguments) -> String {

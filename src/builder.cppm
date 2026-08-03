@@ -247,6 +247,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto compiled      = usize {};
     auto reused        = usize {};
     auto compile_tests = Vec<CompileTestExecution>::make();
+    auto build_timing  = BuildTimingReport {};
     for (auto unit : module_plan.compile_order) {
         auto dependencies = Vec<DependencyArtifact>::make();
         for (auto input : module_plan.direct_inputs[unit]) {
@@ -287,8 +288,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     package.targets[target].name.as_str(),
                     test,
                     units[unit].unit.source.as_path(),
-                    CompileCommandResult {},
-                    rstd::time::Duration {});
+                    CompileCommandResult {});
                 auto recorded = cache.record_compile_test(
                     cache_decision,
                     (*units[unit].unit.compile_test_record).as_path(),
@@ -306,16 +306,16 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                  BuildEventKind::Compile,
                  package.targets[target].name.as_str(),
                  units[unit].unit.source.as_path());
-            auto started = rstd::time::Instant::now();
-            auto output  = toolchain.execute_compile_capture(*invocation);
-            auto elapsed = started.elapsed();
+            auto output = toolchain.execute_compile_capture(*invocation);
             if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+            auto command_output = rstd::move(output).unwrap();
+            auto elapsed        = command_output.elapsed;
+            build_timing.record(BuildOperation::Compile, elapsed);
             auto execution = evaluate_compile_test(
                 package.targets[target].name.as_str(),
                 test,
                 units[unit].unit.source.as_path(),
-                rstd::move(output).unwrap(),
-                elapsed);
+                rstd::move(command_output));
             if (execution.exit_code == i32 {}) {
                 auto committed = cache.commit_success(units[unit], cache_decision);
                 if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
@@ -345,6 +345,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                  units[unit].unit.source.as_path());
             auto result = toolchain.execute_compile(*invocation, units[unit].unit.source.as_path());
             if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+            build_timing.record(BuildOperation::Compile, *result);
             auto committed = cache.commit_success(units[unit], cache_decision);
             if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
             ++compiled;
@@ -383,6 +384,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         auto archived =
             toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
         if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+        build_timing.record(BuildOperation::Archive, *archived);
         archive_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
             .package      = target_spec.name.clone(),
@@ -428,6 +430,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
+        build_timing.record(BuildOperation::Link, *linked);
         artifacts.push(BuiltArtifact {
             .package      = target_spec.name.clone(),
             .target       = target_spec.name.clone(),
@@ -448,6 +451,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .frontend  = frontend_statistics,
         .toolchain = toolchain.statistics(),
         .scan_profile = rstd::move(scan_profile),
+        .build_timing = rstd::move(build_timing),
         .compile_tests = rstd::move(compile_tests),
     });
 }

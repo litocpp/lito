@@ -41,12 +41,16 @@ struct CliSchema {
     ArgKey<String>       build_output;
     ArgKey<bool>         build_locked;
     ArgKey<bool>         build_verbose;
+    ArgKey<String>       build_timing_file;
+    ArgKey<bool>         build_no_timing;
     ArgKey<String>       test_package;
     ArgKey<BuildProfile> test_profile;
     ArgKey<String>       test_output;
     ArgKey<bool>         test_locked;
     ArgKey<bool>         test_no_run;
     ArgKey<bool>         test_verbose;
+    ArgKey<String>       test_timing_file;
+    ArgKey<bool>         test_no_timing;
     ArgKey<String>       test_arguments;
     ArgKey<String>       scan_source;
     ArgKey<String>       scan_package;
@@ -86,6 +90,19 @@ auto locked_arg() -> Arg<bool> {
         .help("Require an unchanged lock file"_str);
 }
 
+auto timing_file_arg() -> Arg<String> {
+    return Arg<String>::value("timing-file"_str, string_parser())
+        .long_name("timing-file"_str)
+        .value_name("FILE"_str)
+        .help("Write the detailed timing report to a file"_str);
+}
+
+auto no_timing_arg() -> Arg<bool> {
+    return Arg<bool>::flag("no-timing"_str)
+        .long_name("no-timing"_str)
+        .help("Hide timing output on stdout"_str);
+}
+
 auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build = Command::make("build"_str);
     build.about("Build packages"_str);
@@ -99,6 +116,8 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build_locked  = build.add_arg(locked_arg());
     auto build_verbose = build.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto build_timing_file = build.add_arg(timing_file_arg());
+    auto build_no_timing   = build.add_arg(no_timing_arg());
 
     auto test = Command::make("test"_str);
     test.about("Build and run test packages"_str);
@@ -114,6 +133,8 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                          .help("Build tests without running"_str));
     auto test_verbose = test.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto test_timing_file = test.add_arg(timing_file_arg());
+    auto test_no_timing   = test.add_arg(no_timing_arg());
     auto test_arguments = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
                                            .value_name("ARGS"_str)
                                            .num_args(NumArgs::any())
@@ -156,12 +177,16 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_output   = build_output,
         .build_locked   = build_locked,
         .build_verbose  = build_verbose,
+        .build_timing_file = build_timing_file,
+        .build_no_timing   = build_no_timing,
         .test_package   = test_package,
         .test_profile   = test_profile,
         .test_output    = test_output,
         .test_locked    = test_locked,
         .test_no_run    = test_no_run,
         .test_verbose   = test_verbose,
+        .test_timing_file = test_timing_file,
+        .test_no_timing   = test_no_timing,
         .test_arguments = test_arguments,
         .scan_source    = scan_source,
         .scan_package   = scan_package,
@@ -206,6 +231,8 @@ struct BuildOptions {
     Option<PathBuf>      output;
     bool                 locked {};
     bool                 verbose {};
+    Option<PathBuf>      timing_file;
+    bool                 no_timing {};
 };
 
 struct ScanOptions {
@@ -224,6 +251,8 @@ struct TestOptions {
     bool                 locked {};
     bool                 no_run {};
     bool                 verbose {};
+    Option<PathBuf>      timing_file;
+    bool                 no_timing {};
 };
 
 struct FormatOptions {
@@ -277,6 +306,7 @@ auto parse() -> CliOutcome {
         auto child   = subcommand->get<1>();
         auto profile = optional_value(*child, schema.build_profile);
         auto output  = optional_value(*child, schema.build_output);
+        auto timing_file = optional_value(*child, schema.build_timing_file);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Build(BuildOptions {
@@ -286,6 +316,10 @@ auto parse() -> CliOutcome {
                 .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
                 .locked   = flag_value(*child, schema.build_locked),
                 .verbose  = flag_value(*child, schema.build_verbose),
+                .timing_file = timing_file.is_some()
+                                   ? Some(PathBuf::from((**timing_file).clone()))
+                                   : None(),
+                .no_timing = flag_value(*child, schema.build_no_timing),
             }));
     }
     if (subcommand->get<0>() == "scan"_str) {
@@ -306,6 +340,7 @@ auto parse() -> CliOutcome {
         auto child   = subcommand->get<1>();
         auto profile = optional_value(*child, schema.test_profile);
         auto output  = optional_value(*child, schema.test_output);
+        auto timing_file = optional_value(*child, schema.test_timing_file);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Test(TestOptions {
@@ -316,6 +351,10 @@ auto parse() -> CliOutcome {
                 .locked    = flag_value(*child, schema.test_locked),
                 .no_run    = flag_value(*child, schema.test_no_run),
                 .verbose   = flag_value(*child, schema.test_verbose),
+                .timing_file = timing_file.is_some()
+                                   ? Some(PathBuf::from((**timing_file).clone()))
+                                   : None(),
+                .no_timing = flag_value(*child, schema.test_no_timing),
             }));
     }
     auto child = subcommand->get<1>();

@@ -1,10 +1,9 @@
 export module tenon.executable;
 
 import rstd;
-import rstd.bench;
 import tenon;
-import tenon.profiling;
 import :cli;
+import :timing;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -77,74 +76,23 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
     return counts;
 }
 
-void print_scan_profile(const tenon::BuildSummary& summary) {
-    const auto& preprocessor = summary.frontend.preprocessor;
-    rstd::io::println(
-        "preprocessor: {} files, {} source tokens, {} token clones, {} synthetic tokens, "
-        "{} directives, {} conditionals, {} macro lookups, {} macro lookup hits, "
-        "{} macro expansions, "
-        "{} include attempts, {} include hits, {} consumer batches, {} consumer tokens",
-        preprocessor.files,
-        preprocessor.source_tokens,
-        preprocessor.token_clones,
-        preprocessor.synthetic_tokens,
-        preprocessor.directives,
-        preprocessor.conditionals,
-        preprocessor.macro_lookups,
-        preprocessor.macro_lookup_hits,
-        preprocessor.macro_expansions,
-        preprocessor.include_attempts,
-        preprocessor.include_hits,
-        preprocessor.consumer_batches,
-        preprocessor.consumer_tokens);
-    const auto& report = summary.scan_profile.aggregate();
-    const auto  schema = report.schema();
-    for (const auto& timing : report.overall()) {
-        auto label = schema->label(timing.probe);
-        if (label.is_none()) continue;
-        rstd::io::println("timing {}: {} calls, {} us total, {} us self, "
-                          "{} us min, {} us mean, {} us median, {} us p95, {} us max",
-                          *label,
-                          timing.count,
-                          timing.inclusive_total.as_micros(),
-                          timing.exclusive_total.as_micros(),
-                          timing.minimum_ns / f64(1000.0),
-                          timing.mean_ns / f64(1000.0),
-                          timing.median_ns / f64(1000.0),
-                          timing.p95_ns / f64(1000.0),
-                          timing.maximum_ns / f64(1000.0));
+auto make_timing_output(ref<rstd::path::Path> root,
+                        Option<rstd::path::PathBuf> file,
+                        bool standard_output)
+    -> tenon::timing_output::OutputOptions {
+    if (file.is_none()) {
+        return tenon::timing_output::OutputOptions {
+            .standard_output = standard_output,
+        };
     }
-    rstd::io::println("timing scan aggregate: {} dropped, {} diagnostics",
-                      report.dropped_samples(),
-                      report.diagnostics().len());
-
-    const auto& source_report = summary.scan_profile.sources();
-    auto slow_sources = summary.scan_profile.slow_sources(tenon::ScanProbe::Preprocessor,
-                                                          usize(10));
-    for (const auto& timing : slow_sources) {
-        const auto* frame = summary.scan_profile.frame(timing.frame);
-        if (frame == nullptr) continue;
-        rstd::io::println("timing slow scan.preprocessor: {} us, {}, {}, {}, "
-                          "{} files, {} source tokens, {} clones, {} macro lookups, "
-                          "{} macro lookup hits, {} macro expansions, {} include attempts, "
-                          "{} consumer tokens",
-                          timing.summary.inclusive_total.as_micros(),
-                          tenon::scan_source_origin_label(frame->origin),
-                          frame->target.as_str(),
-                          frame->source.as_path(),
-                          frame->preprocessor.files,
-                          frame->preprocessor.source_tokens,
-                          frame->preprocessor.token_clones,
-                          frame->preprocessor.macro_lookups,
-                          frame->preprocessor.macro_lookup_hits,
-                          frame->preprocessor.macro_expansions,
-                          frame->preprocessor.include_attempts,
-                          frame->preprocessor.consumer_tokens);
+    auto path = rstd::move(file).unwrap();
+    if (path.as_path().is_relative()) {
+        path = rstd::path::PathBuf::from(root).join(path.as_path());
     }
-    rstd::io::println("timing scan sources: {} frames, {} dropped, {} diagnostics",
-                      summary.scan_profile.frames().len(),
-                      source_report.dropped_samples(),
-                      source_report.diagnostics().len());
+    return tenon::timing_output::OutputOptions {
+        .standard_output = standard_output,
+        .file            = Some(rstd::move(path)),
+    };
 }
 
 } // namespace
@@ -217,6 +165,9 @@ extern "C++" int main() {
 
     if (invocation.command.is_Test()) {
         auto options                     = rstd::move(invocation.command).as_Test().options;
+        auto timing = make_timing_output(project.root.as_path(),
+                                         rstd::move(options.timing_file),
+                                         options.verbose && ! options.no_timing);
         auto request                     = tenon::TestRequest {};
         request.build.selection.root     = rstd::move(project.root);
         request.build.configuration      = build_configuration(rstd::move(project.toolchain));
@@ -245,7 +196,11 @@ extern "C++" int main() {
         }
         auto summary = rstd::move(result).unwrap();
         auto counts  = artifact_counts(summary.build);
-        if (event_context.verbose) print_scan_profile(summary.build);
+        auto emitted = tenon::timing_output::emit(summary.build, timing);
+        if (emitted.is_err()) {
+            rstd::io::eprintln("tenon: {}", rstd::move(emitted).unwrap_err().as_str());
+            return 1;
+        }
         if (options.no_run) {
             rstd::io::println("built {} tests ({}) in {}: {} scanned, {} compiled, {} reused",
                               counts.tests + summary.build.compile_tests.len(),
@@ -315,6 +270,9 @@ extern "C++" int main() {
     }
 
     auto options               = rstd::move(invocation.command).as_Build().options;
+    auto timing = make_timing_output(project.root.as_path(),
+                                     rstd::move(options.timing_file),
+                                     options.verbose && ! options.no_timing);
     auto request               = tenon::BuildRequest {};
     request.selection.root     = rstd::move(project.root);
     request.configuration      = build_configuration(rstd::move(project.toolchain));
@@ -350,44 +308,10 @@ extern "C++" int main() {
                       counts.archives,
                       counts.executables,
                       counts.tests + summary.compile_tests.len());
-    if (event_context.verbose) {
-        rstd::io::println("frontend: {} source requests, {} hits, {} stats, {} reads, {} bytes, "
-                          "{} lexed, {} analyzed, {} analysis hits",
-                          summary.frontend.source_requests,
-                          summary.frontend.source_hits,
-                          summary.frontend.source_stats,
-                          summary.frontend.source_reads,
-                          summary.frontend.source_bytes,
-                          summary.frontend.lex_builds,
-                          summary.frontend.analyze_builds,
-                          summary.frontend.analyze_hits);
-        rstd::io::println(
-            "clang environments: {} entries, {} queries, {} hits; target: {} query; "
-            "builtins: key v3, stdlib catalog {}, {} snapshots, "
-            "{} refreshes, {} hits, "
-            "{} macro processes, "
-            "{} capability processes, {} clang macros, {} native macro owners, "
-            "{} clang capabilities, {} native capabilities, {} macro bytes, "
-            "{} capability input bytes, {} capability output bytes, {} ignored options",
-            summary.toolchain.preprocessor_environment_entries,
-            summary.toolchain.preprocessor_environment_queries,
-            summary.toolchain.preprocessor_environment_hits,
-            summary.toolchain.target_queries,
-            tenon::toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID,
-            summary.toolchain.builtin_snapshots,
-            summary.toolchain.builtin_refreshes,
-            summary.toolchain.builtin_hits,
-            summary.toolchain.builtin_macro_processes,
-            summary.toolchain.builtin_capability_processes,
-            summary.toolchain.clang_macros,
-            summary.toolchain.native_macro_owners,
-            summary.toolchain.clang_capabilities,
-            summary.toolchain.native_capabilities,
-            summary.toolchain.builtin_macro_output_bytes,
-            summary.toolchain.builtin_capability_input_bytes,
-            summary.toolchain.builtin_capability_output_bytes,
-            summary.toolchain.ignored_builtin_options);
-        print_scan_profile(summary);
+    auto emitted = tenon::timing_output::emit(summary, timing);
+    if (emitted.is_err()) {
+        rstd::io::eprintln("tenon: {}", rstd::move(emitted).unwrap_err().as_str());
+        return 1;
     }
     return 0;
 }

@@ -629,16 +629,17 @@ public:
     }
 
     auto execute_compile(const CompileInvocation& invocation, ref<rstd::path::Path> source) const
-        -> Result<empty> {
+        -> Result<rstd::time::Duration> {
         auto output = execute_compile_capture(invocation);
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         if (output->exit_code != i32 {}) {
-            return failure<empty>(rstd::format("clang++ failed for '{}'\n{}\n{}",
-                                               source,
-                                               command_text(invocation.arguments).as_str(),
-                                               output->standard_error.as_str()));
+            return failure<rstd::time::Duration>(
+                rstd::format("clang++ failed for '{}'\n{}\n{}",
+                             source,
+                             command_text(invocation.arguments).as_str(),
+                             output->standard_error.as_str()));
         }
-        return Ok(empty {});
+        return Ok(output->elapsed);
     }
 
     auto execute_compile_capture(const CompileInvocation& invocation) const
@@ -651,26 +652,30 @@ public:
             .exit_code       = command_output.exit_code,
             .standard_output = rstd::move(command_output.standard_output),
             .standard_error  = rstd::move(command_output.standard_error),
+            .elapsed         = command_output.elapsed,
         });
     }
 
     auto archive(ref<rstd::path::Path> output_path,
                  const Vec<PathBuf>&   objects,
-                 ref<rstd::path::Path> working_directory) const -> Result<empty> {
+                 ref<rstd::path::Path> working_directory) const
+        -> Result<rstd::time::Duration> {
         auto parent = create_parent(output_path);
-        if (parent.is_err()) return parent;
+        if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto archive_exists = rstd::fs::exists(output_path);
         if (archive_exists.is_err()) {
-            return failure<empty>(rstd::format("cannot inspect archive '{}': {}",
-                                               output_path,
-                                               rstd::move(archive_exists).unwrap_err()));
+            return failure<rstd::time::Duration>(
+                rstd::format("cannot inspect archive '{}': {}",
+                             output_path,
+                             rstd::move(archive_exists).unwrap_err()));
         }
         if (*archive_exists) {
             auto removed = rstd::fs::remove_file(output_path);
             if (removed.is_err()) {
-                return failure<empty>(rstd::format("cannot replace archive '{}': {}",
-                                                   output_path,
-                                                   rstd::move(removed).unwrap_err()));
+                return failure<rstd::time::Duration>(
+                    rstd::format("cannot replace archive '{}': {}",
+                                 output_path,
+                                 rstd::move(removed).unwrap_err()));
             }
         }
         auto command = Vec<String>::make();
@@ -687,12 +692,13 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return failure<empty>(rstd::format("llvm-ar failed for '{}'\n{}\n{}",
-                                               output_path,
-                                               command_text(command).as_str(),
-                                               command_output.standard_error.as_str()));
+            return failure<rstd::time::Duration>(
+                rstd::format("llvm-ar failed for '{}'\n{}\n{}",
+                             output_path,
+                             command_text(command).as_str(),
+                             command_output.standard_error.as_str()));
         }
-        return Ok(empty {});
+        return Ok(command_output.elapsed);
     }
 
     auto link_executable(ref<rstd::path::Path> output_path,
@@ -700,9 +706,10 @@ public:
                          const Vec<PathBuf>&   archives,
                          StandardLibrary       standard_library,
                          const Vec<String>&    linker_options,
-                         ref<rstd::path::Path> working_directory) const -> Result<empty> {
+                         ref<rstd::path::Path> working_directory) const
+        -> Result<rstd::time::Duration> {
         auto parent = create_parent(output_path);
-        if (parent.is_err()) return parent;
+        if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
@@ -725,12 +732,13 @@ public:
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
-            return failure<empty>(rstd::format("clang++ failed to link '{}'\n{}\n{}",
-                                               output_path,
-                                               command_text(command).as_str(),
-                                               command_output.standard_error.as_str()));
+            return failure<rstd::time::Duration>(
+                rstd::format("clang++ failed to link '{}'\n{}\n{}",
+                             output_path,
+                             command_text(command).as_str(),
+                             command_output.standard_error.as_str()));
         }
-        return Ok(empty {});
+        return Ok(command_output.elapsed);
     }
 
 private:

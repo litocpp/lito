@@ -118,6 +118,7 @@ target_sources(
           CXX_MODULES
           FILES
           src/executable/cli.cppm
+          src/executable/timing.cppm
           src/main.cppm)
 target_link_libraries(tenon PRIVATE tenon.lib rstd.argparse rstd::nostd)
 
@@ -162,6 +163,7 @@ if(BUILD_TESTING)
       ${CMAKE_CURRENT_SOURCE_DIR}/test/test-command/workspace)
   set(TENON_TEST_COMMAND_OUTPUT
       ${CMAKE_CURRENT_BINARY_DIR}/test-command-build)
+  set(TENON_TIMING_REPORT ${CMAKE_CURRENT_BINARY_DIR}/timing-report.txt)
   add_test(
     NAME tenon.test-command.build-production
     COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} build --out
@@ -178,15 +180,35 @@ if(BUILD_TESTING)
     tenon.timing.scan
     PROPERTIES DEPENDS tenon.test-command.build-production
                PASS_REGULAR_EXPRESSION
-               "timing scan.preprocessor:.*mean.*median.*p95.*max;timing scan sources: 2 frames, 0 dropped, 0 diagnostics")
+               "timing summary;scan.orchestration;scan.environment;scan.preprocessor;scan.source;scan.total;build.compile;build.archive;build.link;sources: 2.*dropped: 0.*diagnostics: 0")
+  add_test(
+    NAME tenon.timing.file
+    COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} build --out
+            ${TENON_TEST_COMMAND_OUTPUT} --verbose --no-timing --timing-file
+            ${TENON_TIMING_REPORT})
+  set_tests_properties(
+    tenon.timing.file
+    PROPERTIES DEPENDS tenon.timing.scan FAIL_REGULAR_EXPRESSION
+               "timing summary")
+  add_test(NAME tenon.timing.file-contents COMMAND ${CMAKE_COMMAND} -E cat
+                                                   ${TENON_TIMING_REPORT})
+  set_tests_properties(
+    tenon.timing.file-contents
+    PROPERTIES DEPENDS tenon.timing.file PASS_REGULAR_EXPRESSION
+               "frontend;toolchain;preprocessor;build timing;build.compile;build.archive;build.link;aggregate timing;median_us.*p95_us.*max_us;scan.preprocessor;slow preprocessor sources")
+  set(TENON_ENVIRONMENT_TIMING_REPORT
+      ${CMAKE_CURRENT_BINARY_DIR}/environment-timing-report.txt)
   add_test(
     NAME tenon.environment-cache
     COMMAND tenon -C ${CMAKE_CURRENT_SOURCE_DIR}/test/environment-cache build
-            --out ${CMAKE_CURRENT_BINARY_DIR}/test/environment-cache --verbose)
+            --out ${CMAKE_CURRENT_BINARY_DIR}/test/environment-cache --timing-file
+            ${TENON_ENVIRONMENT_TIMING_REPORT})
+  add_test(NAME tenon.environment-cache-report COMMAND ${CMAKE_COMMAND} -E cat
+                                                       ${TENON_ENVIRONMENT_TIMING_REPORT})
   set_tests_properties(
-    tenon.environment-cache
-    PROPERTIES PASS_REGULAR_EXPRESSION
-               "clang environments: 1 entries, 1 queries, 1 hits")
+    tenon.environment-cache-report
+    PROPERTIES DEPENDS tenon.environment-cache PASS_REGULAR_EXPRESSION
+               "preprocessor environment entries.*1;preprocessor environment queries.*1;preprocessor environment hits.*1")
   add_test(
     NAME tenon.test-command.no-run
     COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out

@@ -476,9 +476,10 @@ struct CompilerIdentity {
 };
 
 struct CompileCommandResult {
-    i32    exit_code {};
-    String standard_output;
-    String standard_error;
+    i32                  exit_code {};
+    String               standard_output;
+    String               standard_error;
+    rstd::time::Duration elapsed;
 };
 
 struct CompileInvocation {
@@ -623,7 +624,8 @@ struct BuildSummary {
     Vec<BuiltArtifact>           artifacts;
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;
-    ScanProfileReport              scan_profile;
+    ScanProfileReport            scan_profile;
+    BuildTimingReport            build_timing;
     Vec<CompileTestExecution>    compile_tests;
 };
 

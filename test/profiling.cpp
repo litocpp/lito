@@ -46,7 +46,14 @@ auto main() -> int {
     auto source_collector = rstd::bench::probe::ProbeCollector::new_(schema.clone());
     source_collector.ingest(first).unwrap();
     source_collector.ingest(second).unwrap();
-    auto aggregate = rstd::bench::probe::ProbeCollector::new_(schema.clone());
+    auto aggregate_recorder = session.recorder();
+    {
+        auto span = aggregate_recorder.span(probe);
+        now       = u64(750);
+    }
+    auto aggregate_batch = aggregate_recorder.drain().unwrap();
+    auto aggregate       = rstd::bench::probe::ProbeCollector::new_(schema.clone());
+    aggregate.ingest(aggregate_batch).unwrap();
     auto frames     = Vec<tenon::ScanSourceFrame>::make();
     frames.push(tenon::ScanSourceFrame {
         .id     = u64(1),
@@ -71,10 +78,35 @@ auto main() -> int {
         frame->origin != tenon::ScanSourceOrigin::Classify) {
         return 2;
     }
-    if (report.aggregate().overall().len() != usize() ||
+    if (report.aggregate().overall().len() != usize(1) ||
         report.sources().dropped_samples() != usize() ||
         report.sources().diagnostics().len() != usize()) {
         return 3;
+    }
+    if (report.category_timing(tenon::ScanTimingCategory::Preprocessor).as_nanos() != u128(350) ||
+        ! report.category_timing(tenon::ScanTimingCategory::Environment).is_zero() ||
+        ! report.total().is_zero()) {
+        return 4;
+    }
+    auto build_timing = tenon::BuildTimingReport {};
+    build_timing.record(tenon::BuildOperation::Compile,
+                        rstd::time::Duration::from_micros(u64(100)));
+    build_timing.record(tenon::BuildOperation::Compile,
+                        rstd::time::Duration::from_micros(u64(250)));
+    build_timing.record(tenon::BuildOperation::Archive,
+                        rstd::time::Duration::from_micros(u64(50)));
+    const auto& compile = build_timing.timing(tenon::BuildOperation::Compile);
+    const auto& archive = build_timing.timing(tenon::BuildOperation::Archive);
+    const auto& link    = build_timing.timing(tenon::BuildOperation::Link);
+    if (compile.count != usize(2) || compile.total.as_micros() != u64(350) ||
+        archive.count != usize(1) || archive.total.as_micros() != u64(50) ||
+        link.count != usize() || ! link.total.is_zero()) {
+        return 5;
+    }
+    if (tenon::build_operation_label(tenon::BuildOperation::Compile) != "build.compile"_str ||
+        tenon::build_operation_label(tenon::BuildOperation::Archive) != "build.archive"_str ||
+        tenon::build_operation_label(tenon::BuildOperation::Link) != "build.link"_str) {
+        return 6;
     }
     return 0;
 }
