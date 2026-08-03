@@ -273,7 +273,8 @@ private:
                          ref<str>        name,
                          usize           begin,
                          usize           end,
-                         bool            explicitly_exported) -> usize {
+                         bool            explicitly_exported,
+                         bool            is_definition) -> usize {
         advance_comments(tokens_[begin].spelling.offset);
         auto access   = current_access();
         auto exported = explicitly_exported || current_exported();
@@ -295,6 +296,7 @@ private:
             .name           = String::make(name),
             .qualified_name = qualified_name(name),
             .signature      = declaration_spelling(tokens_, begin, end),
+            .is_definition  = is_definition,
             .exported       = exported,
             .access         = access,
             .parent         = current_parent(),
@@ -427,7 +429,12 @@ private:
                 name.push_str(tokens_[index + usize(1)].text.as_str());
             }
         }
-        auto id = add_declaration(kind, name.as_str(), begin, boundary + usize(1), explicit_export);
+        auto id = add_declaration(kind,
+                                  name.as_str(),
+                                  begin,
+                                  boundary + usize(1),
+                                  explicit_export,
+                                  tokens_[boundary].text.as_str() == "{"_str);
         if (tokens_[boundary].text.as_str() == "{"_str) {
             if (kind == DeclarationKind::Enum) {
                 auto next = skip_balanced(boundary, "{"_str, "}"_str);
@@ -506,7 +513,13 @@ private:
             }
         }
         if (name.is_some()) {
-            add_declaration(kind, name->as_str(), begin, end, explicit_export);
+            add_declaration(kind,
+                            name->as_str(),
+                            begin,
+                            end,
+                            explicit_export,
+                            kind != DeclarationKind::Function ||
+                                tokens_[boundary].text.as_str() == "{"_str);
         } else {
             advance_comments(tokens_[begin].spelling.offset);
             auto comment = take_comment();

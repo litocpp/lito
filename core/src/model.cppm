@@ -668,16 +668,31 @@ struct DocRequest {
     bool                locked { false };
 };
 
+enum class DocDiagnosticSeverity
+{
+    Warning,
+    Error,
+};
+
+struct DocDiagnosticSummary {
+    DocDiagnosticSeverity severity { DocDiagnosticSeverity::Warning };
+    String                code;
+    String                message;
+    PathBuf               path;
+    usize                 line {};
+};
+
 struct DocPackageSummary {
-    String  name;
-    PathBuf directory;
-    PathBuf json;
-    PathBuf index;
-    usize   symbols {};
-    usize   documented {};
-    usize   undocumented {};
-    usize   unsupported {};
-    usize   diagnostics {};
+    String                    name;
+    PathBuf                   directory;
+    PathBuf                   json;
+    PathBuf                   index;
+    usize                     symbols {};
+    usize                     documented {};
+    usize                     undocumented {};
+    usize                     unsupported {};
+    usize                     diagnostics {};
+    Vec<DocDiagnosticSummary> diagnostic_details;
 };
 
 struct DocSummary {

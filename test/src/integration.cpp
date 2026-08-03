@@ -82,6 +82,10 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_EQ(package.documented, usize(5));
     EXPECT_EQ(package.undocumented, usize {});
     EXPECT_EQ(package.unsupported, usize {});
+    EXPECT_EQ(package.diagnostics, usize(1));
+    ASSERT_EQ(package.diagnostic_details.len(), usize(1));
+    EXPECT_EQ(package.diagnostic_details[usize {}].code.as_str(),
+              "conflicting-symbol-documentation"_str);
     EXPECT_EQ(generated->frontend.source_reads, usize(1));
     EXPECT_EQ(generated->frontend.lex_builds, usize(1));
     EXPECT_EQ(generated->frontend.documentation_builds, usize(1));
@@ -100,6 +104,8 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     ASSERT_TRUE(project_text.is_some());
     EXPECT_FALSE(json->as_str().contains(*project_text));
     EXPECT_TRUE(json->as_str().contains("Adds two values"_str));
+    EXPECT_FALSE(json->as_str().contains("Forward declaration documentation."_str));
+    EXPECT_TRUE(json->as_str().contains("conflicting-symbol-documentation"_str));
     EXPECT_TRUE(json->as_str().contains("fixture::nested::make"_str));
     EXPECT_FALSE(json->as_str().contains("fixture::nested::T"_str));
     EXPECT_TRUE(json->as_str().contains("\"group\": \"Arithmetic\""_str));

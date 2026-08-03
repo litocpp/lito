@@ -59,6 +59,7 @@ struct DeclarationOutline {
     String                       name;
     String                       qualified_name;
     String                       signature;
+    bool                         is_definition { false };
     bool                         exported { false };
     DeclarationAccess            access { DeclarationAccess::Public };
     Option<usize>                parent;

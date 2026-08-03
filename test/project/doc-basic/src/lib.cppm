@@ -12,13 +12,14 @@ export namespace fixture::nested
 
 /// \name Arithmetic
 /// @{
+/// Forward declaration documentation.
+int add(int left, int right);
 /**
  * Adds two values with `int` arithmetic.
  * \param left The left value.
  * @param right The right value.
  * \return The sum.
  */
-int add(int left, int right);
 int add(int left, int right) {
     return left + right;
 }

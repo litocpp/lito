@@ -189,6 +189,16 @@ extern "C++" int main() {
                               package.undocumented,
                               package.unsupported,
                               package.diagnostics);
+            for (const auto& diagnostic : package.diagnostic_details) {
+                rstd::io::eprintln("{}[{}] {}:{}: {}",
+                                   diagnostic.severity == tenon::DocDiagnosticSeverity::Error
+                                       ? "error"_str
+                                       : "warning"_str,
+                                   diagnostic.code.as_str(),
+                                   diagnostic.path.as_path(),
+                                   diagnostic.line,
+                                   diagnostic.message.as_str());
+            }
         }
         rstd::io::println("generated documentation ({}) at {}",
                           summary.profile.as_str(),

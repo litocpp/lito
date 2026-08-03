@@ -140,7 +140,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
         .toolchain = toolchain.statistics(),
     };
     for (auto& package : rendered.packages) {
-        summary.packages.push(DocPackageSummary {
+        auto package_summary = DocPackageSummary {
             .name         = rstd::move(package.name),
             .directory    = rstd::move(package.directory),
             .json         = rstd::move(package.json),
@@ -150,7 +150,19 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
             .undocumented = package.undocumented,
             .unsupported  = package.unsupported,
             .diagnostics  = package.diagnostics,
-        });
+        };
+        for (auto& diagnostic : package.diagnostic_details) {
+            package_summary.diagnostic_details.push(DocDiagnosticSummary {
+                .severity = diagnostic.severity == frontend::DocumentationSeverity::Error
+                                ? DocDiagnosticSeverity::Error
+                                : DocDiagnosticSeverity::Warning,
+                .code     = rstd::move(diagnostic.code),
+                .message  = rstd::move(diagnostic.message),
+                .path     = PathBuf::from(diagnostic.path.as_str()),
+                .line     = diagnostic.line,
+            });
+        }
+        summary.packages.push(rstd::move(package_summary));
     }
     return Ok(rstd::move(summary));
 }
