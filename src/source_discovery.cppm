@@ -3,7 +3,7 @@ export module tenon.source_discovery;
 import rstd;
 import tenon.model;
 import tenon.modules;
-import tenon.toolchain;
+import tenon.frontend_analysis;
 import tenon.frontend;
 import tenon.profiling;
 
@@ -292,10 +292,9 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
     return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
-auto discover_package_sources(const PackageMetadata&     package,
-                              const SourceDiscoveryPlan& plan,
-                              const ClangToolchain&      toolchain,
-                              frontend::FrontendService& frontend_service,
+auto discover_package_sources(const PackageMetadata&       package,
+                              const SourceDiscoveryPlan&   plan,
+                              FrontendAnalysisService&     analysis_service,
                               const Option<BuildObserver>& observer)
     -> Result<Vec<ResolvedPackageSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
@@ -330,15 +329,9 @@ auto discover_package_sources(const PackageMetadata&     package,
     }
 
     for (auto cursor = usize {}; cursor < queue.len(); ++cursor) {
-        auto        candidate = rstd::move(queue[cursor]);
-        const auto& target    = package.targets[candidate.target];
-        if (observer.is_some() && observer->notify != nullptr) {
-            observer->notify(observer->context,
-                             BuildEvent { BuildEventKind::Scan,
-                                          target.manifest.name.as_str(),
-                                          candidate.source.canonical_path.as_path() });
-        }
-        auto source_frame = frontend_service.profiler().begin_source_frame(
+        auto        candidate    = rstd::move(queue[cursor]);
+        const auto& target       = package.targets[candidate.target];
+        auto        source_frame = analysis_service.profiler().begin_source_frame(
             target.manifest.name.as_str(),
             candidate.source.canonical_path.as_path(),
             ScanSourceOrigin::Discovery);
@@ -346,17 +339,29 @@ auto discover_package_sources(const PackageMetadata&     package,
             return Err(Error::make(ErrorKind::Artifact,
                                    rstd::move(source_frame).unwrap_err_unchecked()));
         }
-        auto facts = toolchain.preprocess(candidate.source.canonical_path.as_path(),
-                                          plan.contexts[candidate.target],
-                                          target.manifest.root.as_path(),
-                                          frontend_service);
-        auto source_finished = frontend_service.profiler().end_source_frame();
+        auto facts           = analysis_service.analyze(target.manifest.name.as_str(),
+                                                        candidate.source.relative_path.as_path(),
+                                                        candidate.source.canonical_path.as_path(),
+                                                        plan.contexts[candidate.target],
+                                                        target.manifest.root.as_path());
+        auto source_finished = analysis_service.profiler().end_source_frame();
         if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
         if (source_finished.is_err()) {
             return Err(Error::make(ErrorKind::Artifact,
                                    rstd::move(source_finished).unwrap_err_unchecked()));
         }
-        auto frontend_result = rstd::move(facts).unwrap();
+        auto frontend_analysis = rstd::move(facts).unwrap();
+        if (observer.is_some() && observer->notify != nullptr) {
+            auto kind =
+                frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
+                    ? BuildEventKind::ScanReuse
+                    : BuildEventKind::Scan;
+            observer->notify(observer->context,
+                             BuildEvent { kind,
+                                          target.manifest.name.as_str(),
+                                          candidate.source.canonical_path.as_path() });
+        }
+        const auto& frontend_result = frontend_analysis.result;
         if (candidate.source.expected_module.is_some()) {
             if (frontend_result.provided.is_none() ||
                 frontend_result.provided->logical_name.as_str() !=
@@ -406,7 +411,7 @@ auto discover_package_sources(const PackageMetadata&     package,
                                               queue);
             if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
         }
-        candidate.source.frontend_result = Some(rstd::move(frontend_result));
+        candidate.source.frontend_analysis = Some(rstd::move(frontend_analysis));
         discovered[candidate.target].push(rstd::move(candidate.source));
     }
 

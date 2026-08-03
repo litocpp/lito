@@ -19,6 +19,20 @@ struct FrontendStatistics {
   usize lex_builds{};
   usize analyze_builds{};
   usize analyze_hits{};
+  usize persistent_scan_hits{};
+  usize persistent_scan_misses{};
+  usize persistent_scan_uncacheable{};
+  usize persistent_scan_absent{};
+  usize persistent_scan_refresh{};
+  usize persistent_scan_version{};
+  usize persistent_scan_recipe{};
+  usize persistent_scan_corrupt{};
+  usize persistent_scan_environment{};
+  usize persistent_scan_context{};
+  usize persistent_scan_source{};
+  usize persistent_scan_file_dependency{};
+  usize persistent_scan_include_lookup{};
+  usize persistent_scan_receipt{};
   preprocessor::PreprocessorStatistics preprocessor;
 };
 

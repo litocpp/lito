@@ -2,6 +2,7 @@ export module tenon.frontend.preprocessor:traits;
 
 import rstd;
 import tenon.frontend.lexical;
+import tenon.frontend.result;
 import :macro;
 
 using namespace rstd::prelude;
@@ -23,12 +24,7 @@ using lexical::TokenKind;
 using lexical::lex;
 template <typename T> using Result = lexical::Result<T>;
 
-enum class IncludeKind {
-  Quoted,
-  Angled,
-  NextQuoted,
-  NextAngled,
-};
+using IncludeKind = frontend::IncludeLookupKind;
 
 struct IncludeRequest {
   String name;

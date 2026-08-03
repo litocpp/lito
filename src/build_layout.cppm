@@ -120,6 +120,12 @@ public:
         return join(units.as_path(), target);
     }
 
+    auto cache_scan(ref<str> target, ref<rstd::path::Path> relative_source) const
+        -> Result<PathBuf> {
+        auto scans = join(compile_cache_directory().as_path(), "scans"_str);
+        return source_path(scans.as_path(), target, relative_source, ".json"_str);
+    }
+
     auto cache_unit(ref<str> target, ref<rstd::path::Path> relative_source) const
         -> Result<PathBuf> {
         return source_path(

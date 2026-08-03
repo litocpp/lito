@@ -112,7 +112,7 @@ auto scan(const ScanRequest &request) -> Result<ScanReport> {
   return Ok(ScanReport{
       .target = metadata.targets[source_target].manifest.name.clone(),
       .profile = metadata.profiles[discovery.profile].name.clone(),
-      .result = rstd::move(facts).unwrap(),
+      .result = rstd::move(facts).unwrap().result,
   });
 }
 

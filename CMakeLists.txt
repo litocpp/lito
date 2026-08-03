@@ -36,7 +36,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG ff15588888448b94a56e7f59df637306cc24ae90)
+  GIT_TAG 41e1a9dc7711ccd305ac795c012e0bd67253e4b9)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
@@ -101,6 +101,7 @@ target_sources(
          src/build_layout.cppm
          src/cache/hash.cppm
          src/cache/mod.cppm
+         src/frontend_analysis.cppm
          src/compile_test.cppm
          src/builder.cppm
          src/test_runner.cppm
@@ -209,6 +210,14 @@ if(BUILD_TESTING)
     tenon.environment-cache-report
     PROPERTIES DEPENDS tenon.environment-cache PASS_REGULAR_EXPRESSION
                "preprocessor environment entries.*1;preprocessor environment queries.*1;preprocessor environment hits.*1")
+
+  add_test(
+    NAME tenon.scan-cache
+    COMMAND ${CMAKE_COMMAND} -DTENON=$<TARGET_FILE:tenon>
+            -DSOURCE=${CMAKE_CURRENT_SOURCE_DIR}/test/cache
+            -DWORK=${CMAKE_CURRENT_BINARY_DIR}/test/scan-cache-fixtures
+            -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/test/scan-cache-build
+            -P ${CMAKE_CURRENT_SOURCE_DIR}/test/cache/scan_cache.cmake)
   add_test(
     NAME tenon.test-command.no-run
     COMMAND tenon -C ${TENON_TEST_COMMAND_FIXTURE} test --out

@@ -2,6 +2,7 @@ export module tenon.modules:graph;
 
 import rstd;
 import tenon.model;
+import :convention;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -97,14 +98,20 @@ auto resolve_modules(const PackagePlan& package,
                 provided.logical_name.as_str(),
                 primary_name));
         }
-        const auto primary_target = units[**primary_provider].unit.target;
+        const auto  primary_target   = units[**primary_provider].unit.target;
+        const auto  partition_target = units[scan.unit].unit.target;
         const auto& primary_affiliation =
             package.package->targets[primary_target].module_affiliation;
-        if (primary_affiliation.is_none() || *primary_affiliation != primary_name) {
-            return graph_failure<ModulePlan>(rstd::format(
-                "partition '{}' has primary module '{}' with a different named-module affiliation",
-                provided.logical_name.as_str(),
-                primary_name));
+        const auto& partition_affiliation =
+            package.package->targets[partition_target].module_affiliation;
+        if (primary_affiliation.is_none() || partition_affiliation.is_none() ||
+            ! module_name_belongs(primary_affiliation->as_str(), primary_name) ||
+            ! module_name_belongs(partition_affiliation->as_str(), primary_name)) {
+            return graph_failure<ModulePlan>(
+                rstd::format("partition '{}' has primary module '{}' with a "
+                             "different named-module affiliation",
+                             provided.logical_name.as_str(),
+                             primary_name));
         }
     }
 

@@ -10,6 +10,7 @@ import tenon.modules;
 import tenon.cache;
 import tenon.build_layout;
 import tenon.frontend;
+import tenon.frontend_analysis;
 import tenon.compile_test;
 import tenon.profiling;
 
@@ -84,9 +85,22 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
     auto layout = rstd::move(selected_layout).unwrap();
 
+    auto created_environment =
+        CacheEnvironment::create(layout,
+                                 metadata.root.as_path(),
+                                 metadata.profiles[discovery_plan.profile].name.as_str(),
+                                 toolchain.compiler_identity());
+    if (created_environment.is_err()) {
+        return Err(rstd::move(created_environment).unwrap_err());
+    }
+    auto cache_environment = rstd::move(created_environment).unwrap();
+    auto scan_cache        = ScanCacheSession::create(cache_environment);
+    auto analysis_service =
+        FrontendAnalysisService::make(layout, toolchain, frontend_service, scan_cache);
+
     auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_sources(
-            metadata, discovery_plan, toolchain, frontend_service, request.observer);
+            metadata, discovery_plan, analysis_service, request.observer);
     });
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
@@ -152,8 +166,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                 target_spec.root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
             auto unit = rstd::move(prepared).unwrap();
-            if (source.frontend_result.is_some()) {
-                unit.frontend_result = rstd::addressof(*source.frontend_result);
+            if (source.frontend_analysis.is_some() &&
+                source.frontend_analysis->context_identity.as_str() == context->id.as_str()) {
+                unit.frontend_analysis = Some(frontend::clone_analysis(*source.frontend_analysis));
             }
             units.push(rstd::move(unit));
             target_units[target].emplace_back(id);
@@ -168,12 +183,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto scans = Vec<ScanResult>::with_capacity(units.len());
     auto classify_span = profiler.span(ScanProbe::ClassifyUnits);
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
-        const auto target = units[unit].unit.target;
-        if (units[unit].frontend_result == nullptr) {
-            emit(request,
-                 BuildEventKind::Scan,
-                 package.targets[target].name.as_str(),
-                 units[unit].unit.source.as_path());
+        const auto target          = units[unit].unit.target;
+        auto       needed_analysis = units[unit].frontend_analysis.is_none();
+        if (needed_analysis) {
             auto source_frame = profiler.begin_source_frame(package.targets[target].name.as_str(),
                                                             units[unit].unit.source.as_path(),
                                                             ScanSourceOrigin::Classify);
@@ -182,18 +194,30 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                     ErrorKind::Artifact,
                     rstd::move(source_frame).unwrap_err_unchecked());
             }
+            auto analyzed = analysis_service.analyze(package.targets[target].name.as_str(),
+                                                     units[unit].unit.relative_source.as_path(),
+                                                     units[unit].unit.source.as_path(),
+                                                     *units[unit].unit.context,
+                                                     units[unit].working_directory.as_path());
+            auto source_finished = profiler.end_source_frame();
+            if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
+            if (source_finished.is_err()) {
+                return failure<BuildSummary>(ErrorKind::Artifact,
+                                             rstd::move(source_finished).unwrap_err_unchecked());
+            }
+            auto analysis = rstd::move(analyzed).unwrap();
+            emit(request,
+                 analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
+                     ? BuildEventKind::ScanReuse
+                     : BuildEventKind::Scan,
+                 package.targets[target].name.as_str(),
+                 units[unit].unit.source.as_path());
+            units[unit].frontend_analysis = Some(rstd::move(analysis));
+        } else {
+            analysis_service.record_in_build_reuse();
         }
-        auto scanned = toolchain.scan(units[unit], frontend_service);
-        auto source_finished = rstd::Result<empty, String>(Ok(empty {}));
-        if (units[unit].frontend_result == nullptr) {
-            source_finished = profiler.end_source_frame();
-        }
+        auto scanned = toolchain.scan(units[unit]);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
-        if (source_finished.is_err()) {
-            return failure<BuildSummary>(
-                ErrorKind::Artifact,
-                rstd::move(source_finished).unwrap_err_unchecked());
-        }
         auto result = rstd::move(scanned).unwrap();
         if (result.provided.is_some()) {
             units[unit].unit.bmi = Some(layout.bmi((*result.provided).logical_name.as_str()));
@@ -230,16 +254,26 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         return failure<BuildSummary>(ErrorKind::Artifact,
                                      rstd::move(finished_profile).unwrap_err_unchecked());
     }
-    auto scan_profile = rstd::move(finished_profile).unwrap_unchecked();
-    auto frontend_statistics = frontend_service.statistics();
+    auto        scan_profile                   = rstd::move(finished_profile).unwrap_unchecked();
+    auto        frontend_statistics            = frontend_service.statistics();
+    const auto& scan_cache_statistics          = scan_cache.statistics();
+    frontend_statistics.persistent_scan_hits   = scan_cache_statistics.hits;
+    frontend_statistics.persistent_scan_misses = scan_cache_statistics.misses;
+    frontend_statistics.persistent_scan_uncacheable     = scan_cache_statistics.uncacheable;
+    frontend_statistics.persistent_scan_absent          = scan_cache_statistics.absent;
+    frontend_statistics.persistent_scan_refresh         = scan_cache_statistics.refresh;
+    frontend_statistics.persistent_scan_version         = scan_cache_statistics.version;
+    frontend_statistics.persistent_scan_recipe          = scan_cache_statistics.recipe;
+    frontend_statistics.persistent_scan_corrupt         = scan_cache_statistics.corrupt;
+    frontend_statistics.persistent_scan_environment     = scan_cache_statistics.environment;
+    frontend_statistics.persistent_scan_context         = scan_cache_statistics.context;
+    frontend_statistics.persistent_scan_source          = scan_cache_statistics.source;
+    frontend_statistics.persistent_scan_file_dependency = scan_cache_statistics.file_dependency;
+    frontend_statistics.persistent_scan_include_lookup  = scan_cache_statistics.include_lookup;
+    frontend_statistics.persistent_scan_receipt         = scan_cache_statistics.receipt;
     frontend_service.release_source_cache();
 
-    auto created_cache = CompileCacheSession::create(layout,
-                                                     package.root.as_path(),
-                                                     package_plan.profile->name.as_str(),
-                                                     toolchain.compiler_identity());
-    if (created_cache.is_err()) return Err(rstd::move(created_cache).unwrap_err());
-    auto cache = rstd::move(created_cache).unwrap();
+    auto cache = CompileCacheSession::create(cache_environment);
 
     auto keys = Vec<String>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) keys.emplace_back();
@@ -271,7 +305,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
         auto decision = cache.evaluate(package.targets[target].name.as_str(),
                                        units[unit],
-                                       scans[unit],
+                                       units[unit].frontend_analysis->receipt.as_str(),
                                        *invocation,
                                        dependencies);
         if (decision.is_err()) return Err(rstd::move(decision).unwrap_err());

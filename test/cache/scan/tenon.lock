@@ -1,0 +1,21 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "tenon.toml",
+      "name": "fixture-scan-cache",
+      "source": "path+.",
+      "version": "0.1.0"
+    }
+  ],
+  "roots": [
+    "fixture-scan-cache"
+  ],
+  "sources": [
+    {
+      "kind": "path",
+      "path": "."
+    }
+  ],
+  "version": 4
+}

@@ -5,6 +5,7 @@ export import tenon.build_profile;
 export import tenon.config;
 export import tenon.manifest;
 export import tenon.frontend;
+export import tenon.frontend_analysis;
 export import tenon.source_discovery;
 export import tenon.modules;
 export import tenon.package;

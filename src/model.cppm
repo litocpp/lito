@@ -323,11 +323,11 @@ using ModuleImport = frontend::ModuleImport;
 using FrontendResult = frontend::FrontendResult;
 
 struct ResolvedSource {
-    PathBuf                         relative_path;
-    PathBuf                         canonical_path;
-    SourceOrigin                    origin { SourceOrigin::Explicit };
-    Option<String>                  expected_module;
-    Option<FrontendResult>          frontend_result;
+    PathBuf                            relative_path;
+    PathBuf                            canonical_path;
+    SourceOrigin                       origin { SourceOrigin::Explicit };
+    Option<String>                     expected_module;
+    Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
 struct ResolvedSourceSet {
@@ -410,10 +410,10 @@ struct BuildConfiguration {
 };
 
 struct TargetSource {
-    PathBuf                         relative_path;
-    PathBuf                         path;
-    Option<String>                  expected_module;
-    Option<FrontendResult> frontend_result;
+    PathBuf                            relative_path;
+    PathBuf                            path;
+    Option<String>                     expected_module;
+    Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
 struct TargetMetadata {
@@ -522,9 +522,9 @@ struct UnitSpec {
 };
 
 struct PreparedUnit {
-    UnitSpec                       unit;
-    PathBuf                        working_directory;
-    const FrontendResult* frontend_result {};
+    UnitSpec                           unit;
+    PathBuf                            working_directory;
+    Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
 struct ScanResult {
@@ -544,6 +544,7 @@ struct ModulePlan {
 enum class BuildEventKind
 {
     Scan,
+    ScanReuse,
     Compile,
     Reuse,
     Archive,

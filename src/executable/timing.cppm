@@ -78,6 +78,24 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "lexed sources"_str, summary.frontend.lex_builds);
     append_metric(output, "analyzed sources"_str, summary.frontend.analyze_builds);
     append_metric(output, "analysis hits"_str, summary.frontend.analyze_hits);
+    append_metric(output, "persistent scan hits"_str, summary.frontend.persistent_scan_hits);
+    append_metric(output, "persistent scan misses"_str, summary.frontend.persistent_scan_misses);
+    append_metric(
+        output, "persistent scan uncacheable"_str, summary.frontend.persistent_scan_uncacheable);
+    append_metric(output, "scan miss absent"_str, summary.frontend.persistent_scan_absent);
+    append_metric(output, "scan miss refresh"_str, summary.frontend.persistent_scan_refresh);
+    append_metric(output, "scan miss version"_str, summary.frontend.persistent_scan_version);
+    append_metric(output, "scan miss recipe"_str, summary.frontend.persistent_scan_recipe);
+    append_metric(output, "scan miss corrupt"_str, summary.frontend.persistent_scan_corrupt);
+    append_metric(
+        output, "scan miss environment"_str, summary.frontend.persistent_scan_environment);
+    append_metric(output, "scan miss context"_str, summary.frontend.persistent_scan_context);
+    append_metric(output, "scan miss source"_str, summary.frontend.persistent_scan_source);
+    append_metric(
+        output, "scan miss file dependency"_str, summary.frontend.persistent_scan_file_dependency);
+    append_metric(
+        output, "scan miss include lookup"_str, summary.frontend.persistent_scan_include_lookup);
+    append_metric(output, "scan miss receipt"_str, summary.frontend.persistent_scan_receipt);
 
     append_line(output, "\ntoolchain"_str);
     append_metric(output, "preprocessor environment entries"_str,

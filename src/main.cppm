@@ -18,6 +18,7 @@ struct EventContext {
 auto event_name(tenon::BuildEventKind kind) -> ref<str> {
     switch (kind) {
     case tenon::BuildEventKind::Scan: return "scan"_str;
+    case tenon::BuildEventKind::ScanReuse: return "scan-reuse"_str;
     case tenon::BuildEventKind::Compile: return "compile"_str;
     case tenon::BuildEventKind::Reuse: return "reuse"_str;
     case tenon::BuildEventKind::Archive: return "archive"_str;

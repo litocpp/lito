@@ -970,6 +970,12 @@ public:
 
   auto resolve(const preprocessor::IncludeRequest &request)
       -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
+    auto dependency = frontend::IncludeLookupDependency{
+        .kind = request.kind,
+        .name = request.name.clone(),
+        .including_path = request.including_path.clone(),
+        .previous_search_index = request.previous_search_index,
+    };
     auto next = request.kind == preprocessor::IncludeKind::NextQuoted ||
                 request.kind == preprocessor::IncludeKind::NextAngled;
     auto quoted = request.kind == preprocessor::IncludeKind::Quoted ||
@@ -980,10 +986,14 @@ public:
     if (quoted && !next && start == usize{}) {
       auto parent = request.including_path.as_path().parent();
       if (parent.is_some()) {
-        auto resolved =
-            candidate(*parent, request.name.as_str(), usize{}, false);
-        if (resolved.is_err() || resolved->is_some())
+        auto resolved = candidate(*parent, request.name.as_str(), usize{},
+                                  false, dependency);
+        if (resolved.is_err())
           return resolved;
+        if (resolved->is_some()) {
+          dependencies_.push(rstd::move(dependency));
+          return resolved;
+        }
       }
       start = usize(1);
     }
@@ -992,17 +1002,28 @@ public:
     for (auto index = start; index <= environment_.include_search.len();
          ++index) {
       const auto &entry = environment_.include_search[index - usize(1)];
-      auto resolved = candidate(entry.directory.as_path(),
-                                request.name.as_str(), index, entry.system);
-      if (resolved.is_err() || resolved->is_some())
+      auto resolved =
+          candidate(entry.directory.as_path(), request.name.as_str(), index,
+                    entry.system, dependency);
+      if (resolved.is_err())
         return resolved;
+      if (resolved->is_some()) {
+        dependencies_.push(rstd::move(dependency));
+        return resolved;
+      }
     }
+    dependencies_.push(rstd::move(dependency));
     return Ok(None());
+  }
+
+  auto take_dependencies() -> Vec<frontend::IncludeLookupDependency> {
+    return rstd::move(dependencies_);
   }
 
 private:
   auto candidate(ref<rstd::path::Path> directory, ref<str> name,
-                 usize search_index, bool system)
+                 usize search_index, bool system,
+                 frontend::IncludeLookupDependency &dependency)
       -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
     auto requested =
         PathBuf::from(directory).join(PathBuf::from(name).as_path());
@@ -1012,22 +1033,31 @@ private:
           rstd::format("cannot inspect include candidate '{}': {}",
                        requested.as_path(), rstd::move(exists).unwrap_err())));
     }
-    if (!*exists)
+    if (!*exists) {
+      dependency.missing_candidates.push(requested.clone());
       return Ok(None());
+    }
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
       return Err(preprocessor::Error::make(rstd::format(
           "cannot resolve include candidate '{}': {}", requested.as_path(),
           rstd::move(canonical).unwrap_err())));
     }
+    auto canonical_path = rstd::move(canonical).unwrap();
+    dependency.resolved = Some(frontend::ResolvedIncludeCandidate{
+        .requested_path = requested.clone(),
+        .canonical_path = canonical_path.clone(),
+        .search_index = search_index,
+    });
     return Ok(Some(preprocessor::IncludeResolution{
-        .path = rstd::move(canonical).unwrap(),
+        .path = rstd::move(canonical_path),
         .search_index = search_index,
         .system = system,
     }));
   }
 
   const PreprocessorEnvironment &environment_;
+  Vec<frontend::IncludeLookupDependency> dependencies_;
 };
 
 class ClangBuiltinProvider {

@@ -489,35 +489,36 @@ public:
         });
     }
 
-    auto scan(const PreparedUnit& prepared,
-              frontend::FrontendService& frontend_service) const
-        -> Result<ScanResult> {
-        if (prepared.frontend_result != nullptr) {
-            frontend_service.record_analysis_hit();
-            return Ok(modules::scan_from_frontend(*prepared.frontend_result,
-                                                  prepared.unit.id));
+    auto scan(const PreparedUnit& prepared) const -> Result<ScanResult> {
+        if (prepared.frontend_analysis.is_none()) {
+            return failure<ScanResult>(rstd::format("source '{}' has no frontend analysis",
+                                                    prepared.unit.source.as_path()));
         }
-        auto facts = preprocess(prepared.unit.source.as_path(),
-                                *prepared.unit.context,
-                                prepared.working_directory.as_path(),
-                                frontend_service);
-        if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-        return Ok(modules::scan_from_frontend(*facts, prepared.unit.id));
+        return Ok(
+            modules::scan_from_frontend(prepared.frontend_analysis->result, prepared.unit.id));
     }
 
-    auto preprocess(ref<rstd::path::Path> source,
-                    const CompileContext& compile_context,
-                    ref<rstd::path::Path> working_directory,
+    auto preprocessor_environment_identity(const CompileContext& compile_context,
+                                           ref<rstd::path::Path> working_directory) const
+        -> Result<String> {
+        auto environment = environment_for(compile_context, working_directory);
+        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        return Ok((*environment)->identity.clone());
+    }
+
+    auto preprocess(ref<rstd::path::Path>      source,
+                    const CompileContext&      compile_context,
+                    ref<rstd::path::Path>      working_directory,
                     frontend::FrontendService& frontend_service) const
-        -> Result<FrontendResult> {
+        -> Result<frontend::UncachedFrontendAnalysis> {
         auto frontend_span = frontend_service.profiler().span(ScanProbe::Frontend);
         frontend_service.record_analysis_build();
         auto environment_span = frontend_service.profiler().span(ScanProbe::Environment);
         for (const auto& option : compile_context.options) {
             if (unsupported_native_preprocessor_option(option.as_str())) {
-                return failure<FrontendResult>(rstd::format(
-                    "compiler option '{}' is not supported by the native preprocessor",
-                    option.as_str()));
+                return failure<frontend::UncachedFrontendAnalysis>(
+                    rstd::format("compiler option '{}' is not supported by the native preprocessor",
+                                 option.as_str()));
             }
         }
         auto selected_environment = environment_for(compile_context, working_directory);
@@ -527,7 +528,7 @@ public:
         auto environment = *selected_environment;
         auto environment_finished = frontend_service.profiler().complete(environment_span);
         if (environment_finished.is_err()) {
-            return failure<FrontendResult>(
+            return failure<frontend::UncachedFrontendAnalysis>(
                 rstd::move(environment_finished).unwrap_err_unchecked());
         }
         auto includes = toolchain::ClangIncludeResolver(*environment);
@@ -554,30 +555,33 @@ public:
         });
         auto observer_finished = observer.finish();
         if (observer_finished.is_err()) {
-            return failure<FrontendResult>(
+            return failure<frontend::UncachedFrontendAnalysis>(
                 rstd::move(observer_finished).unwrap_err_unchecked());
         }
         frontend_service.record_preprocessor_statistics(observer.statistics());
         if (translation.is_err()) {
             auto error = rstd::move(translation).unwrap_err();
             if (error.path.is_some() && error.location.is_some()) {
-                return failure<FrontendResult>(rstd::format(
-                    "native preprocessing failed at {}:{}:{}: {}",
-                    error.path->as_path(),
-                    error.location->line,
-                    error.location->column,
-                    error.message.as_str()));
+                return failure<frontend::UncachedFrontendAnalysis>(
+                    rstd::format("native preprocessing failed at {}:{}:{}: {}",
+                                 error.path->as_path(),
+                                 error.location->line,
+                                 error.location->column,
+                                 error.message.as_str()));
             }
-            return failure<FrontendResult>(rstd::format(
+            return failure<frontend::UncachedFrontendAnalysis>(rstd::format(
                 "native preprocessing failed for '{}': {}", source, error.message.as_str()));
         }
         translation->header_inputs = events.take_headers();
         auto parsed = consumer.finish(*translation);
         if (parsed.is_err()) {
-            return failure<FrontendResult>(
+            return failure<frontend::UncachedFrontendAnalysis>(
                 rstd::move(parsed).unwrap_err().message.clone());
         }
-        return Ok(rstd::move(parsed).unwrap());
+        return Ok(frontend::UncachedFrontendAnalysis {
+            .result          = rstd::move(parsed).unwrap(),
+            .include_lookups = includes.take_dependencies(),
+        });
     }
 
     auto prepare_compile(const PreparedUnit&           prepared,
