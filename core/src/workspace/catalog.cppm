@@ -44,6 +44,7 @@ export namespace tenon
 {
 
 class WorkspaceCatalog {
+    String      name_;
     PathBuf     root_;
     PathBuf     manifest_path_;
     Vec<String> names_;
@@ -56,6 +57,7 @@ public:
 
     static auto single(PackageManifest manifest) -> WorkspaceCatalog {
         auto catalog           = WorkspaceCatalog {};
+        catalog.name_          = manifest.name.clone();
         catalog.root_          = manifest.root.clone();
         catalog.manifest_path_ = manifest.manifest_path.clone();
         catalog.names_.push(manifest.name.clone());
@@ -66,6 +68,8 @@ public:
         catalog.packages_.insert(manifest.name.clone(), rstd::move(manifest));
         return catalog;
     }
+
+    auto name() const noexcept -> ref<str> { return name_.as_str(); }
 
     auto root() const noexcept -> ref<rstd::path::Path> { return root_.as_path(); }
 
@@ -93,6 +97,7 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     -> Result<WorkspaceCatalog> {
     auto catalog           = WorkspaceCatalog {};
     catalog.workspace_     = true;
+    catalog.name_          = rstd::move(workspace.name);
     catalog.root_          = workspace.root.clone();
     catalog.manifest_path_ = workspace.manifest_path.clone();
     auto directories       = StringSet::make();

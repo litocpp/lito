@@ -117,6 +117,40 @@ TEST(Contracts, InvalidDependencyGraphsAreRejectedByResolverOwner) {
     }
 }
 
+TEST(Contracts, ProjectNameComesFromRootManifest) {
+    auto workspace = tenon::resolve_package_graph(root("../demo/workspace"_str).as_path());
+    ASSERT_TRUE(workspace.is_ok());
+    EXPECT_TRUE(workspace->root_is_workspace);
+    EXPECT_EQ(workspace->name.as_str(), "demo-workspace"_str);
+
+    auto workspace_member =
+        tenon::resolve_package_graph(root("../demo/workspace/app-one"_str).as_path());
+    ASSERT_TRUE(workspace_member.is_ok());
+    EXPECT_TRUE(workspace_member->root_is_workspace);
+    EXPECT_EQ(workspace_member->name.as_str(), "demo-workspace"_str);
+
+    auto package =
+        tenon::resolve_package_graph(root("../demo/module-convention/demo-app"_str).as_path());
+    ASSERT_TRUE(package.is_ok());
+    EXPECT_FALSE(package->root_is_workspace);
+    EXPECT_EQ(package->name.as_str(), "demo-app"_str);
+}
+
+TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
+    auto missing = tenon::load_manifest_document(root("workspace/name-missing"_str).as_path());
+    ASSERT_TRUE(missing.is_err());
+    EXPECT_TRUE(missing.unwrap_err().message.as_str().contains("missing 'name'"_str));
+
+    auto invalid = tenon::load_manifest_document(root("workspace/name-invalid"_str).as_path());
+    ASSERT_TRUE(invalid.is_err());
+    EXPECT_TRUE(invalid.unwrap_err().message.as_str().contains("workspace.name"_str));
+
+    auto valid = tenon::load_manifest_document(root("../demo/workspace"_str).as_path());
+    ASSERT_TRUE(valid.is_ok());
+    ASSERT_TRUE(valid->workspace.is_some());
+    EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
+}
+
 TEST(Contracts, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
     for (const auto path : INVALID_EXPLICIT_SOURCES) {
         auto loaded = tenon::load_package_manifest(root(path).as_path());

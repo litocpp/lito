@@ -293,6 +293,7 @@ struct WorkspacePackageDefaults {
 };
 
 struct WorkspaceManifest {
+    String                   name;
     PathBuf                  root;
     PathBuf                  manifest_path;
     Vec<PathBuf>             members;
@@ -370,6 +371,7 @@ struct ResolvedPackage {
 };
 
 struct ResolvedPackageGraph {
+    String                     name;
     Vec<String>                root_names;
     PathBuf                    root_directory;
     PathBuf                    manifest_path;

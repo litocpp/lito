@@ -1,2 +1,3 @@
 [workspace]
+name = "fixture-inherited-version-missing"
 members = ["member"]

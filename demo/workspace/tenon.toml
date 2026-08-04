@@ -1,4 +1,5 @@
 [workspace]
+name = "demo-workspace"
 members = ["common", "app-one", "app-two", "unused"]
 default-members = ["app-one"]
 

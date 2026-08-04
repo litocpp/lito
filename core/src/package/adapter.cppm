@@ -241,15 +241,11 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
         }
         default_targets.push(name.clone());
     }
-    auto package_name = String::make("workspace"_str);
-    if (graph.root_names.len() == usize(1)) {
-        package_name = graph.root_names[usize {}].clone();
-    }
     auto profiles        = Vec<ProfileSpec>::make();
     auto default_profile = profile.name.clone();
     profiles.push(rstd::move(profile));
     return Ok(PackageMetadata {
-        .name            = rstd::move(package_name),
+        .name            = rstd::move(graph.name),
         .root            = rstd::move(graph.root_directory),
         .manifest_path   = rstd::move(graph.manifest_path),
         .default_profile = rstd::move(default_profile),

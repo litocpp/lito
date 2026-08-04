@@ -1,3 +1,4 @@
 [workspace]
+name = "fixture-default-not-member"
 members = ["member"]
 default-members = ["other"]

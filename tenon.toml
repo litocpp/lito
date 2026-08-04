@@ -1,4 +1,5 @@
 [workspace]
+name = "tenon"
 members = ["frontend", "doc", "core", "cli", "test"]
 default-members = ["cli", "test"]
 

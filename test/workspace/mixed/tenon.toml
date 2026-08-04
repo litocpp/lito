@@ -1,4 +1,5 @@
 [workspace]
+name = "fixture-mixed-workspace"
 members = ["member"]
 
 [package]

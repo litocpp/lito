@@ -1,4 +1,5 @@
 [workspace]
+name = "fixture-invalid-dependency"
 members = ["app", "test-dependency"]
 
 [workspace.package]

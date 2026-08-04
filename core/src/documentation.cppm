@@ -154,6 +154,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
             Some(resolved_doc_path(metadata.root.as_path(), request.frontend->as_path()));
     }
     auto site = tenon::doc::SiteInput {
+        .title = metadata.name.clone(),
         .output =
             default_doc_root(metadata.root.as_path(), profile.as_str(), request.output.as_path()),
         .data_output = default_doc_data_root(

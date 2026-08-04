@@ -70,6 +70,10 @@ public:
 
     auto package_names(usize source) const -> Vec<String> { return sources_.package_names(source); }
 
+    auto source_name(usize source) const noexcept -> ref<str> {
+        return sources_.source_name(source);
+    }
+
     auto source_manifest(usize source) const -> PathBuf { return sources_.source_manifest(source); }
 
     auto source_is_workspace(usize source) const noexcept -> bool {
@@ -146,7 +150,7 @@ public:
         return Ok(String::make(expected_name));
     }
 
-    auto finish(Vec<String> root_names, PathBuf manifest_path, bool root_is_workspace)
+    auto finish(String name, Vec<String> root_names, PathBuf manifest_path, bool root_is_workspace)
         -> ResolvedPackageGraph {
         rstd::slice_::sort_unstable_by(
             packages_.as_mut_slice().as_mut_ref(),
@@ -155,6 +159,7 @@ public:
             });
         rstd::slice_::sort_unstable(root_names.as_mut_slice().as_mut_ref());
         return ResolvedPackageGraph {
+            .name              = rstd::move(name),
             .root_names        = rstd::move(root_names),
             .root_directory    = rstd::move(root_directory_),
             .manifest_path     = rstd::move(manifest_path),
@@ -184,6 +189,7 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
     auto source   = resolver.acquire_root(root.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto root_source       = *source;
+    auto project_name      = String::make(resolver.source_name(root_source));
     auto manifest_path     = resolver.source_manifest(root_source);
     auto root_is_workspace = resolver.source_is_workspace(root_source);
     auto names             = resolver.package_names(root_source);
@@ -193,8 +199,10 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
         if (resolved_name.is_err()) return Err(rstd::move(resolved_name).unwrap_err());
         root_names.push(rstd::move(resolved_name).unwrap());
     }
-    return Ok(
-        resolver.finish(rstd::move(root_names), rstd::move(manifest_path), root_is_workspace));
+    return Ok(resolver.finish(rstd::move(project_name),
+                              rstd::move(root_names),
+                              rstd::move(manifest_path),
+                              root_is_workspace));
 }
 
 } // namespace tenon

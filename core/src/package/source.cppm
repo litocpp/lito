@@ -606,6 +606,10 @@ public:
         return result;
     }
 
+    auto source_name(usize source) const noexcept -> ref<str> {
+        return entries_[source].catalog.name();
+    }
+
     auto source_identity(usize source) const noexcept -> ref<str> {
         return entries_[source].source.identity.as_str();
     }

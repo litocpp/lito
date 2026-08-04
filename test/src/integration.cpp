@@ -152,6 +152,9 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_TRUE(generated->site_generated);
     EXPECT_EQ(generated->data.as_path(), data.as_path());
     EXPECT_TRUE(rstd::fs::exists(generated->data_manifest.as_path()).unwrap());
+    auto data_manifest = rstd::fs::read_to_string(generated->data_manifest.as_path());
+    ASSERT_TRUE(data_manifest.is_ok());
+    EXPECT_TRUE(data_manifest->as_str().contains("\"title\": \"tenon-test-project\""_str));
     EXPECT_TRUE(tenon::doc::validate_data(data.as_path()).is_ok());
     ASSERT_TRUE(copy_directory(data.as_path(), corrupt_data.as_path()));
     auto corrupt_sources =
@@ -295,6 +298,10 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     auto restored_index = rstd::fs::read_to_string(restored->index.as_path());
     ASSERT_TRUE(original_index.is_ok());
     ASSERT_TRUE(restored_index.is_ok());
+    EXPECT_TRUE(
+        original_index->as_str().contains("<title>Overview · tenon-test-project</title>"_str));
+    EXPECT_TRUE(original_index->as_str().contains("<h1>tenon-test-project</h1>"_str));
+    EXPECT_FALSE(original_index->as_str().contains("Workspace documentation"_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-shell>"_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-search root-prefix="_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-theme-picker>"_str));

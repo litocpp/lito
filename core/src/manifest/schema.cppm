@@ -163,7 +163,8 @@ auto dependency_key(ref<str> key) -> bool {
 }
 
 auto workspace_key(ref<str> key) -> bool {
-    return key == "members"_str || key == "default-members"_str || key == "package"_str;
+    return key == "name"_str || key == "members"_str || key == "default-members"_str ||
+           key == "package"_str;
 }
 
 auto package_version_key(ref<str> key) -> bool {
@@ -853,6 +854,12 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
         if (workspace_known.is_err()) {
             return Err(rstd::move(workspace_known).unwrap_err());
         }
+        auto workspace_name = required_string(**workspace_value, "name"_str, "workspace"_str);
+        if (workspace_name.is_err()) return Err(rstd::move(workspace_name).unwrap_err());
+        if (! package_name_is_valid(workspace_name->as_str())) {
+            return failure<ManifestDocument>(
+                "workspace.name must contain only ASCII letters, digits, '-' or '_'"_str);
+        }
         auto members =
             declared_paths(member(**workspace_value, "members"_str), "workspace.members"_str, true);
         auto default_member_value = member(**workspace_value, "default-members"_str);
@@ -888,6 +895,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
         return Ok(ManifestDocument {
             .kind      = ManifestKind::Workspace,
             .workspace = Some(WorkspaceManifest {
+                .name            = rstd::move(workspace_name).unwrap(),
                 .root            = rstd::move(root),
                 .manifest_path   = rstd::move(path),
                 .members         = rstd::move(members).unwrap(),

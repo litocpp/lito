@@ -1,4 +1,5 @@
 [workspace]
+name = "fixture-duplicate-name"
 members = ["one", "two"]
 
 [workspace.package]
