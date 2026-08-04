@@ -41,11 +41,71 @@ auto default_doc_root(ref<rstd::path::Path> project,
         .join(PathBuf::from("doc"_str).as_path());
 }
 
+auto default_doc_data_root(ref<rstd::path::Path> project,
+                           ref<str>              profile,
+                           ref<rstd::path::Path> requested) -> PathBuf {
+    if (! requested.is_empty()) {
+        return requested.is_absolute() ? PathBuf::from(requested)
+                                       : PathBuf::from(project).join(requested);
+    }
+    return PathBuf::from(project)
+        .join(PathBuf::from("build"_str).as_path())
+        .join(PathBuf::from(profile).as_path())
+        .join(PathBuf::from("doc-data"_str).as_path());
+}
+
+auto resolved_doc_path(ref<rstd::path::Path> root, ref<rstd::path::Path> requested) -> PathBuf {
+    return requested.is_absolute() ? PathBuf::from(requested) : PathBuf::from(root).join(requested);
+}
+
 auto selected_doc_target(const Vec<String>& names, ref<str> name) -> bool {
     for (const auto& selected : names) {
         if (selected.as_str() == name) return true;
     }
     return false;
+}
+
+auto copy_doc_summary(String                       profile,
+                      tenon::doc::Summary          rendered,
+                      frontend::FrontendStatistics frontend_statistics,
+                      ToolchainStatistics          toolchain_statistics) -> DocSummary {
+    auto summary = DocSummary {
+        .profile        = rstd::move(profile),
+        .output         = rstd::move(rendered.output),
+        .index          = rstd::move(rendered.index),
+        .data           = rstd::move(rendered.data.root),
+        .data_manifest  = rstd::move(rendered.data.manifest),
+        .site_generated = rendered.site_generated,
+        .frontend       = rstd::move(frontend_statistics),
+        .toolchain      = rstd::move(toolchain_statistics),
+    };
+    for (auto& package : rendered.packages) {
+        auto package_summary = DocPackageSummary {
+            .name         = rstd::move(package.name),
+            .directory    = rstd::move(package.directory),
+            .json         = rstd::move(package.json),
+            .data_json    = rstd::move(package.data_json),
+            .index        = rstd::move(package.index),
+            .symbols      = package.symbols,
+            .documented   = package.documented,
+            .undocumented = package.undocumented,
+            .unsupported  = package.unsupported,
+            .diagnostics  = package.diagnostics,
+        };
+        for (auto& diagnostic : package.diagnostic_details) {
+            package_summary.diagnostic_details.push(DocDiagnosticSummary {
+                .severity = diagnostic.severity == frontend::DocumentationSeverity::Error
+                                ? DocDiagnosticSeverity::Error
+                                : DocDiagnosticSeverity::Warning,
+                .code     = rstd::move(diagnostic.code),
+                .message  = rstd::move(diagnostic.message),
+                .path     = PathBuf::from(diagnostic.path.as_str()),
+                .line     = diagnostic.line,
+            });
+        }
+        summary.packages.push(rstd::move(package_summary));
+    }
+    return summary;
 }
 
 } // namespace tenon
@@ -88,9 +148,18 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
 
     const auto& selected_names =
         request.targets.is_empty() ? metadata.default_targets : request.targets;
+    auto frontend_path = Option<PathBuf> {};
+    if (request.frontend.is_some()) {
+        frontend_path =
+            Some(resolved_doc_path(metadata.root.as_path(), request.frontend->as_path()));
+    }
     auto site = tenon::doc::SiteInput {
         .output =
             default_doc_root(metadata.root.as_path(), profile.as_str(), request.output.as_path()),
+        .data_output = default_doc_data_root(
+            metadata.root.as_path(), profile.as_str(), request.data_output.as_path()),
+        .frontend  = rstd::move(frontend_path),
+        .data_only = request.data_only,
     };
     for (auto& source_set : source_sets) {
         if (! selected_doc_target(selected_names, source_set.package_name.as_str())) continue;
@@ -132,40 +201,35 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
         return doc_failure<DocSummary>("doc selection has no library package"_str);
     auto generated = tenon::doc::generate(rstd::move(site));
     if (generated.is_err()) return doc_failure<DocSummary>(rstd::move(generated).unwrap_err());
-    auto rendered = rstd::move(generated).unwrap();
-    auto summary  = DocSummary {
-        .profile   = rstd::move(profile),
-        .output    = rstd::move(rendered.output),
-        .index     = rstd::move(rendered.index),
-        .frontend  = frontend_service.statistics(),
-        .toolchain = toolchain.statistics(),
-    };
-    for (auto& package : rendered.packages) {
-        auto package_summary = DocPackageSummary {
-            .name         = rstd::move(package.name),
-            .directory    = rstd::move(package.directory),
-            .json         = rstd::move(package.json),
-            .index        = rstd::move(package.index),
-            .symbols      = package.symbols,
-            .documented   = package.documented,
-            .undocumented = package.undocumented,
-            .unsupported  = package.unsupported,
-            .diagnostics  = package.diagnostics,
-        };
-        for (auto& diagnostic : package.diagnostic_details) {
-            package_summary.diagnostic_details.push(DocDiagnosticSummary {
-                .severity = diagnostic.severity == frontend::DocumentationSeverity::Error
-                                ? DocDiagnosticSeverity::Error
-                                : DocDiagnosticSeverity::Warning,
-                .code     = rstd::move(diagnostic.code),
-                .message  = rstd::move(diagnostic.message),
-                .path     = PathBuf::from(diagnostic.path.as_str()),
-                .line     = diagnostic.line,
-            });
-        }
-        summary.packages.push(rstd::move(package_summary));
+    return Ok(copy_doc_summary(rstd::move(profile),
+                               rstd::move(generated).unwrap(),
+                               frontend_service.statistics(),
+                               toolchain.statistics()));
+}
+
+auto render_documentation(const DocRenderRequest& request) -> Result<DocSummary> {
+    if (request.working_directory.is_empty())
+        return doc_failure<DocSummary>("doc working directory is required"_str);
+    if (request.data.is_empty())
+        return doc_failure<DocSummary>("doc data directory is required"_str);
+    auto data = resolved_doc_path(request.working_directory.as_path(), request.data.as_path());
+    auto output =
+        request.output.is_empty()
+            ? request.working_directory.join(PathBuf::from("doc"_str).as_path())
+            : resolved_doc_path(request.working_directory.as_path(), request.output.as_path());
+    auto frontend_path = Option<PathBuf> {};
+    if (request.frontend.is_some()) {
+        frontend_path = Some(
+            resolved_doc_path(request.working_directory.as_path(), request.frontend->as_path()));
     }
-    return Ok(rstd::move(summary));
+    auto rendered = tenon::doc::render(tenon::doc::RenderInput {
+        .data     = rstd::move(data),
+        .output   = rstd::move(output),
+        .frontend = rstd::move(frontend_path),
+    });
+    if (rendered.is_err()) return doc_failure<DocSummary>(rstd::move(rendered).unwrap_err());
+    return Ok(
+        copy_doc_summary(String::make("from-data"_str), rstd::move(rendered).unwrap(), {}, {}));
 }
 
 } // namespace tenon

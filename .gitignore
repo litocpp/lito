@@ -4,3 +4,6 @@
 demo/**/build/
 test/**/build/
 **/tenon.lock.tmp.*
+doc/frontend/node_modules/
+doc/frontend/dist/
+doc/src/frontend/generated/default-bundle.inc

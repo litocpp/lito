@@ -94,6 +94,36 @@ auto make_timing_output(ref<rstd::path::Path>       root,
     };
 }
 
+auto report_documentation(const tenon::DocSummary& summary) -> int {
+    for (const auto& package : summary.packages) {
+        rstd::io::println("documented {}: {} symbols, {} documented, {} undocumented, "
+                          "{} unsupported, {} diagnostics",
+                          package.name.as_str(),
+                          package.symbols,
+                          package.documented,
+                          package.undocumented,
+                          package.unsupported,
+                          package.diagnostics);
+        for (const auto& diagnostic : package.diagnostic_details) {
+            rstd::io::eprintln("{}[{}] {}:{}: {}",
+                               diagnostic.severity == tenon::DocDiagnosticSeverity::Error
+                                   ? "error"_str
+                                   : "warning"_str,
+                               diagnostic.code.as_str(),
+                               diagnostic.path.as_path(),
+                               diagnostic.line,
+                               diagnostic.message.as_str());
+        }
+    }
+    rstd::io::println("documentation data at {}", summary.data_manifest.as_path());
+    if (summary.site_generated) {
+        rstd::io::println("generated documentation ({}) at {}",
+                          summary.profile.as_str(),
+                          summary.index.as_path());
+    }
+    return 0;
+}
+
 } // namespace
 
 extern "C++" int main() {
@@ -106,7 +136,26 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation    = rstd::move(parsed).as_Parsed();
+    auto invocation = rstd::move(parsed).as_Parsed();
+    if (invocation.command.is_Doc()) {
+        auto& options = invocation.command.as_Doc().options;
+        if (options.from_data.is_some()) {
+            auto request = tenon::DocRenderRequest {
+                .working_directory = invocation.working_directory.clone(),
+                .data              = options.from_data->clone(),
+                .output =
+                    options.output.is_some() ? options.output->clone() : rstd::path::PathBuf {},
+                .frontend = options.frontend.is_some() ? Some(options.frontend->clone()) : None(),
+            };
+            auto rendered = tenon::render_documentation(request);
+            if (rendered.is_err()) {
+                auto error = rstd::move(rendered).unwrap_err();
+                rstd::io::eprintln("tenon: {}", error.message.as_str());
+                return 1;
+            }
+            return report_documentation(*rendered);
+        }
+    }
     auto loaded_config = tenon::load_project_config(invocation.working_directory.as_path());
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
@@ -171,8 +220,11 @@ extern "C++" int main() {
         request.selection.packages = rstd::move(options.packages);
         request.targets            = rstd::move(options.targets);
         request.locked             = options.locked;
+        request.data_only          = options.data_only;
         if (options.profile.is_some()) request.configuration.profile = *options.profile;
         if (options.output.is_some()) request.output = rstd::move(*options.output);
+        if (options.data_output.is_some()) request.data_output = rstd::move(*options.data_output);
+        if (options.frontend.is_some()) request.frontend = rstd::move(options.frontend);
 
         auto generated = tenon::generate_documentation(request);
         if (generated.is_err()) {
@@ -180,31 +232,7 @@ extern "C++" int main() {
             rstd::io::eprintln("tenon: {}", error.message.as_str());
             return 1;
         }
-        auto summary = rstd::move(generated).unwrap();
-        for (const auto& package : summary.packages) {
-            rstd::io::println("documented {}: {} symbols, {} documented, {} undocumented, "
-                              "{} unsupported, {} diagnostics",
-                              package.name.as_str(),
-                              package.symbols,
-                              package.documented,
-                              package.undocumented,
-                              package.unsupported,
-                              package.diagnostics);
-            for (const auto& diagnostic : package.diagnostic_details) {
-                rstd::io::eprintln("{}[{}] {}:{}: {}",
-                                   diagnostic.severity == tenon::DocDiagnosticSeverity::Error
-                                       ? "error"_str
-                                       : "warning"_str,
-                                   diagnostic.code.as_str(),
-                                   diagnostic.path.as_path(),
-                                   diagnostic.line,
-                                   diagnostic.message.as_str());
-            }
-        }
-        rstd::io::println("generated documentation ({}) at {}",
-                          summary.profile.as_str(),
-                          summary.index.as_path());
-        return 0;
+        return report_documentation(*generated);
     }
 
     if (invocation.command.is_Test()) {

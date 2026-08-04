@@ -62,6 +62,10 @@ struct CliSchema {
     ArgKey<BuildProfile> doc_profile;
     ArgKey<String>       doc_target;
     ArgKey<String>       doc_output;
+    ArgKey<String>       doc_data_output;
+    ArgKey<String>       doc_frontend;
+    ArgKey<String>       doc_from_data;
+    ArgKey<bool>         doc_data_only;
     ArgKey<bool>         doc_locked;
     Parser               parser;
 };
@@ -170,7 +174,22 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                        .long_name("out"_str)
                                        .value_name("DIRECTORY"_str)
                                        .help("Override the documentation output directory"_str));
-    auto doc_locked  = doc.add_arg(locked_arg());
+    auto doc_data_output = doc.add_arg(Arg<String>::value("data-out"_str, string_parser())
+                                           .long_name("data-out"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Override the documentation data directory"_str));
+    auto doc_frontend    = doc.add_arg(Arg<String>::value("frontend"_str, string_parser())
+                                           .long_name("frontend"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Render with a frontend bundle directory"_str));
+    auto doc_from_data   = doc.add_arg(Arg<String>::value("from-data"_str, string_parser())
+                                           .long_name("from-data"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Render an existing documentation dataset"_str));
+    auto doc_data_only   = doc.add_arg(Arg<bool>::flag("data-only"_str)
+                                           .long_name("data-only"_str)
+                                           .help("Publish documentation data without a site"_str));
+    auto doc_locked      = doc.add_arg(locked_arg());
 
     auto root = Command::make("tenon"_str);
     root.about("Module-first C++ builder"_str);
@@ -216,6 +235,10 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .doc_profile       = doc_profile,
         .doc_target        = doc_target,
         .doc_output        = doc_output,
+        .doc_data_output   = doc_data_output,
+        .doc_frontend      = doc_frontend,
+        .doc_from_data     = doc_from_data,
+        .doc_data_only     = doc_data_only,
         .doc_locked        = doc_locked,
         .parser            = rstd::move(parser).unwrap(),
     });
@@ -287,6 +310,10 @@ struct DocOptions {
     Option<BuildProfile> profile;
     Vec<String>          targets;
     Option<PathBuf>      output;
+    Option<PathBuf>      data_output;
+    Option<PathBuf>      frontend;
+    Option<PathBuf>      from_data;
+    bool                 data_only {};
     bool                 locked {};
 };
 
@@ -388,17 +415,45 @@ auto parse() -> CliOutcome {
             }));
     }
     if (subcommand->get<0>() == "doc"_str) {
-        auto child   = subcommand->get<1>();
-        auto profile = optional_value(*child, schema.doc_profile);
-        auto output  = optional_value(*child, schema.doc_output);
+        auto child       = subcommand->get<1>();
+        auto profile     = optional_value(*child, schema.doc_profile);
+        auto output      = optional_value(*child, schema.doc_output);
+        auto data_output = optional_value(*child, schema.doc_data_output);
+        auto frontend    = optional_value(*child, schema.doc_frontend);
+        auto from_data   = optional_value(*child, schema.doc_from_data);
+        auto packages    = string_values(*child, schema.doc_package);
+        auto targets     = string_values(*child, schema.doc_target);
+        auto data_only   = flag_value(*child, schema.doc_data_only);
+        auto locked      = flag_value(*child, schema.doc_locked);
+        if (from_data.is_some() &&
+            (! packages.is_empty() || profile.is_some() || ! targets.is_empty() ||
+             data_output.is_some() || data_only || locked)) {
+            return CliOutcome::Exit(
+                String::make("tenon: --from-data cannot be combined with --package, --profile, "
+                             "--target, --data-out, --data-only, or --locked\n"_str),
+                true,
+                i32(2));
+        }
+        if (data_only && frontend.is_some()) {
+            return CliOutcome::Exit(
+                String::make("tenon: --frontend cannot be used with --data-only\n"_str),
+                true,
+                i32(2));
+        }
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Doc(DocOptions {
-                .packages = string_values(*child, schema.doc_package),
+                .packages = rstd::move(packages),
                 .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
-                .targets  = string_values(*child, schema.doc_target),
+                .targets  = rstd::move(targets),
                 .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .locked   = flag_value(*child, schema.doc_locked),
+                .data_output =
+                    data_output.is_some() ? Some(PathBuf::from((**data_output).clone())) : None(),
+                .frontend = frontend.is_some() ? Some(PathBuf::from((**frontend).clone())) : None(),
+                .from_data =
+                    from_data.is_some() ? Some(PathBuf::from((**from_data).clone())) : None(),
+                .data_only = data_only,
+                .locked    = locked,
             }));
     }
     auto child = subcommand->get<1>();

@@ -687,9 +687,19 @@ struct DocRequest {
     PackageSelection    selection;
     Vec<String>         targets;
     PathBuf             output;
+    PathBuf             data_output;
+    Option<PathBuf>     frontend;
     BuildConfiguration  configuration;
     PackageSourceConfig sources;
+    bool                data_only { false };
     bool                locked { false };
+};
+
+struct DocRenderRequest {
+    PathBuf         working_directory;
+    PathBuf         data;
+    PathBuf         output;
+    Option<PathBuf> frontend;
 };
 
 enum class DocDiagnosticSeverity
@@ -710,6 +720,7 @@ struct DocPackageSummary {
     String                    name;
     PathBuf                   directory;
     PathBuf                   json;
+    PathBuf                   data_json;
     PathBuf                   index;
     usize                     symbols {};
     usize                     documented {};
@@ -723,6 +734,9 @@ struct DocSummary {
     String                       profile;
     PathBuf                      output;
     PathBuf                      index;
+    PathBuf                      data;
+    PathBuf                      data_manifest;
+    bool                         site_generated { false };
     Vec<DocPackageSummary>       packages;
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;

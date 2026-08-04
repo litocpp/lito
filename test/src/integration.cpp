@@ -120,9 +120,23 @@ TEST(Integration, TestAttachmentKeepsProductionArtifactsIsolated) {
 }
 
 TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
-    auto project = project_root();
-    auto output  = output_root("doc"_str);
+    auto project          = project_root();
+    auto output           = output_root("doc"_str);
+    auto data             = output_root("doc-data"_str);
+    auto restored_output  = output_root("doc-restored"_str);
+    auto data_only_output = output_root("doc-data-only"_str);
+    auto unused_site      = output_root("doc-unused-site"_str);
+    auto custom_frontend  = output_root("doc-custom-frontend"_str);
+    auto custom_output    = output_root("doc-custom-site"_str);
+    auto corrupt_data     = output_root("doc-corrupt-data"_str);
     ASSERT_TRUE(clear_output(output.as_path()));
+    ASSERT_TRUE(clear_output(data.as_path()));
+    ASSERT_TRUE(clear_output(restored_output.as_path()));
+    ASSERT_TRUE(clear_output(data_only_output.as_path()));
+    ASSERT_TRUE(clear_output(unused_site.as_path()));
+    ASSERT_TRUE(clear_output(custom_frontend.as_path()));
+    ASSERT_TRUE(clear_output(custom_output.as_path()));
+    ASSERT_TRUE(clear_output(corrupt_data.as_path()));
     auto generated = tenon::generate_documentation(tenon::DocRequest {
         .selection =
             tenon::PackageSelection {
@@ -130,10 +144,30 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
                 .packages = strings("fixture-doc-basic"_str),
             },
         .output        = output.clone(),
+        .data_output   = data.clone(),
         .configuration = configuration(),
         .locked        = true,
     });
     ASSERT_TRUE(generated.is_ok());
+    EXPECT_TRUE(generated->site_generated);
+    EXPECT_EQ(generated->data.as_path(), data.as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated->data_manifest.as_path()).unwrap());
+    EXPECT_TRUE(tenon::doc::validate_data(data.as_path()).is_ok());
+    ASSERT_TRUE(copy_directory(data.as_path(), corrupt_data.as_path()));
+    auto corrupt_sources =
+        corrupt_data.join(PathBuf::from("packages/fixture-doc-basic/sources"_str).as_path());
+    auto opened_corrupt = rstd::fs::read_dir(corrupt_sources.as_path());
+    ASSERT_TRUE(opened_corrupt.is_ok());
+    auto corrupt_entries = rstd::move(opened_corrupt).unwrap();
+    auto corrupt_entry   = corrupt_entries.next();
+    ASSERT_TRUE(corrupt_entry.is_some());
+    auto corrupt_result = rstd::move(corrupt_entry).unwrap();
+    ASSERT_TRUE(corrupt_result.is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(corrupt_result->path().as_path(), ("{}"_str).as_bytes()).is_ok());
+    auto corrupt_validation = tenon::doc::validate_data(corrupt_data.as_path());
+    ASSERT_TRUE(corrupt_validation.is_err());
+    EXPECT_TRUE(corrupt_validation.unwrap_err().as_str().contains("digest mismatch"_str));
     ASSERT_EQ(generated->packages.len(), usize(1));
     const auto& package = generated->packages[usize {}];
     EXPECT_EQ(package.symbols, usize(5));
@@ -188,7 +222,107 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_TRUE(symbol_pages.as_str().contains("href=\"https://example.com\""_str));
     EXPECT_TRUE(symbol_pages.as_str().contains("&lt;script&gt;"_str));
     EXPECT_FALSE(symbol_pages.as_str().contains("<script>"_str));
+    auto source_directory = package.directory.join(PathBuf::from("source"_str).as_path());
+    auto opened_sources   = rstd::fs::read_dir(source_directory.as_path());
+    ASSERT_TRUE(opened_sources.is_ok());
+    auto source_entries = rstd::move(opened_sources).unwrap();
+    auto source_pages   = String::make();
+    for (auto next = source_entries.next(); next.is_some(); next = source_entries.next()) {
+        auto entry = rstd::move(next).unwrap();
+        ASSERT_TRUE(entry.is_ok());
+        auto page = rstd::fs::read_to_string(entry->path().as_path());
+        ASSERT_TRUE(page.is_ok());
+        source_pages.push_str(page->as_str());
+    }
+    EXPECT_TRUE(source_pages.as_str().contains("&lt;script&gt;"_str));
+    EXPECT_FALSE(source_pages.as_str().contains("<script>"_str));
     EXPECT_TRUE(rstd::fs::exists(generated->index.as_path()).unwrap());
+    auto restored = tenon::render_documentation(tenon::DocRenderRequest {
+        .working_directory = project.clone(),
+        .data              = data.clone(),
+        .output            = restored_output.clone(),
+    });
+    ASSERT_TRUE(restored.is_ok());
+    EXPECT_TRUE(restored->site_generated);
+    auto original_index = rstd::fs::read_to_string(generated->index.as_path());
+    auto restored_index = rstd::fs::read_to_string(restored->index.as_path());
+    ASSERT_TRUE(original_index.is_ok());
+    ASSERT_TRUE(restored_index.is_ok());
+    EXPECT_EQ(original_index->as_str(), restored_index->as_str());
+    EXPECT_EQ(regular_file_count(output.as_path()), regular_file_count(restored_output.as_path()));
+
+    auto frontend_source = root("../doc/frontend/dist"_str);
+    ASSERT_TRUE(copy_directory(frontend_source.as_path(), custom_frontend.as_path()));
+    auto root_template   = custom_frontend.join(PathBuf::from("templates/root.html"_str).as_path());
+    auto custom_template = rstd::fs::read_to_string(root_template.as_path());
+    ASSERT_TRUE(custom_template.is_ok());
+    auto marked_template = String::make("<!-- custom frontend -->\n"_str);
+    marked_template.push_str(custom_template->as_str());
+    ASSERT_TRUE(rstd::fs::write_atomic(root_template.as_path(), marked_template.as_str().as_bytes())
+                    .is_ok());
+    auto custom = tenon::render_documentation(tenon::DocRenderRequest {
+        .working_directory = project.clone(),
+        .data              = data.clone(),
+        .output            = custom_output.clone(),
+        .frontend          = Some(custom_frontend.clone()),
+    });
+    ASSERT_TRUE(custom.is_ok());
+    auto custom_index = rstd::fs::read_to_string(custom->index.as_path());
+    ASSERT_TRUE(custom_index.is_ok());
+    EXPECT_TRUE(custom_index->as_str().starts_with("<!-- custom frontend -->"_str));
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(root_template.as_path(), ("{{missing.value}}"_str).as_bytes())
+            .is_ok());
+    auto missing_value = tenon::render_documentation(tenon::DocRenderRequest {
+        .working_directory = project.clone(),
+        .data              = data.clone(),
+        .output            = custom_output.clone(),
+        .frontend          = Some(custom_frontend.clone()),
+    });
+    ASSERT_TRUE(missing_value.is_err());
+    EXPECT_TRUE(missing_value.unwrap_err().message.as_str().contains(
+        "templates/root.html:1:1: missing template value 'missing.value'"_str));
+    auto preserved_index = rstd::fs::read_to_string(custom->index.as_path());
+    ASSERT_TRUE(preserved_index.is_ok());
+    EXPECT_EQ(preserved_index->as_str(), custom_index->as_str());
+    ASSERT_TRUE(rstd::fs::write_atomic(root_template.as_path(),
+                                       ("{{> templates/root.html}}"_str).as_bytes())
+                    .is_ok());
+    auto partial_cycle = tenon::render_documentation(tenon::DocRenderRequest {
+        .working_directory = project.clone(),
+        .data              = data.clone(),
+        .output            = custom_output.clone(),
+        .frontend          = Some(custom_frontend.clone()),
+    });
+    ASSERT_TRUE(partial_cycle.is_err());
+    EXPECT_TRUE(partial_cycle.unwrap_err().message.as_str().contains(
+        "template partial cycle through 'templates/root.html'"_str));
+    auto extra = custom_frontend.join(PathBuf::from("undeclared.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write_atomic(extra.as_path(), ("undeclared"_str).as_bytes()).is_ok());
+    EXPECT_TRUE(tenon::render_documentation(tenon::DocRenderRequest {
+                                                .working_directory = project.clone(),
+                                                .data              = data.clone(),
+                                                .output            = custom_output.clone(),
+                                                .frontend          = Some(custom_frontend.clone()),
+                                            })
+                    .is_err());
+
+    auto data_only = tenon::generate_documentation(tenon::DocRequest {
+        .selection =
+            tenon::PackageSelection {
+                .root     = project.clone(),
+                .packages = strings("fixture-doc-basic"_str),
+            },
+        .output        = unused_site.clone(),
+        .data_output   = data_only_output.clone(),
+        .configuration = configuration(),
+        .data_only     = true,
+        .locked        = true,
+    });
+    ASSERT_TRUE(data_only.is_ok());
+    EXPECT_FALSE(data_only->site_generated);
+    EXPECT_FALSE(rstd::fs::exists(unused_site.as_path()).unwrap());
+    EXPECT_TRUE(tenon::doc::validate_data(data_only_output.as_path()).is_ok());
     auto regenerated = tenon::generate_documentation(tenon::DocRequest {
         .selection =
             tenon::PackageSelection {
@@ -196,6 +330,7 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
                 .packages = strings("fixture-doc-basic"_str),
             },
         .output        = output.clone(),
+        .data_output   = data.clone(),
         .configuration = configuration(),
         .locked        = true,
     });
@@ -204,6 +339,12 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     ASSERT_TRUE(second_json.is_ok());
     EXPECT_EQ(second_json->as_str(), json->as_str());
     EXPECT_TRUE(clear_output(output.as_path()));
+    EXPECT_TRUE(clear_output(data.as_path()));
+    EXPECT_TRUE(clear_output(restored_output.as_path()));
+    EXPECT_TRUE(clear_output(data_only_output.as_path()));
+    EXPECT_TRUE(clear_output(custom_frontend.as_path()));
+    EXPECT_TRUE(clear_output(custom_output.as_path()));
+    EXPECT_TRUE(clear_output(corrupt_data.as_path()));
 
     auto rejected = tenon::generate_documentation(tenon::DocRequest {
         .selection =
@@ -212,6 +353,7 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
                 .packages = strings("fixture-test-app"_str),
             },
         .output        = output.clone(),
+        .data_output   = data.clone(),
         .configuration = configuration(),
         .locked        = true,
     });
