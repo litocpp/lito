@@ -6,4 +6,5 @@ test/**/build/
 **/tenon.lock.tmp.*
 doc/frontend/node_modules/
 doc/frontend/dist/
+doc/frontend/package-lock.json
 doc/src/frontend/generated/default-bundle.inc
