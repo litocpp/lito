@@ -247,6 +247,16 @@ private:
         return scopes_[scopes_.len() - usize(1)].qualified_name.as_str();
     }
 
+    auto current_namespace() const -> String {
+        auto index = scopes_.len();
+        while (index != usize {}) {
+            --index;
+            if (scopes_[index].kind == DeclarationKind::Namespace)
+                return scopes_[index].qualified_name.clone();
+        }
+        return String::make();
+    }
+
     auto current_access() const -> DeclarationAccess {
         if (scopes_.is_empty()) return DeclarationAccess::Public;
         return scopes_[scopes_.len() - usize(1)].access;
@@ -295,6 +305,7 @@ private:
             .kind           = kind,
             .name           = String::make(name),
             .qualified_name = qualified_name(name),
+            .namespace_name = current_namespace(),
             .signature      = declaration_spelling(tokens_, begin, end),
             .is_definition  = is_definition,
             .exported       = exported,

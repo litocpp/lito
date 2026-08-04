@@ -60,6 +60,7 @@ struct DeclarationOutline {
     DeclarationKind              kind { DeclarationKind::Variable };
     String                       name;
     String                       qualified_name;
+    String                       namespace_name;
     String                       signature;
     bool                         is_definition { false };
     bool                         exported { false };

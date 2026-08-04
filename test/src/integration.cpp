@@ -178,9 +178,9 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     ASSERT_EQ(package.diagnostic_details.len(), usize(1));
     EXPECT_EQ(package.diagnostic_details[usize {}].code.as_str(),
               "conflicting-symbol-documentation"_str);
-    EXPECT_EQ(generated->frontend.source_reads, usize(1));
-    EXPECT_EQ(generated->frontend.lex_builds, usize(1));
-    EXPECT_EQ(generated->frontend.documentation_builds, usize(1));
+    EXPECT_EQ(generated->frontend.source_reads, usize(3));
+    EXPECT_EQ(generated->frontend.lex_builds, usize(3));
+    EXPECT_EQ(generated->frontend.documentation_builds, usize(3));
     EXPECT_EQ(generated->frontend.documentation_declarations, usize(8));
     auto json = rstd::fs::read_to_string(package.json.as_path());
     ASSERT_TRUE(json.is_ok());
@@ -199,11 +199,57 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_FALSE(json->as_str().contains("Forward declaration documentation."_str));
     EXPECT_TRUE(json->as_str().contains("conflicting-symbol-documentation"_str));
     EXPECT_TRUE(json->as_str().contains("fixture::nested::make"_str));
+    EXPECT_TRUE(json->as_str().contains("\"namespace\": \"fixture::nested\""_str));
     EXPECT_FALSE(json->as_str().contains("fixture::nested::T"_str));
     EXPECT_TRUE(json->as_str().contains("\"group\": \"Arithmetic\""_str));
     EXPECT_FALSE(json->as_str().contains("Inactive declaration documentation."_str));
     EXPECT_FALSE(json->as_str().contains("doxygen_hidden"_str));
     EXPECT_FALSE(json->as_str().contains("private member"_str));
+    auto package_page = rstd::fs::read_to_string(package.index.as_path());
+    ASSERT_TRUE(package_page.is_ok());
+    EXPECT_TRUE(package_page->as_str().contains("Fixture module overview."_str));
+    EXPECT_TRUE(package_page->as_str().contains("<code>child</code>"_str));
+    EXPECT_FALSE(package_page->as_str().contains("<code>nested</code>"_str));
+    EXPECT_FALSE(package_page->as_str().contains("Public API"_str));
+    EXPECT_FALSE(package_page->as_str().contains("coverage-strip"_str));
+    EXPECT_FALSE(package_page->as_str().contains(">Packages</div>"_str));
+    EXPECT_TRUE(package_page->as_str().contains(">On this page</div>"_str));
+    EXPECT_FALSE(package_page->as_str().contains("aria-label=\"Package modules\""_str));
+    auto module_directory = package.directory.join(PathBuf::from("module"_str).as_path());
+    auto opened_modules   = rstd::fs::read_dir(module_directory.as_path());
+    ASSERT_TRUE(opened_modules.is_ok());
+    auto module_entries    = rstd::move(opened_modules).unwrap();
+    auto root_module_page  = String::make();
+    auto child_module_page = String::make();
+    for (auto next = module_entries.next(); next.is_some(); next = module_entries.next()) {
+        auto entry = rstd::move(next).unwrap();
+        ASSERT_TRUE(entry.is_ok());
+        auto page = rstd::fs::read_to_string(entry->path().as_path());
+        ASSERT_TRUE(page.is_ok());
+        EXPECT_FALSE(page->as_str().contains("Reexports"_str));
+        EXPECT_FALSE(page->as_str().contains(">Packages</div>"_str));
+        if (page->as_str().contains("<h1><code>fixture.doc.basic</code></h1>"_str))
+            root_module_page.push_str(page->as_str());
+        if (page->as_str().contains("<h1><code>fixture.doc.basic:child</code></h1>"_str))
+            child_module_page.push_str(page->as_str());
+    }
+    EXPECT_TRUE(root_module_page.as_str().contains("<code>child</code>"_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("<code>nested</code>"_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("aria-label=\"Package modules\""_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("Symbols"_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("kind-label"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"structs\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Structs</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Widget</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"functions\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Functions</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">add</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">make</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(
+        "<span class=\"namespace-label\">fixture::nested</span>"_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("fixture::nested::Widget::value"_str));
+    EXPECT_TRUE(child_module_page.as_str().contains("<code>nested</code>"_str));
+    EXPECT_TRUE(child_module_page.as_str().contains("aria-label=\"Package modules\""_str));
     auto symbol_directory = package.directory.join(PathBuf::from("symbol"_str).as_path());
     auto opened_symbols   = rstd::fs::read_dir(symbol_directory.as_path());
     ASSERT_TRUE(opened_symbols.is_ok());
@@ -222,6 +268,7 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_TRUE(symbol_pages.as_str().contains("href=\"https://example.com\""_str));
     EXPECT_TRUE(symbol_pages.as_str().contains("&lt;script&gt;"_str));
     EXPECT_FALSE(symbol_pages.as_str().contains("<script>"_str));
+    EXPECT_FALSE(symbol_pages.as_str().contains(">Packages</div>"_str));
     auto source_directory = package.directory.join(PathBuf::from("source"_str).as_path());
     auto opened_sources   = rstd::fs::read_dir(source_directory.as_path());
     ASSERT_TRUE(opened_sources.is_ok());
@@ -248,6 +295,16 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     auto restored_index = rstd::fs::read_to_string(restored->index.as_path());
     ASSERT_TRUE(original_index.is_ok());
     ASSERT_TRUE(restored_index.is_ok());
+    EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-shell>"_str));
+    EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-search root-prefix="_str));
+    EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-theme-picker>"_str));
+    EXPECT_TRUE(original_index->as_str().contains("<span>Packages</span>"_str));
+    EXPECT_FALSE(original_index->as_str().contains(">Packages</div>"_str));
+    EXPECT_TRUE(original_index->as_str().contains(">On this page</div>"_str));
+    EXPECT_FALSE(original_index->as_str().contains("class=\"page-outline\""_str));
+    EXPECT_FALSE(original_index->as_str().contains("aria-label=\"Packages\""_str));
+    EXPECT_FALSE(original_index->as_str().contains("data-root-prefix="_str));
+    EXPECT_TRUE(symbol_pages.as_str().contains("<tenon-doc-module-identity"_str));
     EXPECT_EQ(original_index->as_str(), restored_index->as_str());
     EXPECT_EQ(regular_file_count(output.as_path()), regular_file_count(restored_output.as_path()));
 

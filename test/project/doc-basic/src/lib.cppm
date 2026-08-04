@@ -6,6 +6,8 @@ export int inactive_documentation();
 //! Fixture module overview.
 export module fixture.doc.basic;
 
+export import :child;
+
 /// Public fixture API.
 export namespace fixture::nested
 {
