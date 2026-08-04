@@ -832,12 +832,12 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(ref<rstd::path::Path>   output_path,
-                         const Vec<PathBuf>&     objects,
-                         const Vec<LinkArchive>& archives,
-                         StandardLibrary         standard_library,
-                         const Vec<String>&      linker_options,
-                         ref<rstd::path::Path>   working_directory) const
+    auto link_executable(ref<rstd::path::Path>         output_path,
+                         const Vec<PathBuf>&           objects,
+                         const Vec<ResolvedLinkInput>& inputs,
+                         StandardLibrary               standard_library,
+                         const Vec<String>&            linker_options,
+                         ref<rstd::path::Path>         working_directory) const
         -> Result<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -851,7 +851,14 @@ public:
             pushed = toolchain::command::push_path(command, object.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
-        for (const auto& archive : archives) {
+        for (const auto& input : inputs) {
+            if (input.is_External()) {
+                for (const auto& token : input.as_External().arguments.tokens) {
+                    command.push(token.clone());
+                }
+                continue;
+            }
+            const auto& archive = input.as_Archive().archive;
             if (archive.mode == LinkArchiveMode::Normal) {
                 pushed = toolchain::command::push_path(command, archive.path.as_path());
                 if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
@@ -1054,8 +1061,11 @@ private:
                                       macro.value.as_str()));
         }
         for (const auto& include : context.cpp.preprocessor.include_directories) {
-            toolchain::command::push_option(command, toolchain::clang_options::INCLUDE);
-            pushed = toolchain::command::push_path(command, include.as_path());
+            toolchain::command::push_option(command,
+                                            include.kind == CppIncludeDirectoryKind::System
+                                                ? "-isystem"_str
+                                                : toolchain::clang_options::INCLUDE);
+            pushed = toolchain::command::push_path(command, include.path.as_path());
             if (pushed.is_err()) return pushed;
         }
         return Ok(empty {});

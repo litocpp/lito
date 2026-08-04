@@ -58,6 +58,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto loaded    = resolve_project_metadata(request.selection,
                                               request.configuration,
                                               request.sources,
+                                              request.pkg_config,
                                               toolchain.target_info(),
                                               toolchain.argument_parser(),
                                               request.locked,
@@ -526,7 +527,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         }
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
-        auto linked_archives = Vec<LinkArchive>::make();
+        auto link_inputs = Vec<ResolvedLinkInput>::make();
         if (target_spec.artifact_kind == ArtifactKind::TestExecutable) {
             for (auto candidate : package_plan.target_order) {
                 const auto& candidate_spec = package.targets[candidate];
@@ -541,13 +542,19 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                      target_spec.name.as_str(),
                                      candidate_spec.test_attachment->library_target.as_str()));
                 }
-                linked_archives.push(LinkArchive {
+                link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                     .path = (*archive_paths[candidate]).clone(),
                     .mode = LinkArchiveMode::Whole,
-                });
+                }));
             }
         }
-        for (auto dependency : package_plan.link_dependencies[target]) {
+        for (const auto& input : package_plan.link_inputs[target]) {
+            if (input.is_External()) {
+                link_inputs.push(
+                    ResolvedLinkInput::External(input.as_External().arguments.clone()));
+                continue;
+            }
+            auto        dependency      = input.as_Target().target;
             const auto& dependency_spec = package.targets[dependency];
             if (dependency_spec.artifact_kind != ArtifactKind::StaticLibrary ||
                 archive_paths[dependency].is_none()) {
@@ -558,10 +565,10 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                  target_spec.name.as_str(),
                                  dependency_spec.name.as_str()));
             }
-            linked_archives.push(LinkArchive {
+            link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                 .path = (*archive_paths[dependency]).clone(),
                 .mode = LinkArchiveMode::Normal,
-            });
+            }));
         }
         auto executable_path =
             target_spec.artifact_kind == ArtifactKind::TestExecutable
@@ -570,7 +577,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         emit(request, BuildEventKind::Link, target_spec.name.as_str(), executable_path.as_path());
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
-                                                linked_archives,
+                                                link_inputs,
                                                 package_plan.profile->cpp.abi.standard_library,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());

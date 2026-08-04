@@ -33,6 +33,13 @@ auto append_unique(Vec<String>& output, const Vec<String>& input) -> void {
     }
 }
 
+auto append_unique(Vec<String>& output, ref<str> input) -> void {
+    for (const auto& existing : output) {
+        if (existing.as_str() == input) return;
+    }
+    output.push(String::make(input));
+}
+
 auto append_unique(Vec<PathBuf>& output, const Vec<PathBuf>& input) -> void {
     for (const auto& value : input) {
         auto present = false;
@@ -85,6 +92,7 @@ struct PublicUsage {
     Vec<PathBuf>     include_directories;
     Vec<String>      definitions;
     CppArgumentLayer arguments;
+    Vec<String>      external_identities;
 };
 
 auto visit_target(const PackageMetadata& package,
@@ -121,13 +129,17 @@ auto visit_target(const PackageMetadata& package,
 }
 
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("tenon-compile-context-v2\n"_str);
+    auto result = String::make("tenon-compile-context-v3\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
     result.push_ascii('\n');
     result.push_str(cpp_compile_identity(context.cpp).as_str());
     result.push_str(cpp_public_requirements_identity(context.public_requirements).as_str());
+    for (const auto& identity : context.external_identities) {
+        result.push_str(
+            rstd::format("external:{}:{}\n", identity.len(), identity.as_str()).as_str());
+    }
     return result;
 }
 
@@ -143,6 +155,7 @@ auto attachment_context(const CompileContext&       library,
         .bmi                 = library.bmi,
         .cpp                 = as<rstd::clone::Clone>(library.cpp).clone(),
         .public_requirements = as<rstd::clone::Clone>(library.public_requirements).clone(),
+        .external_identities = as<rstd::clone::Clone>(library.external_identities).clone(),
     };
     auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
     if (merged.is_err()) {
@@ -151,6 +164,7 @@ auto attachment_context(const CompileContext&       library,
     result.cpp                 = rstd::move(merged).unwrap();
     result.public_requirements = merge_cpp_public_requirements(
         rstd::move(result.public_requirements), test.public_requirements);
+    append_unique(result.external_identities, test.external_identities);
     result.id = rstd::format("tenon-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
                              attachment.test_target.as_str(),
                              attachment.library_target.as_str(),
@@ -169,6 +183,7 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
         .bmi                 = base.bmi,
         .cpp                 = as<rstd::clone::Clone>(base.cpp).clone(),
         .public_requirements = as<rstd::clone::Clone>(base.public_requirements).clone(),
+        .external_identities = as<rstd::clone::Clone>(base.external_identities).clone(),
     };
     auto layer      = CppOptionLayer {};
     layer.arguments = as<rstd::clone::Clone>(test.arguments).clone();
@@ -218,18 +233,18 @@ auto resolve_source_discovery(const PackageMetadata& package,
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
     }
 
-    auto public_usage      = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
-    auto public_visible    = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto contexts          = Vec<CompileContext>::with_capacity(package.targets.len());
-    auto visible_targets   = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto link_dependencies = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto linker_options    = Vec<Vec<String>>::with_capacity(package.targets.len());
+    auto public_usage    = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
+    auto public_visible  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto contexts        = Vec<CompileContext>::with_capacity(package.targets.len());
+    auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto link_inputs     = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
+    auto linker_options  = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
         public_visible.emplace_back();
         contexts.emplace_back();
         visible_targets.emplace_back();
-        link_dependencies.emplace_back();
+        link_inputs.emplace_back();
         linker_options.emplace_back();
     }
 
@@ -239,6 +254,11 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(usage.include_directories, spec.manifest.usage.public_include_directories);
         append_unique(usage.definitions, spec.manifest.usage.public_definitions);
         append_unique(usage.arguments, spec.manifest.usage.public_arguments);
+        for (const auto& dependency : spec.external_dependencies) {
+            if (dependency.visibility != DependencyVisibility::Public) continue;
+            append_unique(usage.arguments, dependency.compile_arguments);
+            append_unique(usage.external_identities, dependency.identity.as_str());
+        }
 
         auto exported_targets = Vec<TargetId>::make();
         append_unique(exported_targets, target);
@@ -249,6 +269,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             append_unique(usage.include_directories, nested_usage.include_directories);
             append_unique(usage.definitions, nested_usage.definitions);
             append_unique(usage.arguments, nested_usage.arguments);
+            append_unique(usage.external_identities, nested_usage.external_identities);
             append_unique(exported_targets, public_visible[dependency_id]);
         }
         public_usage[target]   = Some(rstd::move(usage));
@@ -273,12 +294,18 @@ auto resolve_source_discovery(const PackageMetadata& package,
         }
         context.public_requirements = cpp_public_requirements(*public_cpp);
         context.cpp                 = rstd::move(public_cpp).unwrap();
+        append_unique(context.external_identities, exported_usage.external_identities);
 
         auto private_layer = CppOptionLayer {};
         append_unique(private_layer.include_directories,
                       spec.manifest.usage.private_include_directories);
         append_unique(private_layer.definitions, spec.manifest.usage.private_definitions);
         append_unique(private_layer.arguments, spec.manifest.usage.private_arguments);
+        for (const auto& dependency : spec.external_dependencies) {
+            if (dependency.visibility != DependencyVisibility::Private) continue;
+            append_unique(private_layer.arguments, dependency.compile_arguments);
+            append_unique(context.external_identities, dependency.identity.as_str());
+        }
 
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
@@ -291,6 +318,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             append_unique(private_layer.include_directories, usage.include_directories);
             append_unique(private_layer.definitions, usage.definitions);
             append_unique(private_layer.arguments, usage.arguments);
+            append_unique(context.external_identities, usage.external_identities);
         }
         auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
         if (applied.is_err()) {
@@ -347,10 +375,21 @@ auto resolve_source_discovery(const PackageMetadata& package,
         auto dependency_order = Vec<TargetId>::make();
         auto ordered          = visit_target(package, target_ids, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
-        auto& dependencies = link_dependencies[target];
+        auto& inputs = link_inputs[target];
         for (auto index = dependency_order.len(); index > usize {}; --index) {
             const auto candidate = dependency_order[index - usize(1)];
-            if (candidate != target) dependencies.emplace_back(candidate);
+            if (candidate == target) continue;
+            inputs.push(PlannedLinkInput::Target(candidate));
+            for (const auto& external : package.targets[candidate].external_dependencies) {
+                if (! external.link_arguments.tokens.is_empty()) {
+                    inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
+                }
+            }
+        }
+        for (const auto& external : package.targets[target].external_dependencies) {
+            if (! external.link_arguments.tokens.is_empty()) {
+                inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
+            }
         }
     }
 
@@ -359,13 +398,13 @@ auto resolve_source_discovery(const PackageMetadata& package,
         target_names.push(target.manifest.name.clone());
     }
     return Ok(SourceDiscoveryPlan {
-        .profile           = *profile,
-        .target_names      = rstd::move(target_names),
-        .target_order      = rstd::move(target_order),
-        .contexts          = rstd::move(contexts),
-        .visible_targets   = rstd::move(visible_targets),
-        .link_dependencies = rstd::move(link_dependencies),
-        .linker_options    = rstd::move(linker_options),
+        .profile         = *profile,
+        .target_names    = rstd::move(target_names),
+        .target_order    = rstd::move(target_order),
+        .contexts        = rstd::move(contexts),
+        .visible_targets = rstd::move(visible_targets),
+        .link_inputs     = rstd::move(link_inputs),
+        .linker_options  = rstd::move(linker_options),
     });
 }
 
@@ -383,13 +422,13 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
         }
     }
     return Ok(PackagePlan {
-        .package           = rstd::addressof(package),
-        .profile           = rstd::addressof(package.profiles[discovery.profile]),
-        .target_order      = rstd::move(discovery.target_order),
-        .contexts          = rstd::move(discovery.contexts),
-        .visible_targets   = rstd::move(discovery.visible_targets),
-        .link_dependencies = rstd::move(discovery.link_dependencies),
-        .linker_options    = rstd::move(discovery.linker_options),
+        .package         = rstd::addressof(package),
+        .profile         = rstd::addressof(package.profiles[discovery.profile]),
+        .target_order    = rstd::move(discovery.target_order),
+        .contexts        = rstd::move(discovery.contexts),
+        .visible_targets = rstd::move(discovery.visible_targets),
+        .link_inputs     = rstd::move(discovery.link_inputs),
+        .linker_options  = rstd::move(discovery.linker_options),
     });
 }
 

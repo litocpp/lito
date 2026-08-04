@@ -72,6 +72,11 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
         "include-directory"_str,
         "-I"_str,
         CompilerArgumentValueForm::SeparateOrJoined);
+    add(schema,
+        CppCompilerArgumentKind::SystemIncludeDirectory,
+        "system-include-directory"_str,
+        "-isystem"_str,
+        CompilerArgumentValueForm::SeparateOrJoined);
 
     auto target = definition("target"_str);
     spelling(target, "--target"_str, CompilerArgumentValueForm::SeparateOrEquals);

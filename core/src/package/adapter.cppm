@@ -6,6 +6,7 @@ export module tenon.package:adapter;
 import rstd;
 import tenon.model;
 import tenon.build_profile;
+import tenon.dependency;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -48,12 +49,13 @@ auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidat
 export namespace tenon
 {
 
-auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
-                                  const Vec<String>&        selected_package_names,
-                                  const Vec<String>&        selected_root_names,
-                                  const BuildConfiguration& configuration,
-                                  const TargetInfo&         target_info,
-                                  const CppArgumentParser&  argument_parser)
+auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
+                                  const Vec<String>&             selected_package_names,
+                                  const Vec<String>&             selected_root_names,
+                                  const BuildConfiguration&      configuration,
+                                  const PkgConfigProviderConfig& pkg_config,
+                                  const TargetInfo&              target_info,
+                                  const CppArgumentParser&       argument_parser)
     -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
@@ -69,6 +71,42 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
     for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
     for (const auto& name : selected_root_names) requested_roots.insert(name.clone(), empty {});
+
+    auto declared_external = Vec<DeclaredExternalDependency>::make();
+    auto external_owners   = Vec<usize>::make();
+    auto external_by_package =
+        Vec<Vec<ResolvedExternalDependency>>::with_capacity(graph.packages.len());
+    for (usize index {}; index < graph.packages.len(); ++index) {
+        external_by_package.emplace_back();
+        if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
+        for (const auto& dependency : graph.packages[index].external_dependencies) {
+            auto requirement = PkgConfigDependencyRequirement {
+                .module = dependency.requirement.module.clone(),
+                .mode   = dependency.requirement.mode,
+            };
+            if (dependency.requirement.version.is_some()) {
+                requirement.version = Some(PkgConfigVersionRequirement {
+                    .comparison = dependency.requirement.version->comparison,
+                    .value      = dependency.requirement.version->value.clone(),
+                });
+            }
+            declared_external.push(DeclaredExternalDependency {
+                .alias       = dependency.alias.clone(),
+                .requirement = rstd::move(requirement),
+                .visibility  = dependency.visibility,
+            });
+            external_owners.emplace_back(index);
+        }
+    }
+    auto effective_target  = profile.cpp.target.target.is_some()
+                                 ? profile.cpp.target.target->as_str()
+                                 : target_info.triple.as_str();
+    auto resolved_external = resolve_external_dependencies(
+        declared_external, pkg_config, target_info, effective_target, argument_parser);
+    if (resolved_external.is_err()) return Err(rstd::move(resolved_external).unwrap_err());
+    for (usize index {}; index < resolved_external->len(); ++index) {
+        external_by_package[external_owners[index]].push(rstd::move((*resolved_external)[index]));
+    }
 
     auto artifact_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
     for (const auto& package : graph.packages) {
@@ -98,7 +136,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
     }
 
     auto targets = Vec<TargetMetadata>::with_capacity(selected_package_names.len());
-    for (auto& package : graph.packages) {
+    for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
+        auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
         for (auto& group : package.manifest.conditional_source_groups) {
             if (! group.predicate.matches(target_info)) continue;
@@ -149,8 +188,9 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph      graph,
             });
         }
         targets.push(TargetMetadata {
-            .manifest     = rstd::move(package.manifest),
-            .dependencies = rstd::move(dependencies),
+            .manifest              = rstd::move(package.manifest),
+            .dependencies          = rstd::move(dependencies),
+            .external_dependencies = rstd::move(external_by_package[package_index]),
         });
     }
 
@@ -301,17 +341,18 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
         auto archive_stem  = target.manifest.artifact_name.clone();
         auto compile_tests = rstd::move(target.manifest.compile_tests);
         targets.push(TargetSpec {
-            .name               = rstd::move(target.manifest.name),
-            .artifact_kind      = target.manifest.artifact_kind,
-            .artifact_name      = rstd::move(artifact_name),
-            .archive_stem       = rstd::move(archive_stem),
-            .module_affiliation = rstd::move(target.manifest.root_module),
-            .root               = rstd::move(target.manifest.root),
-            .sources            = rstd::move(sources),
-            .dependencies       = rstd::move(target.dependencies),
-            .usage              = rstd::move(target.manifest.usage),
-            .compile_tests      = rstd::move(compile_tests),
-            .test_attachment    = rstd::move(target.test_attachment),
+            .name                  = rstd::move(target.manifest.name),
+            .artifact_kind         = target.manifest.artifact_kind,
+            .artifact_name         = rstd::move(artifact_name),
+            .archive_stem          = rstd::move(archive_stem),
+            .module_affiliation    = rstd::move(target.manifest.root_module),
+            .root                  = rstd::move(target.manifest.root),
+            .sources               = rstd::move(sources),
+            .dependencies          = rstd::move(target.dependencies),
+            .external_dependencies = rstd::move(target.external_dependencies),
+            .usage                 = rstd::move(target.manifest.usage),
+            .compile_tests         = rstd::move(compile_tests),
+            .test_attachment       = rstd::move(target.test_attachment),
         });
     }
 

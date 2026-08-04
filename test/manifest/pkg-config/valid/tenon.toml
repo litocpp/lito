@@ -1,0 +1,18 @@
+[package]
+name = "pkg-config-valid"
+version = "0.1.0"
+module = "pkg_config_valid"
+
+[library]
+archive = "pkg_config_valid"
+discovery = "module"
+
+[dependencies.curl]
+pkg-config = "libcurl"
+version = ">= 7.86.0"
+visibility = "private"
+
+[dependencies.openssl]
+pkg-config = "openssl"
+static = true
+visibility = "public"

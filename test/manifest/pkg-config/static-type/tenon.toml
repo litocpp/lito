@@ -1,0 +1,13 @@
+[package]
+name = "pkg-config-static-type"
+version = "0.1.0"
+module = "pkg_config_static_type"
+
+[library]
+archive = "pkg_config_static_type"
+discovery = "module"
+
+[dependencies.curl]
+pkg-config = "libcurl"
+static = "yes"
+visibility = "private"

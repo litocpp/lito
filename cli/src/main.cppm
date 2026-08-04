@@ -189,6 +189,7 @@ extern "C++" int main() {
         request.selection.root     = rstd::move(project.root);
         request.configuration      = build_configuration(rstd::move(project.toolchain));
         request.sources            = rstd::move(project.sources);
+        request.pkg_config         = rstd::move(project.pkg_config);
         request.selection.packages = rstd::move(options.packages);
         request.targets            = rstd::move(options.targets);
         request.source             = rstd::move(options.source);
@@ -217,6 +218,7 @@ extern "C++" int main() {
         request.selection.root     = rstd::move(project.root);
         request.configuration      = build_configuration(rstd::move(project.toolchain));
         request.sources            = rstd::move(project.sources);
+        request.pkg_config         = rstd::move(project.pkg_config);
         request.selection.packages = rstd::move(options.packages);
         request.targets            = rstd::move(options.targets);
         request.locked             = options.locked;
@@ -244,6 +246,7 @@ extern "C++" int main() {
         request.build.selection.root = rstd::move(project.root);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain));
         request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.locked             = options.locked;
         request.arguments                = rstd::move(options.arguments);
@@ -349,6 +352,7 @@ extern "C++" int main() {
     request.selection.root     = rstd::move(project.root);
     request.configuration      = build_configuration(rstd::move(project.toolchain));
     request.sources            = rstd::move(project.sources);
+    request.pkg_config         = rstd::move(project.pkg_config);
     request.selection.packages = rstd::move(options.packages);
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked;

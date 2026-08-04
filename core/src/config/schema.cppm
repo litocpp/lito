@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module tenon.config:schema;
 
 import rstd;
@@ -36,7 +39,7 @@ auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
 }
 
 auto root_config_key(ref<str> key) -> bool {
-    return key == "toolchain"_str || key == "patch"_str;
+    return key == "toolchain"_str || key == "pkg-config"_str || key == "patch"_str;
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
@@ -45,6 +48,11 @@ auto toolchain_config_key(ref<str> key) -> bool {
 
 auto patch_config_key(ref<str> key) -> bool {
     return key == "path"_str;
+}
+
+auto pkg_config_key(ref<str> key) -> bool {
+    return key == "executable"_str || key == "search-path"_str || key == "library-path"_str ||
+           key == "sysroot"_str;
 }
 
 auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
@@ -59,24 +67,108 @@ auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)
     return Ok(empty {});
 }
 
-auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback)
+auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback, ref<str> context)
     -> Result<PathBuf> {
     auto value = config_member(toolchain_value, key);
     if (value.is_none()) return Ok(PathBuf::from(fallback));
     auto text = (**value).as_str();
     if (text.is_none()) {
-        return config_failure<PathBuf>(rstd::format("config.toolchain.{} must be a string", key));
+        return config_failure<PathBuf>(rstd::format("{}.{} must be a string", context, key));
     }
     if (text->is_empty()) {
-        return config_failure<PathBuf>(rstd::format("config.toolchain.{} must not be empty", key));
+        return config_failure<PathBuf>(rstd::format("{}.{} must not be empty", context, key));
     }
     auto path = PathBuf::from(*text);
     if (! path.as_path().is_absolute() &&
         ! toolchain::command::is_searchable_tool_name(path.as_path())) {
         return config_failure<PathBuf>(
-            rstd::format("config.toolchain.{} must be an executable name or absolute path", key));
+            rstd::format("{}.{} must be an executable name or absolute path", context, key));
     }
     return Ok(rstd::move(path));
+}
+
+auto configured_directories(const Toml&           table,
+                            ref<str>              key,
+                            ref<str>              context,
+                            ref<rstd::path::Path> project_root) -> Result<Vec<PathBuf>> {
+    auto result = Vec<PathBuf>::make();
+    auto value  = config_member(table, key);
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto array = (**value).as_array();
+    if (array.is_none()) {
+        return config_failure<Vec<PathBuf>>(rstd::format("{}.{} must be an array", context, key));
+    }
+    for (const auto& item : **array) {
+        auto text = item.as_str();
+        if (text.is_none() || text->is_empty()) {
+            return config_failure<Vec<PathBuf>>(
+                rstd::format("{}.{} entries must be non-empty strings", context, key));
+        }
+        auto path = PathBuf::from(*text);
+        if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
+        auto canonical = rstd::fs::canonicalize(path.as_path());
+        if (canonical.is_err()) {
+            return config_failure<Vec<PathBuf>>(rstd::format("cannot resolve {}.{} path '{}': {}",
+                                                             context,
+                                                             key,
+                                                             path.as_path(),
+                                                             rstd::move(canonical).unwrap_err()));
+        }
+        auto metadata = rstd::fs::metadata(canonical->as_path());
+        if (metadata.is_err()) {
+            return config_failure<Vec<PathBuf>>(rstd::format("cannot inspect {}.{} path '{}': {}",
+                                                             context,
+                                                             key,
+                                                             canonical->as_path(),
+                                                             rstd::move(metadata).unwrap_err()));
+        }
+        if (! metadata->is_dir()) {
+            return config_failure<Vec<PathBuf>>(rstd::format(
+                "{}.{} path '{}' is not a directory", context, key, canonical->as_path()));
+        }
+        result.push(rstd::move(canonical).unwrap());
+    }
+    return Ok(rstd::move(result));
+}
+
+auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_root)
+    -> Result<PkgConfigProviderConfig> {
+    auto result = PkgConfigProviderConfig {
+        .executable = PathBuf::from("pkg-config"_str),
+    };
+    auto value = config_member(document, "pkg-config"_str);
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = config_table(**value, "config.pkg-config"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.pkg-config"_str, pkg_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    result.executable = rstd_try(
+        configured_tool(**value, "executable"_str, "pkg-config"_str, "config.pkg-config"_str));
+    result.search_paths = rstd_try(
+        configured_directories(**value, "search-path"_str, "config.pkg-config"_str, project_root));
+    result.library_paths = rstd_try(
+        configured_directories(**value, "library-path"_str, "config.pkg-config"_str, project_root));
+    auto sysroot = config_member(**value, "sysroot"_str);
+    if (sysroot.is_some()) {
+        auto text = (**sysroot).as_str();
+        if (text.is_none() || text->is_empty()) {
+            return config_failure<PkgConfigProviderConfig>(
+                "config.pkg-config.sysroot must be a non-empty string"_str);
+        }
+        auto path = PathBuf::from(*text);
+        if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
+        auto canonical = rstd::fs::canonicalize(path.as_path());
+        if (canonical.is_err()) {
+            return config_failure<PkgConfigProviderConfig>(
+                rstd::format("cannot resolve config.pkg-config.sysroot '{}': {}",
+                             path.as_path(),
+                             rstd::move(canonical).unwrap_err()));
+        }
+        result.sysroot = Some(rstd::move(canonical).unwrap());
+    }
+    result.target_configured = config_member(**value, "executable"_str).is_some() ||
+                               ! result.library_paths.is_empty() || result.sysroot.is_some();
+    return Ok(rstd::move(result));
 }
 
 auto default_toolchain() -> ToolchainSpec {
@@ -202,6 +294,10 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         return Ok(ProjectConfig {
             .root      = rstd::move(root),
             .toolchain = default_toolchain(),
+            .pkg_config =
+                PkgConfigProviderConfig {
+                    .executable = PathBuf::from("pkg-config"_str),
+                },
         });
     }
 
@@ -230,9 +326,12 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto compiler  = configured_tool(**toolchain_value, "compiler"_str, "clang++"_str);
-        auto archiver  = configured_tool(**toolchain_value, "archiver"_str, "llvm-ar"_str);
-        auto formatter = configured_tool(**toolchain_value, "formatter"_str, "clang-format"_str);
+        auto compiler = configured_tool(
+            **toolchain_value, "compiler"_str, "clang++"_str, "config.toolchain"_str);
+        auto archiver = configured_tool(
+            **toolchain_value, "archiver"_str, "llvm-ar"_str, "config.toolchain"_str);
+        auto formatter = configured_tool(
+            **toolchain_value, "formatter"_str, "clang-format"_str, "config.toolchain"_str);
         if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
         if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
         if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
@@ -245,11 +344,14 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
 
     auto sources = configured_sources(document, root.as_path());
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
+    auto pkg_config = configured_pkg_config(document, root.as_path());
+    if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
 
     return Ok(ProjectConfig {
-        .root      = rstd::move(root),
-        .toolchain = rstd::move(toolchain),
-        .sources   = rstd::move(sources).unwrap(),
+        .root       = rstd::move(root),
+        .toolchain  = rstd::move(toolchain),
+        .sources    = rstd::move(sources).unwrap(),
+        .pkg_config = rstd::move(pkg_config).unwrap(),
     });
 }
 

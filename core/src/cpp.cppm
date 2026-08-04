@@ -48,6 +48,12 @@ enum class CppMacroAction
     Undefine,
 };
 
+enum class CppIncludeDirectoryKind
+{
+    User,
+    System,
+};
+
 enum class CppVendorOptionEffect
 {
     Preprocessor,
@@ -82,6 +88,7 @@ enum class CppCompilerArgumentKind
     MacroDefine,
     MacroUndefine,
     IncludeDirectory,
+    SystemIncludeDirectory,
     Target,
     Sysroot,
     OwnedLanguageStandard,
@@ -107,6 +114,13 @@ struct CppMacroDirective : DefaultInClass<CppMacroDirective, Clone> {
     String         value;
 
     auto clone() const -> CppMacroDirective;
+};
+
+struct CppIncludeDirectory : DefaultInClass<CppIncludeDirectory, Clone> {
+    PathBuf                 path;
+    CppIncludeDirectoryKind kind { CppIncludeDirectoryKind::User };
+
+    auto clone() const -> CppIncludeDirectory;
 };
 
 struct CppFamilyOption : DefaultInClass<CppFamilyOption, Clone> {
@@ -145,8 +159,8 @@ struct CppTargetOptions {
 };
 
 struct CppPreprocessorOptions {
-    Vec<PathBuf>           include_directories;
-    Vec<CppMacroDirective> macros;
+    Vec<CppIncludeDirectory> include_directories;
+    Vec<CppMacroDirective>   macros;
 };
 
 struct CppCodegenOptions {
@@ -173,8 +187,8 @@ struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
 };
 
 struct CppPublicRequirements : DefaultInClass<CppPublicRequirements, Clone> {
-    Vec<PathBuf>           include_directories;
-    Vec<CppMacroDirective> macros;
+    Vec<CppIncludeDirectory> include_directories;
+    Vec<CppMacroDirective>   macros;
 
     auto clone() const -> CppPublicRequirements;
 };
@@ -182,7 +196,7 @@ struct CppPublicRequirements : DefaultInClass<CppPublicRequirements, Clone> {
 class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
     RSTD_ENUM(CppCompilerArgument,
               (Macro, (CppMacroDirective directive;)),
-              (IncludeDirectory, (PathBuf path;)),
+              (IncludeDirectory, (CppIncludeDirectory directory;)),
               (Target, (String value;)),
               (Sysroot, (String value;)),
               (OwnedSetting, (CppOwnedSetting setting;)),
@@ -385,9 +399,9 @@ auto append_unique(Vec<String>& output, String value) -> void {
     output.push(rstd::move(value));
 }
 
-auto append_unique(Vec<PathBuf>& output, PathBuf value) -> void {
+auto append_unique(Vec<CppIncludeDirectory>& output, CppIncludeDirectory value) -> void {
     for (const auto& existing : output) {
-        if (existing.as_path() == value.as_path()) return;
+        if (existing.path.as_path() == value.path.as_path() && existing.kind == value.kind) return;
     }
     output.push(rstd::move(value));
 }
@@ -550,8 +564,13 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
             .value  = compiler_argument_value(matched).clone(),
         });
     case CppCompilerArgumentKind::IncludeDirectory:
-        return CppCompilerArgument::IncludeDirectory(
-            PathBuf::from(compiler_argument_value(matched).clone()));
+    case CppCompilerArgumentKind::SystemIncludeDirectory:
+        return CppCompilerArgument::IncludeDirectory(CppIncludeDirectory {
+            .path = PathBuf::from(compiler_argument_value(matched).clone()),
+            .kind = kind == CppCompilerArgumentKind::SystemIncludeDirectory
+                        ? CppIncludeDirectoryKind::System
+                        : CppIncludeDirectoryKind::User,
+        });
     case CppCompilerArgumentKind::Target:
         return CppCompilerArgument::Target(compiler_argument_value(matched).clone());
     case CppCompilerArgumentKind::Sysroot:
@@ -663,6 +682,13 @@ auto CppMacroDirective::clone() const -> CppMacroDirective {
     };
 }
 
+auto CppIncludeDirectory::clone() const -> CppIncludeDirectory {
+    return CppIncludeDirectory {
+        .path = path.clone(),
+        .kind = kind,
+    };
+}
+
 auto CppFamilyOption::clone() const -> CppFamilyOption {
     return CppFamilyOption {
         .family = family.clone(),
@@ -688,8 +714,8 @@ auto CppCompilerArgument::clone() const -> CppCompilerArgument {
                 .value  = directive.value.clone(),
             });
         }
-        RSTD_CASE(IncludeDirectory, path) {
-            return CppCompilerArgument::IncludeDirectory(path.clone());
+        RSTD_CASE(IncludeDirectory, directory) {
+            return CppCompilerArgument::IncludeDirectory(as<Clone>(directory).clone());
         }
         RSTD_CASE(Target, value) {
             return CppCompilerArgument::Target(value.clone());
@@ -831,7 +857,11 @@ auto make_cpp_options(ref<str>        language_standard,
 auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
     -> CppOptionResult<CppCompileOptions> {
     for (auto& include : layer.include_directories) {
-        append_unique(input.preprocessor.include_directories, rstd::move(include));
+        append_unique(input.preprocessor.include_directories,
+                      CppIncludeDirectory {
+                          .path = rstd::move(include),
+                          .kind = CppIncludeDirectoryKind::User,
+                      });
     }
     for (auto& definition : layer.definitions) {
         input.preprocessor.macros.push(CppMacroDirective {
@@ -855,8 +885,8 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             RSTD_CASE(Macro, directive) {
                 input.preprocessor.macros.push(rstd::move(directive));
             }
-            RSTD_CASE(IncludeDirectory, path) {
-                append_unique(input.preprocessor.include_directories, rstd::move(path));
+            RSTD_CASE(IncludeDirectory, directory) {
+                append_unique(input.preprocessor.include_directories, rstd::move(directory));
             }
             RSTD_CASE(Target, value) {
                 input.target.target = Some(rstd::move(value));
@@ -909,8 +939,14 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         cpp_bmi_compatibility_identity(extra).as_str()) {
         return option_error("cannot merge C++ contexts with different semantic or ABI options"_str);
     }
-    auto layer                = CppOptionLayer {};
-    layer.include_directories = as<Clone>(extra.preprocessor.include_directories).clone();
+    auto layer = CppOptionLayer {};
+    for (const auto& include : extra.preprocessor.include_directories) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument   = CppCompilerArgument::IncludeDirectory(as<Clone>(include).clone()),
+            .raw_tokens = Vec<String>::make(),
+            .source     = String::make("merged C++ context"_str),
+        });
+    }
     for (const auto& macro : extra.preprocessor.macros) {
         if (macro.action == CppMacroAction::Define) {
             layer.definitions.push(macro.value.clone());
@@ -980,8 +1016,11 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
         push_identity(result, "instrumentation"_str, value.as_str());
     }
     for (const auto& include : options.preprocessor.include_directories) {
-        auto text = include.as_path().to_str();
-        push_identity(result, "include"_str, text.is_some() ? *text : "<non-utf8>"_str);
+        auto text = include.path.as_path().to_str();
+        push_identity(result,
+                      include.kind == CppIncludeDirectoryKind::System ? "system-include"_str
+                                                                      : "include"_str,
+                      text.is_some() ? *text : "<non-utf8>"_str);
     }
     for (const auto& macro : options.preprocessor.macros) {
         push_identity(result,
@@ -1014,8 +1053,11 @@ auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String 
 auto cpp_public_requirements_identity(const CppPublicRequirements& requirements) -> String {
     auto result = String::make("tenon-cpp-public-requirements-v1\n"_str);
     for (const auto& include : requirements.include_directories) {
-        auto text = include.as_path().to_str();
-        push_identity(result, "include"_str, text.is_some() ? *text : "<non-utf8>"_str);
+        auto text = include.path.as_path().to_str();
+        push_identity(result,
+                      include.kind == CppIncludeDirectoryKind::System ? "system-include"_str
+                                                                      : "include"_str,
+                      text.is_some() ? *text : "<non-utf8>"_str);
     }
     for (const auto& macro : requirements.macros) {
         push_identity(result,
@@ -1030,7 +1072,8 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
     for (const auto& required : requirements.include_directories) {
         auto available = false;
         for (const auto& include : consumer.preprocessor.include_directories) {
-            if (include.as_path() == required.as_path()) {
+            if (include.path.as_path() == required.path.as_path() &&
+                include.kind == required.kind) {
                 available = true;
                 break;
             }

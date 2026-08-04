@@ -52,6 +52,21 @@ auto package_conflict(ref<str>                 name,
                      candidate.source_identity.as_str()));
 }
 
+auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& input)
+    -> PkgConfigDependencyRequirement {
+    auto result = PkgConfigDependencyRequirement {
+        .module = input.module.clone(),
+        .mode   = input.mode,
+    };
+    if (input.version.is_some()) {
+        result.version = Some(PkgConfigVersionRequirement {
+            .comparison = input.version->comparison,
+            .value      = input.version->value.clone(),
+        });
+    }
+    return result;
+}
+
 class Resolver {
     PathBuf              root_directory_;
     PackageSourceManager sources_;
@@ -118,10 +133,28 @@ public:
                             });
         active_.insert(loaded.package.name.clone(), empty {});
 
-        auto dependencies = Vec<ResolvedDependency>::make();
+        auto dependencies          = Vec<ResolvedDependency>::make();
+        auto external_dependencies = Vec<DeclaredExternalDependency>::make();
         for (const auto& dependency : loaded.package.dependencies) {
-            auto dependency_source =
-                sources_.acquire(dependency.source, loaded.package.root.as_path());
+            if (dependency.source.is_PkgConfig()) {
+                external_dependencies.push(DeclaredExternalDependency {
+                    .alias = dependency.name.clone(),
+                    .requirement =
+                        clone_pkg_config_requirement(dependency.source.as_PkgConfig().requirement),
+                    .visibility = dependency.visibility,
+                });
+                continue;
+            }
+            auto source =
+                dependency.source.is_Git()
+                    ? PackageSourceRequirement::Git(
+                          dependency.source.as_Git().url.clone(),
+                          GitReference {
+                              .kind  = dependency.source.as_Git().reference.kind,
+                              .value = dependency.source.as_Git().reference.value.clone(),
+                          })
+                    : PackageSourceRequirement::Path(dependency.source.as_Path().path.clone());
+            auto dependency_source = sources_.acquire(source, loaded.package.root.as_path());
             if (dependency_source.is_err()) {
                 return Err(rstd::move(dependency_source).unwrap_err());
             }
@@ -142,10 +175,11 @@ public:
 
         active_.remove(loaded.package.name.as_str());
         packages_.push(ResolvedPackage {
-            .source_identity = rstd::move(loaded.source_identity),
-            .source_manifest = rstd::move(loaded.manifest),
-            .manifest        = rstd::move(loaded.package),
-            .dependencies    = rstd::move(dependencies),
+            .source_identity       = rstd::move(loaded.source_identity),
+            .source_manifest       = rstd::move(loaded.manifest),
+            .manifest              = rstd::move(loaded.package),
+            .dependencies          = rstd::move(dependencies),
+            .external_dependencies = rstd::move(external_dependencies),
         });
         return Ok(String::make(expected_name));
     }

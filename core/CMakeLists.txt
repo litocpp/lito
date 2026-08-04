@@ -15,6 +15,7 @@ target_sources(
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm
+         src/dependency.cppm
          src/manifest/locator.cppm
          src/manifest/schema.cppm
          src/manifest/mod.cppm

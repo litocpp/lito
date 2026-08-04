@@ -14,13 +14,14 @@ using namespace rstd::prelude;
 export namespace tenon
 {
 
-auto resolve_project_metadata(const PackageSelection&    selection,
-                              const BuildConfiguration&  configuration,
-                              const PackageSourceConfig& sources,
-                              const TargetInfo&          target_info,
-                              const CppArgumentParser&   argument_parser,
-                              bool                       locked,
-                              PackageSelectionPurpose    purpose = PackageSelectionPurpose::All)
+auto resolve_project_metadata(const PackageSelection&        selection,
+                              const BuildConfiguration&      configuration,
+                              const PackageSourceConfig&     sources,
+                              const PkgConfigProviderConfig& pkg_config,
+                              const TargetInfo&              target_info,
+                              const CppArgumentParser&       argument_parser,
+                              bool                           locked,
+                              PackageSelectionPurpose        purpose = PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
     auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), locked));
     auto resolution    = lock_session.take_resolution_options();
@@ -32,6 +33,7 @@ auto resolve_project_metadata(const PackageSelection&    selection,
                                         project.selected_package_names,
                                         project.selected_root_names,
                                         configuration,
+                                        pkg_config,
                                         target_info,
                                         argument_parser);
 }

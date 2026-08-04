@@ -159,7 +159,8 @@ auto usage_key(ref<str> key) -> bool {
 
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
-           key == "rev"_str || key == "visibility"_str;
+           key == "rev"_str || key == "pkg-config"_str || key == "version"_str ||
+           key == "static"_str || key == "visibility"_str;
 }
 
 auto workspace_key(ref<str> key) -> bool {
@@ -700,6 +701,48 @@ auto parse_visibility(ref<str> value, ref<str> context) -> Result<DependencyVisi
         rstd::format("{} must be public, private, or runtime", context));
 }
 
+auto parse_pkg_config_version(ref<str> value, ref<str> context)
+    -> Result<PkgConfigVersionRequirement> {
+    auto text       = value.trim_ascii();
+    auto comparison = PkgConfigVersionOperator::Equal;
+    auto prefix     = usize {};
+    if (text.starts_with(">="_str)) {
+        comparison = PkgConfigVersionOperator::GreaterEqual;
+        prefix     = usize(2);
+    } else if (text.starts_with("<="_str)) {
+        comparison = PkgConfigVersionOperator::LessEqual;
+        prefix     = usize(2);
+    } else if (text.starts_with("="_str)) {
+        comparison = PkgConfigVersionOperator::Equal;
+        prefix     = usize(1);
+    } else if (text.starts_with(">"_str)) {
+        comparison = PkgConfigVersionOperator::Greater;
+        prefix     = usize(1);
+    } else if (text.starts_with("<"_str)) {
+        comparison = PkgConfigVersionOperator::Less;
+        prefix     = usize(1);
+    } else {
+        return failure<PkgConfigVersionRequirement>(
+            rstd::format("{} must begin with one of '=', '<', '>', '<=', or '>='", context));
+    }
+    auto version = text.get(prefix, text.len());
+    if (version.is_none()) {
+        return failure<PkgConfigVersionRequirement>(
+            rstd::format("{} must contain a version value", context));
+    }
+    auto normalized = version->trim_ascii();
+    if (normalized.is_empty() || normalized.contains(" "_str) || normalized.contains("\t"_str) ||
+        normalized.contains("<"_str) || normalized.contains(">"_str) ||
+        normalized.contains("="_str)) {
+        return failure<PkgConfigVersionRequirement>(
+            rstd::format("{} contains an invalid version value", context));
+    }
+    return Ok(PkgConfigVersionRequirement {
+        .comparison = comparison,
+        .value      = String::make(normalized),
+    });
+}
+
 auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependency>> {
     auto result = Vec<DeclaredDependency>::make();
     if (value.is_none()) return Ok(rstd::move(result));
@@ -727,23 +770,33 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         auto path_text       = optional_string(**specification, "path"_str, "dependency"_str);
         auto git             = optional_string(**specification, "git"_str, "dependency"_str);
+        auto pkg_config      = optional_string(**specification, "pkg-config"_str, "dependency"_str);
+        auto version         = optional_string(**specification, "version"_str, "dependency"_str);
         auto branch          = optional_string(**specification, "branch"_str, "dependency"_str);
         auto tag             = optional_string(**specification, "tag"_str, "dependency"_str);
         auto rev             = optional_string(**specification, "rev"_str, "dependency"_str);
         auto visibility_text = required_string(**specification, "visibility"_str, "dependency"_str);
         if (path_text.is_err()) return Err(rstd::move(path_text).unwrap_err());
         if (git.is_err()) return Err(rstd::move(git).unwrap_err());
+        if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
+        if (version.is_err()) return Err(rstd::move(version).unwrap_err());
         if (branch.is_err()) return Err(rstd::move(branch).unwrap_err());
         if (tag.is_err()) return Err(rstd::move(tag).unwrap_err());
         if (rev.is_err()) return Err(rstd::move(rev).unwrap_err());
         if (visibility_text.is_err()) {
             return Err(rstd::move(visibility_text).unwrap_err());
         }
-        auto path_value = rstd::move(path_text).unwrap();
-        auto git_value  = rstd::move(git).unwrap();
-        if (path_value.is_some() == git_value.is_some()) {
+        auto path_value       = rstd::move(path_text).unwrap();
+        auto git_value        = rstd::move(git).unwrap();
+        auto pkg_config_value = rstd::move(pkg_config).unwrap();
+        auto source_count     = usize {};
+        if (path_value.is_some()) ++source_count;
+        if (git_value.is_some()) ++source_count;
+        if (pkg_config_value.is_some()) ++source_count;
+        if (source_count != usize(1)) {
             return failure<Vec<DeclaredDependency>>(rstd::format(
-                "dependency '{}' must contain exactly one of 'path' or 'git'", name.as_str()));
+                "dependency '{}' must contain exactly one of 'path', 'git', or 'pkg-config'",
+                name.as_str()));
         }
         auto  branch_value = rstd::move(branch).unwrap();
         auto  tag_value    = rstd::move(tag).unwrap();
@@ -757,16 +810,31 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
                 rstd::format("dependency '{}' may contain only one of 'branch', 'tag', or 'rev'",
                              name.as_str()));
         }
-        if (path_value.is_some() && selector_count != usize {}) {
+        if (! git_value.is_some() && selector_count != usize {}) {
             return failure<Vec<DeclaredDependency>>(
                 rstd::format("dependency '{}' Git selector requires 'git'", name.as_str()));
         }
-        auto source = Option<PackageSourceRequirement> {};
+        auto version_value = rstd::move(version).unwrap();
+        auto static_value  = false;
+        auto static_member = member(**specification, "static"_str);
+        if (static_member.is_some()) {
+            auto parsed_static = (**static_member).as_bool();
+            if (parsed_static.is_none()) {
+                return failure<Vec<DeclaredDependency>>(
+                    rstd::format("dependency '{}'.static must be a boolean", name.as_str()));
+            }
+            static_value = *parsed_static;
+        }
+        if (pkg_config_value.is_none() && (version_value.is_some() || static_member.is_some())) {
+            return failure<Vec<DeclaredDependency>>(rstd::format(
+                "dependency '{}' version and static require 'pkg-config'", name.as_str()));
+        }
+        auto source = Option<DeclaredDependencySource> {};
         if (path_value.is_some()) {
             auto path = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            source = Some(PackageSourceRequirement::Path(rstd::move(path).unwrap()));
-        } else {
+            source = Some(DeclaredDependencySource::Path(rstd::move(path).unwrap()));
+        } else if (git_value.is_some()) {
             auto url = rstd::move(git_value).unwrap();
             if (url.is_empty()) {
                 return failure<Vec<DeclaredDependency>>(
@@ -799,7 +867,28 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
                 return failure<Vec<DeclaredDependency>>(rstd::format(
                     "dependency '{}' Git selector must not start with '-'", name.as_str()));
             }
-            source = Some(PackageSourceRequirement::Git(rstd::move(url), rstd::move(reference)));
+            source = Some(DeclaredDependencySource::Git(rstd::move(url), rstd::move(reference)));
+        } else {
+            auto module = rstd::move(pkg_config_value).unwrap();
+            if (module.is_empty() || module.as_str().starts_with("-"_str)) {
+                return failure<Vec<DeclaredDependency>>(rstd::format(
+                    "dependency '{}'.pkg-config must be non-empty and must not start with '-'",
+                    name.as_str()));
+            }
+            auto requirement = Option<PkgConfigVersionRequirement> {};
+            if (version_value.is_some()) {
+                auto parsed_version =
+                    parse_pkg_config_version(version_value->as_str(), "dependency.version"_str);
+                if (parsed_version.is_err()) {
+                    return Err(rstd::move(parsed_version).unwrap_err());
+                }
+                requirement = Some(rstd::move(parsed_version).unwrap());
+            }
+            source = Some(DeclaredDependencySource::PkgConfig(PkgConfigDependencyRequirement {
+                .module  = rstd::move(module),
+                .version = rstd::move(requirement),
+                .mode    = static_value ? PkgConfigQueryMode::Static : PkgConfigQueryMode::Shared,
+            }));
         }
         auto visibility = parse_visibility(visibility_text->as_str(), "dependency.visibility"_str);
         if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());

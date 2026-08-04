@@ -85,10 +85,43 @@ struct GitReference {
     String           value;
 };
 
+enum class PkgConfigVersionOperator
+{
+    Equal,
+    Less,
+    Greater,
+    LessEqual,
+    GreaterEqual,
+};
+
+enum class PkgConfigQueryMode
+{
+    Shared,
+    Static,
+};
+
+struct PkgConfigVersionRequirement {
+    PkgConfigVersionOperator comparison { PkgConfigVersionOperator::Equal };
+    String                   value;
+};
+
+struct PkgConfigDependencyRequirement {
+    String                              module;
+    Option<PkgConfigVersionRequirement> version;
+    PkgConfigQueryMode                  mode { PkgConfigQueryMode::Shared };
+};
+
 class PackageSourceRequirement {
     RSTD_ENUM(PackageSourceRequirement,
               (Path, (PathBuf path;)),
               (Git, (String url; GitReference reference;)))
+};
+
+class DeclaredDependencySource {
+    RSTD_ENUM(DeclaredDependencySource,
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference;)),
+              (PkgConfig, (PkgConfigDependencyRequirement requirement;)))
 };
 
 enum class SourceDiscoveryMode
@@ -157,10 +190,30 @@ struct PackageSourceConfig {
     }
 };
 
+struct PkgConfigProviderConfig {
+    PathBuf         executable;
+    Vec<PathBuf>    search_paths;
+    Vec<PathBuf>    library_paths;
+    Option<PathBuf> sysroot;
+    bool            target_configured { false };
+
+    auto clone() const -> PkgConfigProviderConfig {
+        auto result = PkgConfigProviderConfig {
+            .executable        = executable.clone(),
+            .search_paths      = as<rstd::clone::Clone>(search_paths).clone(),
+            .library_paths     = as<rstd::clone::Clone>(library_paths).clone(),
+            .target_configured = target_configured,
+        };
+        if (sysroot.is_some()) result.sysroot = Some(sysroot->clone());
+        return result;
+    }
+};
+
 struct ProjectConfig {
-    PathBuf             root;
-    ToolchainSpec       toolchain;
-    PackageSourceConfig sources;
+    PathBuf                 root;
+    ToolchainSpec           toolchain;
+    PackageSourceConfig     sources;
+    PkgConfigProviderConfig pkg_config;
 };
 
 struct ProfileSpec {
@@ -173,6 +226,44 @@ struct ProfileSpec {
 struct DependencySpec {
     String               target;
     DependencyVisibility visibility { DependencyVisibility::Private };
+};
+
+struct LinkArgumentSequence {
+    Vec<String> tokens;
+    String      source;
+    String      identity;
+
+    auto clone() const -> LinkArgumentSequence {
+        return LinkArgumentSequence {
+            .tokens   = as<rstd::clone::Clone>(tokens).clone(),
+            .source   = source.clone(),
+            .identity = identity.clone(),
+        };
+    }
+};
+
+struct ResolvedExternalDependency {
+    String               alias;
+    String               provider;
+    String               module;
+    String               version;
+    DependencyVisibility visibility { DependencyVisibility::Private };
+    CppArgumentLayer     compile_arguments;
+    LinkArgumentSequence link_arguments;
+    String               identity;
+
+    auto clone() const -> ResolvedExternalDependency {
+        return ResolvedExternalDependency {
+            .alias             = alias.clone(),
+            .provider          = provider.clone(),
+            .module            = module.clone(),
+            .version           = version.clone(),
+            .visibility        = visibility,
+            .compile_arguments = as<rstd::clone::Clone>(compile_arguments).clone(),
+            .link_arguments    = link_arguments.clone(),
+            .identity          = identity.clone(),
+        };
+    }
 };
 
 struct UsageRequirements {
@@ -189,7 +280,7 @@ struct UsageRequirements {
 
 struct DeclaredDependency {
     String                   name;
-    PackageSourceRequirement source;
+    DeclaredDependencySource source;
     DependencyVisibility     visibility { DependencyVisibility::Private };
 };
 
@@ -341,6 +432,12 @@ struct ResolvedDependency {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct DeclaredExternalDependency {
+    String                         alias;
+    PkgConfigDependencyRequirement requirement;
+    DependencyVisibility           visibility { DependencyVisibility::Private };
+};
+
 struct ResolvedPackageSource {
     String            identity;
     PackageSourceKind kind { PackageSourceKind::Path };
@@ -364,10 +461,11 @@ struct PackageResolutionOptions {
 };
 
 struct ResolvedPackage {
-    String                  source_identity;
-    PathBuf                 source_manifest;
-    PackageManifest         manifest;
-    Vec<ResolvedDependency> dependencies;
+    String                          source_identity;
+    PathBuf                         source_manifest;
+    PackageManifest                 manifest;
+    Vec<ResolvedDependency>         dependencies;
+    Vec<DeclaredExternalDependency> external_dependencies;
 };
 
 struct ResolvedPackageGraph {
@@ -429,9 +527,10 @@ struct TestAttachmentTarget {
 };
 
 struct TargetMetadata {
-    PackageManifest              manifest;
-    Vec<DependencySpec>          dependencies;
-    Option<TestAttachmentTarget> test_attachment;
+    PackageManifest                 manifest;
+    Vec<DependencySpec>             dependencies;
+    Vec<ResolvedExternalDependency> external_dependencies;
+    Option<TestAttachmentTarget>    test_attachment;
 };
 
 struct PackageMetadata {
@@ -446,17 +545,18 @@ struct PackageMetadata {
 };
 
 struct TargetSpec {
-    String                       name;
-    ArtifactKind                 artifact_kind { ArtifactKind::StaticLibrary };
-    String                       artifact_name;
-    String                       archive_stem;
-    Option<String>               module_affiliation;
-    PathBuf                      root;
-    Vec<TargetSource>            sources;
-    Vec<DependencySpec>          dependencies;
-    UsageRequirements            usage;
-    Vec<CompileTestCase>         compile_tests;
-    Option<TestAttachmentTarget> test_attachment;
+    String                          name;
+    ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
+    String                          artifact_name;
+    String                          archive_stem;
+    Option<String>                  module_affiliation;
+    PathBuf                         root;
+    Vec<TargetSource>               sources;
+    Vec<DependencySpec>             dependencies;
+    Vec<ResolvedExternalDependency> external_dependencies;
+    UsageRequirements               usage;
+    Vec<CompileTestCase>            compile_tests;
+    Option<TestAttachmentTarget>    test_attachment;
 };
 
 struct PackageSpec {
@@ -475,6 +575,7 @@ struct CompileContext {
     BmiRequest            bmi;
     CppCompileOptions     cpp;
     CppPublicRequirements public_requirements;
+    Vec<String>           external_identities;
 };
 
 struct CompilerIdentity {
@@ -516,24 +617,36 @@ struct LinkArchive {
     LinkArchiveMode mode { LinkArchiveMode::Normal };
 };
 
+class PlannedLinkInput {
+    RSTD_ENUM(PlannedLinkInput,
+              (Target, (TargetId target;)),
+              (External, (LinkArgumentSequence arguments;)))
+};
+
+class ResolvedLinkInput {
+    RSTD_ENUM(ResolvedLinkInput,
+              (Archive, (LinkArchive archive;)),
+              (External, (LinkArgumentSequence arguments;)))
+};
+
 struct SourceDiscoveryPlan {
-    usize               profile {};
-    Vec<String>         target_names;
-    Vec<TargetId>       target_order;
-    Vec<CompileContext> contexts;
-    Vec<Vec<TargetId>>  visible_targets;
-    Vec<Vec<TargetId>>  link_dependencies;
-    Vec<Vec<String>>    linker_options;
+    usize                      profile {};
+    Vec<String>                target_names;
+    Vec<TargetId>              target_order;
+    Vec<CompileContext>        contexts;
+    Vec<Vec<TargetId>>         visible_targets;
+    Vec<Vec<PlannedLinkInput>> link_inputs;
+    Vec<Vec<String>>           linker_options;
 };
 
 struct PackagePlan {
-    const PackageSpec*  package {};
-    const ProfileSpec*  profile {};
-    Vec<TargetId>       target_order;
-    Vec<CompileContext> contexts;
-    Vec<Vec<TargetId>>  visible_targets;
-    Vec<Vec<TargetId>>  link_dependencies;
-    Vec<Vec<String>>    linker_options;
+    const PackageSpec*         package {};
+    const ProfileSpec*         profile {};
+    Vec<TargetId>              target_order;
+    Vec<CompileContext>        contexts;
+    Vec<Vec<TargetId>>         visible_targets;
+    Vec<Vec<PlannedLinkInput>> link_inputs;
+    Vec<Vec<String>>           linker_options;
 };
 
 struct UnitSpec {
@@ -617,6 +730,7 @@ struct BuildRequest {
     PathBuf                 output;
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
+    PkgConfigProviderConfig pkg_config;
     PackageSelectionPurpose purpose { PackageSelectionPurpose::Production };
     bool                    locked { false };
     Option<BuildObserver>   observer;
@@ -660,12 +774,13 @@ struct BuildSummary {
 };
 
 struct ScanRequest {
-    PackageSelection    selection;
-    Vec<String>         targets;
-    PathBuf             source;
-    BuildConfiguration  configuration;
-    PackageSourceConfig sources;
-    bool                locked { false };
+    PackageSelection        selection;
+    Vec<String>             targets;
+    PathBuf                 source;
+    BuildConfiguration      configuration;
+    PackageSourceConfig     sources;
+    PkgConfigProviderConfig pkg_config;
+    bool                    locked { false };
 };
 
 struct ScanReport {
@@ -686,15 +801,16 @@ struct FormatSummary {
 };
 
 struct DocRequest {
-    PackageSelection    selection;
-    Vec<String>         targets;
-    PathBuf             output;
-    PathBuf             data_output;
-    Option<PathBuf>     frontend;
-    BuildConfiguration  configuration;
-    PackageSourceConfig sources;
-    bool                data_only { false };
-    bool                locked { false };
+    PackageSelection        selection;
+    Vec<String>             targets;
+    PathBuf                 output;
+    PathBuf                 data_output;
+    Option<PathBuf>         frontend;
+    BuildConfiguration      configuration;
+    PackageSourceConfig     sources;
+    PkgConfigProviderConfig pkg_config;
+    bool                    data_only { false };
+    bool                    locked { false };
 };
 
 struct DocRenderRequest {

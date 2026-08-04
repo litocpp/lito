@@ -30,6 +30,16 @@ struct CommandOutput {
     rstd::time::Duration elapsed;
 };
 
+struct CommandEnvironmentEntry {
+    String         key;
+    Option<String> value;
+};
+
+struct CommandEnvironment {
+    bool                         clear { false };
+    Vec<CommandEnvironmentEntry> entries;
+};
+
 auto decode_command_output(rstd::process::Output value, rstd::time::Duration elapsed)
     -> Result<CommandOutput> {
     auto stdout_text = output_text(rstd::move(value.stdout_buf), "command stdout"_str);
@@ -46,9 +56,9 @@ auto decode_command_output(rstd::process::Output value, rstd::time::Duration ela
     });
 }
 
-auto run_command(const Vec<String>&            arguments,
-                 Option<ref<rstd::path::Path>> working_directory = None())
-    -> Result<CommandOutput> {
+auto run_command(const Vec<String>&              arguments,
+                 Option<ref<rstd::path::Path>>   working_directory = None(),
+                 Option<ref<CommandEnvironment>> environment = None()) -> Result<CommandOutput> {
     if (arguments.is_empty()) {
         return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
     }
@@ -60,6 +70,15 @@ auto run_command(const Vec<String>&            arguments,
 
     if (working_directory.is_some()) {
         command.current_dir(*working_directory);
+    }
+    if (environment.is_some()) {
+        if ((*environment)->clear) command.env_clear();
+        for (const auto& entry : (*environment)->entries) {
+            if (entry.value.is_some())
+                command.env(entry.key.as_str(), entry.value->as_str());
+            else
+                command.env_remove(entry.key.as_str());
+        }
     }
 
     auto started = rstd::time::Instant::now();

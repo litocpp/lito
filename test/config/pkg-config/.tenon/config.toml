@@ -1,0 +1,5 @@
+[pkg-config]
+executable = "pkg-config"
+search-path = ["../../pkg-config"]
+library-path = ["../../pkg-config"]
+sysroot = "."

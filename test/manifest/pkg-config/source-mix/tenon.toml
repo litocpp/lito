@@ -1,0 +1,13 @@
+[package]
+name = "pkg-config-source-mix"
+version = "0.1.0"
+module = "pkg_config_source_mix"
+
+[library]
+archive = "pkg_config_source_mix"
+discovery = "module"
+
+[dependencies.curl]
+path = "../valid"
+pkg-config = "libcurl"
+visibility = "private"

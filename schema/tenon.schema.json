@@ -559,6 +559,17 @@
       "type": "string",
       "pattern": "^[^-]"
     },
+    "pkgConfigModule": {
+      "description": "A non-empty pkg-config module name not starting with '-'.",
+      "type": "string",
+      "pattern": "^[^-].*$",
+      "minLength": 1
+    },
+    "pkgConfigVersion": {
+      "description": "One pkg-config version comparison.",
+      "type": "string",
+      "pattern": "^(=|<|>|<=|>=)[ \\t]*[^<>= \\t]+$"
+    },
     "dependency": {
       "type": "object",
       "required": [
@@ -570,6 +581,15 @@
         },
         "git": {
           "$ref": "#/definitions/gitUrl"
+        },
+        "pkg-config": {
+          "$ref": "#/definitions/pkgConfigModule"
+        },
+        "version": {
+          "$ref": "#/definitions/pkgConfigVersion"
+        },
+        "static": {
+          "type": "boolean"
         },
         "branch": {
           "$ref": "#/definitions/gitSelector"
@@ -616,6 +636,21 @@
                     "required": [
                       "rev"
                     ]
+                  },
+                  {
+                    "required": [
+                      "pkg-config"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "static"
+                    ]
                   }
                 ]
               }
@@ -625,8 +660,61 @@
                 "git"
               ],
               "not": {
-                "required": [
-                  "path"
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "pkg-config"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "static"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "pkg-config"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  }
                 ]
               }
             }

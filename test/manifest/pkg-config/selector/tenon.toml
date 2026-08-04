@@ -1,0 +1,13 @@
+[package]
+name = "pkg-config-selector"
+version = "0.1.0"
+module = "pkg_config_selector"
+
+[library]
+archive = "pkg_config_selector"
+discovery = "module"
+
+[dependencies.curl]
+pkg-config = "libcurl"
+tag = "v1"
+visibility = "private"

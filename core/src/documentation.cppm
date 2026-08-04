@@ -122,6 +122,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
     auto loaded    = resolve_project_metadata(request.selection,
                                               request.configuration,
                                               request.sources,
+                                              request.pkg_config,
                                               toolchain.target_info(),
                                               toolchain.argument_parser(),
                                               request.locked,
