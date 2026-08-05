@@ -6,7 +6,7 @@
       "hidden": true,
       "generator": "Ninja",
       "cacheVariables": {
-        "CMAKE_CXX_COMPILER": "/usr/bin/clang++"
+        "CMAKE_CXX_COMPILER": "/nix/opt/llvm/22/bin/clang++"
       }
     },
     {

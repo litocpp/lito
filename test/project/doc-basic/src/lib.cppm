@@ -47,4 +47,31 @@ private:
     int secret;
 };
 
+/// A documented template record used to verify record scope parsing.
+template<typename T>
+struct Box {
+    /// The contained value.
+    T value;
+
+    /// Returns whether the box contains a value.
+    explicit operator bool() const { return true; }
+};
+
+/// A fixture execution mode.
+enum class Mode
+{
+    Fast,
+    Safe,
+};
+
+/// A type accepted by the fixture API.
+template<typename T>
+concept Value = true;
+
+/// An alias for the fixture record.
+using WidgetAlias = Widget;
+
+/// The fixture answer.
+inline constexpr int answer = 42;
+
 } // namespace fixture::nested

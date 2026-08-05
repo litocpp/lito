@@ -409,6 +409,23 @@ private:
         return None();
     }
 
+    auto operator_function_name(usize begin, usize end) const -> Option<String> {
+        for (auto index = begin; index < end; ++index) {
+            if (tokens_[index].text.as_str() != "operator"_str) continue;
+            auto cursor = index + usize(1);
+            if (cursor + usize(2) < end && tokens_[cursor].text.as_str() == "("_str &&
+                tokens_[cursor + usize(1)].text.as_str() == ")"_str &&
+                tokens_[cursor + usize(2)].text.as_str() == "("_str)
+                return Some(String::make("operator ()"_str));
+            auto name = String::make("operator "_str);
+            for (; cursor < end && tokens_[cursor].text.as_str() != "("_str; ++cursor)
+                name.push_str(tokens_[cursor].text.as_str());
+            if (cursor < end && name.as_str() != "operator "_str) return Some(rstd::move(name));
+            return None();
+        }
+        return None();
+    }
+
     auto parse_reexport(usize begin, usize end) -> void {
         auto name = String::make();
         for (auto index = begin; index < end; ++index) name.push_str(tokens_[index].text.as_str());
@@ -417,6 +434,63 @@ private:
             .logical_module = rstd::move(name),
             .span           = token_span(begin, end),
         });
+    }
+
+    auto template_declaration_keyword(usize keyword) const -> Option<usize> {
+        if (keyword + usize(1) >= tokens_.len() ||
+            tokens_[keyword + usize(1)].text.as_str() != "<"_str)
+            return None();
+        auto cursor = keyword + usize(2);
+        auto depth  = usize(1);
+        while (cursor < tokens_.len() && depth != usize {}) {
+            auto text = tokens_[cursor].text.as_str();
+            if (text == "<"_str) {
+                ++depth;
+            } else if (text == ">"_str) {
+                --depth;
+            } else if (text == ">>"_str) {
+                depth = depth > usize(2) ? depth - usize(2) : usize {};
+            }
+            ++cursor;
+        }
+        if (depth != usize {}) return None();
+        auto boundary = statement_end(cursor);
+        auto angle    = usize {};
+        auto paren    = usize {};
+        auto bracket  = usize {};
+        auto brace    = usize {};
+        for (; cursor < boundary; ++cursor) {
+            auto       text = tokens_[cursor].text.as_str();
+            const auto top_level =
+                angle == usize {} && paren == usize {} && bracket == usize {} && brace == usize {};
+            if (top_level) {
+                if (text == "class"_str || text == "struct"_str || text == "union"_str ||
+                    text == "enum"_str)
+                    return Some(cursor);
+                if (text == "using"_str || text == "typedef"_str || text == "concept"_str)
+                    return None();
+            }
+            if (text == "<"_str) {
+                ++angle;
+            } else if (text == ">"_str && angle != usize {}) {
+                --angle;
+            } else if (text == ">>"_str && angle != usize {}) {
+                angle = angle > usize(1) ? angle - usize(2) : usize {};
+            } else if (text == "("_str) {
+                ++paren;
+            } else if (text == ")"_str && paren != usize {}) {
+                --paren;
+            } else if (text == "["_str) {
+                ++bracket;
+            } else if (text == "]"_str && bracket != usize {}) {
+                --bracket;
+            } else if (text == "{"_str) {
+                ++brace;
+            } else if (text == "}"_str && brace != usize {}) {
+                --brace;
+            }
+        }
+        return None();
     }
 
     auto parse_named_scope(usize begin, usize keyword, DeclarationKind kind, bool explicit_export)
@@ -511,16 +585,21 @@ private:
             if (keyword + usize(1) < boundary)
                 name = Some(tokens_[keyword + usize(1)].text.clone());
         } else {
-            auto found = function_name(keyword, boundary);
-            if (found.is_some()) {
+            name = operator_function_name(keyword, boundary);
+            if (name.is_some()) {
                 kind = DeclarationKind::Function;
-                name = Some(tokens_[*found].text.clone());
             } else {
-                found = name_before(keyword, boundary);
-                if (found.is_some()) name = Some(tokens_[*found].text.clone());
-                if (! scopes_.is_empty() &&
-                    scopes_[scopes_.len() - usize(1)].kind == DeclarationKind::Record)
-                    kind = DeclarationKind::Field;
+                auto found = function_name(keyword, boundary);
+                if (found.is_some()) {
+                    kind = DeclarationKind::Function;
+                    name = Some(tokens_[*found].text.clone());
+                } else {
+                    found = name_before(keyword, boundary);
+                    if (found.is_some()) name = Some(tokens_[*found].text.clone());
+                    if (! scopes_.is_empty() &&
+                        scopes_[scopes_.len() - usize(1)].kind == DeclarationKind::Record)
+                        kind = DeclarationKind::Field;
+                }
             }
         }
         if (name.is_some()) {
@@ -590,6 +669,14 @@ private:
                 }
                 if (cursor >= tokens_.len()) break;
                 text = tokens_[cursor].text.as_str();
+            }
+
+            if (text == "template"_str) {
+                auto keyword = template_declaration_keyword(cursor);
+                if (keyword.is_some()) {
+                    cursor = *keyword;
+                    text   = tokens_[cursor].text.as_str();
+                }
             }
 
             if (text == "module"_str || text == "import"_str) {

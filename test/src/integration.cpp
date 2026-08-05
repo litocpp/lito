@@ -173,8 +173,8 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_TRUE(corrupt_validation.unwrap_err().as_str().contains("digest mismatch"_str));
     ASSERT_EQ(generated->packages.len(), usize(1));
     const auto& package = generated->packages[usize {}];
-    EXPECT_EQ(package.symbols, usize(5));
-    EXPECT_EQ(package.documented, usize(5));
+    EXPECT_EQ(package.symbols, usize(12));
+    EXPECT_EQ(package.documented, usize(12));
     EXPECT_EQ(package.undocumented, usize {});
     EXPECT_EQ(package.unsupported, usize {});
     EXPECT_EQ(package.diagnostics, usize(1));
@@ -184,7 +184,7 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_EQ(generated->frontend.source_reads, usize(3));
     EXPECT_EQ(generated->frontend.lex_builds, usize(3));
     EXPECT_EQ(generated->frontend.documentation_builds, usize(3));
-    EXPECT_EQ(generated->frontend.documentation_declarations, usize(8));
+    EXPECT_EQ(generated->frontend.documentation_declarations, usize(15));
     auto json = rstd::fs::read_to_string(package.json.as_path());
     ASSERT_TRUE(json.is_ok());
     EXPECT_TRUE(tenon::doc::validate_json(json->as_str()).is_ok());
@@ -202,6 +202,7 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_FALSE(json->as_str().contains("Forward declaration documentation."_str));
     EXPECT_TRUE(json->as_str().contains("conflicting-symbol-documentation"_str));
     EXPECT_TRUE(json->as_str().contains("fixture::nested::make"_str));
+    EXPECT_TRUE(json->as_str().contains("fixture::nested::Box::operator bool"_str));
     EXPECT_TRUE(json->as_str().contains("\"namespace\": \"fixture::nested\""_str));
     EXPECT_FALSE(json->as_str().contains("fixture::nested::T"_str));
     EXPECT_TRUE(json->as_str().contains("\"group\": \"Arithmetic\""_str));
@@ -241,9 +242,13 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_FALSE(root_module_page.as_str().contains("aria-label=\"Package modules\""_str));
     EXPECT_FALSE(root_module_page.as_str().contains("Symbols"_str));
     EXPECT_FALSE(root_module_page.as_str().contains("kind-label"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"namespaces\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Namespaces</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">fixture::nested</code></a>"_str));
     EXPECT_TRUE(root_module_page.as_str().contains("id=\"structs\""_str));
     EXPECT_TRUE(root_module_page.as_str().contains(">Structs</span>"_str));
     EXPECT_TRUE(root_module_page.as_str().contains(">Widget</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Box</code></a>"_str));
     EXPECT_TRUE(root_module_page.as_str().contains("id=\"functions\""_str));
     EXPECT_TRUE(root_module_page.as_str().contains(">Functions</span>"_str));
     EXPECT_TRUE(root_module_page.as_str().contains(">add</code></a>"_str));
@@ -251,6 +256,23 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_TRUE(root_module_page.as_str().contains(
         "<span class=\"namespace-label\">fixture::nested</span>"_str));
     EXPECT_FALSE(root_module_page.as_str().contains("fixture::nested::Widget::value"_str));
+    EXPECT_FALSE(root_module_page.as_str().contains("fixture::nested::Box::value"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"enums\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Enums</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Mode</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"concepts\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Concepts</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Value</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"aliases\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Aliases</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">WidgetAlias</code></a>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("id=\"variables\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">Variables</span>"_str));
+    EXPECT_TRUE(root_module_page.as_str().contains(">answer</code></a>"_str));
+    EXPECT_TRUE(
+        root_module_page.as_str().contains("catalog-url=\"../../../search-index.json\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("current-package=\"fixture-doc-basic\""_str));
+    EXPECT_TRUE(root_module_page.as_str().contains("current-module=\"fixture.doc.basic\""_str));
     EXPECT_TRUE(child_module_page.as_str().contains("<code>nested</code>"_str));
     EXPECT_TRUE(child_module_page.as_str().contains("aria-label=\"Package modules\""_str));
     auto symbol_directory = package.directory.join(PathBuf::from("symbol"_str).as_path());
@@ -304,6 +326,10 @@ TEST(Integration, DocumentationUsesFrontendFactsAndPublishesVersionedOutput) {
     EXPECT_FALSE(original_index->as_str().contains("Workspace documentation"_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-shell>"_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-search root-prefix="_str));
+    EXPECT_TRUE(original_index->as_str().contains("catalog-url=\"search-index.json\""_str));
+    EXPECT_FALSE(original_index->as_str().contains("static/search-index.js\"></script>"_str));
+    EXPECT_TRUE(original_index->as_str().contains(
+        "<link rel=\"icon\" href=\"static/favicon.svg\" type=\"image/svg+xml\">"_str));
     EXPECT_TRUE(original_index->as_str().contains("<tenon-doc-theme-picker>"_str));
     EXPECT_TRUE(original_index->as_str().contains("<span>Packages</span>"_str));
     EXPECT_FALSE(original_index->as_str().contains(">Packages</div>"_str));
