@@ -570,6 +570,30 @@
       "type": "string",
       "pattern": "^(=|<|>|<=|>=)[ \\t]*[^<>= \\t]+$"
     },
+    "cmakePackage": {
+      "description": "A CMake package name accepted by Tenon's generated consumer project.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.+-][A-Za-z0-9_.+-]*$"
+    },
+    "cmakeTarget": {
+      "description": "A namespaced CMake imported target.",
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_.+-]+(::[A-Za-z0-9_.+-]+)+$"
+    },
+    "cmakeCache": {
+      "description": "CMake cache entries used only when building a path or Git source.",
+      "type": "object",
+      "propertyNames": {
+        "pattern": "^[A-Za-z0-9_]+$"
+      },
+      "additionalProperties": {
+        "type": [
+          "string",
+          "boolean",
+          "integer"
+        ]
+      }
+    },
     "dependency": {
       "type": "object",
       "required": [
@@ -584,6 +608,15 @@
         },
         "pkg-config": {
           "$ref": "#/definitions/pkgConfigModule"
+        },
+        "cmake": {
+          "$ref": "#/definitions/cmakePackage"
+        },
+        "target": {
+          "$ref": "#/definitions/cmakeTarget"
+        },
+        "cmake-cache": {
+          "$ref": "#/definitions/cmakeCache"
         },
         "version": {
           "$ref": "#/definitions/pkgConfigVersion"
@@ -651,6 +684,21 @@
                     "required": [
                       "static"
                     ]
+                  },
+                  {
+                    "required": [
+                      "cmake"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake-cache"
+                    ]
                   }
                 ]
               }
@@ -679,6 +727,21 @@
                   {
                     "required": [
                       "static"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake-cache"
                     ]
                   }
                 ]
@@ -713,6 +776,153 @@
                   {
                     "required": [
                       "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "target"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake-cache"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "cmake",
+                "target"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "pkg-config"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "static"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cmake-cache"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "cmake",
+                "target",
+                "path"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "pkg-config"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "static"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "cmake",
+                "target",
+                "git"
+              ],
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "pkg-config"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "version"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "static"
                     ]
                   }
                 ]

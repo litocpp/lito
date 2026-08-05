@@ -39,7 +39,8 @@ auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
 }
 
 auto root_config_key(ref<str> key) -> bool {
-    return key == "toolchain"_str || key == "pkg-config"_str || key == "patch"_str;
+    return key == "toolchain"_str || key == "pkg-config"_str || key == "cmake"_str ||
+           key == "patch"_str;
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
@@ -53,6 +54,10 @@ auto patch_config_key(ref<str> key) -> bool {
 auto pkg_config_key(ref<str> key) -> bool {
     return key == "executable"_str || key == "search-path"_str || key == "library-path"_str ||
            key == "sysroot"_str;
+}
+
+auto cmake_key(ref<str> key) -> bool {
+    return key == "executable"_str || key == "generator"_str;
 }
 
 auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
@@ -168,6 +173,31 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
     }
     result.target_configured = config_member(**value, "executable"_str).is_some() ||
                                ! result.library_paths.is_empty() || result.sysroot.is_some();
+    return Ok(rstd::move(result));
+}
+
+auto configured_cmake(const Toml& document) -> Result<CMakeProviderConfig> {
+    auto result = CMakeProviderConfig {
+        .executable = PathBuf::from("cmake"_str),
+        .generator  = String::make("Ninja"_str),
+    };
+    auto value = config_member(document, "cmake"_str);
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = config_table(**value, "config.cmake"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.cmake"_str, cmake_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    result.executable =
+        rstd_try(configured_tool(**value, "executable"_str, "cmake"_str, "config.cmake"_str));
+    auto generator = config_member(**value, "generator"_str);
+    if (generator.is_some()) {
+        auto text = (**generator).as_str();
+        if (text.is_none() || text->is_empty()) {
+            return config_failure<CMakeProviderConfig>(
+                "config.cmake.generator must be a non-empty string"_str);
+        }
+        result.generator = String::make(*text);
+    }
     return Ok(rstd::move(result));
 }
 
@@ -298,6 +328,11 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
                 PkgConfigProviderConfig {
                     .executable = PathBuf::from("pkg-config"_str),
                 },
+            .cmake =
+                CMakeProviderConfig {
+                    .executable = PathBuf::from("cmake"_str),
+                    .generator  = String::make("Ninja"_str),
+                },
         });
     }
 
@@ -346,12 +381,15 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
+    auto cmake = configured_cmake(document);
+    if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
 
     return Ok(ProjectConfig {
         .root       = rstd::move(root),
         .toolchain  = rstd::move(toolchain),
         .sources    = rstd::move(sources).unwrap(),
         .pkg_config = rstd::move(pkg_config).unwrap(),
+        .cmake      = rstd::move(cmake).unwrap(),
     });
 }
 

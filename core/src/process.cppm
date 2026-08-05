@@ -18,6 +18,24 @@ auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
     return Ok(rstd::move(decoded).unwrap());
 }
 
+enum class FragmentQuote
+{
+    None,
+    Single,
+    Double,
+};
+
+auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context) -> Result<empty> {
+    auto word = String::from_utf8(rstd::move(current));
+    if (word.is_err()) {
+        return Err(
+            Error::make(ErrorKind::Dependency, rstd::format("{} contains invalid UTF-8", context)));
+    }
+    output.push(rstd::move(word).unwrap());
+    current = Vec<u8>::make();
+    return Ok(empty {});
+}
+
 } // namespace tenon
 
 export namespace tenon
@@ -161,6 +179,85 @@ auto command_text(const Vec<String>& arguments) -> String {
 
 auto trim_ascii(String value) -> String {
     return String::make(value.as_str().trim_ascii());
+}
+
+auto tokenize_command_fragments(ref<str> input, ref<str> context) -> Result<Vec<String>> {
+    auto result      = Vec<String>::make();
+    auto current     = Vec<u8>::make();
+    auto quote       = FragmentQuote::None;
+    auto escaping    = false;
+    auto word_active = false;
+    for (auto byte : input.as_bytes()) {
+        if (byte == u8()) {
+            return Err(
+                Error::make(ErrorKind::Dependency, rstd::format("{} contains NUL", context)));
+        }
+        if (escaping) {
+            if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
+                byte != u8('$') && byte != u8('`') && byte != u8('\n')) {
+                current.emplace_back(u8('\\'));
+            }
+            if (quote == FragmentQuote::Double && byte == u8('\n')) {
+                escaping = false;
+                continue;
+            }
+            current.emplace_back(byte);
+            escaping    = false;
+            word_active = true;
+            continue;
+        }
+        if (quote == FragmentQuote::Single) {
+            if (byte == u8('\''))
+                quote = FragmentQuote::None;
+            else
+                current.emplace_back(byte);
+            word_active = true;
+            continue;
+        }
+        if (quote == FragmentQuote::Double) {
+            if (byte == u8('"')) {
+                quote = FragmentQuote::None;
+            } else if (byte == u8('\\')) {
+                escaping = true;
+            } else {
+                current.emplace_back(byte);
+            }
+            word_active = true;
+            continue;
+        }
+        if (byte == u8('\\')) {
+            escaping    = true;
+            word_active = true;
+        } else if (byte == u8('\'')) {
+            quote       = FragmentQuote::Single;
+            word_active = true;
+        } else if (byte == u8('"')) {
+            quote       = FragmentQuote::Double;
+            word_active = true;
+        } else if (byte == u8(' ') || byte == u8('\t') || byte == u8('\n') || byte == u8('\r')) {
+            if (word_active) {
+                auto pushed = push_fragment_word(result, current, context);
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+                word_active = false;
+            }
+        } else {
+            current.emplace_back(byte);
+            word_active = true;
+        }
+    }
+    if (escaping) {
+        return Err(
+            Error::make(ErrorKind::Dependency, rstd::format("{} ends with an escape", context)));
+    }
+    if (quote != FragmentQuote::None) {
+        return Err(Error::make(ErrorKind::Dependency,
+                               rstd::format("{} contains an unclosed quote", context)));
+    }
+    if (word_active) {
+        auto pushed = push_fragment_word(result, current, context);
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+    }
+    return Ok(rstd::move(result));
 }
 
 } // namespace tenon

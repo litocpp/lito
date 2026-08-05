@@ -3,6 +3,7 @@ export module tenon.dependency;
 import rstd;
 import tenon.model;
 import tenon.process;
+import :cmake;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -90,23 +91,6 @@ auto provider_environment(const PkgConfigProviderConfig& config, const TargetInf
     return Ok(rstd::move(result));
 }
 
-auto push_word(Vec<String>& output, Vec<u8>& current) -> Result<empty> {
-    auto word = String::from_utf8(rstd::move(current));
-    if (word.is_err()) {
-        return dependency_failure<empty>("pkg-config output contains invalid UTF-8"_str);
-    }
-    output.push(rstd::move(word).unwrap());
-    current = Vec<u8>::make();
-    return Ok(empty {});
-}
-
-enum class FragmentQuote
-{
-    None,
-    Single,
-    Double,
-};
-
 struct PkgConfigSnapshot {
     String               module;
     String               version;
@@ -171,12 +155,13 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
 auto provider_version(const PkgConfigProviderConfig&    config,
                       const CommandEnvironment&         environment,
                       const DeclaredExternalDependency& declaration) -> Result<String> {
-    auto executable = config.executable.as_path().to_str();
+    const auto& requirement = declaration.requirement.as_PkgConfig().requirement;
+    auto        executable  = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return dependency_failure<String>(rstd::format(
             "pkg-config dependency '{}' module '{}' has a provider path that is not valid UTF-8",
             declaration.alias.as_str(),
-            declaration.requirement.module.as_str()));
+            requirement.module.as_str()));
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
@@ -189,7 +174,7 @@ auto provider_version(const PkgConfigProviderConfig&    config,
         return dependency_failure<String>(
             rstd::format("pkg-config dependency '{}' module '{}' cannot execute provider '{}': {}",
                          declaration.alias.as_str(),
-                         declaration.requirement.module.as_str(),
+                         requirement.module.as_str(),
                          *executable,
                          rstd::move(output).unwrap_err().message.as_str()));
     }
@@ -198,7 +183,7 @@ auto provider_version(const PkgConfigProviderConfig&    config,
         return dependency_failure<String>(rstd::format(
             "pkg-config dependency '{}' module '{}' provider '{}' failed with exit code {}: {}",
             declaration.alias.as_str(),
-            declaration.requirement.module.as_str(),
+            requirement.module.as_str(),
             *executable,
             value.exit_code,
             value.standard_error.as_str()));
@@ -208,7 +193,7 @@ auto provider_version(const PkgConfigProviderConfig&    config,
         return dependency_failure<String>(rstd::format(
             "pkg-config dependency '{}' module '{}' provider returned an empty version",
             declaration.alias.as_str(),
-            declaration.requirement.module.as_str()));
+            requirement.module.as_str()));
     }
     return Ok(rstd::move(version));
 }
@@ -269,136 +254,81 @@ export namespace tenon
 {
 
 auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
-    auto result      = Vec<String>::make();
-    auto current     = Vec<u8>::make();
-    auto quote       = FragmentQuote::None;
-    auto escaping    = false;
-    auto word_active = false;
-    for (auto byte : input.as_bytes()) {
-        if (byte == u8()) {
-            return dependency_failure<Vec<String>>("pkg-config output contains NUL"_str);
-        }
-        if (escaping) {
-            if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
-                byte != u8('$') && byte != u8('`') && byte != u8('\n')) {
-                current.emplace_back(u8('\\'));
-            }
-            if (quote == FragmentQuote::Double && byte == u8('\n')) {
-                escaping = false;
-                continue;
-            }
-            current.emplace_back(byte);
-            escaping    = false;
-            word_active = true;
-            continue;
-        }
-        if (quote == FragmentQuote::Single) {
-            if (byte == u8('\''))
-                quote = FragmentQuote::None;
-            else
-                current.emplace_back(byte);
-            word_active = true;
-            continue;
-        }
-        if (quote == FragmentQuote::Double) {
-            if (byte == u8('"')) {
-                quote = FragmentQuote::None;
-            } else if (byte == u8('\\')) {
-                escaping = true;
-            } else {
-                current.emplace_back(byte);
-            }
-            word_active = true;
-            continue;
-        }
-        if (byte == u8('\\')) {
-            escaping    = true;
-            word_active = true;
-        } else if (byte == u8('\'')) {
-            quote       = FragmentQuote::Single;
-            word_active = true;
-        } else if (byte == u8('"')) {
-            quote       = FragmentQuote::Double;
-            word_active = true;
-        } else if (byte == u8(' ') || byte == u8('\t') || byte == u8('\n') || byte == u8('\r')) {
-            if (word_active) {
-                auto pushed = push_word(result, current);
-                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-                word_active = false;
-            }
-        } else {
-            current.emplace_back(byte);
-            word_active = true;
-        }
-    }
-    if (escaping) {
-        return dependency_failure<Vec<String>>("pkg-config output ends with an escape"_str);
-    }
-    if (quote != FragmentQuote::None) {
-        return dependency_failure<Vec<String>>("pkg-config output contains an unclosed quote"_str);
-    }
-    if (word_active) {
-        auto pushed = push_word(result, current);
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-    }
-    return Ok(rstd::move(result));
+    return tokenize_command_fragments(input, "pkg-config output"_str);
 }
 
 auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declarations,
-                                   const PkgConfigProviderConfig&         config,
+                                   const PkgConfigProviderConfig&         pkg_config,
+                                   const CMakeProviderConfig&             cmake_config,
+                                   const BuildConfiguration&              configuration,
                                    const TargetInfo&                      default_target,
                                    ref<str>                               effective_target,
                                    const CppArgumentParser&               parser)
     -> Result<Vec<ResolvedExternalDependency>> {
     auto result = Vec<ResolvedExternalDependency>::with_capacity(declarations.len());
     if (declarations.is_empty()) return Ok(rstd::move(result));
-    if (effective_target != default_target.triple.as_str() && ! config.target_configured) {
-        return dependency_failure<Vec<ResolvedExternalDependency>>(
-            rstd::format("target '{}' requires explicit pkg-config executable, library-path, or "
-                         "sysroot configuration",
-                         effective_target));
+    auto pkg_declaration = Option<ref<DeclaredExternalDependency>> {};
+    for (const auto& declaration : declarations) {
+        if (declaration.requirement.is_PkgConfig()) {
+            pkg_declaration =
+                Some(ref<DeclaredExternalDependency>::from_raw_parts(rstd::addressof(declaration)));
+            break;
+        }
     }
-    auto environment = provider_environment(config, default_target);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    auto provider = provider_version(config, *environment, declarations[usize {}]);
-    if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
-    auto provider_id = provider_identity(config, effective_target, provider->as_str());
-    if (provider_id.is_err()) return Err(rstd::move(provider_id).unwrap_err());
+    auto environment = CommandEnvironment {};
+    auto provider_id = String::make();
+    if (pkg_declaration.is_some()) {
+        if (effective_target != default_target.triple.as_str() && ! pkg_config.target_configured) {
+            return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::format(
+                "target '{}' requires explicit pkg-config executable, library-path, or "
+                "sysroot configuration",
+                effective_target));
+        }
+        auto configured_environment = provider_environment(pkg_config, default_target);
+        if (configured_environment.is_err()) {
+            return Err(rstd::move(configured_environment).unwrap_err());
+        }
+        environment   = rstd::move(configured_environment).unwrap();
+        auto provider = provider_version(pkg_config, environment, **pkg_declaration);
+        if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
+        auto identity = provider_identity(pkg_config, effective_target, provider->as_str());
+        if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
+        provider_id = rstd::move(identity).unwrap();
+    }
     auto snapshots = rstd::collections::BTreeMap<String, PkgConfigSnapshot>::make();
     for (const auto& declaration : declarations) {
-        auto key = provider_id->clone();
-        key.push_str(module_spec(declaration.requirement).as_str());
-        key.push_str(declaration.requirement.mode == PkgConfigQueryMode::Static ? "\nstatic"_str
-                                                                                : "\nshared"_str);
+        if (declaration.requirement.is_CMake()) {
+            auto resolved = resolve_cmake_dependency(
+                declaration, cmake_config, configuration, default_target, effective_target, parser);
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            result.push(rstd::move(resolved).unwrap());
+            continue;
+        }
+        const auto& requirement = declaration.requirement.as_PkgConfig().requirement;
+        auto        key         = provider_id.clone();
+        key.push_str(module_spec(requirement).as_str());
+        key.push_str(requirement.mode == PkgConfigQueryMode::Static ? "\nstatic"_str
+                                                                    : "\nshared"_str);
         auto cached   = snapshots.get(key.as_str());
         auto snapshot = PkgConfigSnapshot {};
         if (cached.is_some()) {
             snapshot = (**cached).clone();
         } else {
-            auto version = query_pkg_config(config,
-                                            declaration.requirement,
-                                            declaration.alias.as_str(),
-                                            "modversion"_str,
-                                            *environment);
+            auto version = query_pkg_config(
+                pkg_config, requirement, declaration.alias.as_str(), "modversion"_str, environment);
             if (version.is_err()) return Err(rstd::move(version).unwrap_err());
             auto normalized_version = String::make(version->as_str().trim_ascii());
             if (normalized_version.is_empty()) {
                 return dependency_failure<Vec<ResolvedExternalDependency>>(
                     rstd::format("pkg-config dependency '{}' module '{}' returned an empty version",
                                  declaration.alias.as_str(),
-                                 declaration.requirement.module.as_str()));
+                                 requirement.module.as_str()));
             }
-            auto cflags = query_pkg_config(config,
-                                           declaration.requirement,
-                                           declaration.alias.as_str(),
-                                           "cflags"_str,
-                                           *environment);
+            auto cflags = query_pkg_config(
+                pkg_config, requirement, declaration.alias.as_str(), "cflags"_str, environment);
             if (cflags.is_err()) return Err(rstd::move(cflags).unwrap_err());
-            auto libs = query_pkg_config(config,
-                                         declaration.requirement,
-                                         declaration.alias.as_str(),
-                                         "libs"_str,
-                                         *environment);
+            auto libs = query_pkg_config(
+                pkg_config, requirement, declaration.alias.as_str(), "libs"_str, environment);
             if (libs.is_err()) return Err(rstd::move(libs).unwrap_err());
             auto compile_tokens = tokenize_pkg_config_fragments(cflags->as_str());
             if (compile_tokens.is_err()) return Err(rstd::move(compile_tokens).unwrap_err());
@@ -406,7 +336,7 @@ auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declar
             if (link_tokens.is_err()) return Err(rstd::move(link_tokens).unwrap_err());
             auto source  = rstd::format("pkg-config dependency '{}' module '{}'",
                                         declaration.alias.as_str(),
-                                        declaration.requirement.module.as_str());
+                                        requirement.module.as_str());
             auto compile = parser.parse(*compile_tokens, source.as_str());
             if (compile.is_err()) {
                 return dependency_failure<Vec<ResolvedExternalDependency>>(
@@ -414,13 +344,13 @@ auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declar
                                  source.as_str(),
                                  rstd::move(compile).unwrap_err()));
             }
-            auto identity = snapshot_identity(provider_id->as_str(),
-                                              declaration.requirement,
+            auto identity = snapshot_identity(provider_id.as_str(),
+                                              requirement,
                                               normalized_version.as_str(),
                                               *compile_tokens,
                                               *link_tokens);
             snapshot      = PkgConfigSnapshot {
-                .module            = declaration.requirement.module.clone(),
+                .module            = requirement.module.clone(),
                 .version           = rstd::move(normalized_version),
                 .compile_arguments = rstd::move(compile).unwrap(),
                 .link_arguments =

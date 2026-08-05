@@ -15,6 +15,8 @@ target_sources(
          src/model.cppm
          src/build_profile.cppm
          src/process.cppm
+         src/storage.cppm
+         src/dependency/cmake.cppm
          src/dependency.cppm
          src/manifest/locator.cppm
          src/manifest/schema.cppm

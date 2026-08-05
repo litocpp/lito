@@ -67,6 +67,17 @@ auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& input)
     return result;
 }
 
+auto clone_cmake_cache(const Vec<CMakeCacheEntry>& input) -> Vec<CMakeCacheEntry> {
+    auto result = Vec<CMakeCacheEntry>::with_capacity(input.len());
+    for (const auto& entry : input) {
+        result.push(CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    return result;
+}
+
 class Resolver {
     PathBuf              root_directory_;
     PackageSourceManager sources_;
@@ -138,9 +149,46 @@ public:
         for (const auto& dependency : loaded.package.dependencies) {
             if (dependency.source.is_PkgConfig()) {
                 external_dependencies.push(DeclaredExternalDependency {
+                    .alias       = dependency.name.clone(),
+                    .requirement = ExternalDependencyRequirement::PkgConfig(
+                        clone_pkg_config_requirement(dependency.source.as_PkgConfig().requirement)),
+                    .visibility = dependency.visibility,
+                });
+                continue;
+            }
+            if (dependency.source.is_CMake()) {
+                const auto& declaration = dependency.source.as_CMake().requirement;
+                auto        identity    = Option<String> {};
+                auto        root        = Option<PathBuf> {};
+                if (! declaration.source.is_Installed()) {
+                    auto requirement =
+                        declaration.source.is_Git()
+                            ? PackageSourceRequirement::Git(
+                                  declaration.source.as_Git().url.clone(),
+                                  GitReference {
+                                      .kind  = declaration.source.as_Git().reference.kind,
+                                      .value = declaration.source.as_Git().reference.value.clone(),
+                                  })
+                            : PackageSourceRequirement::Path(
+                                  declaration.source.as_Path().path.clone());
+                    auto external_source =
+                        sources_.acquire_external(requirement, loaded.package.root.as_path());
+                    if (external_source.is_err()) {
+                        return Err(rstd::move(external_source).unwrap_err());
+                    }
+                    identity = Some(String::make(sources_.source_identity(*external_source)));
+                    root     = Some(sources_.source_root(*external_source));
+                }
+                external_dependencies.push(DeclaredExternalDependency {
                     .alias = dependency.name.clone(),
                     .requirement =
-                        clone_pkg_config_requirement(dependency.source.as_PkgConfig().requirement),
+                        ExternalDependencyRequirement::CMake(ResolvedCMakeDependencyRequirement {
+                            .package         = declaration.package.clone(),
+                            .target          = declaration.target.clone(),
+                            .source_identity = rstd::move(identity),
+                            .source_root     = rstd::move(root),
+                            .cache           = clone_cmake_cache(declaration.cache),
+                        }),
                     .visibility = dependency.visibility,
                 });
                 continue;

@@ -86,6 +86,7 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                               request.configuration,
                                               request.sources,
                                               request.pkg_config,
+                                              request.cmake,
                                               toolchain.target_info(),
                                               toolchain.argument_parser(),
                                               request.locked,

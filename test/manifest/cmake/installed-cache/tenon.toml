@@ -1,0 +1,14 @@
+[package]
+name = "cmake-installed-cache"
+version = "0.1.0"
+module = "cmake_installed_cache"
+
+[library]
+archive = "cmake_installed_cache"
+discovery = "module"
+
+[dependencies.fixture]
+cmake = "TenonFixture"
+target = "TenonFixture::fixture"
+cmake-cache = { TENON_FIXTURE_OPTION = true }
+visibility = "private"

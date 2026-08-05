@@ -2,6 +2,7 @@ export module tenon.package:source;
 
 import rstd;
 import tenon.model;
+import tenon.storage;
 import tenon.manifest;
 import tenon.process;
 import tenon.workspace;
@@ -115,26 +116,6 @@ auto git_status(Vec<String> arguments, ref<str> operation) -> Result<empty> {
     return Ok(empty {});
 }
 
-auto cache_root() -> Result<PathBuf> {
-    auto configured = rstd::env::var("XDG_CACHE_HOME"_str);
-    if (configured.is_some() && ! configured->is_empty()) {
-        auto root = PathBuf::from(rstd::move(configured).unwrap());
-        if (! root.as_path().is_absolute()) {
-            return source_failure<PathBuf>("XDG_CACHE_HOME must be an absolute path"_str);
-        }
-        return Ok(root.join(PathBuf::from("tenon/git"_str).as_path()));
-    }
-    auto home = rstd::env::var("HOME"_str);
-    if (home.is_none() || home->is_empty()) {
-        return source_failure<PathBuf>("Git sources require XDG_CACHE_HOME or HOME"_str);
-    }
-    auto root = PathBuf::from(rstd::move(home).unwrap());
-    if (! root.as_path().is_absolute()) {
-        return source_failure<PathBuf>("HOME must be an absolute path"_str);
-    }
-    return Ok(root.join(PathBuf::from(".cache/tenon/git"_str).as_path()));
-}
-
 auto same_reference(const GitReference& left, const GitReference& right) -> bool {
     return left.kind == right.kind && left.value == right.value;
 }
@@ -154,8 +135,8 @@ auto load_git_catalog(ref<rstd::path::Path> root) -> Result<WorkspaceCatalog> {
 }
 
 struct SourceEntry {
-    ResolvedPackageSource source;
-    WorkspaceCatalog      catalog;
+    ResolvedPackageSource    source;
+    Option<WorkspaceCatalog> catalog;
 };
 
 } // namespace tenon
@@ -410,7 +391,7 @@ class PackageSourceManager {
         return Ok(rstd::move(checkout));
     }
 
-    auto acquire_path(ref<rstd::path::Path> requested) -> Result<usize> {
+    auto acquire_path(ref<rstd::path::Path> requested, bool package_source) -> Result<usize> {
         auto canonical = rstd::fs::canonicalize(requested);
         if (canonical.is_err()) {
             return source_failure<usize>(rstd::format("cannot resolve path source '{}': {}",
@@ -418,52 +399,58 @@ class PackageSourceManager {
                                                       rstd::move(canonical).unwrap_err()));
         }
         auto requested_root = rstd::move(canonical).unwrap();
-        auto requested_text = requested_root.as_path().to_str();
-        if (requested_text.is_none()) {
-            return source_failure<usize>(
-                rstd::format("path source '{}' is not valid UTF-8", requested_root.as_path()));
-        }
-        auto exact = roots_.get(*requested_text);
-        if (exact.is_some()) return Ok(**exact);
-        for (usize index {}; index < entries_.len(); ++index) {
-            if (entries_[index].catalog.contains_package_root(requested_root.as_path())) {
-                return Ok(index);
-            }
-        }
-
-        auto document = load_manifest_document(requested_root.as_path());
-        if (document.is_err()) return Err(rstd::move(document).unwrap_err());
-        auto loaded  = rstd::move(document).unwrap();
-        auto catalog = WorkspaceCatalog {};
-        if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
-            auto workspace = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
-            if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
-            catalog = rstd::move(workspace).unwrap();
-        } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-            auto package    = rstd::move(loaded.package).unwrap();
-            auto containing = try_containing_workspace(package);
-            if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
-            if (containing->is_some()) {
-                auto workspace = load_workspace_catalog(rstd::move(containing).unwrap().unwrap(),
-                                                        Some(rstd::move(package)));
+        auto catalog        = Option<WorkspaceCatalog> {};
+        auto source_root    = requested_root.clone();
+        if (package_source) {
+            auto document = load_manifest_document(requested_root.as_path());
+            if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+            auto loaded         = rstd::move(document).unwrap();
+            auto loaded_catalog = WorkspaceCatalog {};
+            if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
+                auto workspace = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
                 if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
-                catalog = rstd::move(workspace).unwrap();
+                loaded_catalog = rstd::move(workspace).unwrap();
+            } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
+                auto package    = rstd::move(loaded.package).unwrap();
+                auto containing = try_containing_workspace(package);
+                if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
+                if (containing->is_some()) {
+                    auto workspace = load_workspace_catalog(
+                        rstd::move(containing).unwrap().unwrap(), Some(rstd::move(package)));
+                    if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
+                    loaded_catalog = rstd::move(workspace).unwrap();
+                } else {
+                    loaded_catalog = WorkspaceCatalog::single(rstd::move(package));
+                }
             } else {
-                catalog = WorkspaceCatalog::single(rstd::move(package));
+                return source_failure<usize>("source manifest has no package or workspace"_str);
             }
-        } else {
-            return source_failure<usize>("source manifest has no package or workspace"_str);
+            source_root = PathBuf::from(loaded_catalog.root());
+            catalog     = Some(rstd::move(loaded_catalog));
         }
 
-        auto root_text = catalog.root().to_str();
+        auto root_text = source_root.as_path().to_str();
         if (root_text.is_none()) {
-            return source_failure<usize>(
-                rstd::format("normalized source root '{}' is not valid UTF-8", catalog.root()));
+            return source_failure<usize>(rstd::format(
+                "normalized source root '{}' is not valid UTF-8", source_root.as_path()));
         }
         auto existing = roots_.get(*root_text);
-        if (existing.is_some()) return Ok(**existing);
+        if (existing.is_some()) {
+            if (package_source && entries_[**existing].catalog.is_none()) {
+                entries_[**existing].catalog = rstd::move(catalog);
+            }
+            return Ok(**existing);
+        }
+        if (package_source) {
+            for (usize index {}; index < entries_.len(); ++index) {
+                if (entries_[index].catalog.is_some() &&
+                    entries_[index].catalog->contains_package_root(requested_root.as_path())) {
+                    return Ok(index);
+                }
+            }
+        }
         auto root_key = String::make(*root_text);
-        auto relative = relative_path(graph_root_.as_path(), catalog.root());
+        auto relative = relative_path(graph_root_.as_path(), source_root.as_path());
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         auto normalized = rstd::move(relative).unwrap();
         auto id         = path_source_identity(normalized.as_path());
@@ -473,7 +460,7 @@ class PackageSourceManager {
                 ResolvedPackageSource {
                     .identity       = rstd::move(id),
                     .kind           = PackageSourceKind::Path,
-                    .root_directory = PathBuf::from(catalog.root()),
+                    .root_directory = rstd::move(source_root),
                     .path           = rstd::move(normalized),
                 },
             .catalog = rstd::move(catalog),
@@ -483,7 +470,8 @@ class PackageSourceManager {
         return Ok(index);
     }
 
-    auto acquire_git(ref<str> url, const GitReference& reference) -> Result<usize> {
+    auto acquire_git(ref<str> url, const GitReference& reference, bool package_source)
+        -> Result<usize> {
         auto locked = locked_source(url, reference);
         if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
         auto pin = rstd::move(locked).unwrap();
@@ -492,7 +480,7 @@ class PackageSourceManager {
                 rstd::format("--locked has no source matching Git dependency '{}'", url));
         }
 
-        auto cache = cache_root();
+        auto cache = tenon_cache_directory(PathBuf::from("git"_str).as_path(), "Git sources"_str);
         if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
         auto cache_directory = rstd::move(cache).unwrap();
         auto created         = rstd::fs::create_dir_all(cache_directory.as_path());
@@ -530,7 +518,15 @@ class PackageSourceManager {
         auto precise_commit = rstd::move(commit).unwrap();
         auto id             = git_source_identity(url, precise_commit.as_str());
         auto existing       = source_identities_.get(id.as_str());
-        if (existing.is_some()) return Ok(**existing);
+        if (existing.is_some()) {
+            if (package_source && entries_[**existing].catalog.is_none()) {
+                auto catalog =
+                    load_git_catalog(entries_[**existing].source.root_directory.as_path());
+                if (catalog.is_err()) return Err(rstd::move(catalog).unwrap_err());
+                entries_[**existing].catalog = Some(rstd::move(catalog).unwrap());
+            }
+            return Ok(**existing);
+        }
 
         auto local = checkout(bucket.as_path(), repository_path.as_path(), precise_commit.as_str());
         if (local.is_err()) return Err(rstd::move(local).unwrap_err());
@@ -541,15 +537,19 @@ class PackageSourceManager {
                                                       rstd::move(canonical).unwrap_err()));
         }
         auto checkout_root = rstd::move(canonical).unwrap();
-        auto catalog       = load_git_catalog(checkout_root.as_path());
-        if (catalog.is_err()) return Err(rstd::move(catalog).unwrap_err());
-        auto loaded_catalog = rstd::move(catalog).unwrap();
-        if (! (loaded_catalog.root().starts_with(checkout_root.as_path()) &&
-               checkout_root.as_path().starts_with(loaded_catalog.root()))) {
-            return source_failure<usize>(
-                rstd::format("Git source manifest root '{}' does not match checkout root '{}'",
-                             loaded_catalog.root(),
-                             checkout_root.as_path()));
+        auto catalog       = Option<WorkspaceCatalog> {};
+        if (package_source) {
+            auto loaded = load_git_catalog(checkout_root.as_path());
+            if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+            auto loaded_catalog = rstd::move(loaded).unwrap();
+            if (! (loaded_catalog.root().starts_with(checkout_root.as_path()) &&
+                   checkout_root.as_path().starts_with(loaded_catalog.root()))) {
+                return source_failure<usize>(
+                    rstd::format("Git source manifest root '{}' does not match checkout root '{}'",
+                                 loaded_catalog.root(),
+                                 checkout_root.as_path()));
+            }
+            catalog = Some(rstd::move(loaded_catalog));
         }
 
         auto root_text = checkout_root.as_path().to_str();
@@ -573,7 +573,7 @@ class PackageSourceManager {
                     .reference      = rstd::move(copied_reference),
                     .commit         = rstd::move(precise_commit),
                 },
-            .catalog = rstd::move(loaded_catalog),
+            .catalog = rstd::move(catalog),
         });
         roots_.insert(rstd::move(root_key), index);
         source_identities_.insert(rstd::move(id), index);
@@ -585,7 +585,9 @@ public:
                                   PackageResolutionOptions options)
         : graph_root_(PathBuf::from(graph_root)), options_(rstd::move(options)) {}
 
-    auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> { return acquire_path(root); }
+    auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
+        return acquire_path(root, true);
+    }
 
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)
         -> Result<usize> {
@@ -593,21 +595,34 @@ public:
             const auto& git   = requirement.as_Git();
             auto        patch = patched_path(git.url.as_str());
             if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
-            if (patch->is_some()) return acquire_path(**patch);
-            return acquire_git(git.url.as_str(), git.reference);
+            if (patch->is_some()) return acquire_path(**patch, true);
+            return acquire_git(git.url.as_str(), git.reference, true);
         }
         auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
-        return acquire_path(requested.as_path());
+        return acquire_path(requested.as_path(), true);
+    }
+
+    auto acquire_external(const PackageSourceRequirement& requirement,
+                          ref<rstd::path::Path>           declaring_root) -> Result<usize> {
+        if (requirement.is_Git()) {
+            const auto& git   = requirement.as_Git();
+            auto        patch = patched_path(git.url.as_str());
+            if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
+            if (patch->is_some()) return acquire_path(**patch, false);
+            return acquire_git(git.url.as_str(), git.reference, false);
+        }
+        auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
+        return acquire_path(requested.as_path(), false);
     }
 
     auto package_names(usize source) const -> Vec<String> {
-        auto result = Vec<String>::with_capacity(entries_[source].catalog.names().len());
-        for (const auto& name : entries_[source].catalog.names()) result.push(name.clone());
+        auto result = Vec<String>::with_capacity(entries_[source].catalog->names().len());
+        for (const auto& name : entries_[source].catalog->names()) result.push(name.clone());
         return result;
     }
 
     auto source_name(usize source) const noexcept -> ref<str> {
-        return entries_[source].catalog.name();
+        return entries_[source].catalog->name();
     }
 
     auto source_identity(usize source) const noexcept -> ref<str> {
@@ -615,21 +630,25 @@ public:
     }
 
     auto source_manifest(usize source) const -> PathBuf {
-        return PathBuf::from(entries_[source].catalog.manifest_path());
+        return PathBuf::from(entries_[source].catalog->manifest_path());
     }
 
     auto source_is_workspace(usize source) const noexcept -> bool {
-        return entries_[source].catalog.is_workspace();
+        return entries_[source].catalog->is_workspace();
+    }
+
+    auto source_root(usize source) const -> PathBuf {
+        return entries_[source].source.root_directory.clone();
     }
 
     auto take_package(usize source, ref<str> name) -> Result<SelectedSourcePackage> {
-        auto manifest = entries_[source].catalog.take_package(name);
+        auto manifest = entries_[source].catalog->take_package(name);
         if (manifest.is_none()) {
-            if (entries_[source].catalog.names().len() == usize(1)) {
+            if (entries_[source].catalog->names().len() == usize(1)) {
                 return source_failure<SelectedSourcePackage>(
                     rstd::format("dependency '{}' resolves to package '{}' from source '{}'",
                                  name,
-                                 entries_[source].catalog.names()[usize {}].as_str(),
+                                 entries_[source].catalog->names()[usize {}].as_str(),
                                  entries_[source].source.identity.as_str()));
             }
             return source_failure<SelectedSourcePackage>(

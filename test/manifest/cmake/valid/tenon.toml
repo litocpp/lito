@@ -1,0 +1,20 @@
+[package]
+name = "cmake-valid"
+version = "0.1.0"
+module = "cmake_valid"
+
+[library]
+archive = "cmake_valid"
+discovery = "module"
+
+[dependencies.vulkan]
+cmake = "Vulkan"
+target = "Vulkan::Vulkan"
+visibility = "public"
+
+[dependencies.fixture]
+cmake = "TenonFixture"
+target = "TenonFixture::fixture"
+path = "../../../cmake/package"
+cmake-cache = { TENON_FIXTURE_OPTION = true }
+visibility = "private"

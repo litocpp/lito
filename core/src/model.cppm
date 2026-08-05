@@ -111,6 +111,25 @@ struct PkgConfigDependencyRequirement {
     PkgConfigQueryMode                  mode { PkgConfigQueryMode::Shared };
 };
 
+struct CMakeCacheEntry {
+    String name;
+    String value;
+};
+
+class CMakeDependencySource {
+    RSTD_ENUM(CMakeDependencySource,
+              (Installed),
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference;)))
+};
+
+struct CMakeDependencyRequirement {
+    String                package;
+    String                target;
+    CMakeDependencySource source;
+    Vec<CMakeCacheEntry>  cache;
+};
+
 class PackageSourceRequirement {
     RSTD_ENUM(PackageSourceRequirement,
               (Path, (PathBuf path;)),
@@ -121,7 +140,8 @@ class DeclaredDependencySource {
     RSTD_ENUM(DeclaredDependencySource,
               (Path, (PathBuf path;)),
               (Git, (String url; GitReference reference;)),
-              (PkgConfig, (PkgConfigDependencyRequirement requirement;)))
+              (PkgConfig, (PkgConfigDependencyRequirement requirement;)),
+              (CMake, (CMakeDependencyRequirement requirement;)))
 };
 
 enum class SourceDiscoveryMode
@@ -209,11 +229,24 @@ struct PkgConfigProviderConfig {
     }
 };
 
+struct CMakeProviderConfig {
+    PathBuf executable;
+    String  generator;
+
+    auto clone() const -> CMakeProviderConfig {
+        return CMakeProviderConfig {
+            .executable = executable.clone(),
+            .generator  = generator.clone(),
+        };
+    }
+};
+
 struct ProjectConfig {
     PathBuf                 root;
     ToolchainSpec           toolchain;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
+    CMakeProviderConfig     cmake;
 };
 
 struct ProfileSpec {
@@ -432,10 +465,24 @@ struct ResolvedDependency {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct ResolvedCMakeDependencyRequirement {
+    String               package;
+    String               target;
+    Option<String>       source_identity;
+    Option<PathBuf>      source_root;
+    Vec<CMakeCacheEntry> cache;
+};
+
+class ExternalDependencyRequirement {
+    RSTD_ENUM(ExternalDependencyRequirement,
+              (PkgConfig, (PkgConfigDependencyRequirement requirement;)),
+              (CMake, (ResolvedCMakeDependencyRequirement requirement;)))
+};
+
 struct DeclaredExternalDependency {
-    String                         alias;
-    PkgConfigDependencyRequirement requirement;
-    DependencyVisibility           visibility { DependencyVisibility::Private };
+    String                        alias;
+    ExternalDependencyRequirement requirement;
+    DependencyVisibility          visibility { DependencyVisibility::Private };
 };
 
 struct ResolvedPackageSource {
@@ -731,6 +778,7 @@ struct BuildRequest {
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
+    CMakeProviderConfig     cmake;
     PackageSelectionPurpose purpose { PackageSelectionPurpose::Production };
     bool                    locked { false };
     Option<BuildObserver>   observer;
@@ -780,6 +828,7 @@ struct ScanRequest {
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
+    CMakeProviderConfig     cmake;
     bool                    locked { false };
 };
 
@@ -809,6 +858,7 @@ struct DocRequest {
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
+    CMakeProviderConfig     cmake;
     bool                    data_only { false };
     bool                    locked { false };
 };

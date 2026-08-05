@@ -160,7 +160,8 @@ auto usage_key(ref<str> key) -> bool {
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "pkg-config"_str || key == "version"_str ||
-           key == "static"_str || key == "visibility"_str;
+           key == "static"_str || key == "cmake"_str || key == "target"_str ||
+           key == "cmake-cache"_str || key == "visibility"_str;
 }
 
 auto workspace_key(ref<str> key) -> bool {
@@ -743,6 +744,89 @@ auto parse_pkg_config_version(ref<str> value, ref<str> context)
     });
 }
 
+auto cmake_name_character_is_valid(u8 value) -> bool {
+    const auto character = value.to_primitive();
+    const auto alpha =
+        (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
+    const auto digit = character >= '0' && character <= '9';
+    return alpha || digit || character == '_' || character == '-' || character == '.' ||
+           character == '+';
+}
+
+auto cmake_name_is_valid(ref<str> value) -> bool {
+    if (value.is_empty() || value.starts_with("-"_str)) return false;
+    for (auto character : value) {
+        if (! cmake_name_character_is_valid(character)) return false;
+    }
+    return true;
+}
+
+auto cmake_target_is_valid(ref<str> value) -> bool {
+    if (value.is_empty() || value.starts_with("-"_str)) return false;
+    auto namespaces = usize {};
+    auto segment    = usize {};
+    for (usize index {}; index < value.len(); ++index) {
+        if (value[index] != u8(':')) {
+            if (! cmake_name_character_is_valid(value[index])) return false;
+            ++segment;
+            continue;
+        }
+        if (segment == usize {} || index + usize(1) >= value.len() ||
+            value[index + usize(1)] != u8(':')) {
+            return false;
+        }
+        ++namespaces;
+        segment = usize {};
+        ++index;
+    }
+    return namespaces != usize {} && segment != usize {};
+}
+
+auto cmake_cache_key_is_valid(ref<str> value) -> bool {
+    if (value.is_empty()) return false;
+    for (auto byte : value) {
+        const auto character = byte.to_primitive();
+        const auto alpha =
+            (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
+        const auto digit = character >= '0' && character <= '9';
+        if (! (alpha || digit || character == '_')) return false;
+    }
+    return true;
+}
+
+auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<CMakeCacheEntry>> {
+    auto result = Vec<CMakeCacheEntry>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = table_value(**value, context);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto keys = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        if (! cmake_cache_key_is_valid((**key).as_str())) {
+            return failure<Vec<CMakeCacheEntry>>(rstd::format(
+                "{} key '{}' must contain only ASCII letters, digits, or '_'", context, **key));
+        }
+        auto item       = (**table).get((**key).as_str());
+        auto text       = (**item).as_str();
+        auto boolean    = (**item).as_bool();
+        auto integer    = (**item).as_integer();
+        auto cache_text = String::make();
+        if (text.is_some())
+            cache_text = String::make(*text);
+        else if (boolean.is_some())
+            cache_text = String::make(*boolean ? "ON"_str : "OFF"_str);
+        else if (integer.is_some())
+            cache_text = rstd::format("{}", *integer);
+        else
+            return failure<Vec<CMakeCacheEntry>>(rstd::format(
+                "{} value '{}' must be a string, boolean, or integer", context, **key));
+        result.push(CMakeCacheEntry {
+            .name  = (**key).clone(),
+            .value = rstd::move(cache_text),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependency>> {
     auto result = Vec<DeclaredDependency>::make();
     if (value.is_none()) return Ok(rstd::move(result));
@@ -771,6 +855,8 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
         auto path_text       = optional_string(**specification, "path"_str, "dependency"_str);
         auto git             = optional_string(**specification, "git"_str, "dependency"_str);
         auto pkg_config      = optional_string(**specification, "pkg-config"_str, "dependency"_str);
+        auto cmake           = optional_string(**specification, "cmake"_str, "dependency"_str);
+        auto cmake_target    = optional_string(**specification, "target"_str, "dependency"_str);
         auto version         = optional_string(**specification, "version"_str, "dependency"_str);
         auto branch          = optional_string(**specification, "branch"_str, "dependency"_str);
         auto tag             = optional_string(**specification, "tag"_str, "dependency"_str);
@@ -779,6 +865,8 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
         if (path_text.is_err()) return Err(rstd::move(path_text).unwrap_err());
         if (git.is_err()) return Err(rstd::move(git).unwrap_err());
         if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
+        if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
+        if (cmake_target.is_err()) return Err(rstd::move(cmake_target).unwrap_err());
         if (version.is_err()) return Err(rstd::move(version).unwrap_err());
         if (branch.is_err()) return Err(rstd::move(branch).unwrap_err());
         if (tag.is_err()) return Err(rstd::move(tag).unwrap_err());
@@ -789,14 +877,25 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
         auto path_value       = rstd::move(path_text).unwrap();
         auto git_value        = rstd::move(git).unwrap();
         auto pkg_config_value = rstd::move(pkg_config).unwrap();
-        auto source_count     = usize {};
-        if (path_value.is_some()) ++source_count;
-        if (git_value.is_some()) ++source_count;
-        if (pkg_config_value.is_some()) ++source_count;
-        if (source_count != usize(1)) {
+        auto cmake_value      = rstd::move(cmake).unwrap();
+        auto target_value     = rstd::move(cmake_target).unwrap();
+        if (pkg_config_value.is_some() && cmake_value.is_some()) {
             return failure<Vec<DeclaredDependency>>(rstd::format(
-                "dependency '{}' must contain exactly one of 'path', 'git', or 'pkg-config'",
-                name.as_str()));
+                "dependency '{}' cannot combine 'pkg-config' and 'cmake'", name.as_str()));
+        }
+        if (path_value.is_some() && git_value.is_some()) {
+            return failure<Vec<DeclaredDependency>>(
+                rstd::format("dependency '{}' cannot combine 'path' and 'git'", name.as_str()));
+        }
+        if (pkg_config_value.is_some() && (path_value.is_some() || git_value.is_some())) {
+            return failure<Vec<DeclaredDependency>>(rstd::format(
+                "dependency '{}' cannot combine 'pkg-config' with a source", name.as_str()));
+        }
+        if (pkg_config_value.is_none() && cmake_value.is_none() && path_value.is_none() &&
+            git_value.is_none()) {
+            return failure<Vec<DeclaredDependency>>(
+                rstd::format("dependency '{}' must contain 'path', 'git', 'pkg-config', or 'cmake'",
+                             name.as_str()));
         }
         auto  branch_value = rstd::move(branch).unwrap();
         auto  tag_value    = rstd::move(tag).unwrap();
@@ -829,8 +928,72 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<Vec<DeclaredDependenc
             return failure<Vec<DeclaredDependency>>(rstd::format(
                 "dependency '{}' version and static require 'pkg-config'", name.as_str()));
         }
+        auto cmake_cache = parse_cmake_cache(member(**specification, "cmake-cache"_str),
+                                             "dependency.cmake-cache"_str);
+        if (cmake_cache.is_err()) return Err(rstd::move(cmake_cache).unwrap_err());
+        if (cmake_value.is_none() && (target_value.is_some() || ! cmake_cache->is_empty())) {
+            return failure<Vec<DeclaredDependency>>(rstd::format(
+                "dependency '{}' target and cmake-cache require 'cmake'", name.as_str()));
+        }
+        if (cmake_value.is_some() && target_value.is_none()) {
+            return failure<Vec<DeclaredDependency>>(
+                rstd::format("dependency '{}' cmake requires 'target'", name.as_str()));
+        }
+        if (cmake_value.is_some() && path_value.is_none() && git_value.is_none() &&
+            ! cmake_cache->is_empty()) {
+            return failure<Vec<DeclaredDependency>>(rstd::format(
+                "dependency '{}' cmake-cache requires a path or Git source", name.as_str()));
+        }
         auto source = Option<DeclaredDependencySource> {};
-        if (path_value.is_some()) {
+        if (cmake_value.is_some()) {
+            auto package = rstd::move(cmake_value).unwrap();
+            auto target  = rstd::move(target_value).unwrap();
+            if (! cmake_name_is_valid(package.as_str())) {
+                return failure<Vec<DeclaredDependency>>(rstd::format(
+                    "dependency '{}'.cmake contains characters unsafe for a CMake package name",
+                    name.as_str()));
+            }
+            if (! cmake_target_is_valid(target.as_str())) {
+                return failure<Vec<DeclaredDependency>>(rstd::format(
+                    "dependency '{}'.target must be a namespaced CMake target", name.as_str()));
+            }
+            auto cmake_source = CMakeDependencySource::Installed();
+            if (path_value.is_some()) {
+                auto path = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
+                if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+                cmake_source = CMakeDependencySource::Path(rstd::move(path).unwrap());
+            } else if (git_value.is_some()) {
+                auto url = rstd::move(git_value).unwrap();
+                if (url.is_empty() || url.as_str().starts_with("-"_str) ||
+                    url.as_str().contains("#"_str)) {
+                    return failure<Vec<DeclaredDependency>>(rstd::format(
+                        "dependency '{}'.git is not a valid Git source URL", name.as_str()));
+                }
+                auto reference = GitReference {};
+                if (branch_value.is_some()) {
+                    reference.kind  = GitReferenceKind::Branch;
+                    reference.value = rstd::move(branch_value).unwrap();
+                } else if (tag_value.is_some()) {
+                    reference.kind  = GitReferenceKind::Tag;
+                    reference.value = rstd::move(tag_value).unwrap();
+                } else if (rev_value.is_some()) {
+                    reference.kind  = GitReferenceKind::Rev;
+                    reference.value = rstd::move(rev_value).unwrap();
+                }
+                if (reference.kind != GitReferenceKind::DefaultBranch &&
+                    (reference.value.is_empty() || reference.value.as_str().starts_with("-"_str))) {
+                    return failure<Vec<DeclaredDependency>>(
+                        rstd::format("dependency '{}' Git selector is invalid", name.as_str()));
+                }
+                cmake_source = CMakeDependencySource::Git(rstd::move(url), rstd::move(reference));
+            }
+            source = Some(DeclaredDependencySource::CMake(CMakeDependencyRequirement {
+                .package = rstd::move(package),
+                .target  = rstd::move(target),
+                .source  = rstd::move(cmake_source),
+                .cache   = rstd::move(cmake_cache).unwrap(),
+            }));
+        } else if (path_value.is_some()) {
             auto path = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
             source = Some(DeclaredDependencySource::Path(rstd::move(path).unwrap()));

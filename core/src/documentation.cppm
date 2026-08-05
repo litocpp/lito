@@ -123,6 +123,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
                                               request.configuration,
                                               request.sources,
                                               request.pkg_config,
+                                              request.cmake,
                                               toolchain.target_info(),
                                               toolchain.argument_parser(),
                                               request.locked,
