@@ -124,8 +124,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
                                               request.sources,
                                               request.pkg_config,
                                               request.cmake,
-                                              toolchain.target_info(),
-                                              toolchain.argument_parser(),
+                                              toolchain,
                                               request.locked,
                                               PackageSelectionPurpose::Documentation);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());

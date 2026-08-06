@@ -3,6 +3,7 @@ export module tenon.dependency;
 import rstd;
 import tenon.model;
 import tenon.process;
+import tenon.source;
 import :cmake;
 
 using namespace rstd::prelude;
@@ -152,10 +153,10 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
     return Ok(rstd::move(value.standard_output));
 }
 
-auto provider_version(const PkgConfigProviderConfig&    config,
-                      const CommandEnvironment&         environment,
-                      const DeclaredExternalDependency& declaration) -> Result<String> {
-    const auto& requirement = declaration.requirement.as_PkgConfig().requirement;
+auto provider_version(const PkgConfigProviderConfig&     config,
+                      const CommandEnvironment&          environment,
+                      const PkgConfigExternalDependency& declaration) -> Result<String> {
+    const auto& requirement = declaration.requirement;
     auto        executable  = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return dependency_failure<String>(rstd::format(
@@ -257,27 +258,91 @@ auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
     return tokenize_command_fragments(input, "pkg-config output"_str);
 }
 
-auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declarations,
-                                   const PkgConfigProviderConfig&         pkg_config,
-                                   const CMakeProviderConfig&             cmake_config,
-                                   const BuildConfiguration&              configuration,
-                                   const TargetInfo&                      default_target,
-                                   ref<str>                               effective_target,
-                                   const CppArgumentParser&               parser)
-    -> Result<Vec<ResolvedExternalDependency>> {
-    auto result = Vec<ResolvedExternalDependency>::with_capacity(declarations.len());
-    if (declarations.is_empty()) return Ok(rstd::move(result));
-    auto pkg_declaration = Option<ref<DeclaredExternalDependency>> {};
-    for (const auto& declaration : declarations) {
-        if (declaration.requirement.is_PkgConfig()) {
-            pkg_declaration =
-                Some(ref<DeclaredExternalDependency>::from_raw_parts(rstd::addressof(declaration)));
-            break;
+auto resolve_external_dependency_sources(ResolvedPackageGraph&    graph,
+                                         PackageResolutionOptions options) -> Result<empty> {
+    auto sources = SourceManager(graph.root_directory.as_path(), rstd::move(options));
+    for (auto& package : graph.packages) {
+        auto resolved = Vec<ResolvedCMakeDependencyRequirement>::with_capacity(
+            package.manifest.cmake_external_dependencies.len());
+        for (const auto& declaration : package.manifest.cmake_external_dependencies) {
+            auto source_identity = Option<String> {};
+            auto source_root     = Option<PathBuf> {};
+            if (! declaration.source.is_Installed()) {
+                auto source =
+                    declaration.source.is_Git()
+                        ? PackageSourceRequirement::Git(
+                              declaration.source.as_Git().url.clone(),
+                              GitReference {
+                                  .kind  = declaration.source.as_Git().reference.kind,
+                                  .value = declaration.source.as_Git().reference.value.clone(),
+                              })
+                        : PackageSourceRequirement::Path(declaration.source.as_Path().path.clone());
+                auto acquired = sources.acquire_external(source, package.manifest.root.as_path());
+                if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+                source_identity = Some(rstd::move(acquired->identity));
+                source_root     = Some(rstd::move(acquired->root));
+            }
+            auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
+            for (const auto& entry : declaration.cache) {
+                cache.push(CMakeCacheEntry {
+                    .name  = entry.name.clone(),
+                    .value = entry.value.clone(),
+                });
+            }
+            auto targets = Vec<CMakeTargetRequirement>::with_capacity(declaration.targets.len());
+            for (const auto& target : declaration.targets) {
+                targets.push(CMakeTargetRequirement {
+                    .name       = target.name.clone(),
+                    .visibility = target.visibility,
+                });
+            }
+            auto config_directory = Option<PathBuf> {};
+            if (declaration.config_directory.is_some()) {
+                config_directory = Some(declaration.config_directory->clone());
+            }
+            resolved.push(ResolvedCMakeDependencyRequirement {
+                .alias            = declaration.alias.clone(),
+                .package          = declaration.package.clone(),
+                .source_identity  = rstd::move(source_identity),
+                .source_root      = rstd::move(source_root),
+                .config_directory = rstd::move(config_directory),
+                .cache            = rstd::move(cache),
+                .targets          = rstd::move(targets),
+            });
         }
+        package.cmake_external_dependencies = rstd::move(resolved);
     }
+    for (auto& source : sources.finish()) {
+        auto present = false;
+        for (const auto& existing : graph.sources) {
+            if (existing.identity == source.identity.as_str()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) graph.sources.push(rstd::move(source));
+    }
+    rstd::slice_::sort_unstable_by(
+        graph.sources.as_mut_slice().as_mut_ref(),
+        [](const ResolvedPackageSource& left, const ResolvedPackageSource& right) {
+            return left.identity < right.identity;
+        });
+    return Ok(empty {});
+}
+
+auto resolve_external_dependencies(
+    const Vec<PkgConfigExternalDependency>&        pkg_config_declarations,
+    const Vec<ResolvedCMakeDependencyRequirement>& cmake_declarations,
+    const PkgConfigProviderConfig&                 pkg_config,
+    const CMakeProviderConfig&                     cmake_config,
+    const BuildConfiguration&                      configuration,
+    const TargetInfo&                              default_target,
+    ref<str>                                       effective_target,
+    const CppArgumentParser& parser) -> Result<Vec<ResolvedExternalDependency>> {
+    auto result      = Vec<ResolvedExternalDependency>::make();
     auto environment = CommandEnvironment {};
     auto provider_id = String::make();
-    if (pkg_declaration.is_some()) {
+    if (! pkg_config_declarations.is_empty()) {
         if (effective_target != default_target.triple.as_str() && ! pkg_config.target_configured) {
             return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::format(
                 "target '{}' requires explicit pkg-config executable, library-path, or "
@@ -288,23 +353,17 @@ auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declar
         if (configured_environment.is_err()) {
             return Err(rstd::move(configured_environment).unwrap_err());
         }
-        environment   = rstd::move(configured_environment).unwrap();
-        auto provider = provider_version(pkg_config, environment, **pkg_declaration);
+        environment = rstd::move(configured_environment).unwrap();
+        auto provider =
+            provider_version(pkg_config, environment, pkg_config_declarations[usize {}]);
         if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
         auto identity = provider_identity(pkg_config, effective_target, provider->as_str());
         if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
         provider_id = rstd::move(identity).unwrap();
     }
     auto snapshots = rstd::collections::BTreeMap<String, PkgConfigSnapshot>::make();
-    for (const auto& declaration : declarations) {
-        if (declaration.requirement.is_CMake()) {
-            auto resolved = resolve_cmake_dependency(
-                declaration, cmake_config, configuration, default_target, effective_target, parser);
-            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-            result.push(rstd::move(resolved).unwrap());
-            continue;
-        }
-        const auto& requirement = declaration.requirement.as_PkgConfig().requirement;
+    for (const auto& declaration : pkg_config_declarations) {
+        const auto& requirement = declaration.requirement;
         auto        key         = provider_id.clone();
         key.push_str(module_spec(requirement).as_str());
         key.push_str(requirement.mode == PkgConfigQueryMode::Static ? "\nstatic"_str
@@ -363,18 +422,47 @@ auto resolve_external_dependencies(const Vec<DeclaredExternalDependency>& declar
             };
             snapshots.insert(rstd::move(key), snapshot.clone());
         }
-        result.push(ResolvedExternalDependency {
-            .alias             = declaration.alias.clone(),
-            .provider          = String::make("pkg-config"_str),
-            .module            = snapshot.module.clone(),
-            .version           = snapshot.version.clone(),
+        auto targets = Vec<ResolvedExternalTargetUsage>::make();
+        targets.push(ResolvedExternalTargetUsage {
+            .name              = snapshot.module.clone(),
             .visibility        = declaration.visibility,
             .compile_arguments = as<rstd::clone::Clone>(snapshot.compile_arguments).clone(),
-            .link_arguments    = snapshot.link_arguments.clone(),
             .identity          = snapshot.identity.clone(),
         });
+        result.push(ResolvedExternalDependency {
+            .alias          = declaration.alias.clone(),
+            .provider       = String::make("pkg-config"_str),
+            .version        = snapshot.version.clone(),
+            .targets        = rstd::move(targets),
+            .link_arguments = snapshot.link_arguments.clone(),
+            .identity       = snapshot.identity.clone(),
+        });
+    }
+    for (const auto& declaration : cmake_declarations) {
+        auto resolved = resolve_cmake_dependency(
+            declaration, cmake_config, configuration, default_target, effective_target, parser);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        result.push(rstd::move(resolved).unwrap());
     }
     return Ok(rstd::move(result));
+}
+
+auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& declarations,
+                                   const PkgConfigProviderConfig&          pkg_config,
+                                   const CMakeProviderConfig&              cmake_config,
+                                   const BuildConfiguration&               configuration,
+                                   const TargetInfo&                       default_target,
+                                   ref<str>                                effective_target,
+                                   const CppArgumentParser&                parser)
+    -> Result<Vec<ResolvedExternalDependency>> {
+    return resolve_external_dependencies(declarations,
+                                         Vec<ResolvedCMakeDependencyRequirement>::make(),
+                                         pkg_config,
+                                         cmake_config,
+                                         configuration,
+                                         default_target,
+                                         effective_target,
+                                         parser);
 }
 
 } // namespace tenon

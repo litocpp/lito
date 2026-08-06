@@ -7,8 +7,5 @@ module = "cmake_provider_mix"
 archive = "cmake_provider_mix"
 discovery = "module"
 
-[dependencies.fixture]
-pkg-config = "tenon-fixture"
-cmake = "TenonFixture"
-target = "TenonFixture::fixture"
-visibility = "private"
+[external-dependencies.fixture]
+module = "tenon-fixture"

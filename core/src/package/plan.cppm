@@ -255,9 +255,11 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(usage.definitions, spec.manifest.usage.public_definitions);
         append_unique(usage.arguments, spec.manifest.usage.public_arguments);
         for (const auto& dependency : spec.external_dependencies) {
-            if (dependency.visibility != DependencyVisibility::Public) continue;
-            append_unique(usage.arguments, dependency.compile_arguments);
-            append_unique(usage.external_identities, dependency.identity.as_str());
+            for (const auto& target : dependency.targets) {
+                if (target.visibility != DependencyVisibility::Public) continue;
+                append_unique(usage.arguments, target.compile_arguments);
+                append_unique(usage.external_identities, target.identity.as_str());
+            }
         }
 
         auto exported_targets = Vec<TargetId>::make();
@@ -302,9 +304,11 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(private_layer.definitions, spec.manifest.usage.private_definitions);
         append_unique(private_layer.arguments, spec.manifest.usage.private_arguments);
         for (const auto& dependency : spec.external_dependencies) {
-            if (dependency.visibility != DependencyVisibility::Private) continue;
-            append_unique(private_layer.arguments, dependency.compile_arguments);
-            append_unique(context.external_identities, dependency.identity.as_str());
+            for (const auto& target : dependency.targets) {
+                if (target.visibility != DependencyVisibility::Private) continue;
+                append_unique(private_layer.arguments, target.compile_arguments);
+                append_unique(context.external_identities, target.identity.as_str());
+            }
         }
 
         auto visible = Vec<TargetId>::make();

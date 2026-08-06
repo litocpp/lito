@@ -7,12 +7,12 @@ module = "pkg_config_valid"
 archive = "pkg_config_valid"
 discovery = "module"
 
-[dependencies.curl]
-pkg-config = "libcurl"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
 version = ">= 7.86.0"
 visibility = "private"
 
-[dependencies.openssl]
-pkg-config = "openssl"
+[external-dependencies.pkg-config.openssl]
+module = "openssl"
 static = true
 visibility = "public"

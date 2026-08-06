@@ -27,13 +27,18 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
 };
 
 inline constexpr ref<str> INVALID_PKG_CONFIG_MANIFESTS[] = {
-    "manifest/pkg-config/path-version"_str, "manifest/pkg-config/selector"_str,
-    "manifest/pkg-config/source-mix"_str,   "manifest/pkg-config/static-type"_str,
-    "manifest/pkg-config/version"_str,
+    "manifest/pkg-config/legacy-dependency"_str, "manifest/pkg-config/path-version"_str,
+    "manifest/pkg-config/selector"_str,          "manifest/pkg-config/source-mix"_str,
+    "manifest/pkg-config/static-type"_str,       "manifest/pkg-config/version"_str,
 };
 
 inline constexpr ref<str> INVALID_CMAKE_MANIFESTS[] = {
+    "manifest/cmake/config-directory-parent"_str,
+    "manifest/cmake/duplicate-target"_str,
+    "manifest/cmake/empty-targets"_str,
     "manifest/cmake/installed-cache"_str,
+    "manifest/cmake/installed-config-directory"_str,
+    "manifest/cmake/legacy-dependency"_str,
     "manifest/cmake/missing-target"_str,
     "manifest/cmake/provider-mix"_str,
     "manifest/cmake/unsafe-target"_str,
@@ -143,18 +148,18 @@ auto versioned_fixture(ref<str>                        alias,
                        tenon::PkgConfigVersionOperator comparison,
                        ref<str>                        version,
                        tenon::PkgConfigQueryMode       mode = tenon::PkgConfigQueryMode::Shared)
-    -> tenon::DeclaredExternalDependency {
-    return tenon::DeclaredExternalDependency {
+    -> tenon::PkgConfigExternalDependency {
+    return tenon::PkgConfigExternalDependency {
         .alias = String::make(alias),
         .requirement =
-            tenon::ExternalDependencyRequirement::PkgConfig(tenon::PkgConfigDependencyRequirement {
+            tenon::PkgConfigDependencyRequirement {
                 .module  = String::make("tenon-fixture"_str),
                 .version = Some(tenon::PkgConfigVersionRequirement {
                     .comparison = comparison,
                     .value      = String::make(version),
                 }),
                 .mode    = mode,
-            }),
+            },
     };
 }
 
@@ -167,14 +172,19 @@ auto external_usage_metadata(tenon::DependencyVisibility     visibility,
         return Err(
             tenon::Error::make(tenon::ErrorKind::Dependency, rstd::move(arguments).unwrap_err()));
     }
-    auto external = Vec<tenon::ResolvedExternalDependency>::make();
-    external.push(tenon::ResolvedExternalDependency {
-        .alias             = String::make("fixture"_str),
-        .provider          = String::make("pkg-config"_str),
-        .module            = String::make("tenon-fixture"_str),
-        .version           = String::make("2.3.4"_str),
+    auto external         = Vec<tenon::ResolvedExternalDependency>::make();
+    auto external_targets = Vec<tenon::ResolvedExternalTargetUsage>::make();
+    external_targets.push(tenon::ResolvedExternalTargetUsage {
+        .name              = String::make("tenon-fixture"_str),
         .visibility        = visibility,
         .compile_arguments = rstd::move(arguments).unwrap(),
+        .identity          = String::make("fixture-resolution-v1"_str),
+    });
+    external.push(tenon::ResolvedExternalDependency {
+        .alias    = String::make("fixture"_str),
+        .provider = String::make("pkg-config"_str),
+        .version  = String::make("2.3.4"_str),
+        .targets  = rstd::move(external_targets),
         .link_arguments =
             tenon::LinkArgumentSequence {
                 .tokens   = strings("-ltenon_fixture"_str),
@@ -260,11 +270,11 @@ TEST(Contracts, CMakeProviderConfigurationBelongsToProjectConfig) {
 TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
     auto loaded = tenon::load_package_manifest(root("manifest/pkg-config/valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
-    ASSERT_EQ(loaded->dependencies.len(), usize(2));
-    const auto& curl = loaded->dependencies[usize {}];
-    EXPECT_EQ(curl.name.as_str(), "curl"_str);
-    ASSERT_TRUE(curl.source.is_PkgConfig());
-    const auto& requirement = curl.source.as_PkgConfig().requirement;
+    EXPECT_TRUE(loaded->dependencies.is_empty());
+    ASSERT_EQ(loaded->pkg_config_external_dependencies.len(), usize(2));
+    const auto& curl = loaded->pkg_config_external_dependencies[usize {}];
+    EXPECT_EQ(curl.alias.as_str(), "curl"_str);
+    const auto& requirement = curl.requirement;
     EXPECT_EQ(requirement.module.as_str(), "libcurl"_str);
     ASSERT_TRUE(requirement.version.is_some());
     EXPECT_EQ(requirement.version->comparison, tenon::PkgConfigVersionOperator::GreaterEqual);
@@ -275,7 +285,7 @@ TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     EXPECT_TRUE(graph->packages[usize {}].dependencies.is_empty());
-    EXPECT_EQ(graph->packages[usize {}].external_dependencies.len(), usize(2));
+    EXPECT_EQ(graph->packages[usize {}].manifest.pkg_config_external_dependencies.len(), usize(2));
 }
 
 TEST(Contracts, PkgConfigInvalidManifestDocumentsAreRejectedByManifestOwner) {
@@ -285,43 +295,51 @@ TEST(Contracts, PkgConfigInvalidManifestDocumentsAreRejectedByManifestOwner) {
     }
 }
 
-TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByPackageOwner) {
+TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
     auto loaded = tenon::load_package_manifest(root("manifest/cmake/valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
-    ASSERT_EQ(loaded->dependencies.len(), usize(2));
+    EXPECT_TRUE(loaded->dependencies.is_empty());
+    ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(2));
 
     const auto installed_index =
-        loaded->dependencies[usize {}].name.as_str() == "vulkan"_str ? usize {} : usize(1);
-    const auto  source_index = installed_index == usize {} ? usize(1) : usize {};
-    const auto& installed    = loaded->dependencies[installed_index];
-    ASSERT_TRUE(installed.source.is_CMake());
-    const auto& installed_requirement = installed.source.as_CMake().requirement;
+        loaded->cmake_external_dependencies[usize {}].alias.as_str() == "vulkan"_str ? usize {}
+                                                                                     : usize(1);
+    const auto  source_index          = installed_index == usize {} ? usize(1) : usize {};
+    const auto& installed_requirement = loaded->cmake_external_dependencies[installed_index];
     EXPECT_EQ(installed_requirement.package.as_str(), "Vulkan"_str);
-    EXPECT_EQ(installed_requirement.target.as_str(), "Vulkan::Vulkan"_str);
+    ASSERT_EQ(installed_requirement.targets.len(), usize(1));
+    EXPECT_EQ(installed_requirement.targets[usize {}].name.as_str(), "Vulkan::Vulkan"_str);
     EXPECT_TRUE(installed_requirement.source.is_Installed());
 
-    const auto& source = loaded->dependencies[source_index];
-    ASSERT_TRUE(source.source.is_CMake());
-    const auto& source_requirement = source.source.as_CMake().requirement;
+    const auto& source_requirement = loaded->cmake_external_dependencies[source_index];
     EXPECT_EQ(source_requirement.package.as_str(), "TenonFixture"_str);
-    EXPECT_EQ(source_requirement.target.as_str(), "TenonFixture::fixture"_str);
+    ASSERT_EQ(source_requirement.targets.len(), usize(3));
+    EXPECT_EQ(source_requirement.targets[usize {}].name.as_str(), "TenonFixture::fixture"_str);
+    EXPECT_EQ(source_requirement.targets[usize(1)].name.as_str(), "TenonFixture::headers"_str);
+    EXPECT_EQ(source_requirement.targets[usize(2)].name.as_str(), "TenonFixture::order"_str);
     EXPECT_TRUE(source_requirement.source.is_Path());
     ASSERT_EQ(source_requirement.cache.len(), usize(1));
     EXPECT_EQ(source_requirement.cache[usize {}].name.as_str(), "TENON_FIXTURE_OPTION"_str);
     EXPECT_EQ(source_requirement.cache[usize {}].value.as_str(), "ON"_str);
+    ASSERT_TRUE(source_requirement.config_directory.is_some());
+    EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
+              "lib/cmake/TenonFixture"_str);
 
     auto graph = tenon::resolve_package_graph(root("manifest/cmake/valid"_str).as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
-    ASSERT_EQ(graph->packages[usize {}].external_dependencies.len(), usize(2));
+    EXPECT_TRUE(graph->packages[usize {}].cmake_external_dependencies.is_empty());
+    auto external = tenon::resolve_external_dependency_sources(*graph, {});
+    ASSERT_TRUE(external.is_ok());
+    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(2));
     const auto resolved_index =
-        graph->packages[usize {}].external_dependencies[usize {}].alias.as_str() == "fixture"_str
+        graph->packages[usize {}].cmake_external_dependencies[usize {}].alias.as_str() ==
+                "fixture"_str
             ? usize {}
             : usize(1);
-    const auto& resolved = graph->packages[usize {}].external_dependencies[resolved_index];
-    ASSERT_TRUE(resolved.requirement.is_CMake());
-    EXPECT_TRUE(resolved.requirement.as_CMake().requirement.source_root.is_some());
-    EXPECT_TRUE(resolved.requirement.as_CMake().requirement.source_identity.is_some());
+    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[resolved_index];
+    EXPECT_TRUE(resolved.source_root.is_some());
+    EXPECT_TRUE(resolved.source_identity.is_some());
 }
 
 TEST(Contracts, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
@@ -329,6 +347,17 @@ TEST(Contracts, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
         auto loaded = tenon::load_manifest_document(root(path).as_path());
         EXPECT_TRUE(loaded.is_err());
     }
+}
+
+TEST(Contracts, CMakeManifestAcceptsUnnamespacedTargets) {
+    auto loaded =
+        tenon::load_package_manifest(root("manifest/cmake/unnamespaced-target"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
+    const auto& requirement = loaded->cmake_external_dependencies[usize {}];
+    EXPECT_EQ(requirement.package.as_str(), "qjs"_str);
+    ASSERT_EQ(requirement.targets.len(), usize(1));
+    EXPECT_EQ(requirement.targets[usize {}].name.as_str(), "qjs"_str);
 }
 
 TEST(Contracts, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingThem) {
@@ -356,7 +385,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::DeclaredExternalDependency>::make();
+    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture("fixture"_str,
                                         tenon::PkgConfigVersionOperator::GreaterEqual,
                                         "2.0.0"_str,
@@ -374,7 +403,8 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
 
     auto user_include   = false;
     auto system_include = false;
-    for (const auto& occurrence : (*resolved)[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence :
+         (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
         if (! occurrence.argument.is_IncludeDirectory()) continue;
         const auto& include = occurrence.argument.as_IncludeDirectory().directory;
         user_include        = user_include || include.kind == tenon::CppIncludeDirectoryKind::User;
@@ -392,8 +422,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
     EXPECT_EQ(repeat_count, usize(2));
     EXPECT_TRUE(has_private);
 
-    declarations[usize {}].requirement.as_PkgConfig().requirement.mode =
-        tenon::PkgConfigQueryMode::Shared;
+    declarations[usize {}].requirement.mode = tenon::PkgConfigQueryMode::Shared;
     auto shared = tenon::resolve_external_dependencies(declarations,
                                                        config,
                                                        fixture_cmake(),
@@ -410,36 +439,65 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
 TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto parser = tenon::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
+    auto count_directory = output_root("cmake-provider-count"_str);
+    ASSERT_TRUE(clear_output(count_directory.as_path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(count_directory.as_path()).is_ok());
+    auto count_path =
+        count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::DeclaredExternalDependency>::make();
-    declarations.push(tenon::DeclaredExternalDependency {
-        .alias = String::make("fixture"_str),
-        .requirement =
-            tenon::ExternalDependencyRequirement::CMake(tenon::ResolvedCMakeDependencyRequirement {
-                .package         = String::make("TenonFixture"_str),
-                .target          = String::make("TenonFixture::fixture"_str),
-                .source_identity = Some(String::make("tenon-test-cmake-fixture-v1"_str)),
-                .source_root     = Some(root("cmake/package"_str)),
-            }),
+    auto declarations = Vec<tenon::ResolvedCMakeDependencyRequirement>::make();
+    auto targets      = Vec<tenon::CMakeTargetRequirement>::make();
+    targets.push(tenon::CMakeTargetRequirement {
+        .name       = String::make("TenonFixture::fixture"_str),
+        .visibility = tenon::DependencyVisibility::Private,
+    });
+    targets.push(tenon::CMakeTargetRequirement {
+        .name       = String::make("TenonFixture::headers"_str),
         .visibility = tenon::DependencyVisibility::Public,
     });
-    auto resolved = tenon::resolve_external_dependencies(declarations,
-                                                         fixture_pkg_config(),
-                                                         fixture_cmake(),
-                                                         configuration(),
-                                                         target,
-                                                         target.triple.as_str(),
-                                                         *parser);
-    ASSERT_TRUE(resolved.is_ok());
+    targets.push(tenon::CMakeTargetRequirement {
+        .name       = String::make("TenonFixture::order"_str),
+        .visibility = tenon::DependencyVisibility::Runtime,
+    });
+    auto cache = Vec<tenon::CMakeCacheEntry>::make();
+    cache.push(tenon::CMakeCacheEntry {
+        .name  = String::make("TENON_FIXTURE_CONFIGURE_COUNT"_str),
+        .value = String::make(count_path.as_path().to_str().unwrap()),
+    });
+    declarations.push(tenon::ResolvedCMakeDependencyRequirement {
+        .alias            = String::make("fixture"_str),
+        .package          = String::make("TenonFixture"_str),
+        .source_identity  = Some(String::make("tenon-test-cmake-fixture-v3"_str)),
+        .source_root      = Some(root("cmake/package"_str)),
+        .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/TenonFixture"_str)),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
+    });
+    auto resolved =
+        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+                                             declarations,
+                                             fixture_pkg_config(),
+                                             fixture_cmake(),
+                                             configuration(),
+                                             target,
+                                             target.triple.as_str(),
+                                             *parser);
+    if (resolved.is_err()) {
+        auto error = rstd::move(resolved).unwrap_err();
+        rstd::io::eprintln("{}", error.message.as_str());
+        EXPECT_TRUE(false);
+        return;
+    }
     ASSERT_EQ(resolved->len(), usize(1));
     const auto& dependency = (*resolved)[usize {}];
     EXPECT_EQ(dependency.provider.as_str(), "cmake"_str);
-    EXPECT_EQ(dependency.module.as_str(), "TenonFixture::fixture"_str);
     EXPECT_EQ(dependency.version.as_str(), "1.2.3"_str);
+    ASSERT_EQ(dependency.targets.len(), usize(3));
+    EXPECT_EQ(dependency.targets[usize {}].name.as_str(), "TenonFixture::fixture"_str);
 
     auto has_macro   = false;
     auto has_include = false;
-    for (const auto& occurrence : dependency.compile_arguments.occurrences) {
+    for (const auto& occurrence : dependency.targets[usize {}].compile_arguments.occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
                                          "TENON_CMAKE_USAGE=1"_str;
@@ -454,6 +512,48 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         if (token.as_str().contains("libtenon_fixture.a"_str)) has_archive = true;
     }
     EXPECT_TRUE(has_archive);
+    EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "TenonFixture::headers"_str);
+    EXPECT_EQ(dependency.targets[usize(1)].visibility, tenon::DependencyVisibility::Public);
+    EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "TenonFixture::order"_str);
+    EXPECT_EQ(dependency.targets[usize(2)].visibility, tenon::DependencyVisibility::Runtime);
+
+    auto first_count = rstd::fs::read_to_string(count_path.as_path());
+    ASSERT_TRUE(first_count.is_ok());
+    EXPECT_EQ(first_count->as_str(), "configure\n"_str);
+    declarations[usize {}].targets[usize {}].name = String::make("TenonFixture::headers"_str);
+    declarations[usize {}].targets[usize(1)].name = String::make("TenonFixture::fixture"_str);
+    auto queried_again =
+        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+                                             declarations,
+                                             fixture_pkg_config(),
+                                             fixture_cmake(),
+                                             configuration(),
+                                             target,
+                                             target.triple.as_str(),
+                                             *parser);
+    ASSERT_TRUE(queried_again.is_ok());
+    auto second_count = rstd::fs::read_to_string(count_path.as_path());
+    ASSERT_TRUE(second_count.is_ok());
+    EXPECT_EQ(second_count->as_str(), "configure\n"_str);
+
+    declarations[usize {}].cache.push(tenon::CMakeCacheEntry {
+        .name  = String::make("TENON_FIXTURE_VARIANT"_str),
+        .value = String::make("ON"_str),
+    });
+    auto installed_again =
+        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+                                             declarations,
+                                             fixture_pkg_config(),
+                                             fixture_cmake(),
+                                             configuration(),
+                                             target,
+                                             target.triple.as_str(),
+                                             *parser);
+    ASSERT_TRUE(installed_again.is_ok());
+    auto third_count = rstd::fs::read_to_string(count_path.as_path());
+    ASSERT_TRUE(third_count.is_ok());
+    EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
+    EXPECT_TRUE(clear_output(count_directory.as_path()));
 }
 
 TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyContext) {
@@ -461,7 +561,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::DeclaredExternalDependency>::make();
+    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
     declarations.push(
         versioned_fixture("equal"_str, tenon::PkgConfigVersionOperator::Equal, "2.3.4"_str));
     declarations.push(
@@ -482,7 +582,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
 
-    auto incompatible = Vec<tenon::DeclaredExternalDependency>::make();
+    auto incompatible = Vec<tenon::PkgConfigExternalDependency>::make();
     incompatible.push(versioned_fixture(
         "incompatible"_str, tenon::PkgConfigVersionOperator::Greater, "99.0.0"_str));
     auto failed = tenon::resolve_external_dependencies(incompatible,
@@ -503,7 +603,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::DeclaredExternalDependency>::make();
+    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
         "fixture"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
 
@@ -539,10 +639,9 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     EXPECT_TRUE(provider_error.message.as_str().contains("fixture"_str));
     EXPECT_TRUE(provider_error.message.as_str().contains("tenon-fixture"_str));
 
-    config                       = fixture_pkg_config();
-    declarations[usize {}].alias = String::make("missing-module"_str);
-    declarations[usize {}].requirement.as_PkgConfig().requirement.module =
-        String::make("tenon-module-does-not-exist"_str);
+    config                                    = fixture_pkg_config();
+    declarations[usize {}].alias              = String::make("missing-module"_str);
+    declarations[usize {}].requirement.module = String::make("tenon-module-does-not-exist"_str);
     auto missing_module = tenon::resolve_external_dependencies(declarations,
                                                                config,
                                                                fixture_cmake(),
@@ -568,7 +667,7 @@ TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
         .target_configured = true,
     };
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::DeclaredExternalDependency>::make();
+    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
     declarations.push(
         versioned_fixture("first"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
     declarations.push(versioned_fixture(

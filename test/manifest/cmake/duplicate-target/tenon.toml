@@ -1,0 +1,15 @@
+[package]
+name = "cmake-duplicate-target"
+version = "0.1.0"
+module = "cmake_duplicate_target"
+
+[library]
+archive = "cmake_duplicate_target"
+discovery = "module"
+
+[external-dependencies.cmake.fixture]
+find-package = "TenonFixture"
+targets = [
+  { name = "TenonFixture::fixture", visibility = "private" },
+  { name = "TenonFixture::fixture", visibility = "public" },
+]

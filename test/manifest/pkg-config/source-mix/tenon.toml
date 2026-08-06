@@ -7,7 +7,7 @@ module = "pkg_config_source_mix"
 archive = "pkg_config_source_mix"
 discovery = "module"
 
-[dependencies.curl]
+[external-dependencies.pkg-config.curl]
 path = "../valid"
-pkg-config = "libcurl"
+module = "libcurl"
 visibility = "private"

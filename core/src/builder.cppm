@@ -60,8 +60,7 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                               request.sources,
                                               request.pkg_config,
                                               request.cmake,
-                                              toolchain.target_info(),
-                                              toolchain.argument_parser(),
+                                              toolchain,
                                               request.locked,
                                               request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());

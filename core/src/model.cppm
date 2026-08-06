@@ -123,25 +123,30 @@ class CMakeDependencySource {
               (Git, (String url; GitReference reference;)))
 };
 
+struct CMakeTargetRequirement {
+    String               name;
+    DependencyVisibility visibility { DependencyVisibility::Private };
+};
+
 struct CMakeDependencyRequirement {
-    String                package;
-    String                target;
-    CMakeDependencySource source;
-    Vec<CMakeCacheEntry>  cache;
+    String                      alias;
+    String                      package;
+    CMakeDependencySource       source;
+    Option<PathBuf>             config_directory;
+    Vec<CMakeCacheEntry>        cache;
+    Vec<CMakeTargetRequirement> targets;
+};
+
+struct PkgConfigExternalDependency {
+    String                         alias;
+    PkgConfigDependencyRequirement requirement;
+    DependencyVisibility           visibility { DependencyVisibility::Private };
 };
 
 class PackageSourceRequirement {
     RSTD_ENUM(PackageSourceRequirement,
               (Path, (PathBuf path;)),
               (Git, (String url; GitReference reference;)))
-};
-
-class DeclaredDependencySource {
-    RSTD_ENUM(DeclaredDependencySource,
-              (Path, (PathBuf path;)),
-              (Git, (String url; GitReference reference;)),
-              (PkgConfig, (PkgConfigDependencyRequirement requirement;)),
-              (CMake, (CMakeDependencyRequirement requirement;)))
 };
 
 enum class SourceDiscoveryMode
@@ -188,6 +193,14 @@ struct ToolchainSpec {
     PathBuf compiler;
     PathBuf archiver;
     PathBuf formatter;
+
+    auto clone() const -> ToolchainSpec {
+        return ToolchainSpec {
+            .compiler  = compiler.clone(),
+            .archiver  = archiver.clone(),
+            .formatter = formatter.clone(),
+        };
+    }
 };
 
 struct GitSourcePatch {
@@ -275,26 +288,40 @@ struct LinkArgumentSequence {
     }
 };
 
-struct ResolvedExternalDependency {
-    String               alias;
-    String               provider;
-    String               module;
-    String               version;
+struct ResolvedExternalTargetUsage {
+    String               name;
     DependencyVisibility visibility { DependencyVisibility::Private };
     CppArgumentLayer     compile_arguments;
-    LinkArgumentSequence link_arguments;
     String               identity;
 
-    auto clone() const -> ResolvedExternalDependency {
-        return ResolvedExternalDependency {
-            .alias             = alias.clone(),
-            .provider          = provider.clone(),
-            .module            = module.clone(),
-            .version           = version.clone(),
+    auto clone() const -> ResolvedExternalTargetUsage {
+        return ResolvedExternalTargetUsage {
+            .name              = name.clone(),
             .visibility        = visibility,
             .compile_arguments = as<rstd::clone::Clone>(compile_arguments).clone(),
-            .link_arguments    = link_arguments.clone(),
             .identity          = identity.clone(),
+        };
+    }
+};
+
+struct ResolvedExternalDependency {
+    String                           alias;
+    String                           provider;
+    String                           version;
+    Vec<ResolvedExternalTargetUsage> targets;
+    LinkArgumentSequence             link_arguments;
+    String                           identity;
+
+    auto clone() const -> ResolvedExternalDependency {
+        auto copied_targets = Vec<ResolvedExternalTargetUsage>::with_capacity(targets.len());
+        for (const auto& target : targets) copied_targets.push(target.clone());
+        return ResolvedExternalDependency {
+            .alias          = alias.clone(),
+            .provider       = provider.clone(),
+            .version        = version.clone(),
+            .targets        = rstd::move(copied_targets),
+            .link_arguments = link_arguments.clone(),
+            .identity       = identity.clone(),
         };
     }
 };
@@ -313,7 +340,7 @@ struct UsageRequirements {
 
 struct DeclaredDependency {
     String                   name;
-    DeclaredDependencySource source;
+    PackageSourceRequirement source;
     DependencyVisibility     visibility { DependencyVisibility::Private };
 };
 
@@ -395,21 +422,23 @@ struct CompileTestCase {
 };
 
 struct PackageManifest {
-    String                      name;
-    PackageVersion              version;
-    Option<String>              root_module;
-    PathBuf                     root;
-    PathBuf                     manifest_path;
-    ArtifactKind                artifact_kind { ArtifactKind::StaticLibrary };
-    String                      artifact_name;
-    SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>                declared_sources;
-    Vec<ConditionalSourceGroup> conditional_source_groups;
-    Vec<TestAttachmentManifest> test_attachments;
-    TargetPredicate             target;
-    Vec<CompileTestCase>        compile_tests;
-    UsageRequirements           usage;
-    Vec<DeclaredDependency>     dependencies;
+    String                           name;
+    PackageVersion                   version;
+    Option<String>                   root_module;
+    PathBuf                          root;
+    PathBuf                          manifest_path;
+    ArtifactKind                     artifact_kind { ArtifactKind::StaticLibrary };
+    String                           artifact_name;
+    SourceDiscoveryMode              discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>                     declared_sources;
+    Vec<ConditionalSourceGroup>      conditional_source_groups;
+    Vec<TestAttachmentManifest>      test_attachments;
+    TargetPredicate                  target;
+    Vec<CompileTestCase>             compile_tests;
+    UsageRequirements                usage;
+    Vec<DeclaredDependency>          dependencies;
+    Vec<PkgConfigExternalDependency> pkg_config_external_dependencies;
+    Vec<CMakeDependencyRequirement>  cmake_external_dependencies;
 };
 
 struct WorkspacePackageDefaults {
@@ -466,23 +495,13 @@ struct ResolvedDependency {
 };
 
 struct ResolvedCMakeDependencyRequirement {
-    String               package;
-    String               target;
-    Option<String>       source_identity;
-    Option<PathBuf>      source_root;
-    Vec<CMakeCacheEntry> cache;
-};
-
-class ExternalDependencyRequirement {
-    RSTD_ENUM(ExternalDependencyRequirement,
-              (PkgConfig, (PkgConfigDependencyRequirement requirement;)),
-              (CMake, (ResolvedCMakeDependencyRequirement requirement;)))
-};
-
-struct DeclaredExternalDependency {
-    String                        alias;
-    ExternalDependencyRequirement requirement;
-    DependencyVisibility          visibility { DependencyVisibility::Private };
+    String                      alias;
+    String                      package;
+    Option<String>              source_identity;
+    Option<PathBuf>             source_root;
+    Option<PathBuf>             config_directory;
+    Vec<CMakeCacheEntry>        cache;
+    Vec<CMakeTargetRequirement> targets;
 };
 
 struct ResolvedPackageSource {
@@ -505,14 +524,34 @@ struct PackageResolutionOptions {
     bool                 locked { false };
     Vec<LockedGitSource> git_sources;
     PackageSourceConfig  sources;
+
+    auto clone() const -> PackageResolutionOptions {
+        auto locked_sources = Vec<LockedGitSource>::with_capacity(git_sources.len());
+        for (const auto& source : git_sources) {
+            locked_sources.push(LockedGitSource {
+                .git = source.git.clone(),
+                .reference =
+                    GitReference {
+                        .kind  = source.reference.kind,
+                        .value = source.reference.value.clone(),
+                    },
+                .commit = source.commit.clone(),
+            });
+        }
+        return PackageResolutionOptions {
+            .locked      = locked,
+            .git_sources = rstd::move(locked_sources),
+            .sources     = sources.clone(),
+        };
+    }
 };
 
 struct ResolvedPackage {
-    String                          source_identity;
-    PathBuf                         source_manifest;
-    PackageManifest                 manifest;
-    Vec<ResolvedDependency>         dependencies;
-    Vec<DeclaredExternalDependency> external_dependencies;
+    String                                  source_identity;
+    PathBuf                                 source_manifest;
+    PackageManifest                         manifest;
+    Vec<ResolvedDependency>                 dependencies;
+    Vec<ResolvedCMakeDependencyRequirement> cmake_external_dependencies;
 };
 
 struct ResolvedPackageGraph {
@@ -558,6 +597,21 @@ struct BuildConfiguration {
     String                   language_standard;
     Vec<String>              options;
     Vec<String>              linker_options;
+
+    auto clone() const -> BuildConfiguration {
+        return BuildConfiguration {
+            .profile              = profile,
+            .toolchain            = toolchain.clone(),
+            .standard_library     = standard_library,
+            .bmi_mode             = bmi_mode,
+            .bmi_source_embedding = bmi_source_embedding,
+            .exceptions           = exceptions,
+            .rtti                 = rtti,
+            .language_standard    = language_standard.clone(),
+            .options              = options.clone(),
+            .linker_options       = linker_options.clone(),
+        };
+    }
 };
 
 struct TargetSource {

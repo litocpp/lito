@@ -7,14 +7,17 @@ module = "cmake_valid"
 archive = "cmake_valid"
 discovery = "module"
 
-[dependencies.vulkan]
-cmake = "Vulkan"
-target = "Vulkan::Vulkan"
-visibility = "public"
+[external-dependencies.cmake.vulkan]
+find-package = "Vulkan"
+targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
 
-[dependencies.fixture]
-cmake = "TenonFixture"
-target = "TenonFixture::fixture"
+[external-dependencies.cmake.fixture]
+find-package = "TenonFixture"
 path = "../../../cmake/package"
-cmake-cache = { TENON_FIXTURE_OPTION = true }
-visibility = "private"
+config-directory = "lib/cmake/TenonFixture"
+cache = { TENON_FIXTURE_OPTION = true }
+targets = [
+  { name = "TenonFixture::fixture", visibility = "private" },
+  { name = "TenonFixture::headers", visibility = "public" },
+  { name = "TenonFixture::order", visibility = "runtime" },
+]

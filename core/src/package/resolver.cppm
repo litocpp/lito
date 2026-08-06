@@ -2,7 +2,7 @@ export module tenon.package:resolver;
 
 import rstd;
 import tenon.model;
-import :source;
+import tenon.source;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -52,35 +52,9 @@ auto package_conflict(ref<str>                 name,
                      candidate.source_identity.as_str()));
 }
 
-auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& input)
-    -> PkgConfigDependencyRequirement {
-    auto result = PkgConfigDependencyRequirement {
-        .module = input.module.clone(),
-        .mode   = input.mode,
-    };
-    if (input.version.is_some()) {
-        result.version = Some(PkgConfigVersionRequirement {
-            .comparison = input.version->comparison,
-            .value      = input.version->value.clone(),
-        });
-    }
-    return result;
-}
-
-auto clone_cmake_cache(const Vec<CMakeCacheEntry>& input) -> Vec<CMakeCacheEntry> {
-    auto result = Vec<CMakeCacheEntry>::with_capacity(input.len());
-    for (const auto& entry : input) {
-        result.push(CMakeCacheEntry {
-            .name  = entry.name.clone(),
-            .value = entry.value.clone(),
-        });
-    }
-    return result;
-}
-
 class Resolver {
     PathBuf              root_directory_;
-    PackageSourceManager sources_;
+    SourceManager        sources_;
     Vec<ResolvedPackage> packages_;
     CoordinateMap        coordinates_ { CoordinateMap::make() };
     StringSet            active_ { StringSet::make() };
@@ -144,65 +118,10 @@ public:
                             });
         active_.insert(loaded.package.name.clone(), empty {});
 
-        auto dependencies          = Vec<ResolvedDependency>::make();
-        auto external_dependencies = Vec<DeclaredExternalDependency>::make();
+        auto dependencies = Vec<ResolvedDependency>::make();
         for (const auto& dependency : loaded.package.dependencies) {
-            if (dependency.source.is_PkgConfig()) {
-                external_dependencies.push(DeclaredExternalDependency {
-                    .alias       = dependency.name.clone(),
-                    .requirement = ExternalDependencyRequirement::PkgConfig(
-                        clone_pkg_config_requirement(dependency.source.as_PkgConfig().requirement)),
-                    .visibility = dependency.visibility,
-                });
-                continue;
-            }
-            if (dependency.source.is_CMake()) {
-                const auto& declaration = dependency.source.as_CMake().requirement;
-                auto        identity    = Option<String> {};
-                auto        root        = Option<PathBuf> {};
-                if (! declaration.source.is_Installed()) {
-                    auto requirement =
-                        declaration.source.is_Git()
-                            ? PackageSourceRequirement::Git(
-                                  declaration.source.as_Git().url.clone(),
-                                  GitReference {
-                                      .kind  = declaration.source.as_Git().reference.kind,
-                                      .value = declaration.source.as_Git().reference.value.clone(),
-                                  })
-                            : PackageSourceRequirement::Path(
-                                  declaration.source.as_Path().path.clone());
-                    auto external_source =
-                        sources_.acquire_external(requirement, loaded.package.root.as_path());
-                    if (external_source.is_err()) {
-                        return Err(rstd::move(external_source).unwrap_err());
-                    }
-                    identity = Some(String::make(sources_.source_identity(*external_source)));
-                    root     = Some(sources_.source_root(*external_source));
-                }
-                external_dependencies.push(DeclaredExternalDependency {
-                    .alias = dependency.name.clone(),
-                    .requirement =
-                        ExternalDependencyRequirement::CMake(ResolvedCMakeDependencyRequirement {
-                            .package         = declaration.package.clone(),
-                            .target          = declaration.target.clone(),
-                            .source_identity = rstd::move(identity),
-                            .source_root     = rstd::move(root),
-                            .cache           = clone_cmake_cache(declaration.cache),
-                        }),
-                    .visibility = dependency.visibility,
-                });
-                continue;
-            }
-            auto source =
-                dependency.source.is_Git()
-                    ? PackageSourceRequirement::Git(
-                          dependency.source.as_Git().url.clone(),
-                          GitReference {
-                              .kind  = dependency.source.as_Git().reference.kind,
-                              .value = dependency.source.as_Git().reference.value.clone(),
-                          })
-                    : PackageSourceRequirement::Path(dependency.source.as_Path().path.clone());
-            auto dependency_source = sources_.acquire(source, loaded.package.root.as_path());
+            auto dependency_source =
+                sources_.acquire(dependency.source, loaded.package.root.as_path());
             if (dependency_source.is_err()) {
                 return Err(rstd::move(dependency_source).unwrap_err());
             }
@@ -223,11 +142,11 @@ public:
 
         active_.remove(loaded.package.name.as_str());
         packages_.push(ResolvedPackage {
-            .source_identity       = rstd::move(loaded.source_identity),
-            .source_manifest       = rstd::move(loaded.manifest),
-            .manifest              = rstd::move(loaded.package),
-            .dependencies          = rstd::move(dependencies),
-            .external_dependencies = rstd::move(external_dependencies),
+            .source_identity             = rstd::move(loaded.source_identity),
+            .source_manifest             = rstd::move(loaded.manifest),
+            .manifest                    = rstd::move(loaded.package),
+            .dependencies                = rstd::move(dependencies),
+            .cmake_external_dependencies = {},
         });
         return Ok(String::make(expected_name));
     }

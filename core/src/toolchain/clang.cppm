@@ -300,14 +300,16 @@ public:
         }
         auto configured_compiler =
             toolchain::command::resolve_tool(specification.compiler.as_path(), "clang++"_str);
-        auto archiver =
+        auto configured_archiver =
             toolchain::command::resolve_tool(specification.archiver.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::move(configured_compiler).unwrap_err());
         }
-        if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
+        if (configured_archiver.is_err()) {
+            return Err(rstd::move(configured_archiver).unwrap_err());
+        }
         auto compiler_path = rstd::move(configured_compiler).unwrap();
-        auto archiver_path = rstd::move(archiver).unwrap();
+        auto archiver_path = rstd::move(configured_archiver).unwrap();
 
         if (toolchain::command::is_searchable_tool_name(specification.compiler.as_path())) {
             auto path_command = Vec<String>::make();
@@ -322,6 +324,32 @@ public:
             auto resolved = toolchain::command::resolve_tool(queried_path.as_path(), "clang++"_str);
             if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
             compiler_path = rstd::move(resolved).unwrap();
+        }
+
+        if (toolchain::command::is_searchable_tool_name(specification.archiver.as_path())) {
+            auto archiver_name = specification.archiver.as_path().to_str();
+            if (archiver_name.is_none()) {
+                return failure<ClangToolchain>(
+                    rstd::format("configured archiver '{}' is not valid UTF-8",
+                                 specification.archiver.as_path()));
+            }
+            auto path_command = Vec<String>::make();
+            auto pushed = toolchain::command::push_path(path_command, compiler_path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            toolchain::command::push_option(
+                path_command, rstd::format("-print-prog-name={}", *archiver_name).as_str());
+            auto queried = toolchain::command::tool_output(rstd::move(path_command),
+                                                           "clang++ archiver query"_str);
+            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
+            auto queried_path = PathBuf::from(queried->as_str());
+            if (! queried_path.as_path().is_absolute()) {
+                return failure<ClangToolchain>(
+                    rstd::format("configured archiver '{}' could not be resolved by clang++",
+                                 specification.archiver.as_path()));
+            }
+            auto resolved = toolchain::command::resolve_tool(queried_path.as_path(), "llvm-ar"_str);
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            archiver_path = rstd::move(resolved).unwrap();
         }
 
         auto compiler_command = Vec<String>::make();
@@ -442,6 +470,8 @@ public:
     }
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
+    auto compiler_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
+    auto archiver_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }

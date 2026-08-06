@@ -7,7 +7,7 @@ module = "pkg_config_static_type"
 archive = "pkg_config_static_type"
 discovery = "module"
 
-[dependencies.curl]
-pkg-config = "libcurl"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
 static = "yes"
 visibility = "private"

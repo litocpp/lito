@@ -7,7 +7,7 @@ module = "pkg_config_selector"
 archive = "pkg_config_selector"
 discovery = "module"
 
-[dependencies.curl]
-pkg-config = "libcurl"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
 tag = "v1"
 visibility = "private"

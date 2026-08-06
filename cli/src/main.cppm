@@ -196,6 +196,7 @@ extern "C++" int main() {
         request.source             = rstd::move(options.source);
         request.locked             = options.locked;
         if (options.profile.is_some()) request.configuration.profile = *options.profile;
+        request.configuration.exceptions = options.exceptions;
 
         auto scanned = tenon::scan(request);
         if (scanned.is_err()) {
@@ -226,6 +227,7 @@ extern "C++" int main() {
         request.locked             = options.locked;
         request.data_only          = options.data_only;
         if (options.profile.is_some()) request.configuration.profile = *options.profile;
+        request.configuration.exceptions = options.exceptions;
         if (options.output.is_some()) request.output = rstd::move(*options.output);
         if (options.data_output.is_some()) request.data_output = rstd::move(*options.data_output);
         if (options.frontend.is_some()) request.frontend = rstd::move(options.frontend);
@@ -255,6 +257,7 @@ extern "C++" int main() {
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) request.build.configuration.profile = *options.profile;
+        request.build.configuration.exceptions = options.exceptions;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
         request.build.observer = Some(tenon::BuildObserver {
@@ -361,6 +364,7 @@ extern "C++" int main() {
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked;
     if (options.profile.is_some()) request.configuration.profile = *options.profile;
+    request.configuration.exceptions = options.exceptions;
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 

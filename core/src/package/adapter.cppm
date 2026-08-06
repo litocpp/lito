@@ -73,76 +73,25 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
     for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
     for (const auto& name : selected_root_names) requested_roots.insert(name.clone(), empty {});
 
-    auto declared_external = Vec<DeclaredExternalDependency>::make();
-    auto external_owners   = Vec<usize>::make();
     auto external_by_package =
         Vec<Vec<ResolvedExternalDependency>>::with_capacity(graph.packages.len());
+    auto effective_target = profile.cpp.target.target.is_some()
+                                ? profile.cpp.target.target->as_str()
+                                : target_info.triple.as_str();
     for (usize index {}; index < graph.packages.len(); ++index) {
         external_by_package.emplace_back();
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
-        for (const auto& dependency : graph.packages[index].external_dependencies) {
-            if (dependency.requirement.is_PkgConfig()) {
-                const auto& value       = dependency.requirement.as_PkgConfig().requirement;
-                auto        requirement = PkgConfigDependencyRequirement {
-                    .module = value.module.clone(),
-                    .mode   = value.mode,
-                };
-                if (value.version.is_some()) {
-                    requirement.version = Some(PkgConfigVersionRequirement {
-                        .comparison = value.version->comparison,
-                        .value      = value.version->value.clone(),
-                    });
-                }
-                declared_external.push(DeclaredExternalDependency {
-                    .alias = dependency.alias.clone(),
-                    .requirement =
-                        ExternalDependencyRequirement::PkgConfig(rstd::move(requirement)),
-                    .visibility = dependency.visibility,
-                });
-            } else {
-                const auto& value = dependency.requirement.as_CMake().requirement;
-                auto        cache = Vec<CMakeCacheEntry>::with_capacity(value.cache.len());
-                for (const auto& entry : value.cache) {
-                    cache.push(CMakeCacheEntry {
-                        .name  = entry.name.clone(),
-                        .value = entry.value.clone(),
-                    });
-                }
-                auto source_identity = Option<String> {};
-                auto source_root     = Option<PathBuf> {};
-                if (value.source_identity.is_some()) {
-                    source_identity = Some(value.source_identity->clone());
-                }
-                if (value.source_root.is_some()) source_root = Some(value.source_root->clone());
-                declared_external.push(DeclaredExternalDependency {
-                    .alias = dependency.alias.clone(),
-                    .requirement =
-                        ExternalDependencyRequirement::CMake(ResolvedCMakeDependencyRequirement {
-                            .package         = value.package.clone(),
-                            .target          = value.target.clone(),
-                            .source_identity = rstd::move(source_identity),
-                            .source_root     = rstd::move(source_root),
-                            .cache           = rstd::move(cache),
-                        }),
-                    .visibility = dependency.visibility,
-                });
-            }
-            external_owners.emplace_back(index);
-        }
-    }
-    auto effective_target  = profile.cpp.target.target.is_some()
-                                 ? profile.cpp.target.target->as_str()
-                                 : target_info.triple.as_str();
-    auto resolved_external = resolve_external_dependencies(declared_external,
-                                                           pkg_config,
-                                                           cmake,
-                                                           configuration,
-                                                           target_info,
-                                                           effective_target,
-                                                           argument_parser);
-    if (resolved_external.is_err()) return Err(rstd::move(resolved_external).unwrap_err());
-    for (usize index {}; index < resolved_external->len(); ++index) {
-        external_by_package[external_owners[index]].push(rstd::move((*resolved_external)[index]));
+        auto resolved = resolve_external_dependencies(
+            graph.packages[index].manifest.pkg_config_external_dependencies,
+            graph.packages[index].cmake_external_dependencies,
+            pkg_config,
+            cmake,
+            configuration,
+            target_info,
+            effective_target,
+            argument_parser);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        external_by_package[index] = rstd::move(resolved).unwrap();
     }
 
     auto artifact_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();

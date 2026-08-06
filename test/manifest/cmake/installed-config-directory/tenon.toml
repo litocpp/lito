@@ -1,13 +1,13 @@
 [package]
-name = "cmake-installed-cache"
+name = "cmake-installed-config-directory"
 version = "0.1.0"
-module = "cmake_installed_cache"
+module = "cmake_installed_config_directory"
 
 [library]
-archive = "cmake_installed_cache"
+archive = "cmake_installed_config_directory"
 discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "TenonFixture"
-cache = { TENON_FIXTURE_OPTION = true }
+config-directory = "lib/cmake/TenonFixture"
 targets = [{ name = "TenonFixture::fixture", visibility = "private" }]

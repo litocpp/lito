@@ -37,6 +37,7 @@ struct CliSchema {
     ArgKey<String>       directory;
     ArgKey<String>       build_package;
     ArgKey<BuildProfile> build_profile;
+    ArgKey<bool>         build_exceptions;
     ArgKey<String>       build_target;
     ArgKey<String>       build_output;
     ArgKey<bool>         build_locked;
@@ -45,6 +46,7 @@ struct CliSchema {
     ArgKey<bool>         build_no_timing;
     ArgKey<String>       test_package;
     ArgKey<BuildProfile> test_profile;
+    ArgKey<bool>         test_exceptions;
     ArgKey<String>       test_output;
     ArgKey<bool>         test_locked;
     ArgKey<bool>         test_no_run;
@@ -55,11 +57,13 @@ struct CliSchema {
     ArgKey<String>       scan_source;
     ArgKey<String>       scan_package;
     ArgKey<BuildProfile> scan_profile;
+    ArgKey<bool>         scan_exceptions;
     ArgKey<String>       scan_target;
     ArgKey<bool>         scan_locked;
     ArgKey<String>       format_package;
     ArgKey<String>       doc_package;
     ArgKey<BuildProfile> doc_profile;
+    ArgKey<bool>         doc_exceptions;
     ArgKey<String>       doc_target;
     ArgKey<String>       doc_output;
     ArgKey<String>       doc_data_output;
@@ -84,6 +88,12 @@ auto profile_arg() -> Arg<BuildProfile> {
         .long_name("profile"_str)
         .value_name("PROFILE"_str)
         .help("Select the build profile"_str);
+}
+
+auto exceptions_arg() -> Arg<bool> {
+    return Arg<bool>::flag("exceptions"_str)
+        .long_name("exceptions"_str)
+        .help("Enable C++ exceptions for the build graph"_str);
 }
 
 auto target_arg() -> Arg<String> {
@@ -116,32 +126,34 @@ auto no_timing_arg() -> Arg<bool> {
 auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build = Command::make("build"_str);
     build.about("Build packages"_str);
-    auto build_package = build.add_arg(package_arg());
-    auto build_profile = build.add_arg(profile_arg());
-    auto build_target  = build.add_arg(target_arg());
-    auto build_output  = build.add_arg(Arg<String>::value("out"_str, string_parser())
-                                           .long_name("out"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Override the build output directory"_str));
-    auto build_locked  = build.add_arg(locked_arg());
-    auto build_verbose = build.add_arg(
+    auto build_package    = build.add_arg(package_arg());
+    auto build_profile    = build.add_arg(profile_arg());
+    auto build_exceptions = build.add_arg(exceptions_arg());
+    auto build_target     = build.add_arg(target_arg());
+    auto build_output     = build.add_arg(Arg<String>::value("out"_str, string_parser())
+                                              .long_name("out"_str)
+                                              .value_name("DIRECTORY"_str)
+                                              .help("Override the build output directory"_str));
+    auto build_locked     = build.add_arg(locked_arg());
+    auto build_verbose    = build.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto build_timing_file = build.add_arg(timing_file_arg());
     auto build_no_timing   = build.add_arg(no_timing_arg());
 
     auto test = Command::make("test"_str);
     test.about("Build and run test packages"_str);
-    auto test_package = test.add_arg(package_arg());
-    auto test_profile = test.add_arg(profile_arg());
-    auto test_output  = test.add_arg(Arg<String>::value("out"_str, string_parser())
-                                         .long_name("out"_str)
-                                         .value_name("DIRECTORY"_str)
-                                         .help("Override the build output directory"_str));
-    auto test_locked  = test.add_arg(locked_arg());
-    auto test_no_run  = test.add_arg(Arg<bool>::flag("no-run"_str)
-                                         .long_name("no-run"_str)
-                                         .help("Build tests without running"_str));
-    auto test_verbose = test.add_arg(
+    auto test_package    = test.add_arg(package_arg());
+    auto test_profile    = test.add_arg(profile_arg());
+    auto test_exceptions = test.add_arg(exceptions_arg());
+    auto test_output     = test.add_arg(Arg<String>::value("out"_str, string_parser())
+                                            .long_name("out"_str)
+                                            .value_name("DIRECTORY"_str)
+                                            .help("Override the build output directory"_str));
+    auto test_locked     = test.add_arg(locked_arg());
+    auto test_no_run     = test.add_arg(Arg<bool>::flag("no-run"_str)
+                                            .long_name("no-run"_str)
+                                            .help("Build tests without running"_str));
+    auto test_verbose    = test.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto test_timing_file = test.add_arg(timing_file_arg());
     auto test_no_timing   = test.add_arg(no_timing_arg());
@@ -152,14 +164,15 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
 
     auto scan = Command::make("scan"_str);
     scan.about("Scan one source file"_str);
-    auto scan_source  = scan.add_arg(Arg<String>::value("source"_str, string_parser())
-                                         .value_name("SOURCE"_str)
-                                         .help("Source file to scan"_str)
-                                         .required());
-    auto scan_package = scan.add_arg(package_arg());
-    auto scan_profile = scan.add_arg(profile_arg());
-    auto scan_target  = scan.add_arg(target_arg());
-    auto scan_locked  = scan.add_arg(locked_arg());
+    auto scan_source     = scan.add_arg(Arg<String>::value("source"_str, string_parser())
+                                            .value_name("SOURCE"_str)
+                                            .help("Source file to scan"_str)
+                                            .required());
+    auto scan_package    = scan.add_arg(package_arg());
+    auto scan_profile    = scan.add_arg(profile_arg());
+    auto scan_exceptions = scan.add_arg(exceptions_arg());
+    auto scan_target     = scan.add_arg(target_arg());
+    auto scan_locked     = scan.add_arg(locked_arg());
 
     auto format = Command::make("format"_str);
     format.about("Format package sources"_str);
@@ -167,13 +180,14 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
 
     auto doc = Command::make("doc"_str);
     doc.about("Generate package documentation"_str);
-    auto doc_package = doc.add_arg(package_arg());
-    auto doc_profile = doc.add_arg(profile_arg());
-    auto doc_target  = doc.add_arg(target_arg());
-    auto doc_output  = doc.add_arg(Arg<String>::value("out"_str, string_parser())
-                                       .long_name("out"_str)
-                                       .value_name("DIRECTORY"_str)
-                                       .help("Override the documentation output directory"_str));
+    auto doc_package    = doc.add_arg(package_arg());
+    auto doc_profile    = doc.add_arg(profile_arg());
+    auto doc_exceptions = doc.add_arg(exceptions_arg());
+    auto doc_target     = doc.add_arg(target_arg());
+    auto doc_output     = doc.add_arg(Arg<String>::value("out"_str, string_parser())
+                                          .long_name("out"_str)
+                                          .value_name("DIRECTORY"_str)
+                                          .help("Override the documentation output directory"_str));
     auto doc_data_output = doc.add_arg(Arg<String>::value("data-out"_str, string_parser())
                                            .long_name("data-out"_str)
                                            .value_name("DIRECTORY"_str)
@@ -210,6 +224,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .directory         = directory,
         .build_package     = build_package,
         .build_profile     = build_profile,
+        .build_exceptions  = build_exceptions,
         .build_target      = build_target,
         .build_output      = build_output,
         .build_locked      = build_locked,
@@ -218,6 +233,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_no_timing   = build_no_timing,
         .test_package      = test_package,
         .test_profile      = test_profile,
+        .test_exceptions   = test_exceptions,
         .test_output       = test_output,
         .test_locked       = test_locked,
         .test_no_run       = test_no_run,
@@ -228,11 +244,13 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_source       = scan_source,
         .scan_package      = scan_package,
         .scan_profile      = scan_profile,
+        .scan_exceptions   = scan_exceptions,
         .scan_target       = scan_target,
         .scan_locked       = scan_locked,
         .format_package    = format_package,
         .doc_package       = doc_package,
         .doc_profile       = doc_profile,
+        .doc_exceptions    = doc_exceptions,
         .doc_target        = doc_target,
         .doc_output        = doc_output,
         .doc_data_output   = doc_data_output,
@@ -275,6 +293,7 @@ struct BuildOptions {
     Option<BuildProfile> profile;
     Vec<String>          targets;
     Option<PathBuf>      output;
+    bool                 exceptions {};
     bool                 locked {};
     bool                 verbose {};
     Option<PathBuf>      timing_file;
@@ -286,6 +305,7 @@ struct ScanOptions {
     Vec<String>          packages;
     Option<BuildProfile> profile;
     Vec<String>          targets;
+    bool                 exceptions {};
     bool                 locked {};
 };
 
@@ -294,6 +314,7 @@ struct TestOptions {
     Option<BuildProfile> profile;
     Option<PathBuf>      output;
     Vec<String>          arguments;
+    bool                 exceptions {};
     bool                 locked {};
     bool                 no_run {};
     bool                 verbose {};
@@ -313,6 +334,7 @@ struct DocOptions {
     Option<PathBuf>      data_output;
     Option<PathBuf>      frontend;
     Option<PathBuf>      from_data;
+    bool                 exceptions {};
     bool                 data_only {};
     bool                 locked {};
 };
@@ -369,12 +391,13 @@ auto parse() -> CliOutcome {
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Build(BuildOptions {
-                .packages = string_values(*child, schema.build_package),
-                .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
-                .targets  = string_values(*child, schema.build_target),
-                .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .locked   = flag_value(*child, schema.build_locked),
-                .verbose  = flag_value(*child, schema.build_verbose),
+                .packages   = string_values(*child, schema.build_package),
+                .profile    = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
+                .targets    = string_values(*child, schema.build_target),
+                .output     = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
+                .exceptions = flag_value(*child, schema.build_exceptions),
+                .locked     = flag_value(*child, schema.build_locked),
+                .verbose    = flag_value(*child, schema.build_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.build_no_timing),
@@ -387,11 +410,12 @@ auto parse() -> CliOutcome {
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Scan(ScanOptions {
-                .source   = PathBuf::from((**source).clone()),
-                .packages = string_values(*child, schema.scan_package),
-                .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
-                .targets  = string_values(*child, schema.scan_target),
-                .locked   = flag_value(*child, schema.scan_locked),
+                .source     = PathBuf::from((**source).clone()),
+                .packages   = string_values(*child, schema.scan_package),
+                .profile    = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
+                .targets    = string_values(*child, schema.scan_target),
+                .exceptions = flag_value(*child, schema.scan_exceptions),
+                .locked     = flag_value(*child, schema.scan_locked),
             }));
     }
     if (subcommand->get<0>() == "test"_str) {
@@ -402,13 +426,14 @@ auto parse() -> CliOutcome {
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Test(TestOptions {
-                .packages  = string_values(*child, schema.test_package),
-                .profile   = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
-                .output    = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .arguments = string_values(*child, schema.test_arguments),
-                .locked    = flag_value(*child, schema.test_locked),
-                .no_run    = flag_value(*child, schema.test_no_run),
-                .verbose   = flag_value(*child, schema.test_verbose),
+                .packages   = string_values(*child, schema.test_package),
+                .profile    = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
+                .output     = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
+                .arguments  = string_values(*child, schema.test_arguments),
+                .exceptions = flag_value(*child, schema.test_exceptions),
+                .locked     = flag_value(*child, schema.test_locked),
+                .no_run     = flag_value(*child, schema.test_no_run),
+                .verbose    = flag_value(*child, schema.test_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
@@ -425,12 +450,13 @@ auto parse() -> CliOutcome {
         auto targets     = string_values(*child, schema.doc_target);
         auto data_only   = flag_value(*child, schema.doc_data_only);
         auto locked      = flag_value(*child, schema.doc_locked);
+        auto exceptions  = flag_value(*child, schema.doc_exceptions);
         if (from_data.is_some() &&
             (! packages.is_empty() || profile.is_some() || ! targets.is_empty() ||
-             data_output.is_some() || data_only || locked)) {
+             data_output.is_some() || data_only || locked || exceptions)) {
             return CliOutcome::Exit(
                 String::make("tenon: --from-data cannot be combined with --package, --profile, "
-                             "--target, --data-out, --data-only, or --locked\n"_str),
+                             "--exceptions, --target, --data-out, --data-only, or --locked\n"_str),
                 true,
                 i32(2));
         }
@@ -452,8 +478,9 @@ auto parse() -> CliOutcome {
                 .frontend = frontend.is_some() ? Some(PathBuf::from((**frontend).clone())) : None(),
                 .from_data =
                     from_data.is_some() ? Some(PathBuf::from((**from_data).clone())) : None(),
-                .data_only = data_only,
-                .locked    = locked,
+                .exceptions = exceptions,
+                .data_only  = data_only,
+                .locked     = locked,
             }));
     }
     auto child = subcommand->get<1>();

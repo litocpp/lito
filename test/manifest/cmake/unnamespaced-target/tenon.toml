@@ -1,0 +1,12 @@
+[package]
+name = "cmake-unnamespaced-target"
+version = "0.1.0"
+module = "cmake_unnamespaced_target"
+
+[library]
+archive = "cmake_unnamespaced_target"
+discovery = "module"
+
+[external-dependencies.cmake.quickjs]
+find-package = "qjs"
+targets = [{ name = "qjs", visibility = "private" }]

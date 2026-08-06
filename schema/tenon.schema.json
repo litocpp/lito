@@ -576,9 +576,9 @@
       "pattern": "^[A-Za-z0-9_.+-][A-Za-z0-9_.+-]*$"
     },
     "cmakeTarget": {
-      "description": "A namespaced CMake imported target.",
+      "description": "A CMake target name accepted by Tenon's generated consumer project.",
       "type": "string",
-      "pattern": "^[A-Za-z0-9_.+-]+(::[A-Za-z0-9_.+-]+)+$"
+      "pattern": "^[A-Za-z0-9_.+-]+(::[A-Za-z0-9_.+-]+)*$"
     },
     "cmakeCache": {
       "description": "CMake cache entries used only when building a path or Git source.",
@@ -594,6 +594,48 @@
         ]
       }
     },
+    "dependencyVisibility": {
+      "enum": [
+        "public",
+        "private",
+        "runtime"
+      ]
+    },
+    "gitSelectors": {
+      "properties": {
+        "branch": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "tag": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "rev": {
+          "$ref": "#/definitions/gitSelector"
+        }
+      },
+      "not": {
+        "anyOf": [
+          {
+            "required": [
+              "branch",
+              "tag"
+            ]
+          },
+          {
+            "required": [
+              "branch",
+              "rev"
+            ]
+          },
+          {
+            "required": [
+              "tag",
+              "rev"
+            ]
+          }
+        ]
+      }
+    },
     "dependency": {
       "type": "object",
       "required": [
@@ -606,24 +648,6 @@
         "git": {
           "$ref": "#/definitions/gitUrl"
         },
-        "pkg-config": {
-          "$ref": "#/definitions/pkgConfigModule"
-        },
-        "cmake": {
-          "$ref": "#/definitions/cmakePackage"
-        },
-        "target": {
-          "$ref": "#/definitions/cmakeTarget"
-        },
-        "cmake-cache": {
-          "$ref": "#/definitions/cmakeCache"
-        },
-        "version": {
-          "$ref": "#/definitions/pkgConfigVersion"
-        },
-        "static": {
-          "type": "boolean"
-        },
         "branch": {
           "$ref": "#/definitions/gitSelector"
         },
@@ -634,14 +658,13 @@
           "$ref": "#/definitions/gitSelector"
         },
         "visibility": {
-          "enum": [
-            "public",
-            "private",
-            "runtime"
-          ]
+          "$ref": "#/definitions/dependencyVisibility"
         }
       },
       "allOf": [
+        {
+          "$ref": "#/definitions/gitSelectors"
+        },
         {
           "oneOf": [
             {
@@ -669,36 +692,6 @@
                     "required": [
                       "rev"
                     ]
-                  },
-                  {
-                    "required": [
-                      "pkg-config"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "version"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "static"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "target"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake-cache"
-                    ]
                   }
                 ]
               }
@@ -708,153 +701,119 @@
                 "git"
               ],
               "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "pkg-config"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "version"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "static"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "target"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake-cache"
-                    ]
-                  }
+                "required": [
+                  "path"
                 ]
               }
-            },
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "dependencies": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/dependency"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pkgConfigExternalDependency": {
+      "type": "object",
+      "required": [
+        "module",
+        "visibility"
+      ],
+      "properties": {
+        "module": {
+          "$ref": "#/definitions/pkgConfigModule"
+        },
+        "version": {
+          "$ref": "#/definitions/pkgConfigVersion"
+        },
+        "static": {
+          "type": "boolean"
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeExternalTarget": {
+      "type": "object",
+      "required": [
+        "name",
+        "visibility"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/cmakeTarget"
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeExternalDependency": {
+      "type": "object",
+      "required": [
+        "find-package",
+        "targets"
+      ],
+      "properties": {
+        "find-package": {
+          "$ref": "#/definitions/cmakePackage"
+        },
+        "path": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "git": {
+          "$ref": "#/definitions/gitUrl"
+        },
+        "branch": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "tag": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "rev": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "cache": {
+          "$ref": "#/definitions/cmakeCache"
+        },
+        "config-directory": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/cmakeExternalTarget"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/gitSelectors"
+        },
+        {
+          "not": {
+            "required": [
+              "path",
+              "git"
+            ]
+          }
+        },
+        {
+          "oneOf": [
             {
               "required": [
-                "pkg-config"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "target"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake-cache"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "cmake",
-                "target"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "pkg-config"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "version"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "static"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cmake-cache"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "cmake",
-                "target",
                 "path"
               ],
               "not": {
@@ -878,31 +837,21 @@
                     "required": [
                       "rev"
                     ]
-                  },
-                  {
-                    "required": [
-                      "pkg-config"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "version"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "static"
-                    ]
                   }
                 ]
               }
             },
             {
               "required": [
-                "cmake",
-                "target",
                 "git"
               ],
+              "not": {
+                "required": [
+                  "path"
+                ]
+              }
+            },
+            {
               "not": {
                 "anyOf": [
                   {
@@ -912,56 +861,62 @@
                   },
                   {
                     "required": [
-                      "pkg-config"
+                      "git"
                     ]
                   },
                   {
                     "required": [
-                      "version"
+                      "branch"
                     ]
                   },
                   {
                     "required": [
-                      "static"
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "cache"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "config-directory"
                     ]
                   }
                 ]
               }
             }
           ]
-        },
-        {
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "branch",
-                  "tag"
-                ]
-              },
-              {
-                "required": [
-                  "branch",
-                  "rev"
-                ]
-              },
-              {
-                "required": [
-                  "tag",
-                  "rev"
-                ]
-              }
-            ]
-          }
         }
       ],
       "additionalProperties": false
     },
-    "dependencies": {
+    "externalDependencies": {
       "type": "object",
-      "patternProperties": {
-        "^[A-Za-z0-9_-]+$": {
-          "$ref": "#/definitions/dependency"
+      "properties": {
+        "pkg-config": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/pkgConfigExternalDependency"
+            }
+          },
+          "additionalProperties": false
+        },
+        "cmake": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/cmakeExternalDependency"
+            }
+          },
+          "additionalProperties": false
         }
       },
       "additionalProperties": false
@@ -1031,6 +986,9 @@
         },
         "dependencies": {
           "$ref": "#/definitions/dependencies"
+        },
+        "external-dependencies": {
+          "$ref": "#/definitions/externalDependencies"
         }
       },
       "oneOf": [

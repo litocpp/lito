@@ -64,6 +64,7 @@ struct CMakeWorkArea {
     PathBuf source;
     PathBuf build;
     PathBuf install;
+    PathBuf query_root;
     PathBuf query_source;
     PathBuf query_build;
 };
@@ -72,9 +73,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const CMakeProviderConfig&                provider,
                const BuildConfiguration&                 build,
                ref<str> effective_target) -> Result<CMakeWorkArea> {
-    auto recipe = String::make("tenon-cmake-work-v1\n"_str);
-    append_identity(recipe, requirement.package.as_str());
-    append_identity(recipe, requirement.target.as_str());
+    auto recipe = String::make("tenon-cmake-install-v2\n"_str);
     append_identity(recipe,
                     requirement.source_identity.is_some() ? requirement.source_identity->as_str()
                                                           : "installed"_str);
@@ -102,15 +101,32 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     auto cache =
         tenon_cache_directory(PathBuf::from("cmake"_str).as_path(), "CMake dependencies"_str);
     if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
-    auto root = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
+    auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
+    auto query_recipe = String::make("tenon-cmake-query-v2\n"_str);
+    append_identity(query_recipe, requirement.package.as_str());
+    if (requirement.config_directory.is_some()) {
+        auto directory =
+            path_text(requirement.config_directory->as_path(), "CMake config directory"_str);
+        if (directory.is_err()) return Err(rstd::move(directory).unwrap_err());
+        append_identity(query_recipe, directory->as_str());
+    } else {
+        append_identity(query_recipe, "default-config-directory"_str);
+    }
+    for (const auto& target : requirement.targets) {
+        append_identity(query_recipe, target.name.as_str());
+    }
+    append_identity(query_recipe, effective_target);
+    auto query_root = root.join(PathBuf::from("queries"_str).as_path())
+                          .join(PathBuf::from(identity_hash(query_recipe.as_str())).as_path());
     return Ok(CMakeWorkArea {
         .root = root.clone(),
         .source =
             requirement.source_root.is_some() ? requirement.source_root->clone() : PathBuf::make(),
         .build        = root.join(PathBuf::from("build"_str).as_path()),
         .install      = root.join(PathBuf::from("install"_str).as_path()),
-        .query_source = root.join(PathBuf::from("query-source"_str).as_path()),
-        .query_build  = root.join(PathBuf::from("query-build"_str).as_path()),
+        .query_root   = query_root.clone(),
+        .query_source = query_root.join(PathBuf::from("source"_str).as_path()),
+        .query_build  = query_root.join(PathBuf::from("build"_str).as_path()),
     });
 }
 
@@ -124,10 +140,15 @@ auto run_cmake(Vec<String>                   arguments,
                                                  rstd::move(output).unwrap_err().message.as_str()));
     }
     if (output->exit_code != i32 {}) {
+        auto diagnostics = output->standard_output.clone();
+        if (! diagnostics.is_empty() && ! output->standard_error.is_empty()) {
+            diagnostics.push('\n');
+        }
+        diagnostics.push_str(output->standard_error.as_str());
         return cmake_failure<empty>(rstd::format("{} failed with exit code {}:\n{}",
                                                  operation,
                                                  output->exit_code,
-                                                 output->standard_error.as_str()));
+                                                 diagnostics.as_str()));
     }
     return Ok(empty {});
 }
@@ -164,6 +185,14 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
                            const BuildConfiguration&                 configuration,
                            const CMakeWorkArea&                      area) -> Result<empty> {
     if (requirement.source_root.is_none()) return Ok(empty {});
+    auto marker = area.root.join(PathBuf::from("installed"_str).as_path());
+    auto ready  = rstd::fs::exists(marker.as_path());
+    if (ready.is_err()) {
+        return cmake_failure<empty>(rstd::format("cannot inspect CMake install marker '{}': {}",
+                                                 marker.as_path(),
+                                                 rstd::move(ready).unwrap_err()));
+    }
+    if (*ready) return Ok(empty {});
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -226,6 +255,12 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     rstd_try(run_cmake(
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str()));
+    auto marked = rstd::fs::write_atomic(marker.as_path(), ("installed\n"_str).as_bytes());
+    if (marked.is_err()) {
+        return cmake_failure<empty>(rstd::format("cannot write CMake install marker '{}': {}",
+                                                 marker.as_path(),
+                                                 rstd::move(marked).unwrap_err()));
+    }
     return Ok(empty {});
 }
 
@@ -243,10 +278,13 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> Str
         result.push_str(requirement.package.as_str());
         result.push_str(" REQUIRED)\n"_str);
     }
-    result.push_str("if(NOT TARGET "_str);
-    result.push_str(requirement.target.as_str());
-    result.push_str(
-        ")\n  message(FATAL_ERROR \"required imported target is unavailable\")\nendif()\n"_str);
+    for (const auto& target : requirement.targets) {
+        result.push_str("if(NOT TARGET "_str);
+        result.push_str(target.name.as_str());
+        result.push_str(")\n  message(FATAL_ERROR \"required imported target "_str);
+        result.push_str(target.name.as_str());
+        result.push_str(" is unavailable\")\nendif()\n"_str);
+    }
     result.push_str("if(DEFINED "_str);
     result.push_str(requirement.package.as_str());
     result.push_str(
@@ -254,10 +292,22 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> Str
     result.push_str(requirement.package.as_str());
     result.push_str(
         "_VERSION}\")\nelse()\n  file(WRITE \"${CMAKE_BINARY_DIR}/tenon-package-version.txt\" \"\")\nendif()\n"_str);
-    result.push_str("add_executable(tenon_cmake_baseline probe.cpp)\n"
-                    "add_executable(tenon_cmake_dependency probe.cpp)\n"
-                    "target_link_libraries(tenon_cmake_dependency PRIVATE "_str);
-    result.push_str(requirement.target.as_str());
+    result.push_str("add_executable(tenon_cmake_baseline probe.cpp)\n"_str);
+    for (usize index {}; index < requirement.targets.len(); ++index) {
+        result.push_str(
+            rstd::format("add_executable(tenon_cmake_dependency_{} probe.cpp)\n", index).as_str());
+        result.push_str(
+            rstd::format("target_link_libraries(tenon_cmake_dependency_{} PRIVATE ", index)
+                .as_str());
+        result.push_str(requirement.targets[index].name.as_str());
+        result.push_str(")\n"_str);
+    }
+    result.push_str("add_executable(tenon_cmake_combined probe.cpp)\n"
+                    "target_link_libraries(tenon_cmake_combined PRIVATE"_str);
+    for (const auto& target : requirement.targets) {
+        result.push_ascii(u8(' '));
+        result.push_str(target.name.as_str());
+    }
     result.push_str(")\n"_str);
     return result;
 }
@@ -270,6 +320,7 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     directories.push(area.root.clone());
     directories.push(area.build.clone());
     directories.push(area.install.clone());
+    directories.push(area.query_root.clone());
     directories.push(area.query_source.clone());
     directories.push(area.query_build.clone());
     directories.push(query.clone());
@@ -339,6 +390,12 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                                     "-DTENON_CMAKE_DEPENDENCY_PREFIX="_str,
                                     area.install.as_path(),
                                     "CMake install"_str));
+        if (requirement.config_directory.is_some()) {
+            auto prefix    = rstd::format("-D{}_DIR=", requirement.package.as_str());
+            auto directory = area.install.join(requirement.config_directory->as_path());
+            rstd_try(push_path_argument(
+                arguments, prefix.as_str(), directory.as_path(), "CMake config directory"_str));
+        }
     }
     return run_cmake(
         rstd::move(arguments),
@@ -447,11 +504,14 @@ auto codemodel_path(const CMakeWorkArea& area) -> Result<PathBuf> {
 }
 
 struct ProbeTargets {
-    PathBuf baseline;
-    PathBuf dependency;
+    PathBuf      baseline;
+    Vec<PathBuf> dependencies;
+    PathBuf      combined;
 };
 
-auto probe_target_paths(const CMakeWorkArea& area) -> Result<ProbeTargets> {
+auto probe_target_paths(const CMakeWorkArea&                      area,
+                        const ResolvedCMakeDependencyRequirement& requirement)
+    -> Result<ProbeTargets> {
     auto path = codemodel_path(area);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     auto model = read_json(path->as_path(), "CMake File API codemodel"_str);
@@ -464,9 +524,13 @@ auto probe_target_paths(const CMakeWorkArea& area) -> Result<ProbeTargets> {
     auto targets = required_json_array(
         (**configurations)[usize {}], "targets"_str, "CMake codemodel configuration"_str);
     if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
-    auto baseline   = Option<PathBuf> {};
-    auto dependency = Option<PathBuf> {};
-    auto reply      = area.query_build.join(PathBuf::from(".cmake/api/v1/reply"_str).as_path());
+    auto baseline     = Option<PathBuf> {};
+    auto combined     = Option<PathBuf> {};
+    auto dependencies = Vec<Option<PathBuf>>::with_capacity(requirement.targets.len());
+    for (usize index {}; index < requirement.targets.len(); ++index) {
+        dependencies.emplace_back(None());
+    }
+    auto reply = area.query_build.join(PathBuf::from(".cmake/api/v1/reply"_str).as_path());
     for (const auto& target : **targets) {
         auto name = required_json_string(target, "name"_str, "CMake codemodel target"_str);
         auto file = required_json_string(target, "jsonFile"_str, "CMake codemodel target"_str);
@@ -474,15 +538,31 @@ auto probe_target_paths(const CMakeWorkArea& area) -> Result<ProbeTargets> {
         if (file.is_err()) return Err(rstd::move(file).unwrap_err());
         if (*name == "tenon_cmake_baseline"_str)
             baseline = Some(reply.join(PathBuf::from(*file).as_path()));
-        else if (*name == "tenon_cmake_dependency"_str)
-            dependency = Some(reply.join(PathBuf::from(*file).as_path()));
+        else if (*name == "tenon_cmake_combined"_str)
+            combined = Some(reply.join(PathBuf::from(*file).as_path()));
+        else {
+            for (usize index {}; index < dependencies.len(); ++index) {
+                if (*name == rstd::format("tenon_cmake_dependency_{}", index).as_str()) {
+                    dependencies[index] = Some(reply.join(PathBuf::from(*file).as_path()));
+                    break;
+                }
+            }
+        }
     }
-    if (baseline.is_none() || dependency.is_none()) {
+    if (baseline.is_none() || combined.is_none()) {
         return cmake_failure<ProbeTargets>("CMake codemodel is missing probe targets"_str);
     }
+    auto resolved_dependencies = Vec<PathBuf>::with_capacity(dependencies.len());
+    for (auto& dependency : dependencies) {
+        if (dependency.is_none()) {
+            return cmake_failure<ProbeTargets>("CMake codemodel is missing probe targets"_str);
+        }
+        resolved_dependencies.push(rstd::move(dependency).unwrap());
+    }
     return Ok(ProbeTargets {
-        .baseline   = rstd::move(baseline).unwrap(),
-        .dependency = rstd::move(dependency).unwrap(),
+        .baseline     = rstd::move(baseline).unwrap(),
+        .dependencies = rstd::move(resolved_dependencies),
+        .combined     = rstd::move(combined).unwrap(),
     });
 }
 
@@ -598,17 +678,16 @@ struct ProbeSnapshot {
     Vec<String> link;
 };
 
-auto read_probe_snapshot(const CMakeWorkArea& area) -> Result<ProbeSnapshot> {
-    auto paths = probe_target_paths(area);
-    if (paths.is_err()) return Err(rstd::move(paths).unwrap_err());
-    auto baseline   = read_json(paths->baseline.as_path(), "CMake baseline target"_str);
-    auto dependency = read_json(paths->dependency.as_path(), "CMake dependency target"_str);
-    if (baseline.is_err()) return Err(rstd::move(baseline).unwrap_err());
-    if (dependency.is_err()) return Err(rstd::move(dependency).unwrap_err());
-    auto baseline_compile   = compile_tokens(*baseline);
-    auto baseline_link      = link_tokens(*baseline);
-    auto dependency_compile = compile_tokens(*dependency);
-    auto dependency_link    = link_tokens(*dependency);
+struct ProbeSnapshots {
+    Vec<ProbeSnapshot> targets;
+    ProbeSnapshot      combined;
+};
+
+auto snapshot_from_targets(const Json& baseline, const Json& dependency) -> Result<ProbeSnapshot> {
+    auto baseline_compile   = compile_tokens(baseline);
+    auto baseline_link      = link_tokens(baseline);
+    auto dependency_compile = compile_tokens(dependency);
+    auto dependency_link    = link_tokens(dependency);
     if (baseline_compile.is_err()) return Err(rstd::move(baseline_compile).unwrap_err());
     if (baseline_link.is_err()) return Err(rstd::move(baseline_link).unwrap_err());
     if (dependency_compile.is_err()) return Err(rstd::move(dependency_compile).unwrap_err());
@@ -619,25 +698,76 @@ auto read_probe_snapshot(const CMakeWorkArea& area) -> Result<ProbeSnapshot> {
     });
 }
 
-auto snapshot_identity(const CMakeProviderConfig&                provider,
-                       const ResolvedCMakeDependencyRequirement& requirement,
-                       ref<str>                                  version,
-                       const ProbeSnapshot&                      snapshot,
-                       ref<str> effective_target) -> Result<String> {
+auto read_probe_snapshots(const CMakeWorkArea&                      area,
+                          const ResolvedCMakeDependencyRequirement& requirement)
+    -> Result<ProbeSnapshots> {
+    auto paths = probe_target_paths(area, requirement);
+    if (paths.is_err()) return Err(rstd::move(paths).unwrap_err());
+    auto baseline = read_json(paths->baseline.as_path(), "CMake baseline target"_str);
+    if (baseline.is_err()) return Err(rstd::move(baseline).unwrap_err());
+    auto snapshots = Vec<ProbeSnapshot>::with_capacity(paths->dependencies.len());
+    for (const auto& path : paths->dependencies) {
+        auto dependency = read_json(path.as_path(), "CMake dependency target"_str);
+        if (dependency.is_err()) return Err(rstd::move(dependency).unwrap_err());
+        auto snapshot = snapshot_from_targets(*baseline, *dependency);
+        if (snapshot.is_err()) return Err(rstd::move(snapshot).unwrap_err());
+        snapshots.push(rstd::move(snapshot).unwrap());
+    }
+    auto combined = read_json(paths->combined.as_path(), "CMake combined target"_str);
+    if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
+    auto combined_snapshot = snapshot_from_targets(*baseline, *combined);
+    if (combined_snapshot.is_err()) return Err(rstd::move(combined_snapshot).unwrap_err());
+    return Ok(ProbeSnapshots {
+        .targets  = rstd::move(snapshots),
+        .combined = rstd::move(combined_snapshot).unwrap(),
+    });
+}
+
+auto target_snapshot_identity(const CMakeProviderConfig&                provider,
+                              const ResolvedCMakeDependencyRequirement& requirement,
+                              ref<str>                                  target,
+                              ref<str>                                  version,
+                              const ProbeSnapshot&                      snapshot,
+                              ref<str> effective_target) -> Result<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("tenon-cmake-dependency-v1\n"_str);
     append_identity(result, executable->as_str());
     append_identity(result, provider.generator.as_str());
     append_identity(result, requirement.package.as_str());
-    append_identity(result, requirement.target.as_str());
+    append_identity(result, target);
     append_identity(result, version);
     append_identity(result, effective_target);
     if (requirement.source_identity.is_some()) {
         append_identity(result, requirement.source_identity->as_str());
     }
     for (const auto& token : snapshot.compile) append_identity(result, token.as_str());
-    for (const auto& token : snapshot.link) append_identity(result, token.as_str());
+    return Ok(rstd::move(result));
+}
+
+auto dependency_identity(const CMakeProviderConfig&                provider,
+                         const ResolvedCMakeDependencyRequirement& requirement,
+                         ref<str>                                  version,
+                         const ProbeSnapshots&                     snapshots,
+                         ref<str> effective_target) -> Result<String> {
+    auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
+    if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
+    auto result = String::make("tenon-cmake-declaration-v1\n"_str);
+    append_identity(result, executable->as_str());
+    append_identity(result, provider.generator.as_str());
+    append_identity(result, requirement.package.as_str());
+    append_identity(result, version);
+    append_identity(result, effective_target);
+    if (requirement.source_identity.is_some()) {
+        append_identity(result, requirement.source_identity->as_str());
+    }
+    for (usize index {}; index < requirement.targets.len(); ++index) {
+        append_identity(result, requirement.targets[index].name.as_str());
+        for (const auto& token : snapshots.targets[index].compile) {
+            append_identity(result, token.as_str());
+        }
+    }
+    for (const auto& token : snapshots.combined.link) append_identity(result, token.as_str());
     return Ok(rstd::move(result));
 }
 
@@ -646,19 +776,18 @@ auto snapshot_identity(const CMakeProviderConfig&                provider,
 export namespace tenon
 {
 
-auto resolve_cmake_dependency(const DeclaredExternalDependency& declaration,
-                              const CMakeProviderConfig&        provider,
-                              const BuildConfiguration&         configuration,
-                              const TargetInfo&                 default_target,
-                              ref<str>                          effective_target,
-                              const CppArgumentParser&          parser)
+auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirement,
+                              const CMakeProviderConfig&                provider,
+                              const BuildConfiguration&                 configuration,
+                              const TargetInfo&                         default_target,
+                              ref<str>                                  effective_target,
+                              const CppArgumentParser&                  parser)
     -> Result<ResolvedExternalDependency> {
-    const auto& requirement = declaration.requirement.as_CMake().requirement;
     if (effective_target != default_target.triple.as_str()) {
         return cmake_failure<ResolvedExternalDependency>(rstd::format(
             "CMake dependency '{}' cannot resolve cross target '{}' without an explicit CMake "
             "toolchain contract",
-            declaration.alias.as_str(),
+            requirement.alias.as_str(),
             effective_target));
     }
     auto area = work_area(requirement, provider, configuration, effective_target);
@@ -682,13 +811,13 @@ auto resolve_cmake_dependency(const DeclaredExternalDependency& declaration,
     if (locked.is_err()) {
         return cmake_failure<ResolvedExternalDependency>(
             rstd::format("cannot lock CMake dependency '{}': {}",
-                         declaration.alias.as_str(),
+                         requirement.alias.as_str(),
                          rstd::move(locked).unwrap_err()));
     }
     rstd_try(write_probe_files(requirement, *area));
     rstd_try(configure_and_install(requirement, provider, configuration, *area));
     rstd_try(configure_probe(requirement, provider, configuration, *area));
-    auto snapshot = rstd_try(read_probe_snapshot(*area));
+    auto snapshots = rstd_try(read_probe_snapshots(*area, requirement));
     auto version_path =
         area->query_build.join(PathBuf::from("tenon-package-version.txt"_str).as_path());
     auto version = rstd::fs::read_to_string(version_path.as_path());
@@ -700,31 +829,49 @@ auto resolve_cmake_dependency(const DeclaredExternalDependency& declaration,
     }
     auto normalized_version = String::make(version->as_str().trim_ascii());
     if (normalized_version.is_empty()) normalized_version = String::make("unknown"_str);
-    auto source  = rstd::format("CMake dependency '{}' package '{}' target '{}'",
-                                declaration.alias.as_str(),
-                                requirement.package.as_str(),
-                                requirement.target.as_str());
-    auto compile = parser.parse(snapshot.compile, source.as_str());
-    if (compile.is_err()) {
-        return cmake_failure<ResolvedExternalDependency>(
-            rstd::format("{} has invalid compile requirements: {}",
-                         source.as_str(),
-                         rstd::move(compile).unwrap_err()));
+    auto targets = Vec<ResolvedExternalTargetUsage>::with_capacity(requirement.targets.len());
+    for (usize index {}; index < requirement.targets.len(); ++index) {
+        const auto& target   = requirement.targets[index];
+        const auto& snapshot = snapshots.targets[index];
+        auto        source   = rstd::format("CMake dependency '{}' package '{}' target '{}'",
+                                            requirement.alias.as_str(),
+                                            requirement.package.as_str(),
+                                            target.name.as_str());
+        auto        compile  = parser.parse(snapshot.compile, source.as_str());
+        if (compile.is_err()) {
+            return cmake_failure<ResolvedExternalDependency>(
+                rstd::format("{} has invalid compile requirements: {}",
+                             source.as_str(),
+                             rstd::move(compile).unwrap_err()));
+        }
+        auto identity = target_snapshot_identity(provider,
+                                                 requirement,
+                                                 target.name.as_str(),
+                                                 normalized_version.as_str(),
+                                                 snapshot,
+                                                 effective_target);
+        if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
+        targets.push(ResolvedExternalTargetUsage {
+            .name              = target.name.clone(),
+            .visibility        = target.visibility,
+            .compile_arguments = rstd::move(compile).unwrap(),
+            .identity          = rstd::move(identity).unwrap(),
+        });
     }
-    auto identity = snapshot_identity(
-        provider, requirement, normalized_version.as_str(), snapshot, effective_target);
+    auto identity = dependency_identity(
+        provider, requirement, normalized_version.as_str(), snapshots, effective_target);
     if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
     return Ok(ResolvedExternalDependency {
-        .alias             = declaration.alias.clone(),
-        .provider          = String::make("cmake"_str),
-        .module            = requirement.target.clone(),
-        .version           = rstd::move(normalized_version),
-        .visibility        = declaration.visibility,
-        .compile_arguments = rstd::move(compile).unwrap(),
+        .alias    = requirement.alias.clone(),
+        .provider = String::make("cmake"_str),
+        .version  = rstd::move(normalized_version),
+        .targets  = rstd::move(targets),
         .link_arguments =
             LinkArgumentSequence {
-                .tokens   = rstd::move(snapshot.link),
-                .source   = rstd::move(source),
+                .tokens   = as<rstd::clone::Clone>(snapshots.combined.link).clone(),
+                .source   = rstd::format("CMake dependency '{}' package '{}'",
+                                         requirement.alias.as_str(),
+                                         requirement.package.as_str()),
                 .identity = identity->clone(),
             },
         .identity = rstd::move(identity).unwrap(),

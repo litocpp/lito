@@ -33,7 +33,7 @@ target_sources(
          src/workspace/mod.cppm
          src/package/plan.cppm
          src/package/adapter.cppm
-         src/package/source.cppm
+         src/source.cppm
          src/package/resolver.cppm
          src/package/mod.cppm
          src/workspace_resolver.cppm

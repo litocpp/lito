@@ -1,4 +1,4 @@
-export module tenon.package:source;
+export module tenon.source;
 
 import rstd;
 import tenon.model;
@@ -158,7 +158,12 @@ struct SelectedSourcePackage {
     PackageManifest package;
 };
 
-class PackageSourceManager {
+struct AcquiredSource {
+    PathBuf root;
+    String  identity;
+};
+
+class SourceManager {
     PathBuf                  graph_root_;
     PackageResolutionOptions options_;
     Vec<SourceEntry>         entries_;
@@ -581,8 +586,7 @@ class PackageSourceManager {
     }
 
 public:
-    explicit PackageSourceManager(ref<rstd::path::Path>    graph_root,
-                                  PackageResolutionOptions options)
+    explicit SourceManager(ref<rstd::path::Path> graph_root, PackageResolutionOptions options)
         : graph_root_(PathBuf::from(graph_root)), options_(rstd::move(options)) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
@@ -603,16 +607,25 @@ public:
     }
 
     auto acquire_external(const PackageSourceRequirement& requirement,
-                          ref<rstd::path::Path>           declaring_root) -> Result<usize> {
-        if (requirement.is_Git()) {
-            const auto& git   = requirement.as_Git();
-            auto        patch = patched_path(git.url.as_str());
-            if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
-            if (patch->is_some()) return acquire_path(**patch, false);
-            return acquire_git(git.url.as_str(), git.reference, false);
-        }
-        auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
-        return acquire_path(requested.as_path(), false);
+                          ref<rstd::path::Path> declaring_root) -> Result<AcquiredSource> {
+        auto acquired = [&]() -> Result<usize> {
+            if (requirement.is_Git()) {
+                const auto& git   = requirement.as_Git();
+                auto        patch = patched_path(git.url.as_str());
+                if (patch.is_err()) return Err(rstd::move(patch).unwrap_err());
+                return patch->is_some() ? acquire_path(**patch, false)
+                                        : acquire_git(git.url.as_str(), git.reference, false);
+            }
+            auto requested =
+                PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
+            return acquire_path(requested.as_path(), false);
+        }();
+        if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+        const auto index = rstd::move(acquired).unwrap();
+        return Ok(AcquiredSource {
+            .root     = entries_[index].source.root_directory.clone(),
+            .identity = entries_[index].source.identity.clone(),
+        });
     }
 
     auto package_names(usize source) const -> Vec<String> {

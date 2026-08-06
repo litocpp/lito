@@ -1,0 +1,11 @@
+[package]
+name = "pkg-config-legacy-dependency"
+version = "0.1.0"
+module = "pkg_config_legacy_dependency"
+
+[library]
+archive = "pkg_config_legacy_dependency"
+discovery = "module"
+
+[dependencies.fixture]
+pkg-config = "tenon-fixture"
