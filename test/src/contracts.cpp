@@ -22,7 +22,6 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/toml-explicit/dependency"_str,
     "manifest/toml-explicit/version-workspace-false"_str,
     "profile/owned-definition"_str,
-    "profile/owned-option"_str,
     "workspace/mixed"_str,
 };
 
@@ -238,6 +237,30 @@ TEST(Contracts, InvalidManifestDocumentsAreRejectedByManifestOwner) {
         if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
         EXPECT_TRUE(loaded.is_err());
     }
+}
+
+TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
+    auto directory = root("profile/owned-option"_str);
+    auto graph     = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto target   = pkg_config_target();
+    auto packages = strings("fixture-profile-owned_option"_str);
+    auto metadata = lito::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
+                                                        packages,
+                                                        packages,
+                                                        configuration(),
+                                                        lito::PkgConfigProviderConfig {},
+                                                        lito::CMakeProviderConfig {},
+                                                        target,
+                                                        *parser);
+    ASSERT_TRUE(metadata.is_ok());
+
+    auto planned = lito::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_err());
+    EXPECT_TRUE(planned.unwrap_err().message.as_str().contains("optimization"_str));
 }
 
 TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
