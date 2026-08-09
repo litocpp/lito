@@ -1,6 +1,7 @@
 export module lito.frontend.preprocessor:builtin;
 
 import rstd;
+import lito.frontend.static_name;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -86,108 +87,46 @@ struct WarningBuiltinQueryHandler {
     static auto render(ref<str> value) -> String { return rstd::format("\"{}\"", value); }
 };
 
-struct HasBuiltinQuery {
-    using Handler              = PlainBuiltinQueryHandler;
-    static constexpr auto name = "__has_builtin"_str;
-};
+using HasBuiltinQuery = StaticNameWithHandler<"__has_builtin", PlainBuiltinQueryHandler>;
+using HasConstexprBuiltinQuery =
+    StaticNameWithHandler<"__has_constexpr_builtin", PlainBuiltinQueryHandler>;
 
-struct HasConstexprBuiltinQuery {
-    using Handler              = PlainBuiltinQueryHandler;
-    static constexpr auto name = "__has_constexpr_builtin"_str;
-};
+using HasFeatureQuery   = StaticNameWithHandler<"__has_feature", PlainBuiltinQueryHandler>;
+using HasExtensionQuery = StaticNameWithHandler<"__has_extension", PlainBuiltinQueryHandler>;
+using HasCppAttributeQuery =
+    StaticNameWithHandler<"__has_cpp_attribute", CppAttributeBuiltinQueryHandler>;
 
-struct HasFeatureQuery {
-    using Handler              = PlainBuiltinQueryHandler;
-    static constexpr auto name = "__has_feature"_str;
-};
+using HasAttributeQuery = StaticNameWithHandler<"__has_attribute", AttributeBuiltinQueryHandler>;
+using HasDeclspecAttributeQuery =
+    StaticNameWithHandler<"__has_declspec_attribute", AttributeBuiltinQueryHandler>;
 
-struct HasExtensionQuery {
-    using Handler              = PlainBuiltinQueryHandler;
-    static constexpr auto name = "__has_extension"_str;
-};
+using HasWarningQuery     = StaticNameWithHandler<"__has_warning", WarningBuiltinQueryHandler>;
+using IsTargetArchQuery   = StaticNameWithHandler<"__is_target_arch", TargetBuiltinQueryHandler>;
+using IsTargetVendorQuery = StaticNameWithHandler<"__is_target_vendor", TargetBuiltinQueryHandler>;
+using IsTargetOsQuery     = StaticNameWithHandler<"__is_target_os", TargetBuiltinQueryHandler>;
+using IsTargetEnvironmentQuery =
+    StaticNameWithHandler<"__is_target_environment", TargetBuiltinQueryHandler>;
 
-struct HasCppAttributeQuery {
-    using Handler              = CppAttributeBuiltinQueryHandler;
-    static constexpr auto name = "__has_cpp_attribute"_str;
-};
+using IsTargetVariantOsQuery =
+    StaticNameWithHandler<"__is_target_variant_os", TargetBuiltinQueryHandler>;
 
-struct HasAttributeQuery {
-    using Handler              = AttributeBuiltinQueryHandler;
-    static constexpr auto name = "__has_attribute"_str;
-};
+using IsTargetVariantEnvironmentQuery =
+    StaticNameWithHandler<"__is_target_variant_environment", TargetBuiltinQueryHandler>;
 
-struct HasDeclspecAttributeQuery {
-    using Handler              = AttributeBuiltinQueryHandler;
-    static constexpr auto name = "__has_declspec_attribute"_str;
-};
-
-struct HasWarningQuery {
-    using Handler              = WarningBuiltinQueryHandler;
-    static constexpr auto name = "__has_warning"_str;
-};
-
-struct IsTargetArchQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_arch"_str;
-};
-
-struct IsTargetVendorQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_vendor"_str;
-};
-
-struct IsTargetOsQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_os"_str;
-};
-
-struct IsTargetEnvironmentQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_environment"_str;
-};
-
-struct IsTargetVariantOsQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_variant_os"_str;
-};
-
-struct IsTargetVariantEnvironmentQuery {
-    using Handler              = TargetBuiltinQueryHandler;
-    static constexpr auto name = "__is_target_variant_environment"_str;
-};
-
-template<typename... Types>
-struct BuiltinTypeSet {
-    template<typename Function>
-    static constexpr auto for_each(Function&& function) -> void {
-        (function(rstd::mtp::type_c<Types>), ...);
-    }
-
-    template<typename Function>
-    static constexpr auto visit(ref<str> name, Function&& function) -> bool {
-        return ((name == Types::name && (function(rstd::mtp::type_c<Types>), true)) || ...);
-    }
-
-    static constexpr auto contains(ref<str> name) -> bool { return ((name == Types::name) || ...); }
-
-    template<typename... Additional>
-    using With = BuiltinTypeSet<Types..., Additional...>;
-};
-
-using BuiltinQuerySet = BuiltinTypeSet<HasBuiltinQuery,
-                                       HasConstexprBuiltinQuery,
-                                       HasFeatureQuery,
-                                       HasExtensionQuery,
-                                       HasCppAttributeQuery,
-                                       HasAttributeQuery,
-                                       HasDeclspecAttributeQuery,
-                                       HasWarningQuery,
-                                       IsTargetArchQuery,
-                                       IsTargetVendorQuery,
-                                       IsTargetOsQuery,
-                                       IsTargetEnvironmentQuery,
-                                       IsTargetVariantOsQuery,
-                                       IsTargetVariantEnvironmentQuery>;
+using BuiltinQuerySet = StaticNameSet<HasBuiltinQuery,
+                                      HasConstexprBuiltinQuery,
+                                      HasFeatureQuery,
+                                      HasExtensionQuery,
+                                      HasCppAttributeQuery,
+                                      HasAttributeQuery,
+                                      HasDeclspecAttributeQuery,
+                                      HasWarningQuery,
+                                      IsTargetArchQuery,
+                                      IsTargetVendorQuery,
+                                      IsTargetOsQuery,
+                                      IsTargetEnvironmentQuery,
+                                      IsTargetVariantOsQuery,
+                                      IsTargetVariantEnvironmentQuery>;
 
 using BuiltinQueryTransform = String (*)(ref<str>);
 
@@ -247,70 +186,31 @@ private:
         BUILTIN_QUERY_DEFINITION<HasBuiltinQuery>) };
 };
 
-struct LineBuiltin {
-    static constexpr auto name = "__LINE__"_str;
-};
-
-struct FileBuiltin {
-    static constexpr auto name = "__FILE__"_str;
-};
-
-struct BaseFileBuiltin {
-    static constexpr auto name = "__BASE_FILE__"_str;
-};
-
-struct FileNameBuiltin {
-    static constexpr auto name = "__FILE_NAME__"_str;
-};
-
-struct IncludeLevelBuiltin {
-    static constexpr auto name = "__INCLUDE_LEVEL__"_str;
-};
-
-struct CounterBuiltin {
-    static constexpr auto name = "__COUNTER__"_str;
-};
-
-struct DateBuiltin {
-    static constexpr auto name = "__DATE__"_str;
-};
-
-struct TimeBuiltin {
-    static constexpr auto name = "__TIME__"_str;
-};
-
-struct PragmaBuiltin {
-    static constexpr auto name = "_Pragma"_str;
-};
-
-struct HasEmbedBuiltin {
-    static constexpr auto name = "__has_embed"_str;
-};
-
-struct IsIdentifierBuiltin {
-    static constexpr auto name = "__is_identifier"_str;
-};
-
-struct HasIncludeBuiltin {
-    static constexpr auto name = "__has_include"_str;
-};
-
-struct HasIncludeNextBuiltin {
-    static constexpr auto name = "__has_include_next"_str;
-};
-
-using DynamicBuiltinSet = BuiltinQuerySet::With<LineBuiltin,
-                                                FileBuiltin,
-                                                BaseFileBuiltin,
-                                                FileNameBuiltin,
-                                                IncludeLevelBuiltin,
-                                                CounterBuiltin,
-                                                DateBuiltin,
-                                                TimeBuiltin,
-                                                PragmaBuiltin,
-                                                HasEmbedBuiltin,
-                                                IsIdentifierBuiltin,
-                                                HasIncludeBuiltin,
-                                                HasIncludeNextBuiltin>;
+using LineBuiltin           = StaticName<"__LINE__">;
+using FileBuiltin           = StaticName<"__FILE__">;
+using BaseFileBuiltin       = StaticName<"__BASE_FILE__">;
+using FileNameBuiltin       = StaticName<"__FILE_NAME__">;
+using IncludeLevelBuiltin   = StaticName<"__INCLUDE_LEVEL__">;
+using CounterBuiltin        = StaticName<"__COUNTER__">;
+using DateBuiltin           = StaticName<"__DATE__">;
+using TimeBuiltin           = StaticName<"__TIME__">;
+using PragmaBuiltin         = StaticName<"_Pragma">;
+using HasEmbedBuiltin       = StaticName<"__has_embed">;
+using IsIdentifierBuiltin   = StaticName<"__is_identifier">;
+using HasIncludeBuiltin     = StaticName<"__has_include">;
+using HasIncludeNextBuiltin = StaticName<"__has_include_next">;
+using DynamicBuiltinSet     = BuiltinQuerySet::With<LineBuiltin,
+                                                    FileBuiltin,
+                                                    BaseFileBuiltin,
+                                                    FileNameBuiltin,
+                                                    IncludeLevelBuiltin,
+                                                    CounterBuiltin,
+                                                    DateBuiltin,
+                                                    TimeBuiltin,
+                                                    PragmaBuiltin,
+                                                    HasEmbedBuiltin,
+                                                    IsIdentifierBuiltin,
+                                                    HasIncludeBuiltin,
+                                                    HasIncludeNextBuiltin>;
 
 } // namespace lito::frontend::preprocessor

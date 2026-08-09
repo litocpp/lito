@@ -7,6 +7,7 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
+         src/static_name.cppm
          src/result.cppm
          src/lexical/token.cppm
          src/lexical/source.cppm

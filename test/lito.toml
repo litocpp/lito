@@ -13,6 +13,7 @@ sources = [
   "src/contracts.cpp",
   "contracts/cpp_bmi.cpp",
   "profiling.cpp",
+  "lexical/token.cpp",
   "preprocessor/core.cpp",
   "toolchain/clang_builtin_context.cpp",
 ]
