@@ -2,10 +2,12 @@
 
 import rstd;
 import rstd.test;
+import lito.cpp;
 import lito.frontend;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+using namespace lito;
 using namespace lito::frontend::lexical;
 
 TEST(CppReservedIdentifier, StaticTypes) {
@@ -36,6 +38,18 @@ TEST(CppReservedIdentifier, IdentifierToken) {
         .kind = TokenKind::Identifier,
         .text = TokenText::borrowed("lito_identifier"_str),
     };
-    EXPECT_FALSE(is_cpp_identifier_token(keyword, "c++20"_str));
-    EXPECT_TRUE(is_cpp_identifier_token(identifier, "c++20"_str));
+    auto matcher = CppIdentifierTokenMatcher {};
+    EXPECT_FALSE(matches_token(matcher, keyword));
+    EXPECT_TRUE(matches_token(matcher, identifier));
+    EXPECT_EQ(keyword.text.comparable_hash(), CppRequiresKeyword::hash);
+}
+
+TEST(TokenMatcher, GenericKindAndTypedText) {
+    auto token = Token {
+        .kind = TokenKind::Identifier,
+        .text = TokenText::borrowed(CppConceptKeyword::name),
+    };
+    EXPECT_TRUE(matches_token(TokenKindMatcher { TokenKind::Identifier }, token));
+    EXPECT_TRUE(matches_token(TokenTextMatcher<CppConceptKeyword> {}, token));
+    EXPECT_FALSE(matches_token(TokenTextMatcher<CppRequiresKeyword> {}, token));
 }

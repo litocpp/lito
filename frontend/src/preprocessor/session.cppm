@@ -17,7 +17,6 @@ export namespace lito::frontend::preprocessor
 
 struct PreprocessRequest {
     rstd::path::PathBuf source;
-    String              language_standard { String::make("c++20"_str) };
     String              environment_identity;
     usize               maximum_include_depth { usize(200) };
 };
@@ -36,10 +35,12 @@ struct PreprocessedTranslationUnit {
 template<typename Sources,
          typename Includes,
          typename Builtins,
+         typename Identifiers,
          typename Pragmas,
          typename Events,
          typename Consumer,
          typename Observer>
+    requires rstd::Impled<Identifiers, TokenMatcher>
 class PreprocessorSession {
     struct ConditionalFrame {
         bool           parent_active { false };
@@ -133,6 +134,7 @@ public:
                         Sources&          sources,
                         Includes&         includes,
                         Builtins&         builtins,
+                        Identifiers&      identifiers,
                         Pragmas&          pragmas,
                         Events&           events,
                         Consumer&         consumer,
@@ -141,6 +143,7 @@ public:
           source_provider_(sources),
           include_resolver_(includes),
           builtin_provider_(builtins),
+          identifier_matcher_(identifiers),
           pragma_handler_(pragmas),
           event_sink_(events),
           consumer_(consumer),
@@ -894,8 +897,8 @@ private:
                                 "builtin '__is_identifier' requires one identifier token"_str,
                                 token.expansion));
                         }
-                        value = Ok(i64(lexical::is_cpp_identifier_token(
-                            arguments[usize {}][usize {}], request_.language_standard.as_str())));
+                        value = Ok(
+                            i64(matches_token(identifier_matcher_, arguments[usize {}][usize {}])));
                     } else {
                         auto matched = BuiltinQuerySet::visit(name, [&](auto query) {
                             using Query = typename decltype(query)::type;
@@ -1465,6 +1468,7 @@ private:
     Sources&                                                                source_provider_;
     Includes&                                                               include_resolver_;
     Builtins&                                                               builtin_provider_;
+    Identifiers&                                                            identifier_matcher_;
     Pragmas&                                                                pragma_handler_;
     Events&                                                                 event_sink_;
     Consumer&                                                               consumer_;
@@ -1499,58 +1503,85 @@ private:
 template<typename Sources,
          typename Includes,
          typename Builtins,
+         typename Identifiers,
          typename Pragmas,
          typename Events,
          typename Consumer,
          typename Observer>
+    requires rstd::Impled<Identifiers, TokenMatcher>
 auto preprocess_to(PreprocessRequest request,
                    Sources&          sources,
                    Includes&         includes,
                    Builtins&         builtins,
+                   Identifiers&      identifiers,
                    Pragmas&          pragmas,
                    Events&           events,
                    Consumer&         consumer,
                    Observer&         observer) -> Result<PreprocessedTranslationUnit> {
-    return PreprocessorSession<Sources, Includes, Builtins, Pragmas, Events, Consumer, Observer>(
-               rstd::move(request),
-               sources,
-               includes,
-               builtins,
-               pragmas,
-               events,
-               consumer,
-               observer)
+    return PreprocessorSession<Sources,
+                               Includes,
+                               Builtins,
+                               Identifiers,
+                               Pragmas,
+                               Events,
+                               Consumer,
+                               Observer>(rstd::move(request),
+                                         sources,
+                                         includes,
+                                         builtins,
+                                         identifiers,
+                                         pragmas,
+                                         events,
+                                         consumer,
+                                         observer)
         .run();
 }
 
 template<typename Sources,
          typename Includes,
          typename Builtins,
+         typename Identifiers,
          typename Pragmas,
          typename Events,
          typename Consumer>
+    requires rstd::Impled<Identifiers, TokenMatcher>
 auto preprocess_to(PreprocessRequest request,
                    Sources&          sources,
                    Includes&         includes,
                    Builtins&         builtins,
+                   Identifiers&      identifiers,
                    Pragmas&          pragmas,
                    Events&           events,
                    Consumer&         consumer) -> Result<PreprocessedTranslationUnit> {
     auto observer = IgnorePreprocessorObserver {};
-    return preprocess_to(
-        rstd::move(request), sources, includes, builtins, pragmas, events, consumer, observer);
+    return preprocess_to(rstd::move(request),
+                         sources,
+                         includes,
+                         builtins,
+                         identifiers,
+                         pragmas,
+                         events,
+                         consumer,
+                         observer);
 }
 
-template<typename Sources, typename Includes, typename Builtins, typename Pragmas, typename Events>
+template<typename Sources,
+         typename Includes,
+         typename Builtins,
+         typename Identifiers,
+         typename Pragmas,
+         typename Events>
+    requires rstd::Impled<Identifiers, TokenMatcher>
 auto preprocess(PreprocessRequest request,
                 Sources&          sources,
                 Includes&         includes,
                 Builtins&         builtins,
+                Identifiers&      identifiers,
                 Pragmas&          pragmas,
                 Events&           events) -> Result<PreprocessedTranslationUnit> {
     auto consumer = CollectPreprocessedTokens {};
-    auto result =
-        preprocess_to(rstd::move(request), sources, includes, builtins, pragmas, events, consumer);
+    auto result   = preprocess_to(
+        rstd::move(request), sources, includes, builtins, identifiers, pragmas, events, consumer);
     if (result.is_err()) return Err(rstd::move(result).unwrap_err());
     result->tokens = consumer.take();
     return result;

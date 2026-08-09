@@ -10,6 +10,7 @@ target_sources(
          src/static_name.cppm
          src/result.cppm
          src/lexical/token.cppm
+         src/lexical/traits.cppm
          src/lexical/source.cppm
          src/lexical/error.cppm
          src/lexical/lexer.cppm

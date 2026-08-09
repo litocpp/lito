@@ -10,7 +10,8 @@ target_sources(
          FILES
          src/profiling.cppm
          src/compiler/arguments.cppm
-         src/cpp.cppm
+         src/cpp/token.cppm
+         src/cpp/mod.cppm
          src/bmi.cppm
          src/model.cppm
          src/build_profile.cppm

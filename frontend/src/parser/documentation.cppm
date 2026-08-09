@@ -64,10 +64,6 @@ auto declaration_spelling(const Vec<lexical::Token>& tokens, usize begin, usize 
     return result;
 }
 
-auto token_identifier(const lexical::Token& token) -> bool {
-    return lexical::is_cpp_identifier_token(token, "c++20"_str);
-}
-
 auto doc_command(ref<str> text, ref<str> command) -> bool {
     if (! text.starts_with(command)) return false;
     return text.len() == command.len() || text[command.len()] == u8(' ');
@@ -82,12 +78,15 @@ struct DocumentationScope {
     usize             brace_depth {};
 };
 
+template<typename IdentifierMatcher>
 class DocumentationParser {
 public:
     DocumentationParser(const preprocessor::PreprocessedTranslationUnit& translation,
-                        const FrontendResult&                            dependencies)
+                        const FrontendResult&                            dependencies,
+                        const IdentifierMatcher&                         identifier_matcher)
         : translation_(&translation),
           dependencies_(&dependencies),
+          identifier_matcher_(identifier_matcher),
           main_source_(translation.main_source) {
         for (const auto& token : translation.tokens) {
             if (token.kind != lexical::TokenKind::Newline &&
@@ -127,6 +126,10 @@ public:
     }
 
 private:
+    auto token_identifier(const lexical::Token& token) const noexcept -> bool {
+        return lexical::matches_token(identifier_matcher_, token);
+    }
+
     auto add_diagnostic(DocumentationSeverity    severity,
                         ref<str>                 code,
                         ref<str>                 message,
@@ -710,6 +713,7 @@ private:
 
     const preprocessor::PreprocessedTranslationUnit* translation_ {};
     const FrontendResult*                            dependencies_ {};
+    const IdentifierMatcher&                         identifier_matcher_;
     lexical::SourceId                                main_source_ {};
     Vec<lexical::Token>                              tokens_;
     DocumentationUnit                                unit_;
@@ -728,16 +732,23 @@ private:
 export namespace lito::frontend::parser
 {
 
-auto parse_documentation(const preprocessor::PreprocessedTranslationUnit& translation)
+template<typename IdentifierMatcher>
+    requires rstd::Impled<IdentifierMatcher, lexical::TokenMatcher>
+auto parse_documentation(const preprocessor::PreprocessedTranslationUnit& translation,
+                         const IdentifierMatcher&                         identifier_matcher)
     -> lexical::Result<DocumentationUnit> {
     auto dependencies = parse_module_dependencies(translation);
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
-    return DocumentationParser(translation, *dependencies).parse();
+    return DocumentationParser(translation, *dependencies, identifier_matcher).parse();
 }
 
+template<typename IdentifierMatcher>
+    requires rstd::Impled<IdentifierMatcher, lexical::TokenMatcher>
 auto parse_documentation(const preprocessor::PreprocessedTranslationUnit& translation,
-                         const FrontendResult& dependencies) -> lexical::Result<DocumentationUnit> {
-    return DocumentationParser(translation, dependencies).parse();
+                         const FrontendResult&                            dependencies,
+                         const IdentifierMatcher&                         identifier_matcher)
+    -> lexical::Result<DocumentationUnit> {
+    return DocumentationParser(translation, dependencies, identifier_matcher).parse();
 }
 
 } // namespace lito::frontend::parser

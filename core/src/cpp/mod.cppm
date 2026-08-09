@@ -4,6 +4,8 @@ module;
 
 export module lito.cpp;
 
+export import :token;
+
 import rstd;
 import lito.compiler.arguments;
 

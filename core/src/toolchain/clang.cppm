@@ -563,6 +563,7 @@ public:
         auto includes = toolchain::ClangIncludeResolver(*environment);
         auto builtins = toolchain::ClangBuiltinProvider(
             *environment, environment->key.working_directory.as_path());
+        auto identifiers       = CppIdentifierTokenMatcher {};
         auto pragmas           = toolchain::ClangPragmaHandler {};
         auto events            = toolchain::DependencyEvents {};
         auto consumer          = frontend::parser::ModuleDependencyConsumer::make();
@@ -571,12 +572,12 @@ public:
             return preprocessor::preprocess_to(
                 preprocessor::PreprocessRequest {
                     .source               = PathBuf::from(source),
-                    .language_standard    = compile_context.cpp.language.standard.clone(),
                     .environment_identity = environment->identity.clone(),
                 },
                 frontend_service,
                 includes,
                 builtins,
+                identifiers,
                 pragmas,
                 events,
                 consumer,

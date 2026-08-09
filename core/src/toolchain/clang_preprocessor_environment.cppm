@@ -1,6 +1,7 @@
 export module lito.toolchain:clang_preprocessor_environment;
 
 import rstd;
+import lito.cpp;
 import lito.model;
 import lito.process;
 import lito.frontend;
@@ -443,7 +444,7 @@ auto environment_identity(ref<str>                       builtin_identity,
     add("lito-clang-preprocessor-environment-v2"_str);
     add(context_id);
     add(builtin_identity);
-    add(lexical::CPP_IDENTIFIER_RULE_ID);
+    add(CPP_IDENTIFIER_RULE_ID);
     for (const auto& include : includes) {
         auto text = include.directory.as_path().to_str();
         if (text.is_none()) {

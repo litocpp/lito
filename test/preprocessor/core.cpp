@@ -184,11 +184,12 @@ auto run_preprocessor_test() -> int {
                 "LITO_LATE\n"
                 "#define LITO_LATE 42\n"
                 "LITO_LATE\n"_str);
-    auto includes = MemoryIncludes(sources);
-    auto builtins = TestBuiltins {};
-    auto pragmas  = IgnorePragmas {};
-    auto events   = TestEvents {};
-    auto result   = preprocess(
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cppm"_str),
             .environment_identity = String::make("memory-v1"_str),
@@ -196,6 +197,7 @@ auto run_preprocessor_test() -> int {
         sources,
         includes,
         builtins,
+        identifiers,
         pragmas,
         events);
     if (result.is_err()) return 1;
@@ -230,6 +232,7 @@ auto run_preprocessor_test() -> int {
         sources,
         includes,
         stream_builtins,
+        identifiers,
         stream_pragmas,
         stream_events,
         consumer);
