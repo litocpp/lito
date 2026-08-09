@@ -64,7 +64,7 @@ class PreprocessorSession {
     public:
         auto contains(ref<str> value) const -> bool {
             for (const auto& macro : values_) {
-                if (macro.definition.get()->name.as_str() == value) return true;
+                if (macro.definition->name.as_str() == value) return true;
             }
             return false;
         }
@@ -72,8 +72,7 @@ class PreprocessorSession {
         auto contains_dynamic(ref<str> value) const -> bool {
             if (dynamic_builtins_ == usize {}) return false;
             for (const auto& macro : values_) {
-                if (macro.dynamic_builtin && macro.definition.get()->name.as_str() == value)
-                    return true;
+                if (macro.dynamic_builtin && macro.definition->name.as_str() == value) return true;
             }
             return false;
         }
@@ -940,7 +939,7 @@ private:
                 }
             }
             auto        macro      = rstd::move(found).unwrap();
-            const auto& definition = *macro.get();
+            const auto& definition = *macro;
             ++raw_statistics_.macro_expansions;
             auto replacement = Vec<Token>::make();
             if (definition.parameters.is_some()) {
@@ -976,7 +975,7 @@ private:
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
         auto macro   = rstd::move(parsed).unwrap();
         auto current = macros_.get(macro.name.as_str());
-        if (current.is_some() && ! same_macro(*current->get(), macro)) {
+        if (current.is_some() && ! same_macro(**current, macro)) {
             return Err(failure(
                 rstd::format("incompatible redefinition of macro '{}'", macro.name.as_str()),
                 macro.location));
@@ -1292,15 +1291,15 @@ private:
         }
         auto loaded = rstd::as<SourceProvider>(source_provider_).load(path);
         if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
-        input_bytes_ += loaded->get()->snapshot.get()->contents.len();
+        input_bytes_ += (*loaded)->snapshot->contents.len();
         ++raw_statistics_.files;
-        raw_statistics_.source_tokens += loaded->get()->tokens.len().to_primitive();
-        raw_statistics_.source_comments += loaded->get()->comments.len().to_primitive();
-        auto source    = sources_.add(loaded->get()->snapshot.clone());
+        raw_statistics_.source_tokens += (*loaded)->tokens.len().to_primitive();
+        raw_statistics_.source_comments += (*loaded)->comments.len().to_primitive();
+        auto source    = sources_.add((*loaded)->snapshot.clone());
         auto main_file = include_stack_.is_empty();
         if (main_file) main_source_ = source;
-        auto tokens = Vec<Token>::with_capacity(loaded->get()->tokens.len());
-        for (const auto& cached : loaded->get()->tokens) {
+        auto tokens = Vec<Token>::with_capacity((*loaded)->tokens.len());
+        for (const auto& cached : (*loaded)->tokens) {
             auto token             = clone_token(cached);
             token.spelling.source  = source;
             token.expansion.source = source;
@@ -1329,8 +1328,8 @@ private:
             auto directive = cursor < end && tokens[cursor].start_of_line &&
                              tokens[cursor].text.as_str() == "#"_str;
             auto line_end  = end < tokens.len() ? tokens[end].spelling.offset
-                                                : loaded->get()->snapshot.get()->contents.len();
-            collect_comments_through(loaded->get()->comments,
+                                                : (*loaded)->snapshot->contents.len();
+            collect_comments_through((*loaded)->comments,
                                      comment_cursor,
                                      line_end,
                                      source,
@@ -1451,9 +1450,9 @@ private:
             }
             cursor = end < tokens.len() ? end + usize(1) : end;
         }
-        collect_comments_through(loaded->get()->comments,
+        collect_comments_through((*loaded)->comments,
                                  comment_cursor,
-                                 loaded->get()->snapshot.get()->contents.len(),
+                                 (*loaded)->snapshot->contents.len(),
                                  source,
                                  active(conditions));
         auto flushed = flush_normal(normal);

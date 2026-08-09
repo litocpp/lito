@@ -54,6 +54,7 @@ target_sources(
          src/cache/mod.cppm
          src/frontend_analysis.cppm
          src/frontend_observer.cppm
+         src/scan_executor.cppm
          src/compile_test.cppm
          src/builder.cppm
          src/test_runner.cppm

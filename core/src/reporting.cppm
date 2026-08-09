@@ -79,6 +79,11 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(output, "source stats"_str, summary.frontend.source_stats);
     append_metric(output, "source reads"_str, summary.frontend.source_reads);
     append_metric(output, "source bytes"_str, summary.frontend.source_bytes);
+    append_metric(output, "source waits"_str, summary.frontend.source_waits);
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "source wait"_str,
+                             display_duration(summary.frontend.source_wait).as_str()));
     append_metric(output, "lexed sources"_str, summary.frontend.lex_builds);
     append_metric(output, "analyzed sources"_str, summary.frontend.analyze_builds);
     append_metric(output, "analysis hits"_str, summary.frontend.analyze_hits);
@@ -100,6 +105,35 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(
         output, "scan miss include lookup"_str, summary.frontend.persistent_scan_include_lookup);
     append_metric(output, "scan miss receipt"_str, summary.frontend.persistent_scan_receipt);
+    append_metric(
+        output, "fingerprint requests"_str, summary.frontend.persistent_fingerprint_requests);
+    append_metric(output, "fingerprint hits"_str, summary.frontend.persistent_fingerprint_hits);
+    append_metric(output, "fingerprint builds"_str, summary.frontend.persistent_fingerprint_builds);
+    append_metric(output, "fingerprint waits"_str, summary.frontend.persistent_fingerprint_waits);
+    append_line(
+        output,
+        rstd::format("  {:<38} {}",
+                     "fingerprint wait"_str,
+                     display_duration(summary.frontend.persistent_fingerprint_wait).as_str()));
+
+    append_line(output, "\nscan execution"_str);
+    const auto& execution = summary.scan_profile.execution();
+    append_metric(output, "jobs"_str, execution.jobs);
+    append_metric(output, "max in flight"_str, execution.max_in_flight);
+    append_metric(output, "tasks"_str, execution.tasks);
+    append_metric(output, "max active"_str, execution.max_active);
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "ready wait"_str,
+                             display_duration(execution.ready_wait).as_str()));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "completion wait"_str,
+                             display_duration(execution.completion_wait).as_str()));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "task work"_str,
+                             display_duration(execution.task_work).as_str()));
 
     append_line(output, "\ntoolchain"_str);
     append_metric(output,
@@ -225,6 +259,12 @@ void print_summary(const BuildSummary& summary) {
                       summary.scan_profile.frames().len(),
                       sources.dropped_samples(),
                       sources.diagnostics().len() + aggregate.diagnostics().len());
+    const auto& execution = summary.scan_profile.execution();
+    rstd::io::println("    jobs: {}; max in flight: {}; max active: {}; task work: {}",
+                      execution.jobs,
+                      execution.max_in_flight,
+                      execution.max_active,
+                      display_duration(execution.task_work).as_str());
 
     rstd::io::println("  build");
     rstd::io::println("    {:<24} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);

@@ -140,7 +140,7 @@ private:
     bool               dynamic_builtin_name_ { false };
 };
 
-using SharedMacroDefinition = rstd::rc::Rc<const MacroDefinition>;
+using SharedMacroDefinition = rstd::sync::Arc<MacroDefinition>;
 
 class MacroTable {
 public:
@@ -155,13 +155,13 @@ public:
 
     auto define(MacroDefinition definition) -> Option<SharedMacroDefinition> {
         auto name   = definition.name.clone();
-        auto shared = rstd::rc::make_rc<MacroDefinition>(rstd::move(definition)).to_const();
+        auto shared = rstd::sync::Arc<MacroDefinition>::make(rstd::move(definition));
         ++revision_;
         return values_.insert(rstd::move(name), rstd::move(shared));
     }
 
     auto define_shared(SharedMacroDefinition definition) -> Option<SharedMacroDefinition> {
-        auto name = definition.get()->name.clone();
+        auto name = definition->name.clone();
         ++revision_;
         return values_.insert(rstd::move(name), rstd::move(definition));
     }
@@ -243,7 +243,7 @@ auto parse_macro_definition(const Vec<Token>& line) -> lexical::Result<MacroDefi
 }
 
 auto share_macro_definition(MacroDefinition definition) -> SharedMacroDefinition {
-    return rstd::rc::make_rc<MacroDefinition>(rstd::move(definition)).to_const();
+    return rstd::sync::Arc<MacroDefinition>::make(rstd::move(definition));
 }
 
 } // namespace lito::frontend::preprocessor

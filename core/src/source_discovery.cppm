@@ -6,6 +6,8 @@ import lito.modules;
 import lito.frontend_analysis;
 import lito.frontend;
 import lito.profiling;
+import lito.scan_executor;
+import lito.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -161,7 +163,9 @@ auto sort_sources(Vec<ResolvedSource> sources) -> Result<Vec<ResolvedSource>> {
 
 struct DiscoveryCandidate {
     TargetId       target {};
+    String         key;
     ResolvedSource source;
+    bool           expand_imports { true };
 };
 
 auto source_key(ref<rstd::path::Path> path) -> Result<String> {
@@ -175,6 +179,7 @@ auto source_key(ref<rstd::path::Path> path) -> Result<String> {
 
 auto enqueue_candidate(TargetId                 target,
                        ResolvedSource           source,
+                       bool                     expand_imports,
                        StringMap&               path_names,
                        StringMap&               name_paths,
                        StringSet&               queued,
@@ -202,9 +207,15 @@ auto enqueue_candidate(TargetId                 target,
         path_names.insert(path.clone(), source.expected_module->clone());
         name_paths.insert(source.expected_module->clone(), path.clone());
     }
-    if (queued.contains_key(path.as_str())) return Ok(empty {});
-    queued.insert(rstd::move(path), empty {});
-    queue.push(DiscoveryCandidate { .target = target, .source = rstd::move(source) });
+    auto work_key = rstd::format("{}:{}", target, path.as_str());
+    if (queued.contains_key(work_key.as_str())) return Ok(empty {});
+    queued.insert(rstd::move(work_key), empty {});
+    queue.push(DiscoveryCandidate {
+        .target         = target,
+        .key            = rstd::move(path),
+        .source         = rstd::move(source),
+        .expand_imports = expand_imports,
+    });
     return Ok(empty {});
 }
 
@@ -401,8 +412,9 @@ namespace lito
 auto discover_sources(const PackageMetadata&       package,
                       const SourceDiscoveryPlan&   plan,
                       FrontendAnalysisService&     analysis_service,
-                      const Option<BuildObserver>& observer)
-    -> Result<Vec<ResolvedPackageSources>> {
+                      const Option<BuildObserver>& observer,
+                      usize                        jobs,
+                      usize max_in_flight) -> Result<Vec<ResolvedPackageSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -417,109 +429,196 @@ auto discover_sources(const PackageMetadata&       package,
         if (manifest.discovery == SourceDiscoveryMode::Explicit) {
             auto explicit_sources = discover_explicit_sources(manifest);
             if (explicit_sources.is_err()) return Err(rstd::move(explicit_sources).unwrap_err());
-            discovered[target] = rstd::move(explicit_sources).unwrap().sources;
+            auto sources = rstd::move(explicit_sources).unwrap().sources;
+            for (auto& source : sources) {
+                auto enqueued = enqueue_candidate(
+                    target, rstd::move(source), false, path_names, name_paths, queued, queue);
+                if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+            }
             continue;
         }
         auto entry = module_entry_source(manifest);
         if (entry.is_err()) return Err(rstd::move(entry).unwrap_err());
         auto enqueued = enqueue_candidate(
-            target, rstd::move(entry).unwrap(), path_names, name_paths, queued, queue);
+            target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
         if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
         for (const auto& declared : manifest.declared_sources) {
             auto resolved = resolve_declared_source(manifest, declared.as_path());
             if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
             enqueued = enqueue_candidate(
-                target, rstd::move(resolved).unwrap(), path_names, name_paths, queued, queue);
+                target, rstd::move(resolved).unwrap(), true, path_names, name_paths, queued, queue);
             if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
         }
     }
 
-    for (auto cursor = usize {}; cursor < queue.len(); ++cursor) {
-        auto        candidate    = rstd::move(queue[cursor]);
-        const auto& target       = package.targets[candidate.target];
-        auto        source_frame = analysis_service.profiler().begin_source_frame(
-            target.manifest.name.as_str(),
-            candidate.source.canonical_path.as_path(),
-            ScanSourceOrigin::Discovery);
-        if (source_frame.is_err()) {
-            return Err(
-                Error::make(ErrorKind::Artifact, rstd::move(source_frame).unwrap_err_unchecked()));
+    auto executor = FrontendScanExecution::create(jobs, max_in_flight);
+    if (executor.is_err()) return Err(rstd::move(executor).unwrap_err());
+    auto scan_executor = rstd::move(executor).unwrap();
+    while (! queue.is_empty()) {
+        rstd::slice_::sort_unstable_by(
+            queue.as_mut_slice().as_mut_ref(),
+            [](const DiscoveryCandidate& left, const DiscoveryCandidate& right) {
+                if (left.key.as_str() != right.key.as_str()) {
+                    return left.key < right.key;
+                }
+                return left.target < right.target;
+            });
+        auto prepared_executor = scan_executor.prepare(queue.len());
+        if (prepared_executor.is_err()) {
+            return Err(rstd::move(prepared_executor).unwrap_err());
         }
-        auto facts           = analysis_service.analyze(target.manifest.name.as_str(),
-                                                        candidate.source.relative_path.as_path(),
-                                                        candidate.source.canonical_path.as_path(),
-                                                        plan.contexts[candidate.target],
-                                                        target.manifest.root.as_path());
-        auto source_finished = analysis_service.profiler().end_source_frame();
-        if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
-        if (source_finished.is_err()) {
-            return Err(Error::make(ErrorKind::Artifact,
-                                   rstd::move(source_finished).unwrap_err_unchecked()));
-        }
-        auto frontend_analysis = rstd::move(facts).unwrap();
-        if (observer.is_some() && observer->notify != nullptr) {
-            auto kind =
-                frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
-                    ? BuildEventKind::ScanReuse
-                    : BuildEventKind::Scan;
-            observer->notify(observer->context,
-                             BuildEvent { kind,
-                                          target.manifest.name.as_str(),
-                                          candidate.source.canonical_path.as_path() });
-        }
-        const auto& frontend_result = frontend_analysis.result;
-        if (candidate.source.expected_module.is_some()) {
-            if (frontend_result.provided.is_none() ||
-                frontend_result.provided->logical_name.as_str() !=
-                    candidate.source.expected_module->as_str()) {
-                auto actual = frontend_result.provided.is_some()
-                                  ? frontend_result.provided->logical_name.as_str()
-                                  : "<none>"_str;
-                return discovery_failure<Vec<ResolvedPackageSources>>(
-                    rstd::format("module convention expected '{}' to provide '{}', but "
-                                 "native preprocessing reported '{}'",
-                                 candidate.source.canonical_path.as_path(),
-                                 candidate.source.expected_module->as_str(),
-                                 actual));
+        auto prepared = Vec<Option<FrontendAnalysisTask>>::with_capacity(queue.len());
+        for (const auto& candidate : queue) {
+            const auto& target  = package.targets[candidate.target];
+            auto        context = static_cast<const CompileContext*>(
+                rstd::addressof(plan.contexts[candidate.target]));
+            auto compile_test_context_value = Option<CompileContext> {};
+            if (target.manifest.artifact_kind == ArtifactKind::CompileTest) {
+                const auto* selected = static_cast<const CompileTestCase*>(nullptr);
+                for (const auto& test : target.manifest.compile_tests) {
+                    if (test.source.as_path() == candidate.source.relative_path.as_path()) {
+                        selected = rstd::addressof(test);
+                        break;
+                    }
+                }
+                if (selected == nullptr) {
+                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                        rstd::format("compile-test package '{}' has no case for source '{}'",
+                                     target.manifest.name.as_str(),
+                                     candidate.source.relative_path.as_path()));
+                }
+                auto resolved_context = compile_test_context(*context, *selected);
+                if (resolved_context.is_err()) {
+                    return Err(rstd::move(resolved_context).unwrap_err());
+                }
+                compile_test_context_value = Some(rstd::move(resolved_context).unwrap());
+                context                    = rstd::addressof(*compile_test_context_value);
             }
-            if (candidate.source.expected_module->as_str() ==
-                    target.manifest.root_module->as_str() &&
-                ! frontend_result.provided->is_interface) {
-                return discovery_failure<Vec<ResolvedPackageSources>>(
-                    rstd::format("primary module source '{}' is not an interface",
-                                 candidate.source.canonical_path.as_path()));
+            auto task = analysis_service.prepare(target.manifest.name.as_str(),
+                                                 candidate.source.relative_path.as_path(),
+                                                 candidate.source.canonical_path.as_path(),
+                                                 *context,
+                                                 target.manifest.root.as_path(),
+                                                 ScanSourceOrigin::Discovery);
+            if (task.is_err()) return Err(rstd::move(task).unwrap_err());
+            prepared.push(Some(rstd::move(task).unwrap()));
+        }
+        auto outcomes =
+            Vec<Option<Result<FrontendAnalysisTaskOutcome>>>::with_capacity(queue.len());
+        for (auto index = usize {}; index < queue.len(); ++index) outcomes.push(None());
+        auto submitted = usize {};
+        auto completed = usize {};
+        auto active    = usize {};
+        while (completed < queue.len()) {
+            auto frontier_capacity = max_in_flight < queue.len() ? max_in_flight : queue.len();
+            while (submitted < queue.len() && active < frontier_capacity) {
+                auto submitted_task =
+                    scan_executor.submit(submitted, rstd::move(prepared[submitted]).unwrap());
+                if (submitted_task.is_err()) {
+                    scan_executor.cancel();
+                    return Err(rstd::move(submitted_task).unwrap_err());
+                }
+                ++submitted;
+                ++active;
             }
+            auto received = scan_executor.recv();
+            if (received.is_err()) {
+                scan_executor.cancel();
+                return Err(rstd::move(received).unwrap_err());
+            }
+            auto completion           = rstd::move(received).unwrap();
+            outcomes[completion.node] = Some(rstd::move(completion.outcome));
+            --active;
+            ++completed;
         }
 
-        for (const auto& imported : frontend_result.imports) {
-            auto owner =
-                import_owner(package, plan, candidate.target, imported.logical_name.as_str());
-            if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
-            if (owner->is_none()) continue;
-            if (package.targets[**owner].manifest.discovery == SourceDiscoveryMode::Explicit) {
-                continue;
+        auto next = Vec<DiscoveryCandidate>::make();
+        for (auto index = usize {}; index < queue.len(); ++index) {
+            auto        candidate    = rstd::move(queue[index]);
+            const auto& target       = package.targets[candidate.target];
+            auto        task_outcome = rstd::move(outcomes[index]).unwrap();
+            if (task_outcome.is_err()) {
+                return Err(rstd::move(task_outcome).unwrap_err());
             }
-            auto nested =
-                module_source(package.targets[**owner].manifest, imported.logical_name.as_str());
-            if (nested.is_err()) return Err(rstd::move(nested).unwrap_err());
-            auto enqueued = enqueue_candidate(
-                **owner, rstd::move(nested).unwrap(), path_names, name_paths, queued, queue);
-            if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+            auto facts = analysis_service.commit(rstd::move(task_outcome).unwrap());
+            if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
+            auto frontend_analysis = rstd::move(facts).unwrap();
+            if (observer.is_some() && observer->notify != nullptr) {
+                auto kind =
+                    frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
+                        ? BuildEventKind::ScanReuse
+                        : BuildEventKind::Scan;
+                observer->notify(observer->context,
+                                 BuildEvent { kind,
+                                              target.manifest.name.as_str(),
+                                              candidate.source.canonical_path.as_path() });
+            }
+            const auto& frontend_result = frontend_analysis.result;
+            if (candidate.source.expected_module.is_some()) {
+                if (frontend_result.provided.is_none() ||
+                    frontend_result.provided->logical_name.as_str() !=
+                        candidate.source.expected_module->as_str()) {
+                    auto actual = frontend_result.provided.is_some()
+                                      ? frontend_result.provided->logical_name.as_str()
+                                      : "<none>"_str;
+                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                        rstd::format("module convention expected '{}' to provide '{}', but "
+                                     "native preprocessing reported '{}'",
+                                     candidate.source.canonical_path.as_path(),
+                                     candidate.source.expected_module->as_str(),
+                                     actual));
+                }
+                if (candidate.source.expected_module->as_str() ==
+                        target.manifest.root_module->as_str() &&
+                    ! frontend_result.provided->is_interface) {
+                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                        rstd::format("primary module source '{}' is not an interface",
+                                     candidate.source.canonical_path.as_path()));
+                }
+            }
+
+            if (candidate.expand_imports) {
+                for (const auto& imported : frontend_result.imports) {
+                    auto owner = import_owner(
+                        package, plan, candidate.target, imported.logical_name.as_str());
+                    if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
+                    if (owner->is_none()) continue;
+                    if (package.targets[**owner].manifest.discovery ==
+                        SourceDiscoveryMode::Explicit) {
+                        continue;
+                    }
+                    auto nested = module_source(package.targets[**owner].manifest,
+                                                imported.logical_name.as_str());
+                    if (nested.is_err()) return Err(rstd::move(nested).unwrap_err());
+                    auto enqueued = enqueue_candidate(**owner,
+                                                      rstd::move(nested).unwrap(),
+                                                      true,
+                                                      path_names,
+                                                      name_paths,
+                                                      queued,
+                                                      next);
+                    if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+                }
+                auto companion = module_companion_source(target.manifest, candidate.source);
+                if (companion.is_err()) return Err(rstd::move(companion).unwrap_err());
+                if (companion->is_some()) {
+                    auto enqueued = enqueue_candidate(candidate.target,
+                                                      rstd::move(companion).unwrap().unwrap(),
+                                                      true,
+                                                      path_names,
+                                                      name_paths,
+                                                      queued,
+                                                      next);
+                    if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+                }
+            }
+            candidate.source.frontend_analysis = Some(rstd::move(frontend_analysis));
+            discovered[candidate.target].push(rstd::move(candidate.source));
         }
-        auto companion = module_companion_source(target.manifest, candidate.source);
-        if (companion.is_err()) return Err(rstd::move(companion).unwrap_err());
-        if (companion->is_some()) {
-            auto enqueued = enqueue_candidate(candidate.target,
-                                              rstd::move(companion).unwrap().unwrap(),
-                                              path_names,
-                                              name_paths,
-                                              queued,
-                                              queue);
-            if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
-        }
-        candidate.source.frontend_analysis = Some(rstd::move(frontend_analysis));
-        discovered[candidate.target].push(rstd::move(candidate.source));
+        queue = rstd::move(next);
     }
+    scan_executor.finish();
+    analysis_service.profiler().record_execution(scan_executor.statistics());
 
     auto result = Vec<ResolvedPackageSources>::with_capacity(plan.target_order.len());
     for (auto target : plan.target_order) {
@@ -541,9 +640,10 @@ export namespace lito
 auto discover_package_sources(const PackageMetadata&       package,
                               const SourceDiscoveryPlan&   plan,
                               FrontendAnalysisService&     analysis_service,
-                              const Option<BuildObserver>& observer)
-    -> Result<Vec<ResolvedPackageSources>> {
-    return discover_sources(package, plan, analysis_service, observer);
+                              const Option<BuildObserver>& observer,
+                              usize                        jobs,
+                              usize max_in_flight) -> Result<Vec<ResolvedPackageSources>> {
+    return discover_sources(package, plan, analysis_service, observer, jobs, max_in_flight);
 }
 
 } // namespace lito

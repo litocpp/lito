@@ -41,6 +41,7 @@ auto preprocessor_probe(preprocessor::PreprocessorActivity activity) noexcept ->
     return ScanProbe::Preprocessor;
 }
 
+template<typename Profiler>
 class PreprocessorProfileObserver {
     struct ActiveActivity {
         preprocessor::PreprocessorActivity activity;
@@ -48,7 +49,7 @@ class PreprocessorProfileObserver {
     };
 
 public:
-    explicit PreprocessorProfileObserver(ScanProfiler& profiler)
+    explicit PreprocessorProfileObserver(Profiler& profiler)
         : profiler_(&profiler), active_(Vec<ActiveActivity>::make()) {}
 
     auto begin(preprocessor::PreprocessorActivity activity) -> void {
@@ -96,7 +97,7 @@ private:
         if (error_.is_none()) error_ = Some(rstd::move(error));
     }
 
-    ScanProfiler*                        profiler_ {};
+    Profiler*                            profiler_ {};
     Vec<ActiveActivity>                  active_;
     preprocessor::PreprocessorStatistics statistics_;
     Option<String>                       error_;
@@ -535,31 +536,46 @@ public:
         return Ok((*environment)->identity.clone());
     }
 
+    auto prepare_scan_environment(const CompileContext& compile_context,
+                                  ref<rstd::path::Path> working_directory) const
+        -> Result<toolchain::SharedPreprocessorEnvironment> {
+        for (const auto& option : compile_context.cpp.vendor) {
+            if (option.native_preprocessor_unsupported) {
+                return failure<toolchain::SharedPreprocessorEnvironment>(
+                    rstd::format("compiler option '{}' is not supported by the native preprocessor",
+                                 option.value.as_str()));
+            }
+        }
+        return environment_for(compile_context, working_directory);
+    }
+
     auto preprocess(ref<rstd::path::Path>      source,
                     const CompileContext&      compile_context,
                     ref<rstd::path::Path>      working_directory,
                     frontend::FrontendService& frontend_service,
                     ScanProfiler& profiler) const -> Result<frontend::UncachedFrontendAnalysis> {
-        auto frontend_span = profiler.span(ScanProbe::Frontend);
-        frontend_service.record_analysis_build();
-        auto environment_span = profiler.span(ScanProbe::Environment);
-        for (const auto& option : compile_context.cpp.vendor) {
-            if (option.native_preprocessor_unsupported) {
-                return failure<frontend::UncachedFrontendAnalysis>(
-                    rstd::format("compiler option '{}' is not supported by the native preprocessor",
-                                 option.value.as_str()));
-            }
-        }
-        auto selected_environment = environment_for(compile_context, working_directory);
+        auto environment_span     = profiler.span(ScanProbe::Environment);
+        auto selected_environment = prepare_scan_environment(compile_context, working_directory);
         if (selected_environment.is_err()) {
             return Err(rstd::move(selected_environment).unwrap_err());
         }
-        auto environment          = *selected_environment;
+        auto environment          = rstd::move(selected_environment).unwrap();
         auto environment_finished = profiler.complete(environment_span);
         if (environment_finished.is_err()) {
             return failure<frontend::UncachedFrontendAnalysis>(
                 rstd::move(environment_finished).unwrap_err_unchecked());
         }
+        return preprocess_with_environment(source, environment, frontend_service, profiler);
+    }
+
+    template<typename Profiler>
+    auto preprocess_with_environment(ref<rstd::path::Path>                           source,
+                                     const toolchain::SharedPreprocessorEnvironment& environment,
+                                     frontend::FrontendService& frontend_service,
+                                     Profiler&                  profiler) const
+        -> Result<frontend::UncachedFrontendAnalysis> {
+        auto frontend_span = profiler.span(ScanProbe::Frontend);
+        frontend_service.record_analysis_build();
         auto includes = toolchain::ClangIncludeResolver(*environment);
         auto builtins = toolchain::ClangBuiltinProvider(
             *environment, environment->key.working_directory.as_path());
@@ -877,16 +893,16 @@ private:
 
     auto environment_for(const CompileContext& compile_context,
                          ref<rstd::path::Path> working_directory) const
-        -> Result<toolchain::PreprocessorEnvironment*> {
+        -> Result<toolchain::SharedPreprocessorEnvironment> {
         auto working_text = working_directory.to_str();
         if (working_text.is_none()) {
-            return failure<toolchain::PreprocessorEnvironment*>(rstd::format(
+            return failure<toolchain::SharedPreprocessorEnvironment>(rstd::format(
                 "preprocessor working directory '{}' is not valid UTF-8", working_directory));
         }
-        for (auto& existing : preprocessor_environments_) {
-            if (existing.key.matches(compile_context.id.as_str(), working_directory)) {
+        for (const auto& existing : preprocessor_environments_) {
+            if (existing->key.matches(compile_context.id.as_str(), working_directory)) {
                 ++toolchain_statistics_.preprocessor_environment_hits;
-                return Ok(rstd::addressof(existing));
+                return Ok(existing.clone());
             }
         }
 
@@ -900,7 +916,7 @@ private:
         toolchain_statistics_.ignored_builtin_options += builtin_values.ignored_options;
         auto builtin_environment = Option<toolchain::SharedClangBuiltinEnvironmentSnapshot> {};
         for (const auto& existing : builtin_environment_snapshots_) {
-            if (existing.get()->key.as_str() == builtin_key.as_str()) {
+            if (existing->key.as_str() == builtin_key.as_str()) {
                 builtin_environment = Some(existing.clone());
                 ++toolchain_statistics_.builtin_hits;
                 break;
@@ -913,15 +929,15 @@ private:
             ++toolchain_statistics_.builtin_refreshes;
             ++toolchain_statistics_.builtin_macro_processes;
             ++toolchain_statistics_.builtin_capability_processes;
-            toolchain_statistics_.clang_macros += queried->get()->clang_macro_count;
-            toolchain_statistics_.native_macro_owners += queried->get()->native_macro_count;
-            toolchain_statistics_.clang_capabilities += queried->get()->clang_capability_count;
-            toolchain_statistics_.native_capabilities += queried->get()->native_capability_count;
-            toolchain_statistics_.builtin_macro_output_bytes += queried->get()->macro_output_bytes;
+            toolchain_statistics_.clang_macros += (*queried)->clang_macro_count;
+            toolchain_statistics_.native_macro_owners += (*queried)->native_macro_count;
+            toolchain_statistics_.clang_capabilities += (*queried)->clang_capability_count;
+            toolchain_statistics_.native_capabilities += (*queried)->native_capability_count;
+            toolchain_statistics_.builtin_macro_output_bytes += (*queried)->macro_output_bytes;
             toolchain_statistics_.builtin_capability_input_bytes +=
-                queried->get()->capability_input_bytes;
+                (*queried)->capability_input_bytes;
             toolchain_statistics_.builtin_capability_output_bytes +=
-                queried->get()->capability_output_bytes;
+                (*queried)->capability_output_bytes;
             builtin_environment_snapshots_.push(queried->clone());
             builtin_environment = Some(rstd::move(queried).unwrap());
         }
@@ -937,9 +953,11 @@ private:
             rstd::move(builtin_values.semantic),
             compile_context.cpp.preprocessor.macros);
         if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-        preprocessor_environments_.push(rstd::move(queried).unwrap());
-        return Ok(rstd::addressof(
-            preprocessor_environments_[preprocessor_environments_.len() - usize(1)]));
+        auto environment =
+            rstd::sync::Arc<toolchain::PreprocessorEnvironment>::make(
+                rstd::move(queried).unwrap());
+        preprocessor_environments_.push(environment.clone());
+        return Ok(rstd::move(environment));
     }
 
     auto make_builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
@@ -1027,7 +1045,7 @@ private:
     CppArgumentParser                                             argument_parser_;
     mutable ToolchainStatistics                                   toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot> builtin_environment_snapshots_;
-    mutable Vec<toolchain::PreprocessorEnvironment>               preprocessor_environments_;
+    mutable Vec<toolchain::SharedPreprocessorEnvironment>         preprocessor_environments_;
 };
 
 } // namespace lito

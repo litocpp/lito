@@ -174,10 +174,44 @@ struct ScanSourceTiming {
     rstd::bench::probe::ProbeSummary summary;
 };
 
+struct ScanExecutionStatistics {
+    usize                jobs {};
+    usize                max_in_flight {};
+    usize                tasks {};
+    usize                max_active {};
+    rstd::time::Duration ready_wait;
+    rstd::time::Duration completion_wait;
+    rstd::time::Duration task_work;
+};
+
+struct ScanTaskProfile {
+    rstd::bench::probe::ProbeBatch batch;
+    ScanSourceFrame                frame;
+};
+
+class ScanTaskProfileContext {
+    rstd::sync::Arc<rstd::bench::probe::ProbeSession> session_;
+    Vec<rstd::bench::probe::ProbeId>                  probes_;
+    ScanSourceFrame                                   frame_;
+
+    ScanTaskProfileContext(rstd::sync::Arc<rstd::bench::probe::ProbeSession> session,
+                           Vec<rstd::bench::probe::ProbeId>                  probes,
+                           ScanSourceFrame                                   frame)
+        : session_(rstd::move(session)), probes_(rstd::move(probes)), frame_(rstd::move(frame)) {}
+
+    friend class ScanProfiler;
+    friend class ScanTaskProfiler;
+
+public:
+    ScanTaskProfileContext(ScanTaskProfileContext&&) noexcept                    = default;
+    auto operator=(ScanTaskProfileContext&&) noexcept -> ScanTaskProfileContext& = default;
+};
+
 class ScanProfileReport {
     rstd::bench::probe::ProbeReport aggregate_;
     rstd::bench::probe::ProbeReport sources_;
     Vec<ScanSourceFrame>            frames_;
+    ScanExecutionStatistics         execution_;
 
     auto exclusive(ScanProbe probe) const noexcept -> rstd::time::Duration {
         const auto* value = timing(probe);
@@ -187,16 +221,20 @@ class ScanProfileReport {
 public:
     ScanProfileReport(rstd::bench::probe::ProbeReport aggregate,
                       rstd::bench::probe::ProbeReport sources,
-                      Vec<ScanSourceFrame>            frames)
+                      Vec<ScanSourceFrame>            frames,
+                      ScanExecutionStatistics         execution)
         : aggregate_(rstd::move(aggregate)),
           sources_(rstd::move(sources)),
-          frames_(rstd::move(frames)) {}
+          frames_(rstd::move(frames)),
+          execution_(execution) {}
 
     auto aggregate() const noexcept -> const rstd::bench::probe::ProbeReport& { return aggregate_; }
 
     auto sources() const noexcept -> const rstd::bench::probe::ProbeReport& { return sources_; }
 
     auto frames() const noexcept -> slice<ScanSourceFrame> { return frames_.as_slice(); }
+
+    auto execution() const noexcept -> const ScanExecutionStatistics& { return execution_; }
 
     auto frame(u64 id) const noexcept -> const ScanSourceFrame* {
         for (const auto& value : frames_) {
@@ -294,21 +332,93 @@ public:
     }
 };
 
-class ScanProfiler {
-    rstd::bench::probe::ProbeRecorder  aggregate_recorder_;
-    rstd::bench::probe::ProbeRecorder  source_recorder_;
-    rstd::bench::probe::ProbeCollector source_collector_;
-    Vec<rstd::bench::probe::ProbeId>   probes_;
-    Vec<ScanSourceFrame>               source_frames_;
-    u64                                next_source_frame_ { u64(1) };
-    bool                               source_frame_active_ {};
+class ScanTaskProfiler {
+    rstd::bench::probe::ProbeRecorder recorder_;
+    Vec<rstd::bench::probe::ProbeId>  probes_;
+    ScanSourceFrame                   frame_;
+    bool                              active_ { true };
 
-    ScanProfiler(rstd::bench::probe::ProbeRecorder  aggregate_recorder,
-                 rstd::bench::probe::ProbeRecorder  source_recorder,
-                 rstd::bench::probe::ProbeCollector source_collector,
-                 Vec<rstd::bench::probe::ProbeId>   probes)
-        : aggregate_recorder_(rstd::move(aggregate_recorder)),
+    ScanTaskProfiler(rstd::bench::probe::ProbeRecorder recorder,
+                     Vec<rstd::bench::probe::ProbeId>  probes,
+                     ScanSourceFrame                   frame)
+        : recorder_(rstd::move(recorder)), probes_(rstd::move(probes)), frame_(rstd::move(frame)) {}
+
+    auto probe(ScanProbe value) const noexcept -> rstd::bench::probe::ProbeId {
+        return probes_[usize(static_cast<rstd::size_t>(value))];
+    }
+
+public:
+    static auto create(ScanTaskProfileContext context) -> rstd::Result<ScanTaskProfiler, String> {
+        auto config     = rstd::bench::probe::RecorderConfig {};
+        config.overflow = rstd::bench::probe::OverflowPolicy::Grow();
+        auto recorder   = context.session_->recorder(rstd::move(config));
+        auto begun      = recorder.begin_frame(context.frame_.id);
+        if (begun.is_err()) {
+            return Err(probe_error_message(rstd::move(begun).unwrap_err_unchecked()));
+        }
+        return Ok(ScanTaskProfiler(
+            rstd::move(recorder), rstd::move(context.probes_), rstd::move(context.frame_)));
+    }
+
+    auto span(ScanProbe value) noexcept -> ScanSpanGuard {
+        return ScanSpanGuard(recorder_.span(probe(value)), {});
+    }
+
+    template<typename Function>
+    decltype(auto) measure(ScanProbe value, Function&& function) {
+        auto guard = span(value);
+        return rstd::forward<Function>(function)();
+    }
+
+    auto complete(ScanSpanGuard& span) -> rstd::Result<empty, String> {
+        auto result = span.finish();
+        if (result.is_err()) {
+            return Err(probe_error_message(rstd::move(result).unwrap_err_unchecked()));
+        }
+        return Ok(empty {});
+    }
+
+    auto record_preprocessor_statistics(
+        const frontend::preprocessor::PreprocessorStatistics& statistics) noexcept -> void {
+        frame_.preprocessor = statistics;
+    }
+
+    auto finish() -> rstd::Result<ScanTaskProfile, String> {
+        if (! active_) return Err(String::make("scan task profile is already complete"_str));
+        auto ended = recorder_.end_frame();
+        if (ended.is_err()) {
+            return Err(probe_error_message(rstd::move(ended).unwrap_err_unchecked()));
+        }
+        active_ = false;
+        return Ok(ScanTaskProfile {
+            .batch = rstd::move(ended).unwrap_unchecked(),
+            .frame = rstd::move(frame_),
+        });
+    }
+};
+
+class ScanProfiler {
+    rstd::sync::Arc<rstd::bench::probe::ProbeSession> session_;
+    rstd::bench::probe::ProbeRecorder                 aggregate_recorder_;
+    rstd::bench::probe::ProbeRecorder                 source_recorder_;
+    rstd::bench::probe::ProbeCollector                aggregate_collector_;
+    rstd::bench::probe::ProbeCollector                source_collector_;
+    Vec<rstd::bench::probe::ProbeId>                  probes_;
+    Vec<ScanSourceFrame>                              source_frames_;
+    u64                                               next_source_frame_ { u64(1) };
+    bool                                              source_frame_active_ {};
+    ScanExecutionStatistics                           execution_;
+
+    ScanProfiler(rstd::sync::Arc<rstd::bench::probe::ProbeSession> session,
+                 rstd::bench::probe::ProbeRecorder                 aggregate_recorder,
+                 rstd::bench::probe::ProbeRecorder                 source_recorder,
+                 rstd::bench::probe::ProbeCollector                aggregate_collector,
+                 rstd::bench::probe::ProbeCollector                source_collector,
+                 Vec<rstd::bench::probe::ProbeId>                  probes)
+        : session_(rstd::move(session)),
+          aggregate_recorder_(rstd::move(aggregate_recorder)),
           source_recorder_(rstd::move(source_recorder)),
+          aggregate_collector_(rstd::move(aggregate_collector)),
           source_collector_(rstd::move(source_collector)),
           probes_(rstd::move(probes)),
           source_frames_(Vec<ScanSourceFrame>::make()) {}
@@ -331,18 +441,58 @@ public:
             }
             probes.push(rstd::move(registered).unwrap_unchecked());
         }
-        auto schema             = rstd::move(registry).freeze();
-        auto session            = rstd::bench::probe::ProbeSession::new_(schema.clone());
-        auto config             = rstd::bench::probe::RecorderConfig {};
-        config.overflow         = rstd::bench::probe::OverflowPolicy::Grow();
-        auto source_config      = config;
-        auto aggregate_recorder = session.recorder(rstd::move(config));
-        auto source_recorder    = session.recorder(rstd::move(source_config));
-        auto source_collector   = rstd::bench::probe::ProbeCollector::new_(schema.clone());
-        return Ok(ScanProfiler(rstd::move(aggregate_recorder),
+        auto schema  = rstd::move(registry).freeze();
+        auto session = rstd::sync::Arc<rstd::bench::probe::ProbeSession>::make(
+            schema.clone(), rstd::bench::SteadyClock {});
+        auto config              = rstd::bench::probe::RecorderConfig {};
+        config.overflow          = rstd::bench::probe::OverflowPolicy::Grow();
+        auto source_config       = config;
+        auto aggregate_recorder  = session->recorder(rstd::move(config));
+        auto source_recorder     = session->recorder(rstd::move(source_config));
+        auto aggregate_collector = rstd::bench::probe::ProbeCollector::new_(schema.clone());
+        auto source_collector    = rstd::bench::probe::ProbeCollector::new_(schema.clone());
+        return Ok(ScanProfiler(rstd::move(session),
+                               rstd::move(aggregate_recorder),
                                rstd::move(source_recorder),
+                               rstd::move(aggregate_collector),
                                rstd::move(source_collector),
                                rstd::move(probes)));
+    }
+
+    auto task(ref<str> target, ref<rstd::path::Path> source, ScanSourceOrigin origin)
+        -> rstd::Result<ScanTaskProfileContext, String> {
+        if (next_source_frame_ == u64::MAX) {
+            return Err(String::make("scan source frame id exhausted"_str));
+        }
+        auto task_probes = Vec<rstd::bench::probe::ProbeId>::with_capacity(probes_.len());
+        for (auto value : probes_) task_probes.push(rstd::move(value));
+        auto context = ScanTaskProfileContext(session_.clone(),
+                                              rstd::move(task_probes),
+                                              ScanSourceFrame {
+                                                  .id     = next_source_frame_,
+                                                  .target = String::make(target),
+                                                  .source = rstd::path::PathBuf::from(source),
+                                                  .origin = origin,
+                                              });
+        ++next_source_frame_;
+        return Ok(rstd::move(context));
+    }
+
+    auto ingest(ScanTaskProfile profile) -> rstd::Result<empty, String> {
+        auto aggregate = aggregate_collector_.ingest(profile.batch);
+        if (aggregate.is_err()) {
+            return Err(probe_error_message(rstd::move(aggregate).unwrap_err_unchecked()));
+        }
+        auto source = source_collector_.ingest(profile.batch);
+        if (source.is_err()) {
+            return Err(probe_error_message(rstd::move(source).unwrap_err_unchecked()));
+        }
+        source_frames_.push(rstd::move(profile.frame));
+        return Ok(empty {});
+    }
+
+    auto record_execution(ScanExecutionStatistics statistics) noexcept -> void {
+        execution_ = statistics;
     }
 
     auto span(ScanProbe value) noexcept -> ScanSpanGuard {
@@ -414,15 +564,20 @@ public:
         if (drained.is_err()) {
             return Err(probe_error_message(rstd::move(drained).unwrap_err_unchecked()));
         }
-        auto batch     = rstd::move(drained).unwrap_unchecked();
-        auto collector = rstd::bench::probe::ProbeCollector::new_(batch.schema_owner());
-        auto ingested  = collector.ingest(batch);
+        auto batch    = rstd::move(drained).unwrap_unchecked();
+        auto ingested = aggregate_collector_.ingest(batch);
         if (ingested.is_err()) {
             return Err(probe_error_message(rstd::move(ingested).unwrap_err_unchecked()));
         }
-        return Ok(ScanProfileReport(rstd::move(collector).finish(),
+        rstd::slice_::sort_unstable_by(
+            source_frames_.as_mut_slice().as_mut_ref(),
+            [](const ScanSourceFrame& left, const ScanSourceFrame& right) {
+                return left.id < right.id;
+            });
+        return Ok(ScanProfileReport(rstd::move(aggregate_collector_).finish(),
                                     rstd::move(source_collector_).finish(),
-                                    rstd::move(source_frames_)));
+                                    rstd::move(source_frames_),
+                                    execution_));
     }
 };
 

@@ -49,7 +49,8 @@ struct ClangBuiltinEnvironmentSnapshot {
     usize                                    capability_output_bytes {};
 };
 
-using SharedClangBuiltinEnvironmentSnapshot = rstd::rc::Rc<const ClangBuiltinEnvironmentSnapshot>;
+using SharedClangBuiltinEnvironmentSnapshot =
+    rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>;
 
 struct PreprocessorEnvironmentKey {
     String  context_id;
@@ -79,9 +80,11 @@ struct PreprocessorEnvironment {
     Vec<IncludeSearchEntry>                     include_search;
     Vec<String>                                 query_command;
     String                                      identity;
-    Option<String>                              date;
-    Option<String>                              time;
+    String                                      date;
+    String                                      time;
 };
+
+using SharedPreprocessorEnvironment = rstd::sync::Arc<PreprocessorEnvironment>;
 
 } // namespace lito::toolchain
 
@@ -802,22 +805,86 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&            base
     auto values            = rstd::move(parsed).unwrap();
     auto capability_values = rstd::move(capabilities).unwrap();
     auto identity          = builtin_snapshot_identity(clang_macros, key);
-    return Ok(rstd::rc::make_rc<ClangBuiltinEnvironmentSnapshot>(
-                  ClangBuiltinEnvironmentSnapshot {
-                      .key                     = String::make(key),
-                      .identity                = rstd::move(identity),
-                      .source                  = rstd::move(values.source),
-                      .definitions             = rstd::move(values.definitions),
-                      .capabilities            = rstd::move(capability_values.values),
-                      .clang_macro_count       = clang_macros.len(),
-                      .native_macro_count      = usize(4),
-                      .clang_capability_count  = capability_values.clang_count,
-                      .native_capability_count = capability_values.native_count,
-                      .macro_output_bytes      = macro_output->standard_output.len(),
-                      .capability_input_bytes  = capability_values.input_bytes,
-                      .capability_output_bytes = capability_values.output_bytes,
-                  })
-                  .to_const());
+    return Ok(rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(
+        ClangBuiltinEnvironmentSnapshot {
+            .key                     = String::make(key),
+            .identity                = rstd::move(identity),
+            .source                  = rstd::move(values.source),
+            .definitions             = rstd::move(values.definitions),
+            .capabilities            = rstd::move(capability_values.values),
+            .clang_macro_count       = clang_macros.len(),
+            .native_macro_count      = usize(4),
+            .clang_capability_count  = capability_values.clang_count,
+            .native_capability_count = capability_values.native_count,
+            .macro_output_bytes      = macro_output->standard_output.len(),
+            .capability_input_bytes  = capability_values.input_bytes,
+            .capability_output_bytes = capability_values.output_bytes,
+        }));
+}
+
+struct TextBuiltinValues {
+    String date;
+    String time;
+};
+
+auto query_text_builtins(const Vec<String>& base_command, ref<rstd::path::Path> working_directory)
+    -> Result<TextBuiltinValues> {
+    auto command_line = clone_command(base_command);
+    command::push_option(command_line, clang_options::PREPROCESS);
+    command::push_option(command_line, clang_options::NO_LINE_MARKERS);
+    command::push_option(command_line, clang_options::LANGUAGE);
+    command::push_option(command_line, clang_options::CXX_SOURCE);
+    command::push_option(command_line, clang_options::STANDARD_INPUT);
+    auto output =
+        run_command_with_input(command_line,
+                               "LITO_BUILTIN_DATE __DATE__\nLITO_BUILTIN_TIME __TIME__\n"_str,
+                               Some(working_directory));
+    if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+    if (output->exit_code != i32 {}) {
+        return environment_failure<TextBuiltinValues>(
+            rstd::format("clang text builtin query failed: {}", output->standard_error.as_str()));
+    }
+    auto date   = Option<String> {};
+    auto time   = Option<String> {};
+    auto parsed = each_line(output->standard_output.as_str(), [&](ref<str> raw) -> Result<empty> {
+        auto           line        = raw.trim_ascii();
+        auto           value       = Option<ref<str>> {};
+        auto           target      = static_cast<Option<String>*>(nullptr);
+        constexpr auto date_prefix = "LITO_BUILTIN_DATE "_str;
+        constexpr auto time_prefix = "LITO_BUILTIN_TIME "_str;
+        if (line.starts_with(date_prefix)) {
+            value  = line.get(date_prefix.len(), line.len());
+            target = rstd::addressof(date);
+        } else if (line.starts_with(time_prefix)) {
+            value  = line.get(time_prefix.len(), line.len());
+            target = rstd::addressof(time);
+        } else if (! line.is_empty()) {
+            return environment_failure<empty>(
+                rstd::format("unexpected clang text builtin output: {}", line));
+        }
+        if (target == nullptr) return Ok(empty {});
+        auto text = value->trim_ascii();
+        if (text.len() < usize(2) || text.as_bytes()[usize {}] != u8('"') ||
+            text.as_bytes()[text.len() - usize(1)] != u8('"')) {
+            return environment_failure<empty>(
+                rstd::format("invalid clang text builtin value: {}", text));
+        }
+        auto inner = text.get(usize(1), text.len() - usize(1));
+        if (inner.is_none()) {
+            return environment_failure<empty>("invalid clang text builtin boundary"_str);
+        }
+        *target = Some(String::make(*inner));
+        return Ok(empty {});
+    });
+    if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+    if (date.is_none() || time.is_none()) {
+        return environment_failure<TextBuiltinValues>(
+            "clang text builtin query returned an incomplete snapshot"_str);
+    }
+    return Ok(TextBuiltinValues {
+        .date = rstd::move(date).unwrap(),
+        .time = rstd::move(time).unwrap(),
+    });
 }
 
 auto query_preprocessor_environment(const Vec<String>&                    base_command,
@@ -851,8 +918,10 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     }
     auto includes = parse_include_search(include_output->standard_error.as_str());
     if (includes.is_err()) return Err(rstd::move(includes).unwrap_err());
+    auto text_builtins = query_text_builtins(base_command, working_directory);
+    if (text_builtins.is_err()) return Err(rstd::move(text_builtins).unwrap_err());
     auto identity = environment_identity(
-        builtin_environment.get()->identity.as_str(), *includes, key.context_id.as_str());
+        builtin_environment->identity.as_str(), *includes, key.context_id.as_str());
     if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
     return Ok(PreprocessorEnvironment {
         .key                 = rstd::move(key),
@@ -865,6 +934,8 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
         .include_search      = rstd::move(includes).unwrap(),
         .query_command       = clone_command(base_command),
         .identity            = rstd::move(identity).unwrap(),
+        .date                = rstd::move(text_builtins->date),
+        .time                = rstd::move(text_builtins->time),
     });
 }
 
@@ -965,15 +1036,15 @@ private:
 
 class ClangBuiltinProvider {
 public:
-    ClangBuiltinProvider(PreprocessorEnvironment& environment,
-                         ref<rstd::path::Path>    working_directory)
+    ClangBuiltinProvider(const PreprocessorEnvironment& environment,
+                         ref<rstd::path::Path>          working_directory)
         : environment_(environment), working_directory_(PathBuf::from(working_directory)) {}
 
     auto predefined_macros() -> preprocessor::Result<Vec<preprocessor::PredefinedMacroOperation>> {
         auto result = Vec<preprocessor::PredefinedMacroOperation>::with_capacity(
-            environment_.builtin_environment.get()->definitions.len() +
+            environment_.builtin_environment->definitions.len() +
             environment_.native_definitions.len() + environment_.command_line_macros.len());
-        for (const auto& definition : environment_.builtin_environment.get()->definitions) {
+        for (const auto& definition : environment_.builtin_environment->definitions) {
             result.push(preprocessor::PredefinedMacroOperation::define(definition.clone()));
         }
         for (const auto& definition : environment_.native_definitions) {
@@ -995,83 +1066,20 @@ public:
         auto native = native_capability(query, environment_.semantic_context);
         if (native.is_some()) return Ok(*native);
         auto key    = capability_key(query);
-        auto cached = environment_.builtin_environment.get()->capabilities.get(key.as_str());
+        auto cached = environment_.builtin_environment->capabilities.get(key.as_str());
         if (cached.is_some()) return Ok(**cached);
         return Ok(i64 {});
     }
 
     auto text(preprocessor::BuiltinTextKind kind) -> preprocessor::Result<String> {
-        if (environment_.date.is_none() || environment_.time.is_none()) {
-            auto queried = query_text_builtins();
-            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-        }
         const auto& value =
             kind == preprocessor::BuiltinTextKind::Date ? environment_.date : environment_.time;
-        if (value.is_none()) {
-            return Err(
-                preprocessor::Error::make("clang did not initialize a requested text builtin"_str));
-        }
-        return Ok(value->clone());
+        return Ok(value.clone());
     }
 
 private:
-    auto query_text_builtins() -> preprocessor::Result<empty> {
-        auto command_line = clone_command(environment_.query_command);
-        command::push_option(command_line, clang_options::PREPROCESS);
-        command::push_option(command_line, clang_options::NO_LINE_MARKERS);
-        command::push_option(command_line, clang_options::LANGUAGE);
-        command::push_option(command_line, clang_options::CXX_SOURCE);
-        command::push_option(command_line, clang_options::STANDARD_INPUT);
-        auto output =
-            run_command_with_input(command_line,
-                                   "LITO_BUILTIN_DATE __DATE__\nLITO_BUILTIN_TIME __TIME__\n"_str,
-                                   Some(working_directory_.as_path()));
-        if (output.is_err()) return Err(preprocessor_error(rstd::move(output).unwrap_err()));
-        if (output->exit_code != i32 {}) {
-            return Err(preprocessor::Error::make(rstd::format("clang text builtin query failed: {}",
-                                                              output->standard_error.as_str())));
-        }
-        auto parsed =
-            each_line(output->standard_output.as_str(), [this](ref<str> raw) -> Result<empty> {
-                auto           line        = raw.trim_ascii();
-                auto           value       = Option<ref<str>> {};
-                auto           target      = static_cast<Option<String>*>(nullptr);
-                constexpr auto date_prefix = "LITO_BUILTIN_DATE "_str;
-                constexpr auto time_prefix = "LITO_BUILTIN_TIME "_str;
-                if (line.starts_with(date_prefix)) {
-                    value  = line.get(date_prefix.len(), line.len());
-                    target = rstd::addressof(environment_.date);
-                } else if (line.starts_with(time_prefix)) {
-                    value  = line.get(time_prefix.len(), line.len());
-                    target = rstd::addressof(environment_.time);
-                } else if (! line.is_empty()) {
-                    return environment_failure<empty>(
-                        rstd::format("unexpected clang text builtin output: {}", line));
-                }
-                if (target == nullptr) return Ok(empty {});
-                auto text = value->trim_ascii();
-                if (text.len() < usize(2) || text.as_bytes()[usize {}] != u8('"') ||
-                    text.as_bytes()[text.len() - usize(1)] != u8('"')) {
-                    return environment_failure<empty>(
-                        rstd::format("invalid clang text builtin value: {}", text));
-                }
-                auto inner = text.get(usize(1), text.len() - usize(1));
-                if (inner.is_none()) {
-                    return environment_failure<empty>("invalid clang text builtin boundary"_str);
-                }
-                *target = Some(String::make(*inner));
-                return Ok(empty {});
-            });
-        if (parsed.is_err()) return Err(preprocessor_error(rstd::move(parsed).unwrap_err()));
-        if (environment_.date.is_none() || environment_.time.is_none()) {
-            return Err(preprocessor::Error::make(
-                "clang text builtin query returned an incomplete snapshot"_str));
-        }
-        return Ok(empty {});
-    }
-
-    PreprocessorEnvironment& environment_;
-    PathBuf                  working_directory_;
+    const PreprocessorEnvironment& environment_;
+    PathBuf                        working_directory_;
 };
 
 class ClangPragmaHandler {

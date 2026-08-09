@@ -41,6 +41,34 @@ auto emit(const BuildRequest&   request,
     observer.notify(observer.context, BuildEvent { kind, target, path });
 }
 
+struct ResolvedScanExecution {
+    usize jobs { usize(1) };
+    usize max_in_flight { usize(1) };
+};
+
+auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<ResolvedScanExecution> {
+    auto jobs = usize(1);
+    if (policy.jobs.is_some()) {
+        jobs = *policy.jobs;
+    } else {
+        auto available = rstd::thread::available_parallelism();
+        if (available.is_ok()) jobs = available->get();
+    }
+    if (jobs == usize {}) {
+        return failure<ResolvedScanExecution>(ErrorKind::InvalidRequest,
+                                              "scan jobs must be greater than zero"_str);
+    }
+    auto max_in_flight = policy.max_in_flight.is_some() ? *policy.max_in_flight : jobs;
+    if (max_in_flight == usize {}) {
+        return failure<ResolvedScanExecution>(ErrorKind::InvalidRequest,
+                                              "scan task capacity must be greater than zero"_str);
+    }
+    return Ok(ResolvedScanExecution {
+        .jobs          = jobs,
+        .max_in_flight = max_in_flight,
+    });
+}
+
 } // namespace lito
 
 export namespace lito
@@ -81,6 +109,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     });
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto discovery_plan = rstd::move(resolved).unwrap();
+    auto execution      = resolve_scan_execution(request.execution.scan);
+    if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
 
     auto selected_layout =
         BuildLayout::create(metadata.root.as_path(),
@@ -103,8 +133,12 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         FrontendAnalysisService::make(layout, toolchain, frontend_service, scan_cache, profiler);
 
     auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
-        return discover_package_sources(
-            metadata, discovery_plan, analysis_service, request.observer);
+        return discover_package_sources(metadata,
+                                        discovery_plan,
+                                        analysis_service,
+                                        request.observer,
+                                        execution->jobs,
+                                        execution->max_in_flight);
     });
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
@@ -205,38 +239,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto scans         = Vec<ScanResult>::with_capacity(units.len());
     auto classify_span = profiler.span(ScanProbe::ClassifyUnits);
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
-        const auto target          = units[unit].unit.target;
-        auto       needed_analysis = units[unit].frontend_analysis.is_none();
-        if (needed_analysis) {
-            auto source_frame = profiler.begin_source_frame(package.targets[target].name.as_str(),
-                                                            units[unit].unit.source.as_path(),
-                                                            ScanSourceOrigin::Classify);
-            if (source_frame.is_err()) {
-                return failure<BuildSummary>(ErrorKind::Artifact,
-                                             rstd::move(source_frame).unwrap_err_unchecked());
-            }
-            auto analyzed = analysis_service.analyze(package.targets[target].name.as_str(),
-                                                     units[unit].unit.relative_source.as_path(),
-                                                     units[unit].unit.source.as_path(),
-                                                     *units[unit].unit.context,
-                                                     units[unit].working_directory.as_path());
-            auto source_finished = profiler.end_source_frame();
-            if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
-            if (source_finished.is_err()) {
-                return failure<BuildSummary>(ErrorKind::Artifact,
-                                             rstd::move(source_finished).unwrap_err_unchecked());
-            }
-            auto analysis = rstd::move(analyzed).unwrap();
-            emit(request,
-                 analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
-                     ? BuildEventKind::ScanReuse
-                     : BuildEventKind::Scan,
-                 package.targets[target].name.as_str(),
-                 units[unit].unit.source.as_path());
-            units[unit].frontend_analysis = Some(rstd::move(analysis));
-        } else {
-            analysis_service.record_in_build_reuse();
+        if (units[unit].frontend_analysis.is_none()) {
+            return failure<BuildSummary>(
+                ErrorKind::Artifact,
+                rstd::format("source '{}' reached classification without frontend analysis",
+                             units[unit].unit.source.as_path()));
         }
+        analysis_service.record_in_build_reuse();
         auto scanned = toolchain.scan(units[unit]);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         auto result = rstd::move(scanned).unwrap();
@@ -272,9 +281,9 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         return failure<BuildSummary>(ErrorKind::Artifact,
                                      rstd::move(finished_profile).unwrap_err_unchecked());
     }
-    auto        scan_profile                   = rstd::move(finished_profile).unwrap_unchecked();
-    auto        frontend_statistics            = frontend_service.statistics();
-    const auto& scan_cache_statistics          = scan_cache.statistics();
+    auto scan_profile                          = rstd::move(finished_profile).unwrap_unchecked();
+    auto frontend_statistics                   = analysis_service.statistics();
+    auto scan_cache_statistics                 = scan_cache.statistics();
     frontend_statistics.persistent_scan_hits   = scan_cache_statistics.hits;
     frontend_statistics.persistent_scan_misses = scan_cache_statistics.misses;
     frontend_statistics.persistent_scan_uncacheable     = scan_cache_statistics.uncacheable;
@@ -289,7 +298,13 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     frontend_statistics.persistent_scan_file_dependency = scan_cache_statistics.file_dependency;
     frontend_statistics.persistent_scan_include_lookup  = scan_cache_statistics.include_lookup;
     frontend_statistics.persistent_scan_receipt         = scan_cache_statistics.receipt;
-    frontend_service.release_source_cache();
+    frontend_statistics.persistent_fingerprint_requests =
+        scan_cache_statistics.fingerprint_requests;
+    frontend_statistics.persistent_fingerprint_hits   = scan_cache_statistics.fingerprint_hits;
+    frontend_statistics.persistent_fingerprint_builds = scan_cache_statistics.fingerprint_builds;
+    frontend_statistics.persistent_fingerprint_waits  = scan_cache_statistics.fingerprint_waits;
+    frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
+    analysis_service.release_source_cache();
 
     auto cache = CompileCacheSession::create(cache_environment, layout.output());
 

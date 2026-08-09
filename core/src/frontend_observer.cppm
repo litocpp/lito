@@ -9,15 +9,16 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
-class FrontendProfileObserver {
+template<typename Profiler>
+class BasicFrontendProfileObserver {
     struct ActiveActivity {
         frontend::FrontendActivity activity { frontend::FrontendActivity::SourceResolve };
         ScanSpanGuard              span;
     };
 
 public:
-    static auto make(ScanProfiler& profiler) -> FrontendProfileObserver {
-        return FrontendProfileObserver { profiler };
+    static auto make(Profiler& profiler) -> BasicFrontendProfileObserver {
+        return BasicFrontendProfileObserver { profiler };
     }
 
     auto observer() noexcept -> frontend::FrontendObserver {
@@ -25,17 +26,17 @@ public:
             .context = this,
             .begin =
                 [](void* context, frontend::FrontendActivity activity) noexcept {
-                    static_cast<FrontendProfileObserver*>(context)->begin(activity);
+                    static_cast<BasicFrontendProfileObserver*>(context)->begin(activity);
                 },
             .end =
                 [](void* context, frontend::FrontendActivity activity) noexcept {
-                    static_cast<FrontendProfileObserver*>(context)->end(activity);
+                    static_cast<BasicFrontendProfileObserver*>(context)->end(activity);
                 },
         };
     }
 
 private:
-    explicit FrontendProfileObserver(ScanProfiler& profiler)
+    explicit BasicFrontendProfileObserver(Profiler& profiler)
         : profiler_(&profiler), active_(Vec<ActiveActivity>::make()) {}
 
     static auto probe(frontend::FrontendActivity activity) noexcept -> ScanProbe {
@@ -60,8 +61,11 @@ private:
         if (value.activity != activity) return;
     }
 
-    ScanProfiler*       profiler_ {};
+    Profiler*           profiler_ {};
     Vec<ActiveActivity> active_;
 };
+
+using FrontendProfileObserver     = BasicFrontendProfileObserver<ScanProfiler>;
+using FrontendTaskProfileObserver = BasicFrontendProfileObserver<ScanTaskProfiler>;
 
 } // namespace lito

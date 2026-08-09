@@ -107,7 +107,7 @@ public:
         }
 
         parse_tokens();
-        advance_comments(unit_.source_snapshot.get()->contents.len());
+        advance_comments(unit_.source_snapshot->contents.len());
         if (! pending_comments_.is_empty()) {
             add_diagnostic(DocumentationSeverity::Warning,
                            "orphan-doc-comment"_str,

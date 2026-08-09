@@ -106,7 +106,7 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation = rstd::move(parsed).as_Parsed();
+    auto invocation    = rstd::move(parsed).as_Parsed();
     auto loaded_config = lito::load_project_config(invocation.working_directory.as_path());
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
@@ -182,6 +182,7 @@ extern "C++" int main() {
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) request.build.configuration.profile = *options.profile;
         request.build.configuration.exceptions = options.exceptions;
+        request.build.execution.scan.jobs      = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
         request.build.observer = Some(lito::BuildObserver {
@@ -289,6 +290,7 @@ extern "C++" int main() {
     request.locked             = options.locked;
     if (options.profile.is_some()) request.configuration.profile = *options.profile;
     request.configuration.exceptions = options.exceptions;
+    request.execution.scan.jobs      = options.jobs;
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 

@@ -44,6 +44,7 @@ struct CliSchema {
     ArgKey<bool>         build_verbose;
     ArgKey<String>       build_timing_file;
     ArgKey<bool>         build_no_timing;
+    ArgKey<usize>        build_jobs;
     ArgKey<String>       test_package;
     ArgKey<BuildProfile> test_profile;
     ArgKey<bool>         test_exceptions;
@@ -53,6 +54,7 @@ struct CliSchema {
     ArgKey<bool>         test_verbose;
     ArgKey<String>       test_timing_file;
     ArgKey<bool>         test_no_timing;
+    ArgKey<usize>        test_jobs;
     ArgKey<String>       test_arguments;
     ArgKey<String>       scan_source;
     ArgKey<String>       scan_package;
@@ -113,6 +115,14 @@ auto no_timing_arg() -> Arg<bool> {
         .help("Hide timing output on stdout"_str);
 }
 
+auto jobs_arg() -> Arg<usize> {
+    return Arg<usize>::value("jobs"_str, from_str_parser<usize>())
+        .short_name(u8('j'))
+        .long_name("jobs"_str)
+        .value_name("N"_str)
+        .help("Set the dependency scan worker count"_str);
+}
+
 auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build = Command::make("build"_str);
     build.about("Build packages"_str);
@@ -129,6 +139,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto build_timing_file = build.add_arg(timing_file_arg());
     auto build_no_timing   = build.add_arg(no_timing_arg());
+    auto build_jobs        = build.add_arg(jobs_arg());
 
     auto test = Command::make("test"_str);
     test.about("Build and run test packages"_str);
@@ -147,6 +158,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto test_timing_file = test.add_arg(timing_file_arg());
     auto test_no_timing   = test.add_arg(no_timing_arg());
+    auto test_jobs        = test.add_arg(jobs_arg());
     auto test_arguments   = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
                                              .value_name("ARGS"_str)
                                              .num_args(NumArgs::any())
@@ -193,6 +205,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_verbose     = build_verbose,
         .build_timing_file = build_timing_file,
         .build_no_timing   = build_no_timing,
+        .build_jobs        = build_jobs,
         .test_package      = test_package,
         .test_profile      = test_profile,
         .test_exceptions   = test_exceptions,
@@ -202,6 +215,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .test_verbose      = test_verbose,
         .test_timing_file  = test_timing_file,
         .test_no_timing    = test_no_timing,
+        .test_jobs         = test_jobs,
         .test_arguments    = test_arguments,
         .scan_source       = scan_source,
         .scan_package      = scan_package,
@@ -250,6 +264,7 @@ struct BuildOptions {
     bool                 verbose {};
     Option<PathBuf>      timing_file;
     bool                 no_timing {};
+    Option<usize>        jobs;
 };
 
 struct ScanOptions {
@@ -272,6 +287,7 @@ struct TestOptions {
     bool                 verbose {};
     Option<PathBuf>      timing_file;
     bool                 no_timing {};
+    Option<usize>        jobs;
 };
 
 struct FormatOptions {
@@ -326,6 +342,7 @@ auto parse() -> CliOutcome {
         auto profile     = optional_value(*child, schema.build_profile);
         auto output      = optional_value(*child, schema.build_output);
         auto timing_file = optional_value(*child, schema.build_timing_file);
+        auto jobs        = optional_value(*child, schema.build_jobs);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Build(BuildOptions {
@@ -339,6 +356,7 @@ auto parse() -> CliOutcome {
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.build_no_timing),
+                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
             }));
     }
     if (subcommand->get<0>() == "scan"_str) {
@@ -361,6 +379,7 @@ auto parse() -> CliOutcome {
         auto profile     = optional_value(*child, schema.test_profile);
         auto output      = optional_value(*child, schema.test_output);
         auto timing_file = optional_value(*child, schema.test_timing_file);
+        auto jobs        = optional_value(*child, schema.test_jobs);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Test(TestOptions {
@@ -375,6 +394,7 @@ auto parse() -> CliOutcome {
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
+                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
             }));
     }
     auto child = subcommand->get<1>();

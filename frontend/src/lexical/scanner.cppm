@@ -128,19 +128,7 @@ public:
     template<typename LanguageType>
         requires rstd::Impled<LanguageType, Language>
     static auto make(SourceFile source) -> ScannerSession {
-        auto result      = ScannerSession {};
-        result.source_   = rstd::move(source);
-        result.language_ = LanguageId::of<LanguageType>();
-        result.position_ = ScannerCursor::Point {
-            .location =
-                SourceLocation {
-                    .source = result.source_.id,
-                    .offset = usize {},
-                    .line   = usize(1),
-                    .column = usize(1),
-                },
-        };
-        return result;
+        return ScannerSession(rstd::move(source), LanguageId::of<LanguageType>());
     }
 
     auto position() const noexcept -> SourceLocation { return position_.location; }
@@ -191,7 +179,18 @@ public:
     }
 
 private:
-    ScannerSession() = default;
+    ScannerSession(SourceFile source, LanguageId language)
+        : source_(rstd::move(source)), language_(language) {
+        position_ = ScannerCursor::Point {
+            .location =
+                SourceLocation {
+                    .source = source_.id,
+                    .offset = usize {},
+                    .line   = usize(1),
+                    .column = usize(1),
+                },
+        };
+    }
 
     SourceFile           source_;
     LanguageId           language_;

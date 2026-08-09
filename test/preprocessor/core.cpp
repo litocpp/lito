@@ -35,12 +35,11 @@ public:
         auto lexed    = lex_with_comments(source, true);
         if (lexed.is_err()) return Err(rstd::move(lexed).unwrap_err());
         auto file = rstd::move(lexed).unwrap();
-        return Ok(rstd::rc::make_rc<LexedSource>(LexedSource {
-                                                     .snapshot = rstd::move(snapshot),
-                                                     .tokens   = rstd::move(file.tokens),
-                                                     .comments = rstd::move(file.comments),
-                                                 })
-                      .to_const());
+        return Ok(rstd::sync::Arc<LexedSource>::make(LexedSource {
+            .snapshot = rstd::move(snapshot),
+            .tokens   = rstd::move(file.tokens),
+            .comments = rstd::move(file.comments),
+        }));
     }
 
 private:

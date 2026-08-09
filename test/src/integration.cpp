@@ -210,12 +210,25 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
     auto root   = project_root();
     auto output = output_root("environment"_str);
     clear_output(output.as_path());
-    auto summary = lito::build(
-        build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str)));
+    auto request =
+        build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
+    request.execution.scan.jobs = Some(usize(2));
+    auto summary                = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
     EXPECT_EQ(summary->toolchain.preprocessor_environment_entries, usize(1));
     EXPECT_EQ(summary->toolchain.preprocessor_environment_queries, usize(1));
     EXPECT_GE(summary->toolchain.preprocessor_environment_hits, usize(1));
+    EXPECT_EQ(summary->scan_profile.execution().jobs, usize(2));
+    EXPECT_EQ(summary->scan_profile.execution().tasks, usize(2));
+    EXPECT_EQ(summary->scan_profile.execution().max_active, usize(2));
+    EXPECT_FALSE(summary->scan_profile.execution().task_work.is_zero());
+    EXPECT_FALSE(summary->scan_profile.execution().completion_wait.is_zero());
+    EXPECT_EQ(summary->frontend.source_requests, usize(4));
+    EXPECT_EQ(summary->frontend.source_reads, usize(3));
+    EXPECT_EQ(summary->frontend.lex_builds, usize(3));
+    EXPECT_EQ(summary->frontend.persistent_fingerprint_requests, usize(4));
+    EXPECT_EQ(summary->frontend.persistent_fingerprint_hits, usize(1));
+    EXPECT_EQ(summary->frontend.persistent_fingerprint_builds, usize(3));
     auto report  = output.join(PathBuf::from("timing.txt"_str).as_path());
     auto emitted = lito::timing_output::emit(*summary,
                                              lito::timing_output::OutputOptions {

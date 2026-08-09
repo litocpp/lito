@@ -802,6 +802,15 @@ struct BuildObserver {
     void (*notify)(void*, const BuildEvent&) noexcept {};
 };
 
+struct ScanExecutionPolicy {
+    Option<usize> jobs;
+    Option<usize> max_in_flight;
+};
+
+struct BuildExecutionPolicy {
+    ScanExecutionPolicy scan;
+};
+
 struct ToolchainStatistics {
     usize target_queries {};
     usize preprocessor_environment_entries {};
@@ -832,6 +841,7 @@ struct BuildRequest {
     CMakeProviderConfig     cmake;
     PackageSelectionPurpose purpose { PackageSelectionPurpose::Production };
     bool                    locked { false };
+    BuildExecutionPolicy    execution;
     Option<BuildObserver>   observer;
 };
 

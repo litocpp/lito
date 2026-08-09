@@ -18,14 +18,13 @@ struct SourceSnapshot {
     String              contents;
 };
 
-using SharedSourceSnapshot = rstd::rc::Rc<const SourceSnapshot>;
+using SharedSourceSnapshot = rstd::sync::Arc<SourceSnapshot>;
 
 auto make_source_snapshot(SourceBuffer buffer) -> SharedSourceSnapshot {
-    return rstd::rc::make_rc<SourceSnapshot>(SourceSnapshot {
-                                                 .path     = rstd::move(buffer.path),
-                                                 .contents = rstd::move(buffer.contents),
-                                             })
-        .to_const();
+    return rstd::sync::Arc<SourceSnapshot>::make(SourceSnapshot {
+        .path     = rstd::move(buffer.path),
+        .contents = rstd::move(buffer.contents),
+    });
 }
 
 struct SourceFile {
@@ -36,9 +35,9 @@ struct SourceFile {
         return SourceFile { .id = id, .snapshot = make_source_snapshot(rstd::move(buffer)) };
     }
 
-    auto path() const -> ref<rstd::path::Path> { return snapshot.get()->path.as_path(); }
+    auto path() const -> ref<rstd::path::Path> { return snapshot->path.as_path(); }
 
-    auto contents() const -> ref<str> { return snapshot.get()->contents.as_str(); }
+    auto contents() const -> ref<str> { return snapshot->contents.as_str(); }
 };
 
 enum class CommentKind
@@ -85,7 +84,7 @@ struct LexedSource {
     Vec<CommentTrivia>   comments;
 };
 
-using SharedLexedSource = rstd::rc::Rc<const LexedSource>;
+using SharedLexedSource = rstd::sync::Arc<LexedSource>;
 
 class SourceManager {
 public:
