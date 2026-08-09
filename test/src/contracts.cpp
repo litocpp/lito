@@ -881,14 +881,16 @@ TEST(Contracts, TestAttachmentRequiresADirectLibraryDependency) {
     EXPECT_TRUE(clear_output(output.as_path()));
 }
 
-TEST(Contracts, LockValidationAndMigrationAreOwnedByLockStore) {
+TEST(Contracts, OnlyCurrentLockVersionIsAcceptedByLockStore) {
     EXPECT_TRUE(locked_graph_is_current("lock/default-update"_str));
     for (const auto path : INVALID_LOCKS) {
         auto current = locked_graph_is_current(path);
         if (current) rstd::io::eprintln("unexpected current lock: {}", path);
         EXPECT_FALSE(current);
     }
-    EXPECT_TRUE(lito::load_lock_session(root("lock/v3"_str).as_path(), false).is_ok());
+    auto old_version = lito::load_lock_session(root("lock/v3"_str).as_path(), false);
+    ASSERT_TRUE(old_version.is_err());
+    EXPECT_TRUE(old_version.unwrap_err().message.as_str().contains("integer 4"_str));
 }
 
 TEST(Contracts, BuildResolutionReusesLockedGitSources) {
