@@ -37,10 +37,6 @@ visibility = "private"
 path = "../frontend"
 visibility = "private"
 
-[dependencies.lito-doc]
-path = "../doc"
-visibility = "private"
-
 [dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
 visibility = "private"

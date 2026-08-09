@@ -319,7 +319,6 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
                 .path              = rstd::move(source.canonical_path),
                 .expected_module   = rstd::move(source.expected_module),
                 .frontend_analysis = rstd::move(source.frontend_analysis),
-                .documentation     = rstd::move(source.documentation),
             });
         }
         auto artifact_name =

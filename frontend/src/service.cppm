@@ -73,8 +73,6 @@ struct FrontendStatistics {
     usize                                lex_builds {};
     usize                                analyze_builds {};
     usize                                analyze_hits {};
-    usize                                documentation_builds {};
-    usize                                documentation_declarations {};
     usize                                persistent_scan_hits {};
     usize                                persistent_scan_misses {};
     usize                                persistent_scan_uncacheable {};
@@ -212,11 +210,6 @@ public:
     auto record_analysis_build() noexcept -> void { ++statistics_.analyze_builds; }
 
     auto record_analysis_hit() noexcept -> void { ++statistics_.analyze_hits; }
-
-    auto record_documentation_build(usize declarations) noexcept -> void {
-        ++statistics_.documentation_builds;
-        statistics_.documentation_declarations += declarations;
-    }
 
     auto
     record_preprocessor_statistics(const preprocessor::PreprocessorStatistics& statistics) noexcept

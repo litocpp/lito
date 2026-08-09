@@ -170,12 +170,6 @@ struct UncachedFrontendAnalysis {
     Vec<IncludeLookupDependency> include_lookups;
 };
 
-struct UncachedDocumentationAnalysis {
-    FrontendResult               result;
-    Vec<IncludeLookupDependency> include_lookups;
-    DocumentationUnit            documentation;
-};
-
 enum class FrontendAnalysisOrigin
 {
     Native,
@@ -190,11 +184,6 @@ struct FrontendAnalysis : DefaultInClass<FrontendAnalysis, Clone> {
     FrontendAnalysisOrigin origin { FrontendAnalysisOrigin::Native };
 
     auto clone() const -> FrontendAnalysis;
-};
-
-struct DocumentationAnalysis {
-    FrontendAnalysis  analysis;
-    DocumentationUnit documentation;
 };
 
 auto ProvidedModule::clone() const -> ProvidedModule {

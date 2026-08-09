@@ -22,10 +22,6 @@ private-options = [
 path = "../frontend"
 visibility = "public"
 
-[dependencies.lito-doc]
-path = "../doc"
-visibility = "private"
-
 [dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
 visibility = "public"

@@ -58,9 +58,8 @@ target_sources(
          src/scanner.cppm
          src/formatter.cppm
          src/reporting.cppm
-         src/documentation.cppm
          src/lib.cppm)
 target_link_libraries(
   lito.lib
   PUBLIC lito.frontend rstd.std
-  PRIVATE lito.doc rstd.json rstd.toml rstd.bench)
+  PRIVATE rstd.json rstd.toml rstd.bench)

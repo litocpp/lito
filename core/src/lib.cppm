@@ -27,4 +27,3 @@ export import lito.compile_test;
 export import lito.test_runner;
 export import lito.scanner;
 export import lito.formatter;
-export import lito.documentation;

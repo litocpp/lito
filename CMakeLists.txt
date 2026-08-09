@@ -42,6 +42,5 @@ set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
 
 add_subdirectory(frontend)
-add_subdirectory(doc)
 add_subdirectory(core)
 add_subdirectory(cli)

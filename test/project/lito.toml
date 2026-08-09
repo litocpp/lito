@@ -15,7 +15,6 @@ members = [
   "preprocessor-native",
   "scan-definitions",
   "environment-cache",
-  "doc-basic",
 ]
 
 [workspace.package]

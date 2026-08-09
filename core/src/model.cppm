@@ -175,7 +175,6 @@ enum class PackageSelectionPurpose
     All,
     Production,
     Test,
-    Documentation,
 };
 
 enum class PackageVersionSource
@@ -477,12 +476,11 @@ using ModuleImport   = frontend::ModuleImport;
 using FrontendResult = frontend::FrontendResult;
 
 struct ResolvedSource {
-    PathBuf                             relative_path;
-    PathBuf                             canonical_path;
-    SourceOrigin                        origin { SourceOrigin::Explicit };
-    Option<String>                      expected_module;
-    Option<frontend::FrontendAnalysis>  frontend_analysis;
-    Option<frontend::DocumentationUnit> documentation;
+    PathBuf                            relative_path;
+    PathBuf                            canonical_path;
+    SourceOrigin                       origin { SourceOrigin::Explicit };
+    Option<String>                     expected_module;
+    Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
 struct ResolvedSourceSet {
@@ -615,11 +613,10 @@ struct BuildConfiguration {
 };
 
 struct TargetSource {
-    PathBuf                             relative_path;
-    PathBuf                             path;
-    Option<String>                      expected_module;
-    Option<frontend::FrontendAnalysis>  frontend_analysis;
-    Option<frontend::DocumentationUnit> documentation;
+    PathBuf                            relative_path;
+    PathBuf                            path;
+    Option<String>                     expected_module;
+    Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
 struct TestAttachmentTarget {
@@ -901,67 +898,6 @@ struct FormatRequest {
 struct FormatSummary {
     usize packages {};
     usize files {};
-};
-
-struct DocRequest {
-    PackageSelection        selection;
-    Vec<String>             targets;
-    PathBuf                 output;
-    PathBuf                 data_output;
-    Option<PathBuf>         frontend;
-    BuildConfiguration      configuration;
-    PackageSourceConfig     sources;
-    PkgConfigProviderConfig pkg_config;
-    CMakeProviderConfig     cmake;
-    bool                    data_only { false };
-    bool                    locked { false };
-};
-
-struct DocRenderRequest {
-    PathBuf         working_directory;
-    PathBuf         data;
-    PathBuf         output;
-    Option<PathBuf> frontend;
-};
-
-enum class DocDiagnosticSeverity
-{
-    Warning,
-    Error,
-};
-
-struct DocDiagnosticSummary {
-    DocDiagnosticSeverity severity { DocDiagnosticSeverity::Warning };
-    String                code;
-    String                message;
-    PathBuf               path;
-    usize                 line {};
-};
-
-struct DocPackageSummary {
-    String                    name;
-    PathBuf                   directory;
-    PathBuf                   json;
-    PathBuf                   data_json;
-    PathBuf                   index;
-    usize                     symbols {};
-    usize                     documented {};
-    usize                     undocumented {};
-    usize                     unsupported {};
-    usize                     diagnostics {};
-    Vec<DocDiagnosticSummary> diagnostic_details;
-};
-
-struct DocSummary {
-    String                       profile;
-    PathBuf                      output;
-    PathBuf                      index;
-    PathBuf                      data;
-    PathBuf                      data_manifest;
-    bool                         site_generated { false };
-    Vec<DocPackageSummary>       packages;
-    frontend::FrontendStatistics frontend;
-    ToolchainStatistics          toolchain;
 };
 
 } // namespace lito
