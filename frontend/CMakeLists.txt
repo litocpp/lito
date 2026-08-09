@@ -1,7 +1,7 @@
-add_library(tenon.frontend STATIC)
-target_compile_features(tenon.frontend PUBLIC cxx_std_20)
+add_library(lito.frontend STATIC)
+target_compile_features(lito.frontend PUBLIC cxx_std_20)
 target_sources(
-  tenon.frontend
+  lito.frontend
   PUBLIC FILE_SET
          modules
          TYPE
@@ -24,4 +24,4 @@ target_sources(
          src/parser/mod.cppm
          src/service.cppm
          src/lib.cppm)
-target_link_libraries(tenon.frontend PUBLIC rstd.std)
+target_link_libraries(lito.frontend PUBLIC rstd.std)

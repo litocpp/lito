@@ -1,10 +1,10 @@
-export module tenon.manifest:schema;
+export module lito.manifest:schema;
 
 import rstd;
 import rstd.toml;
-import tenon.model;
+import lito.model;
 import :locator;
-import tenon.build_profile;
+import lito.build_profile;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -12,7 +12,7 @@ using Toml         = rstd::toml::Value;
 using Table        = rstd::toml::Table;
 using KeyPredicate = bool (*)(ref<str>);
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -648,7 +648,7 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
 auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> Result<empty> {
     for (const auto& definition : definitions) {
         if (is_profile_owned_definition(definition.as_str())) {
-            return failure<empty>(rstd::format("{} definition '{}' overrides a Tenon-owned setting",
+            return failure<empty>(rstd::format("{} definition '{}' overrides a Lito-owned setting",
                                                context,
                                                definition.as_str()));
         }
@@ -660,7 +660,7 @@ auto validate_linker_options(const Vec<String>& options, ref<str> context) -> Re
     for (const auto& option : options) {
         if (option.as_str().starts_with("-stdlib="_str)) {
             return failure<empty>(rstd::format(
-                "{} option '{}' overrides a Tenon-owned setting", context, option.as_str()));
+                "{} option '{}' overrides a Lito-owned setting", context, option.as_str()));
         }
     }
     return Ok(empty {});
@@ -1177,9 +1177,9 @@ auto parse_external_dependencies(Option<ref<Toml>> value) -> Result<ParsedExtern
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto valid_package_name(ref<str> value) -> bool {
@@ -1438,4 +1438,4 @@ auto load_package_manifest(ref<rstd::path::Path> requested_directory) -> Result<
     return Ok(rstd::move(document.package).unwrap());
 }
 
-} // namespace tenon
+} // namespace lito

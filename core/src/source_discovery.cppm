@@ -1,18 +1,18 @@
-export module tenon.source_discovery;
+export module lito.source_discovery;
 
 import rstd;
-import tenon.model;
-import tenon.modules;
-import tenon.frontend_analysis;
-import tenon.frontend;
-import tenon.profiling;
+import lito.model;
+import lito.modules;
+import lito.frontend_analysis;
+import lito.frontend;
+import lito.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 using StringMap = rstd::collections::BTreeMap<String, String>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -233,9 +233,9 @@ auto import_owner(const PackageMetadata&     package,
     return Ok(owner);
 }
 
-} // namespace tenon
+} // namespace lito
 
-namespace tenon
+namespace lito
 {
 
 static auto discover_explicit_sources_impl(const PackageManifest& manifest,
@@ -291,9 +291,9 @@ static auto discover_explicit_sources_impl(const PackageManifest& manifest,
     return Ok(ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
@@ -393,9 +393,9 @@ auto resolve_source_target(const PackageMetadata&     package,
     return Ok(*selected);
 }
 
-} // namespace tenon
+} // namespace lito
 
-namespace tenon
+namespace lito
 {
 
 enum class DiscoveryProduct
@@ -560,9 +560,9 @@ auto discover_sources(const PackageMetadata&       package,
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto discover_package_sources(const PackageMetadata&       package,
@@ -583,4 +583,4 @@ auto discover_documentation_sources(const PackageMetadata&       package,
         package, plan, analysis_service, observer, DiscoveryProduct::Documentation);
 }
 
-} // namespace tenon
+} // namespace lito

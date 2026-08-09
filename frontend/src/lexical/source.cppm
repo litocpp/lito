@@ -1,11 +1,11 @@
-export module tenon.frontend.lexical:source;
+export module lito.frontend.lexical:source;
 
 import rstd;
 import :token;
 
 using namespace rstd::prelude;
 
-export namespace tenon::frontend::lexical
+export namespace lito::frontend::lexical
 {
 
 struct SourceBuffer {
@@ -113,4 +113,4 @@ private:
     Vec<SourceFile> files_;
 };
 
-} // namespace tenon::frontend::lexical
+} // namespace lito::frontend::lexical

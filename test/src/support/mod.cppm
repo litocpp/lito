@@ -1,13 +1,13 @@
-export module tenon.test.support;
+export module lito.test.support;
 
 import rstd;
-import tenon;
+import lito;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace tenon_test
+export namespace lito_test
 {
 
 template<typename... Values>
@@ -26,7 +26,7 @@ auto project_root() -> PathBuf {
 }
 
 auto output_root(ref<str> name) -> PathBuf {
-    auto directory = rstd::format("tenon-test-{}-{}", rstd::process::id(), name);
+    auto directory = rstd::format("lito-test-{}-{}", rstd::process::id(), name);
     return rstd::env::temp_dir().join(PathBuf::from(directory.as_str()).as_path());
 }
 
@@ -36,18 +36,18 @@ auto clear_output(ref<rstd::path::Path> path) -> bool {
     return ! *exists || rstd::fs::remove_dir_all(path).is_ok();
 }
 
-auto configuration(tenon::BuildProfile profile = tenon::BuildProfile::Debug)
-    -> tenon::BuildConfiguration {
-    return tenon::BuildConfiguration {
+auto configuration(lito::BuildProfile profile = lito::BuildProfile::Debug)
+    -> lito::BuildConfiguration {
+    return lito::BuildConfiguration {
         .profile = profile,
         .toolchain =
-            tenon::ToolchainSpec {
+            lito::ToolchainSpec {
                 .compiler  = PathBuf::from("clang++"_str),
                 .archiver  = PathBuf::from("llvm-ar"_str),
                 .formatter = PathBuf::from("clang-format"_str),
             },
-        .standard_library  = tenon::StandardLibrary::Libcxx,
-        .bmi_mode          = tenon::BmiMode::Reduced,
+        .standard_library  = lito::StandardLibrary::Libcxx,
+        .bmi_mode          = lito::BmiMode::Reduced,
         .language_standard = String::make("c++20"_str),
     };
 }
@@ -55,11 +55,11 @@ auto configuration(tenon::BuildProfile profile = tenon::BuildProfile::Debug)
 auto build_request(ref<rstd::path::Path> root,
                    ref<rstd::path::Path> output,
                    Vec<String>           packages,
-                   tenon::BuildProfile   profile = tenon::BuildProfile::Debug)
-    -> tenon::BuildRequest {
-    return tenon::BuildRequest {
+                   lito::BuildProfile   profile = lito::BuildProfile::Debug)
+    -> lito::BuildRequest {
+    return lito::BuildRequest {
         .selection =
-            tenon::PackageSelection {
+            lito::PackageSelection {
                 .root     = PathBuf::from(root),
                 .packages = rstd::move(packages),
             },
@@ -69,7 +69,7 @@ auto build_request(ref<rstd::path::Path> root,
     };
 }
 
-auto artifact_count(const tenon::BuildSummary& summary, tenon::ArtifactKind kind) -> usize {
+auto artifact_count(const lito::BuildSummary& summary, lito::ArtifactKind kind) -> usize {
     auto count = usize {};
     for (const auto& artifact : summary.artifacts) {
         if (artifact.kind == kind) ++count;
@@ -77,7 +77,7 @@ auto artifact_count(const tenon::BuildSummary& summary, tenon::ArtifactKind kind
     return count;
 }
 
-auto has_import(const tenon::ScanReport& report, ref<str> logical_name) -> bool {
+auto has_import(const lito::ScanReport& report, ref<str> logical_name) -> bool {
     for (const auto& imported : report.result.imports) {
         if (imported.logical_name.as_str() == logical_name) return true;
     }
@@ -111,4 +111,4 @@ auto copy_directory(ref<rstd::path::Path> source, ref<rstd::path::Path> destinat
     return true;
 }
 
-} // namespace tenon_test
+} // namespace lito_test

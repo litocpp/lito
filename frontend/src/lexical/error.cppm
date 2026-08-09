@@ -1,11 +1,11 @@
-export module tenon.frontend.lexical:error;
+export module lito.frontend.lexical:error;
 
 import rstd;
 import :token;
 
 using namespace rstd::prelude;
 
-export namespace tenon::frontend::lexical
+export namespace lito::frontend::lexical
 {
 
 struct Error {
@@ -27,4 +27,4 @@ struct Error {
 template<typename T>
 using Result = rstd::Result<T, Error>;
 
-} // namespace tenon::frontend::lexical
+} // namespace lito::frontend::lexical

@@ -1,15 +1,15 @@
-export module tenon.frontend.preprocessor:expression;
+export module lito.frontend.preprocessor:expression;
 
 import rstd;
-import tenon.frontend.lexical;
+import lito.frontend.lexical;
 import :traits;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-using namespace tenon::frontend::lexical;
+using namespace lito::frontend::lexical;
 
-namespace tenon::frontend::preprocessor
+namespace lito::frontend::preprocessor
 {
 
 class ExpressionParser {
@@ -314,13 +314,13 @@ private:
     bool              evaluating_ { true };
 };
 
-} // namespace tenon::frontend::preprocessor
+} // namespace lito::frontend::preprocessor
 
-export namespace tenon::frontend::preprocessor
+export namespace lito::frontend::preprocessor
 {
 
 auto evaluate_expression(const Vec<Token>& tokens) -> Result<i64> {
     return ExpressionParser(tokens).parse();
 }
 
-} // namespace tenon::frontend::preprocessor
+} // namespace lito::frontend::preprocessor

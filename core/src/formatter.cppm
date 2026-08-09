@@ -1,17 +1,17 @@
-export module tenon.formatter;
+export module lito.formatter;
 
 import rstd;
-import tenon.model;
-import tenon.source_discovery;
-import tenon.workspace_resolver;
-import tenon.lock_store;
-import tenon.toolchain;
+import lito.model;
+import lito.source_discovery;
+import lito.workspace_resolver;
+import lito.lock_store;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -19,9 +19,9 @@ auto format_failure(ErrorKind kind, ref<str> message) -> Result<T> {
     return Err(Error::make(kind, message));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto format(const FormatRequest& request) -> Result<FormatSummary> {
@@ -73,4 +73,4 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
     return Ok(summary);
 }
 
-} // namespace tenon
+} // namespace lito

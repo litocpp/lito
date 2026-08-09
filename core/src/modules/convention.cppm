@@ -1,12 +1,12 @@
-export module tenon.modules:convention;
+export module lito.modules:convention;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 auto executable_artifact(ArtifactKind kind) -> bool {
@@ -126,9 +126,9 @@ auto root_module_source(const PackageManifest& manifest) -> Result<ResolvedSourc
         manifest, source_root.as_path(), requested.as_path(), Some(manifest.root_module->clone()));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto module_name_belongs(ref<str> root_module, ref<str> logical_name) -> bool {
@@ -274,4 +274,4 @@ auto validate_module_conventions(const PackageSpec&       package,
     return Ok(empty {});
 }
 
-} // namespace tenon
+} // namespace lito

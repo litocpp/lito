@@ -2,5 +2,5 @@
 
 #include_next <choice.hpp>
 
-#define TENON_MID_VALUE      (10 + TENON_LOW_VALUE)
-#define TENON_SELECTED_VALUE TENON_MID_VALUE
+#define LITO_MID_VALUE      (10 + LITO_LOW_VALUE)
+#define LITO_SELECTED_VALUE LITO_MID_VALUE

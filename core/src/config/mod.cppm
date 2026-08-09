@@ -1,3 +1,3 @@
-export module tenon.config;
+export module lito.config;
 
 export import :schema;

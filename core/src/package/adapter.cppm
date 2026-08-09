@@ -1,17 +1,17 @@
 module;
 #include <rstd/macro.hpp>
 
-export module tenon.package:adapter;
+export module lito.package:adapter;
 
 import rstd;
-import tenon.model;
-import tenon.build_profile;
-import tenon.dependency;
+import lito.model;
+import lito.build_profile;
+import lito.dependency;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -44,9 +44,9 @@ auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidat
     return false;
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
@@ -354,4 +354,4 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> sour
     });
 }
 
-} // namespace tenon
+} // namespace lito

@@ -2,16 +2,16 @@
 
 import rstd;
 import rstd.test;
-import tenon;
+import lito;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using namespace tenon;
+using namespace lito;
 
 namespace
 {
 
-auto context_with(tenon::Vec<String> options,
+auto context_with(lito::Vec<String> options,
                   CppOptimization    optimization = CppOptimization::Default,
                   CppDebugInfo       debug_info   = CppDebugInfo::None) -> CompileContext {
     auto parser = make_clang_cpp_argument_parser();
@@ -47,13 +47,13 @@ auto context_with_standard(ref<str> standard) -> CompileContext {
 }
 
 template<typename... Values>
-auto options(Values... values) -> tenon::Vec<String> {
-    auto result = tenon::Vec<String>::with_capacity(usize(sizeof...(Values)));
+auto options(Values... values) -> lito::Vec<String> {
+    auto result = lito::Vec<String>::with_capacity(usize(sizeof...(Values)));
     (result.push(String::make(values)), ...);
     return result;
 }
 
-auto same_command(const tenon::Vec<String>& left, const tenon::Vec<String>& right) -> bool {
+auto same_command(const lito::Vec<String>& left, const lito::Vec<String>& right) -> bool {
     if (left.len() != right.len()) return false;
     for (auto index = usize {}; index < left.len(); ++index) {
         if (left[index].as_str() != right[index].as_str()) return false;
@@ -103,7 +103,7 @@ auto run_clang_builtin_context_test() -> int {
     if (target_feature->key.as_str() != target_feature_direct->key.as_str()) return 9;
 
     auto llvm_debug        = toolchain.builtin_context(context_with(
-        options("-mllvm=tenon-ignored"_str), CppOptimization::Default, CppDebugInfo::Full));
+        options("-mllvm=lito-ignored"_str), CppOptimization::Default, CppDebugInfo::Full));
     auto llvm_debug_direct = toolchain.builtin_context(context_with(options()));
     if (llvm_debug.is_err() || llvm_debug_direct.is_err()) return 10;
     if (llvm_debug->key.as_str() != llvm_debug_direct->key.as_str() ||

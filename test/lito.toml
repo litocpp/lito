@@ -1,0 +1,57 @@
+[package]
+name = "lito-test"
+version.workspace = true
+module = "lito.test"
+
+[test]
+name = "lito-test"
+discovery = "explicit"
+sources = [
+  "src/main.cpp",
+  "src/support/mod.cppm",
+  "src/integration.cpp",
+  "src/contracts.cpp",
+  "contracts/cpp_bmi.cpp",
+  "profiling.cpp",
+  "preprocessor/core.cpp",
+  "toolchain/clang_builtin_context.cpp",
+]
+
+[usage]
+private-options = [
+  "-fPIC",
+  "-Wall",
+  "-Wpedantic",
+  "-Wno-gnu-statement-expression",
+  "-Wno-deprecated-declarations",
+  "-Wunknown-attributes",
+  "-fsized-deallocation",
+]
+
+[dependencies.lito-core]
+path = "../core"
+visibility = "private"
+
+[dependencies.lito-frontend]
+path = "../frontend"
+visibility = "private"
+
+[dependencies.lito-doc]
+path = "../doc"
+visibility = "private"
+
+[dependencies.rstd-std]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-test]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-bench]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "private"
+
+[dependencies.rstd-nostd]
+git = "https://github.com/litocpp/rstd.git"
+visibility = "runtime"

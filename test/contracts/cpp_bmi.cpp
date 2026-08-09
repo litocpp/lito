@@ -2,30 +2,30 @@
 
 import rstd;
 import rstd.test;
-import tenon;
+import lito;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using namespace tenon;
+using namespace lito;
 
 namespace
 {
 
 template<typename... Values>
-auto strings(Values... values) -> tenon::Vec<String> {
-    auto result = tenon::Vec<String>::with_capacity(usize(sizeof...(Values)));
+auto strings(Values... values) -> lito::Vec<String> {
+    auto result = lito::Vec<String>::with_capacity(usize(sizeof...(Values)));
     (result.push(String::make(values)), ...);
     return result;
 }
 
 template<typename... Values>
-auto paths(Values... values) -> tenon::Vec<PathBuf> {
-    auto result = tenon::Vec<PathBuf>::with_capacity(usize(sizeof...(Values)));
+auto paths(Values... values) -> lito::Vec<PathBuf> {
+    auto result = lito::Vec<PathBuf>::with_capacity(usize(sizeof...(Values)));
     (result.push(PathBuf::from(values)), ...);
     return result;
 }
 
-auto argument_layer(tenon::Vec<String> options) -> CppArgumentLayer {
+auto argument_layer(lito::Vec<String> options) -> CppArgumentLayer {
     auto parser = make_clang_cpp_argument_parser();
     if (parser.is_err()) return CppArgumentLayer {};
     auto parsed = parser->parse(options, "cpp-contract"_str);
@@ -35,7 +35,7 @@ auto argument_layer(tenon::Vec<String> options) -> CppArgumentLayer {
 auto cpp_options(ref<str>           standard,
                  CppOptimization    optimization,
                  CppDebugInfo       debug_info,
-                 tenon::Vec<String> options = {}) -> CppCompileOptions {
+                 lito::Vec<String> options = {}) -> CppCompileOptions {
     auto result = make_cpp_options(standard,
                                    StandardLibrary::Libcxx,
                                    false,
@@ -62,7 +62,7 @@ auto artifact_key(BmiRepresentation        representation,
                   BmiSourceEmbeddingPolicy embedding,
                   ref<str>                 dependency,
                   ref<str> source_content = "source-content-a"_str) -> BmiArtifactKey {
-    auto dependencies = tenon::Vec<BmiRecipeDependency>::make();
+    auto dependencies = lito::Vec<BmiRecipeDependency>::make();
     if (! dependency.is_empty()) {
         dependencies.push(BmiRecipeDependency {
             .logical_name = String::make("dependency"_str),
@@ -86,14 +86,14 @@ auto artifact_key(BmiRepresentation        representation,
     });
 }
 
-auto has_argument(const tenon::Vec<String>& arguments, ref<str> expected) -> bool {
+auto has_argument(const lito::Vec<String>& arguments, ref<str> expected) -> bool {
     for (const auto& argument : arguments) {
         if (argument.as_str() == expected) return true;
     }
     return false;
 }
 
-auto has_prefix(const tenon::Vec<String>& arguments, ref<str> prefix) -> bool {
+auto has_prefix(const lito::Vec<String>& arguments, ref<str> prefix) -> bool {
     for (const auto& argument : arguments) {
         if (argument.as_str().starts_with(prefix)) return true;
     }
@@ -204,14 +204,14 @@ TEST(CompilerArgumentContract, RejectsInvalidAndDuplicateSchemaDefinitions) {
     auto invalid_schema = CompilerArgumentSchema::make();
     invalid_schema.add(CompilerArgumentDefinition {
         .name      = String::make("invalid"_str),
-        .spellings = tenon::Vec<CompilerArgumentSpelling>::make(),
+        .spellings = lito::Vec<CompilerArgumentSpelling>::make(),
     });
     auto invalid = rstd::move(invalid_schema).build();
     ASSERT_TRUE(invalid.is_err());
     EXPECT_TRUE(invalid.unwrap_err().is_InvalidDefinition());
 
     auto duplicate_schema = CompilerArgumentSchema::make();
-    auto first_spellings  = tenon::Vec<CompilerArgumentSpelling>::make();
+    auto first_spellings  = lito::Vec<CompilerArgumentSpelling>::make();
     first_spellings.push(CompilerArgumentSpelling {
         .value = String::make("-duplicate"_str),
     });
@@ -219,7 +219,7 @@ TEST(CompilerArgumentContract, RejectsInvalidAndDuplicateSchemaDefinitions) {
         .name      = String::make("first"_str),
         .spellings = rstd::move(first_spellings),
     });
-    auto second_spellings = tenon::Vec<CompilerArgumentSpelling>::make();
+    auto second_spellings = lito::Vec<CompilerArgumentSpelling>::make();
     second_spellings.push(CompilerArgumentSpelling {
         .value = String::make("-duplicate"_str),
     });
@@ -350,7 +350,7 @@ TEST(BmiContract, ReportsConservativeSemanticDifferencesByField) {
     expect_field(cpp_options("c++20"_str,
                              CppOptimization::None,
                              CppDebugInfo::None,
-                             strings("-funknown-tenon-option"_str)),
+                             strings("-funknown-lito-option"_str)),
                  BmiCompatibilityField::VendorSemantics);
 }
 
@@ -448,13 +448,13 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     auto prepared = PreparedUnit {
         .unit =
             UnitSpec {
-                .source  = PathBuf::from("/tmp/tenon-bmi-consumer.cpp"_str),
-                .object  = PathBuf::from("/tmp/tenon-bmi-consumer.o"_str),
+                .source  = PathBuf::from("/tmp/lito-bmi-consumer.cpp"_str),
+                .object  = PathBuf::from("/tmp/lito-bmi-consumer.o"_str),
                 .context = rstd::addressof(context),
             },
         .working_directory = PathBuf::from("/tmp"_str),
     };
-    auto dependencies = tenon::Vec<ModuleArtifactDependency>::make();
+    auto dependencies = lito::Vec<ModuleArtifactDependency>::make();
     dependencies.push(ModuleArtifactDependency {
         .logical_name = String::make("sample.module"_str),
         .artifact_key = BmiArtifactKey { .value = String::make("artifact-key"_str) },
@@ -475,7 +475,7 @@ TEST(ClangContract, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     ASSERT_TRUE(created.is_ok());
     auto toolchain = rstd::move(created).unwrap();
     auto directory = rstd::env::temp_dir().join(
-        PathBuf::from(rstd::format("tenon-bmi-contract-{}", rstd::process::id()).as_str())
+        PathBuf::from(rstd::format("lito-bmi-contract-{}", rstd::process::id()).as_str())
             .as_path());
     auto removed = rstd::fs::exists(directory.as_path());
     ASSERT_TRUE(removed.is_ok());

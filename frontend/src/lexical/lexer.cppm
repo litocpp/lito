@@ -1,4 +1,4 @@
-export module tenon.frontend.lexical:lexer;
+export module lito.frontend.lexical:lexer;
 
 import rstd;
 import :token;
@@ -8,7 +8,7 @@ import :error;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::frontend::lexical
+namespace lito::frontend::lexical
 {
 
 auto lex_failure(ref<str> message, SourceLocation location) {
@@ -116,9 +116,9 @@ auto ucn_length(slice<u8> bytes, usize index) -> usize {
     return length;
 }
 
-} // namespace tenon::frontend::lexical
+} // namespace lito::frontend::lexical
 
-export namespace tenon::frontend::lexical
+export namespace lito::frontend::lexical
 {
 
 auto lex_with_comments(const SourceFile& source, bool borrow_spelling = false)
@@ -415,4 +415,4 @@ auto lex(const SourceFile& source, bool borrow_spelling = false) -> Result<Vec<T
     return Ok(rstd::move(result).unwrap().tokens);
 }
 
-} // namespace tenon::frontend::lexical
+} // namespace lito::frontend::lexical

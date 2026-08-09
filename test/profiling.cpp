@@ -3,7 +3,7 @@
 import rstd;
 import rstd.bench;
 import rstd.test;
-import tenon.profiling;
+import lito.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -26,7 +26,7 @@ struct ManualClock {
 auto run_profiling_test() -> int {
     auto registry = rstd::bench::probe::ProbeRegistry::new_();
     auto probe =
-        registry.register_probe(tenon::scan_probe_label(tenon::ScanProbe::Preprocessor)).unwrap();
+        registry.register_probe(lito::scan_probe_label(lito::ScanProbe::Preprocessor)).unwrap();
     auto schema   = rstd::move(registry).freeze();
     auto now      = u64();
     auto session  = rstd::bench::probe::BasicProbeSession<ManualClock>(schema.clone(),
@@ -57,27 +57,27 @@ auto run_profiling_test() -> int {
     auto aggregate_batch = aggregate_recorder.drain().unwrap();
     auto aggregate       = rstd::bench::probe::ProbeCollector::new_(schema.clone());
     aggregate.ingest(aggregate_batch).unwrap();
-    auto frames = Vec<tenon::ScanSourceFrame>::make();
-    frames.push(tenon::ScanSourceFrame {
+    auto frames = Vec<lito::ScanSourceFrame>::make();
+    frames.push(lito::ScanSourceFrame {
         .id     = u64(1),
         .target = String::make("first"_str),
         .source = rstd::path::PathBuf::from("/first.cppm"_str),
-        .origin = tenon::ScanSourceOrigin::Discovery,
+        .origin = lito::ScanSourceOrigin::Discovery,
     });
-    frames.push(tenon::ScanSourceFrame {
+    frames.push(lito::ScanSourceFrame {
         .id     = u64(2),
         .target = String::make("second"_str),
         .source = rstd::path::PathBuf::from("/second.cpp"_str),
-        .origin = tenon::ScanSourceOrigin::Classify,
+        .origin = lito::ScanSourceOrigin::Classify,
     });
-    auto report = tenon::ScanProfileReport(
+    auto report = lito::ScanProfileReport(
         rstd::move(aggregate).finish(), rstd::move(source_collector).finish(), rstd::move(frames));
 
-    auto slow = report.slow_sources(tenon::ScanProbe::Preprocessor, usize(1));
+    auto slow = report.slow_sources(lito::ScanProbe::Preprocessor, usize(1));
     if (slow.len() != usize(1) || slow[usize()].frame != u64(2)) return 1;
     const auto* frame = report.frame(slow[usize()].frame);
     if (frame == nullptr || frame->target.as_str() != "second"_str ||
-        frame->origin != tenon::ScanSourceOrigin::Classify) {
+        frame->origin != lito::ScanSourceOrigin::Classify) {
         return 2;
     }
     if (report.aggregate().overall().len() != usize(1) ||
@@ -85,28 +85,28 @@ auto run_profiling_test() -> int {
         report.sources().diagnostics().len() != usize()) {
         return 3;
     }
-    if (report.category_timing(tenon::ScanTimingCategory::Preprocessor).as_nanos() != u128(350) ||
-        ! report.category_timing(tenon::ScanTimingCategory::Environment).is_zero() ||
+    if (report.category_timing(lito::ScanTimingCategory::Preprocessor).as_nanos() != u128(350) ||
+        ! report.category_timing(lito::ScanTimingCategory::Environment).is_zero() ||
         ! report.total().is_zero()) {
         return 4;
     }
-    auto build_timing = tenon::BuildTimingReport {};
-    build_timing.record(tenon::BuildOperation::Compile,
+    auto build_timing = lito::BuildTimingReport {};
+    build_timing.record(lito::BuildOperation::Compile,
                         rstd::time::Duration::from_micros(u64(100)));
-    build_timing.record(tenon::BuildOperation::Compile,
+    build_timing.record(lito::BuildOperation::Compile,
                         rstd::time::Duration::from_micros(u64(250)));
-    build_timing.record(tenon::BuildOperation::Archive, rstd::time::Duration::from_micros(u64(50)));
-    const auto& compile = build_timing.timing(tenon::BuildOperation::Compile);
-    const auto& archive = build_timing.timing(tenon::BuildOperation::Archive);
-    const auto& link    = build_timing.timing(tenon::BuildOperation::Link);
+    build_timing.record(lito::BuildOperation::Archive, rstd::time::Duration::from_micros(u64(50)));
+    const auto& compile = build_timing.timing(lito::BuildOperation::Compile);
+    const auto& archive = build_timing.timing(lito::BuildOperation::Archive);
+    const auto& link    = build_timing.timing(lito::BuildOperation::Link);
     if (compile.count != usize(2) || compile.total.as_micros() != u64(350) ||
         archive.count != usize(1) || archive.total.as_micros() != u64(50) ||
         link.count != usize() || ! link.total.is_zero()) {
         return 5;
     }
-    if (tenon::build_operation_label(tenon::BuildOperation::Compile) != "build.compile"_str ||
-        tenon::build_operation_label(tenon::BuildOperation::Archive) != "build.archive"_str ||
-        tenon::build_operation_label(tenon::BuildOperation::Link) != "build.link"_str) {
+    if (lito::build_operation_label(lito::BuildOperation::Compile) != "build.compile"_str ||
+        lito::build_operation_label(lito::BuildOperation::Archive) != "build.archive"_str ||
+        lito::build_operation_label(lito::BuildOperation::Link) != "build.link"_str) {
         return 6;
     }
     return 0;

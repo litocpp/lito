@@ -1,16 +1,16 @@
-export module tenon.workspace_resolver;
+export module lito.workspace_resolver;
 
 import rstd;
-import tenon.model;
-import tenon.manifest;
-import tenon.package;
+import lito.model;
+import lito.manifest;
+import lito.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using IndexMap  = rstd::collections::BTreeMap<String, usize>;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -77,9 +77,9 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto resolve_package_selection(const PackageSelection&  selection,
@@ -184,4 +184,4 @@ auto resolve_package_selection(const PackageSelection&  selection,
     });
 }
 
-} // namespace tenon
+} // namespace lito

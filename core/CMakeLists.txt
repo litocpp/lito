@@ -1,8 +1,8 @@
-add_library(tenon.lib STATIC)
-add_library(tenon.core ALIAS tenon.lib)
-target_compile_features(tenon.lib PUBLIC cxx_std_20)
+add_library(lito.lib STATIC)
+add_library(lito.core ALIAS lito.lib)
+target_compile_features(lito.lib PUBLIC cxx_std_20)
 target_sources(
-  tenon.lib
+  lito.lib
   PUBLIC FILE_SET
          modules
          TYPE
@@ -61,6 +61,6 @@ target_sources(
          src/documentation.cppm
          src/lib.cppm)
 target_link_libraries(
-  tenon.lib
-  PUBLIC tenon.frontend rstd.std
-  PRIVATE tenon.doc rstd.json rstd.toml rstd.bench)
+  lito.lib
+  PUBLIC lito.frontend rstd.std
+  PRIVATE lito.doc rstd.json rstd.toml rstd.bench)

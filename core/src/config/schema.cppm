@@ -1,19 +1,19 @@
 module;
 #include <rstd/macro.hpp>
 
-export module tenon.config:schema;
+export module lito.config:schema;
 
 import rstd;
 import rstd.toml;
-import tenon.model;
-import tenon.toolchain;
+import lito.model;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -289,9 +289,9 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
     return Ok(PackageSourceConfig { .patches = rstd::move(patches) });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<ProjectConfig> {
@@ -313,7 +313,7 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
             rstd::format("project root '{}' is not a directory", root.as_path()));
     }
 
-    auto config_path = root.join(PathBuf::from(".tenon/config.toml"_str).as_path());
+    auto config_path = root.join(PathBuf::from(".lito/config.toml"_str).as_path());
     auto exists      = rstd::fs::exists(config_path.as_path());
     if (exists.is_err()) {
         return config_failure<ProjectConfig>(rstd::format("cannot inspect config '{}': {}",
@@ -393,4 +393,4 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
     });
 }
 
-} // namespace tenon
+} // namespace lito

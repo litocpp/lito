@@ -1,13 +1,13 @@
-export module tenon.toolchain:clang_arguments;
+export module lito.toolchain:clang_arguments;
 
 import rstd;
-import tenon.cpp;
-import tenon.compiler.arguments;
+import lito.cpp;
+import lito.compiler.arguments;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 auto definition(ref<str> name) -> CompilerArgumentDefinition {
@@ -49,9 +49,9 @@ auto add_toggles(CppArgumentSchema&      schema,
     schema.add(kind, rstd::move(item), family);
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
@@ -311,4 +311,4 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
     return rstd::move(schema).build();
 }
 
-} // namespace tenon
+} // namespace lito

@@ -1,18 +1,18 @@
-export module tenon.frontend.parser:module_dependency;
+export module lito.frontend.parser:module_dependency;
 
 import rstd;
-import tenon.frontend.result;
-import tenon.frontend.preprocessor;
+import lito.frontend.result;
+import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon::frontend::parser
+namespace lito::frontend::parser
 {
 
-namespace preprocessor = tenon::frontend::preprocessor;
-namespace lexical      = tenon::frontend::lexical;
+namespace preprocessor = lito::frontend::preprocessor;
+namespace lexical      = lito::frontend::lexical;
 
 template<typename T>
 auto frontend_failure(String message) -> lexical::Result<T> {
@@ -89,9 +89,9 @@ auto copied_path(const Option<rstd::path::PathBuf>& path) -> Option<rstd::path::
                           : Option<rstd::path::PathBuf> {};
 }
 
-} // namespace tenon::frontend::parser
+} // namespace lito::frontend::parser
 
-export namespace tenon::frontend::parser
+export namespace lito::frontend::parser
 {
 
 class ModuleDependencyConsumer {
@@ -253,4 +253,4 @@ auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& 
     return consumer.finish(translation);
 }
 
-} // namespace tenon::frontend::parser
+} // namespace lito::frontend::parser

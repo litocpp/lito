@@ -1,19 +1,19 @@
 module;
 #include <rstd/macro.hpp>
 
-export module tenon.project;
+export module lito.project;
 
 import rstd;
-import tenon.model;
-import tenon.workspace_resolver;
-import tenon.lock_store;
-import tenon.package;
-import tenon.dependency;
-import tenon.toolchain;
+import lito.model;
+import lito.workspace_resolver;
+import lito.lock_store;
+import lito.package;
+import lito.dependency;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 
-export namespace tenon
+export namespace lito
 {
 
 auto resolve_project_metadata(const PackageSelection&        selection,
@@ -46,4 +46,4 @@ auto resolve_project_metadata(const PackageSelection&        selection,
                                         toolchain.argument_parser());
 }
 
-} // namespace tenon
+} // namespace lito

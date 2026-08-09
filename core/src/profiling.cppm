@@ -1,13 +1,13 @@
-export module tenon.profiling;
+export module lito.profiling;
 
 import rstd;
 import rstd.bench;
-import tenon.frontend.preprocessor;
+import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 auto probe_error_message(const rstd::bench::probe::ProbeError& error) -> String {
@@ -30,9 +30,9 @@ auto probe_error_message(const rstd::bench::probe::ProbeError& error) -> String 
     return String::make("scan probe clock stalled"_str);
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 enum class ScanProbe
@@ -426,4 +426,4 @@ public:
     }
 };
 
-} // namespace tenon
+} // namespace lito

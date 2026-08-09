@@ -1,7 +1,7 @@
-add_executable(tenon)
-target_compile_features(tenon PRIVATE cxx_std_20)
+add_executable(lito)
+target_compile_features(lito PRIVATE cxx_std_20)
 target_sources(
-  tenon
+  lito
   PRIVATE FILE_SET
           modules
           TYPE
@@ -9,4 +9,4 @@ target_sources(
           FILES
           src/cli.cppm
           src/main.cppm)
-target_link_libraries(tenon PRIVATE tenon.core rstd.argparse rstd::nostd)
+target_link_libraries(lito PRIVATE lito.core rstd.argparse rstd::nostd)

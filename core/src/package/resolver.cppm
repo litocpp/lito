@@ -1,14 +1,14 @@
-export module tenon.package:resolver;
+export module lito.package:resolver;
 
 import rstd;
-import tenon.model;
-import tenon.source;
+import lito.model;
+import lito.source;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -171,9 +171,9 @@ public:
     }
 };
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
@@ -206,4 +206,4 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
                               root_is_workspace));
 }
 
-} // namespace tenon
+} // namespace lito

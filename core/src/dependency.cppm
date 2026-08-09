@@ -1,15 +1,15 @@
-export module tenon.dependency;
+export module lito.dependency;
 
 import rstd;
-import tenon.model;
-import tenon.process;
-import tenon.source;
+import lito.model;
+import lito.process;
+import lito.source;
 import :cmake;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -210,7 +210,7 @@ auto provider_identity(const PkgConfigProviderConfig& config,
     if (executable.is_none()) {
         return dependency_failure<String>("pkg-config executable path is not valid UTF-8"_str);
     }
-    auto result = String::make("tenon-pkg-config-provider-v1\n"_str);
+    auto result = String::make("lito-pkg-config-provider-v1\n"_str);
     append_identity_value(result, *executable);
     append_identity_value(result, version);
     append_identity_value(result, effective_target);
@@ -238,7 +238,7 @@ auto snapshot_identity(ref<str>                              provider,
                        ref<str>                              version,
                        const Vec<String>&                    cflags,
                        const Vec<String>&                    libs) -> String {
-    auto result = String::make("tenon-external-dependency-v1\n"_str);
+    auto result = String::make("lito-external-dependency-v1\n"_str);
     append_identity_value(result, provider);
     append_identity_value(result, module_spec(requirement).as_str());
     append_identity_value(result, version);
@@ -249,9 +249,9 @@ auto snapshot_identity(ref<str>                              provider,
     return result;
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
@@ -465,4 +465,4 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                          parser);
 }
 
-} // namespace tenon
+} // namespace lito

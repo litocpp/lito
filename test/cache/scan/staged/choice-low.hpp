@@ -1,3 +1,3 @@
 #pragma once
 
-#define TENON_LOW_VALUE 2
+#define LITO_LOW_VALUE 2

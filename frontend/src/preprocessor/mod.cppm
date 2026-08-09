@@ -1,6 +1,6 @@
-export module tenon.frontend.preprocessor;
+export module lito.frontend.preprocessor;
 
-export import tenon.frontend.lexical;
+export import lito.frontend.lexical;
 export import :traits;
 export import :macro;
 export import :expression;

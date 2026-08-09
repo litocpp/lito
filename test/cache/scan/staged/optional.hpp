@@ -1,3 +1,3 @@
 #pragma once
 
-#define TENON_OPTIONAL_VALUE 1000
+#define LITO_OPTIONAL_VALUE 1000

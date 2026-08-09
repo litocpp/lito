@@ -1,16 +1,16 @@
-export module tenon.reporting;
+export module lito.reporting;
 
 import rstd;
 import rstd.bench;
-import tenon.model;
-import tenon.toolchain;
-import tenon.profiling;
-import tenon.frontend.preprocessor;
+import lito.model;
+import lito.toolchain;
+import lito.profiling;
+import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::timing_output
+namespace lito::timing_output
 {
 
 inline constexpr BuildOperation BUILD_OPERATIONS[] = {
@@ -259,9 +259,9 @@ auto write_details(ref<rstd::path::Path> path, const BuildSummary& summary)
     return Ok(empty {});
 }
 
-} // namespace tenon::timing_output
+} // namespace lito::timing_output
 
-export namespace tenon::timing_output
+export namespace lito::timing_output
 {
 
 struct OutputOptions {
@@ -276,4 +276,4 @@ auto emit(const BuildSummary& summary, const OutputOptions& options)
     return Ok(empty {});
 }
 
-} // namespace tenon::timing_output
+} // namespace lito::timing_output

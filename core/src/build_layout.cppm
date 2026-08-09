@@ -1,12 +1,12 @@
-export module tenon.build_layout;
+export module lito.build_layout;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -49,9 +49,9 @@ auto module_filename(ref<str> logical_name) -> String {
     return result;
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 class BuildLayout {
@@ -111,7 +111,7 @@ public:
     }
 
     auto compile_cache_directory() const -> PathBuf {
-        return join(output_.as_path(), "tenon-cache"_str);
+        return join(output_.as_path(), "lito-cache"_str);
     }
 
     auto cache_environment(ref<str> key) const -> PathBuf {
@@ -199,4 +199,4 @@ public:
     }
 };
 
-} // namespace tenon
+} // namespace lito

@@ -1,13 +1,13 @@
 cmake_minimum_required(VERSION 3.28)
 
 project(
-  tenon
+  lito
   VERSION 0.1.0
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
-  message(FATAL_ERROR "tenon only supports clang++")
+  message(FATAL_ERROR "lito only supports clang++")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)

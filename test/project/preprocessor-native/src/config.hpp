@@ -1,5 +1,5 @@
 #pragma once
 
-#define TENON_ENABLED 1
-#define TENON_HEADER_REVISION 1
-#define TENON_PARTITION :dependency
+#define LITO_ENABLED 1
+#define LITO_HEADER_REVISION 1
+#define LITO_PARTITION :dependency

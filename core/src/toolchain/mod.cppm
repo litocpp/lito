@@ -1,4 +1,4 @@
-export module tenon.toolchain;
+export module lito.toolchain;
 
 export import :command;
 export import :clang_arguments;

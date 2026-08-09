@@ -1,31 +1,26 @@
-export module tenon.manifest:locator;
+export module lito.manifest:locator;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
+
+inline constexpr ref<str> MANIFEST_NAMES[] = { "lito.toml"_str, "tenon.toml"_str };
 
 template<typename T>
 auto locator_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
-} // namespace tenon
-
-export namespace tenon
-{
-
-auto locate_manifest(ref<rstd::path::Path> requested_directory) -> Result<ManifestLocation>;
-
-auto try_locate_manifest(ref<rstd::path::Path> requested_directory)
-    -> Result<Option<ManifestLocation>> {
+auto manifest_directory(ref<rstd::path::Path> requested_directory)
+    -> Result<PathBuf> {
     auto canonical_directory = rstd::fs::canonicalize(requested_directory);
     if (canonical_directory.is_err()) {
-        return locator_failure<Option<ManifestLocation>>(
+        return locator_failure<PathBuf>(
             rstd::format("cannot resolve manifest directory '{}': {}",
                          requested_directory,
                          rstd::move(canonical_directory).unwrap_err()));
@@ -33,76 +28,84 @@ auto try_locate_manifest(ref<rstd::path::Path> requested_directory)
     auto directory = rstd::move(canonical_directory).unwrap();
     auto metadata  = rstd::fs::metadata(directory.as_path());
     if (metadata.is_err()) {
-        return locator_failure<Option<ManifestLocation>>(
+        return locator_failure<PathBuf>(
             rstd::format("cannot inspect manifest directory '{}': {}",
                          directory.as_path(),
                          rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
-        return locator_failure<Option<ManifestLocation>>(
+        return locator_failure<PathBuf>(
             rstd::format("manifest root '{}' is not a directory", directory.as_path()));
     }
+    return Ok(rstd::move(directory));
+}
 
-    auto manifest = directory.join(PathBuf::from("tenon.toml"_str).as_path());
-    auto exists   = rstd::fs::exists(manifest.as_path());
-    if (exists.is_err()) {
-        return locator_failure<Option<ManifestLocation>>(
-            rstd::format("cannot inspect manifest '{}': {}",
-                         manifest.as_path(),
-                         rstd::move(exists).unwrap_err()));
+auto try_manifest_path(ref<rstd::path::Path> directory) -> Result<Option<PathBuf>> {
+    for (auto name : MANIFEST_NAMES) {
+        auto candidate = PathBuf::from(directory).join(PathBuf::from(name).as_path());
+        auto exists    = rstd::fs::exists(candidate.as_path());
+        if (exists.is_err()) {
+            return locator_failure<Option<PathBuf>>(
+                rstd::format("cannot inspect manifest '{}': {}",
+                             candidate.as_path(),
+                             rstd::move(exists).unwrap_err()));
+        }
+        if (! *exists) continue;
+
+        auto canonical = rstd::fs::canonicalize(candidate.as_path());
+        if (canonical.is_err()) {
+            return locator_failure<Option<PathBuf>>(
+                rstd::format("cannot resolve manifest '{}': {}",
+                             candidate.as_path(),
+                             rstd::move(canonical).unwrap_err()));
+        }
+        auto manifest = rstd::move(canonical).unwrap();
+        auto metadata = rstd::fs::metadata(manifest.as_path());
+        if (metadata.is_err()) {
+            return locator_failure<Option<PathBuf>>(
+                rstd::format("cannot inspect manifest '{}': {}",
+                             manifest.as_path(),
+                             rstd::move(metadata).unwrap_err()));
+        }
+        if (! metadata->is_file()) {
+            return locator_failure<Option<PathBuf>>(
+                rstd::format("manifest '{}' is not a regular file", manifest.as_path()));
+        }
+        return Ok(Some(rstd::move(manifest)));
     }
-    if (! *exists) return Ok(Option<ManifestLocation> {});
+    return Ok(None());
+}
 
-    auto located = locate_manifest(directory.as_path());
-    if (located.is_err()) return Err(rstd::move(located).unwrap_err());
-    return Ok(Some(rstd::move(located).unwrap()));
+} // namespace lito
+
+export namespace lito
+{
+
+auto locate_manifest(ref<rstd::path::Path> requested_directory) -> Result<ManifestLocation>;
+
+auto try_locate_manifest(ref<rstd::path::Path> requested_directory)
+    -> Result<Option<ManifestLocation>> {
+    auto directory = manifest_directory(requested_directory);
+    if (directory.is_err()) return Err(rstd::move(directory).unwrap_err());
+    auto manifest = try_manifest_path(directory->as_path());
+    if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
+    if (manifest->is_none()) return Ok(None());
+    return Ok(Some(ManifestLocation {
+        .directory = rstd::move(directory).unwrap(),
+        .manifest  = rstd::move(manifest).unwrap().unwrap(),
+    }));
 }
 
 auto locate_manifest(ref<rstd::path::Path> requested_directory) -> Result<ManifestLocation> {
-    auto canonical_directory = rstd::fs::canonicalize(requested_directory);
-    if (canonical_directory.is_err()) {
+    auto located = try_locate_manifest(requested_directory);
+    if (located.is_err()) return Err(rstd::move(located).unwrap_err());
+    auto manifest = rstd::move(located).unwrap();
+    if (manifest.is_none()) {
         return locator_failure<ManifestLocation>(
-            rstd::format("cannot resolve package directory '{}': {}",
-                         requested_directory,
-                         rstd::move(canonical_directory).unwrap_err()));
+            rstd::format("cannot find lito.toml or legacy tenon.toml in '{}'",
+                         requested_directory));
     }
-    auto directory = rstd::move(canonical_directory).unwrap();
-    auto metadata  = rstd::fs::metadata(directory.as_path());
-    if (metadata.is_err()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("cannot inspect package directory '{}': {}",
-                         directory.as_path(),
-                         rstd::move(metadata).unwrap_err()));
-    }
-    if (! metadata->is_dir()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("manifest root '{}' is not a directory", directory.as_path()));
-    }
-
-    auto manifest           = directory.join(PathBuf::from("tenon.toml"_str).as_path());
-    auto canonical_manifest = rstd::fs::canonicalize(manifest.as_path());
-    if (canonical_manifest.is_err()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("cannot resolve manifest '{}': {}",
-                         manifest.as_path(),
-                         rstd::move(canonical_manifest).unwrap_err()));
-    }
-    auto resolved_manifest = rstd::move(canonical_manifest).unwrap();
-    auto manifest_metadata = rstd::fs::metadata(resolved_manifest.as_path());
-    if (manifest_metadata.is_err()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("cannot inspect manifest '{}': {}",
-                         resolved_manifest.as_path(),
-                         rstd::move(manifest_metadata).unwrap_err()));
-    }
-    if (! manifest_metadata->is_file()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("manifest '{}' is not a regular file", resolved_manifest.as_path()));
-    }
-    return Ok(ManifestLocation {
-        .directory = rstd::move(directory),
-        .manifest  = rstd::move(resolved_manifest),
-    });
+    return Ok(rstd::move(manifest).unwrap());
 }
 
-} // namespace tenon
+} // namespace lito

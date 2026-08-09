@@ -1,20 +1,20 @@
 module;
 #include <rstd/macro.hpp>
 
-export module tenon.dependency:cmake;
+export module lito.dependency:cmake;
 
 import rstd;
 import rstd.json;
-import tenon.model;
-import tenon.process;
-import tenon.storage;
+import lito.model;
+import lito.process;
+import lito.storage;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using Json      = rstd::json::Value;
 using JsonArray = rstd::json::Array;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -73,7 +73,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const CMakeProviderConfig&                provider,
                const BuildConfiguration&                 build,
                ref<str> effective_target) -> Result<CMakeWorkArea> {
-    auto recipe = String::make("tenon-cmake-install-v2\n"_str);
+    auto recipe = String::make("lito-cmake-install-v2\n"_str);
     append_identity(recipe,
                     requirement.source_identity.is_some() ? requirement.source_identity->as_str()
                                                           : "installed"_str);
@@ -99,10 +99,10 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
         append_identity(recipe, entry.value.as_str());
     }
     auto cache =
-        tenon_cache_directory(PathBuf::from("cmake"_str).as_path(), "CMake dependencies"_str);
+        lito_cache_directory(PathBuf::from("cmake"_str).as_path(), "CMake dependencies"_str);
     if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
     auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
-    auto query_recipe = String::make("tenon-cmake-query-v2\n"_str);
+    auto query_recipe = String::make("lito-cmake-query-v2\n"_str);
     append_identity(query_recipe, requirement.package.as_str());
     if (requirement.config_directory.is_some()) {
         auto directory =
@@ -266,13 +266,13 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> String {
     auto result = String::make("cmake_minimum_required(VERSION 3.28)\n"
-                               "project(tenon_cmake_probe LANGUAGES CXX)\n"
+                               "project(lito_cmake_probe LANGUAGES CXX)\n"
                                "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"_str);
     if (requirement.source_root.is_some()) {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
         result.push_str(
-            " REQUIRED CONFIG PATHS \"${TENON_CMAKE_DEPENDENCY_PREFIX}\" NO_DEFAULT_PATH)\n"_str);
+            " REQUIRED CONFIG PATHS \"${LITO_CMAKE_DEPENDENCY_PREFIX}\" NO_DEFAULT_PATH)\n"_str);
     } else {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
@@ -288,22 +288,22 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> Str
     result.push_str("if(DEFINED "_str);
     result.push_str(requirement.package.as_str());
     result.push_str(
-        "_VERSION)\n  file(WRITE \"${CMAKE_BINARY_DIR}/tenon-package-version.txt\" \"${"_str);
+        "_VERSION)\n  file(WRITE \"${CMAKE_BINARY_DIR}/lito-package-version.txt\" \"${"_str);
     result.push_str(requirement.package.as_str());
     result.push_str(
-        "_VERSION}\")\nelse()\n  file(WRITE \"${CMAKE_BINARY_DIR}/tenon-package-version.txt\" \"\")\nendif()\n"_str);
-    result.push_str("add_executable(tenon_cmake_baseline probe.cpp)\n"_str);
+        "_VERSION}\")\nelse()\n  file(WRITE \"${CMAKE_BINARY_DIR}/lito-package-version.txt\" \"\")\nendif()\n"_str);
+    result.push_str("add_executable(lito_cmake_baseline probe.cpp)\n"_str);
     for (usize index {}; index < requirement.targets.len(); ++index) {
         result.push_str(
-            rstd::format("add_executable(tenon_cmake_dependency_{} probe.cpp)\n", index).as_str());
+            rstd::format("add_executable(lito_cmake_dependency_{} probe.cpp)\n", index).as_str());
         result.push_str(
-            rstd::format("target_link_libraries(tenon_cmake_dependency_{} PRIVATE ", index)
+            rstd::format("target_link_libraries(lito_cmake_dependency_{} PRIVATE ", index)
                 .as_str());
         result.push_str(requirement.targets[index].name.as_str());
         result.push_str(")\n"_str);
     }
-    result.push_str("add_executable(tenon_cmake_combined probe.cpp)\n"
-                    "target_link_libraries(tenon_cmake_combined PRIVATE"_str);
+    result.push_str("add_executable(lito_cmake_combined probe.cpp)\n"
+                    "target_link_libraries(lito_cmake_combined PRIVATE"_str);
     for (const auto& target : requirement.targets) {
         result.push_ascii(u8(' '));
         result.push_str(target.name.as_str());
@@ -315,7 +315,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> Str
 auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
                        const CMakeWorkArea&                      area) -> Result<empty> {
     auto query =
-        area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-tenon"_str).as_path());
+        area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-lito"_str).as_path());
     auto directories = Vec<PathBuf>::make();
     directories.push(area.root.clone());
     directories.push(area.build.clone());
@@ -387,7 +387,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(configuration).as_str()));
     if (requirement.source_root.is_some()) {
         rstd_try(push_path_argument(arguments,
-                                    "-DTENON_CMAKE_DEPENDENCY_PREFIX="_str,
+                                    "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
                                     area.install.as_path(),
                                     "CMake install"_str));
         if (requirement.config_directory.is_some()) {
@@ -486,7 +486,7 @@ auto codemodel_path(const CMakeWorkArea& area) -> Result<PathBuf> {
     auto reply_member = required_json_member(*index, "reply"_str, "CMake File API index"_str);
     if (reply_member.is_err()) return Err(rstd::move(reply_member).unwrap_err());
     auto client =
-        required_json_member(**reply_member, "client-tenon"_str, "CMake File API reply"_str);
+        required_json_member(**reply_member, "client-lito"_str, "CMake File API reply"_str);
     if (client.is_err()) return Err(rstd::move(client).unwrap_err());
     auto query =
         required_json_member(**client, "query.json"_str, "CMake File API client reply"_str);
@@ -536,13 +536,13 @@ auto probe_target_paths(const CMakeWorkArea&                      area,
         auto file = required_json_string(target, "jsonFile"_str, "CMake codemodel target"_str);
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         if (file.is_err()) return Err(rstd::move(file).unwrap_err());
-        if (*name == "tenon_cmake_baseline"_str)
+        if (*name == "lito_cmake_baseline"_str)
             baseline = Some(reply.join(PathBuf::from(*file).as_path()));
-        else if (*name == "tenon_cmake_combined"_str)
+        else if (*name == "lito_cmake_combined"_str)
             combined = Some(reply.join(PathBuf::from(*file).as_path()));
         else {
             for (usize index {}; index < dependencies.len(); ++index) {
-                if (*name == rstd::format("tenon_cmake_dependency_{}", index).as_str()) {
+                if (*name == rstd::format("lito_cmake_dependency_{}", index).as_str()) {
                     dependencies[index] = Some(reply.join(PathBuf::from(*file).as_path()));
                     break;
                 }
@@ -731,7 +731,7 @@ auto target_snapshot_identity(const CMakeProviderConfig&                provider
                               ref<str> effective_target) -> Result<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
-    auto result = String::make("tenon-cmake-dependency-v1\n"_str);
+    auto result = String::make("lito-cmake-dependency-v1\n"_str);
     append_identity(result, executable->as_str());
     append_identity(result, provider.generator.as_str());
     append_identity(result, requirement.package.as_str());
@@ -752,7 +752,7 @@ auto dependency_identity(const CMakeProviderConfig&                provider,
                          ref<str> effective_target) -> Result<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
-    auto result = String::make("tenon-cmake-declaration-v1\n"_str);
+    auto result = String::make("lito-cmake-declaration-v1\n"_str);
     append_identity(result, executable->as_str());
     append_identity(result, provider.generator.as_str());
     append_identity(result, requirement.package.as_str());
@@ -771,9 +771,9 @@ auto dependency_identity(const CMakeProviderConfig&                provider,
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirement,
@@ -819,7 +819,7 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
     rstd_try(configure_probe(requirement, provider, configuration, *area));
     auto snapshots = rstd_try(read_probe_snapshots(*area, requirement));
     auto version_path =
-        area->query_build.join(PathBuf::from("tenon-package-version.txt"_str).as_path());
+        area->query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());
     auto version = rstd::fs::read_to_string(version_path.as_path());
     if (version.is_err()) {
         return cmake_failure<ResolvedExternalDependency>(
@@ -878,4 +878,4 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
     });
 }
 
-} // namespace tenon
+} // namespace lito

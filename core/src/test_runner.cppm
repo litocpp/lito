@@ -1,13 +1,13 @@
-export module tenon.test_runner;
+export module lito.test_runner;
 
 import rstd;
-import tenon.model;
-import tenon.builder;
+import lito.model;
+import lito.builder;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon
+export namespace lito
 {
 
 struct TestEvent {
@@ -29,9 +29,9 @@ struct TestRequest {
     Option<TestObserver> observer;
 };
 
-} // namespace tenon
+} // namespace lito
 
-namespace tenon
+namespace lito
 {
 
 auto emit_run(const TestRequest& request, const BuiltArtifact& artifact) noexcept -> void {
@@ -47,9 +47,9 @@ auto emit_run(const TestRequest& request, const BuiltArtifact& artifact) noexcep
                     });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 struct TestExecution {
@@ -134,4 +134,4 @@ auto test(TestRequest request) -> Result<TestSummary> {
     });
 }
 
-} // namespace tenon
+} // namespace lito

@@ -1,13 +1,13 @@
-export module tenon.workspace:member;
+export module lito.workspace:member;
 
 import rstd;
-import tenon.model;
-import tenon.manifest;
+import lito.model;
+import lito.manifest;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -19,9 +19,9 @@ auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept
     return left.starts_with(right) && right.starts_with(left);
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto workspace_member_directory(const WorkspaceManifest& workspace,
@@ -90,4 +90,4 @@ auto resolve_containing_workspace_version(PackageManifest& manifest) -> Result<e
                      manifest.root.as_path()));
 }
 
-} // namespace tenon
+} // namespace lito

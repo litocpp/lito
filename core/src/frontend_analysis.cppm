@@ -1,17 +1,17 @@
-export module tenon.frontend_analysis;
+export module lito.frontend_analysis;
 
 import rstd;
-import tenon.model;
-import tenon.frontend;
-import tenon.toolchain;
-import tenon.cache;
-import tenon.build_layout;
-import tenon.profiling;
+import lito.model;
+import lito.frontend;
+import lito.toolchain;
+import lito.cache;
+import lito.build_layout;
+import lito.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon
+export namespace lito
 {
 
 class FrontendAnalysisService {
@@ -115,4 +115,4 @@ private:
     ScanProfiler*              profiler_ {};
 };
 
-} // namespace tenon
+} // namespace lito

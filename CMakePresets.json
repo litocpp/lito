@@ -30,13 +30,13 @@
     {
       "name": "debug",
       "configurePreset": "debug",
-      "targets": ["tenon"],
+      "targets": ["lito"],
       "jobs": 2
     },
     {
       "name": "release",
       "configurePreset": "release",
-      "targets": ["tenon"],
+      "targets": ["lito"],
       "jobs": 2
     }
   ]

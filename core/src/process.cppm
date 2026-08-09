@@ -1,12 +1,12 @@
-export module tenon.process;
+export module lito.process;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
@@ -36,9 +36,9 @@ auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context)
     return Ok(empty {});
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 struct CommandOutput {
@@ -260,4 +260,4 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> Result<Vec<
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito

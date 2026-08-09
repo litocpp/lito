@@ -2,16 +2,16 @@ module;
 
 #include "config.hpp"
 
-#define TENON_JOIN(left, right) left##right
-#define TENON_IMPORT(name) import name;
-#define TENON_OPTIONAL_IMPORT(...) __VA_OPT__(TENON_IMPORT(__VA_ARGS__))
-#define TENON_PRAGMA(value) _Pragma(#value)
+#define LITO_JOIN(left, right) left##right
+#define LITO_IMPORT(name) import name;
+#define LITO_OPTIONAL_IMPORT(...) __VA_OPT__(LITO_IMPORT(__VA_ARGS__))
+#define LITO_PRAGMA(value) _Pragma(#value)
 
 export module fixture.preprocessor.native;
 
-#if defined(TENON_ENABLED) && TENON_JOIN(TENON_, ENABLED) && ((2 + 3 * 4) == 14) && \
+#if defined(LITO_ENABLED) && LITO_JOIN(LITO_, ENABLED) && ((2 + 3 * 4) == 14) && \
     __has_include("config.hpp")
-TENON_OPTIONAL_IMPORT(TENON_PARTITION)
+LITO_OPTIONAL_IMPORT(LITO_PARTITION)
 #endif
 
 #if __has_include("missing.hpp")
@@ -25,11 +25,11 @@ import :missing;
 import :standard_library_capability_failure;
 #endif
 
-#if __has_builtin(__builtin_tenon_missing) || __has_feature(cxx_exceptions) || \
+#if __has_builtin(__builtin_lito_missing) || __has_feature(cxx_exceptions) || \
     __has_extension(cxx_exceptions) || __has_feature(cxx_rtti) || \
     __has_extension(cxx_rtti) || __is_identifier(class) || \
     __is_identifier(_Atomic) || __is_identifier(__datasizeof) || \
-    !__is_identifier(tenon_identifier) || defined(__EXCEPTIONS) || \
+    !__is_identifier(lito_identifier) || defined(__EXCEPTIONS) || \
     defined(__cpp_exceptions) || defined(__GXX_RTTI) || defined(__cpp_rtti)
 import :native_builtin_failure;
 #endif
@@ -42,22 +42,22 @@ import :short_circuit_failure;
 import :conditional_failure;
 #endif
 
-#define TENON_STACKED 1
-#pragma push_macro("TENON_STACKED")
-#undef TENON_STACKED
-#define TENON_STACKED 0
-#pragma pop_macro("TENON_STACKED")
+#define LITO_STACKED 1
+#pragma push_macro("LITO_STACKED")
+#undef LITO_STACKED
+#define LITO_STACKED 0
+#pragma pop_macro("LITO_STACKED")
 
-#if TENON_STACKED != 1
+#if LITO_STACKED != 1
 import :pragma_stack_failure;
 #endif
 
-TENON_PRAGMA(push_macro("TENON_STACKED"))
-#undef TENON_STACKED
-#define TENON_STACKED 0
-TENON_PRAGMA(pop_macro("TENON_STACKED"))
+LITO_PRAGMA(push_macro("LITO_STACKED"))
+#undef LITO_STACKED
+#define LITO_STACKED 0
+LITO_PRAGMA(pop_macro("LITO_STACKED"))
 
-#if TENON_STACKED != 1
+#if LITO_STACKED != 1
 import :pragma_operator_failure;
 #endif
 

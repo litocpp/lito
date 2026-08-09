@@ -1,7 +1,7 @@
-export module tenon.frontend;
+export module lito.frontend;
 
-export import tenon.frontend.lexical;
-export import tenon.frontend.result;
-export import tenon.frontend.preprocessor;
-export import tenon.frontend.parser;
+export import lito.frontend.lexical;
+export import lito.frontend.result;
+export import lito.frontend.preprocessor;
+export import lito.frontend.parser;
 export import :service;

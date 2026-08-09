@@ -31,10 +31,10 @@ case "$query" in
     printf '%s\n' '1.0.0'
     ;;
   cflags)
-    printf '%s\n' '-DTENON_COUNTING_PROVIDER=1'
+    printf '%s\n' '-DLITO_COUNTING_PROVIDER=1'
     ;;
   libs)
-    printf '%s\n' '-ltenon_counting_provider'
+    printf '%s\n' '-llito_counting_provider'
     ;;
   *)
     printf '%s\n' 'unsupported query' >&2

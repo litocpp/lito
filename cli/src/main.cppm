@@ -1,9 +1,9 @@
-export module tenon.executable;
+export module lito.executable;
 
 import rstd;
-import tenon;
+import lito;
 import :cli;
-import tenon.reporting;
+import lito.reporting;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -15,28 +15,28 @@ struct EventContext {
     bool verbose { false };
 };
 
-auto event_name(tenon::BuildEventKind kind) -> ref<str> {
+auto event_name(lito::BuildEventKind kind) -> ref<str> {
     switch (kind) {
-    case tenon::BuildEventKind::Scan: return "scan"_str;
-    case tenon::BuildEventKind::ScanReuse: return "scan-reuse"_str;
-    case tenon::BuildEventKind::Compile: return "compile"_str;
-    case tenon::BuildEventKind::Reuse: return "reuse"_str;
-    case tenon::BuildEventKind::Archive: return "archive"_str;
-    case tenon::BuildEventKind::Link: return "link"_str;
+    case lito::BuildEventKind::Scan: return "scan"_str;
+    case lito::BuildEventKind::ScanReuse: return "scan-reuse"_str;
+    case lito::BuildEventKind::Compile: return "compile"_str;
+    case lito::BuildEventKind::Reuse: return "reuse"_str;
+    case lito::BuildEventKind::Archive: return "archive"_str;
+    case lito::BuildEventKind::Link: return "link"_str;
     }
     return "unknown"_str;
 }
 
-void observe(void* raw_context, const tenon::BuildEvent& event) noexcept {
+void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
-    if (! context.verbose && event.kind != tenon::BuildEventKind::Compile &&
-        event.kind != tenon::BuildEventKind::Archive && event.kind != tenon::BuildEventKind::Link) {
+    if (! context.verbose && event.kind != lito::BuildEventKind::Compile &&
+        event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link) {
         return;
     }
     rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
 }
 
-void observe_test(void* raw_context, const tenon::TestEvent& event) noexcept {
+void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose) return;
     rstd::io::println(
@@ -46,12 +46,12 @@ void observe_test(void* raw_context, const tenon::TestEvent& event) noexcept {
     }
 }
 
-auto build_configuration(tenon::ToolchainSpec toolchain) -> tenon::BuildConfiguration {
-    return tenon::BuildConfiguration {
+auto build_configuration(lito::ToolchainSpec toolchain) -> lito::BuildConfiguration {
+    return lito::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
-        .standard_library  = tenon::StandardLibrary::Libcxx,
-        .bmi_mode          = tenon::BmiMode::Reduced,
-        .language_standard = tenon::String::make("c++20"_str),
+        .standard_library  = lito::StandardLibrary::Libcxx,
+        .bmi_mode          = lito::BmiMode::Reduced,
+        .language_standard = lito::String::make("c++20"_str),
     };
 }
 
@@ -62,15 +62,15 @@ struct ArtifactCounts {
     usize compile_tests {};
 };
 
-auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
+auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     auto counts = ArtifactCounts {};
     for (const auto& artifact : summary.artifacts) {
         switch (artifact.kind) {
-        case tenon::ArtifactKind::StaticLibrary: ++counts.archives; break;
-        case tenon::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
-        case tenon::ArtifactKind::Executable: ++counts.executables; break;
-        case tenon::ArtifactKind::TestExecutable: ++counts.tests; break;
-        case tenon::ArtifactKind::CompileTest: ++counts.compile_tests; break;
+        case lito::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case lito::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
+        case lito::ArtifactKind::Executable: ++counts.executables; break;
+        case lito::ArtifactKind::TestExecutable: ++counts.tests; break;
+        case lito::ArtifactKind::CompileTest: ++counts.compile_tests; break;
         }
     }
     return counts;
@@ -78,9 +78,9 @@ auto artifact_counts(const tenon::BuildSummary& summary) -> ArtifactCounts {
 
 auto make_timing_output(ref<rstd::path::Path>       root,
                         Option<rstd::path::PathBuf> file,
-                        bool standard_output) -> tenon::timing_output::OutputOptions {
+                        bool standard_output) -> lito::timing_output::OutputOptions {
     if (file.is_none()) {
-        return tenon::timing_output::OutputOptions {
+        return lito::timing_output::OutputOptions {
             .standard_output = standard_output,
         };
     }
@@ -88,46 +88,16 @@ auto make_timing_output(ref<rstd::path::Path>       root,
     if (path.as_path().is_relative()) {
         path = rstd::path::PathBuf::from(root).join(path.as_path());
     }
-    return tenon::timing_output::OutputOptions {
+    return lito::timing_output::OutputOptions {
         .standard_output = standard_output,
         .file            = Some(rstd::move(path)),
     };
 }
 
-auto report_documentation(const tenon::DocSummary& summary) -> int {
-    for (const auto& package : summary.packages) {
-        rstd::io::println("documented {}: {} symbols, {} documented, {} undocumented, "
-                          "{} unsupported, {} diagnostics",
-                          package.name.as_str(),
-                          package.symbols,
-                          package.documented,
-                          package.undocumented,
-                          package.unsupported,
-                          package.diagnostics);
-        for (const auto& diagnostic : package.diagnostic_details) {
-            rstd::io::eprintln("{}[{}] {}:{}: {}",
-                               diagnostic.severity == tenon::DocDiagnosticSeverity::Error
-                                   ? "error"_str
-                                   : "warning"_str,
-                               diagnostic.code.as_str(),
-                               diagnostic.path.as_path(),
-                               diagnostic.line,
-                               diagnostic.message.as_str());
-        }
-    }
-    rstd::io::println("documentation data at {}", summary.data_manifest.as_path());
-    if (summary.site_generated) {
-        rstd::io::println("generated documentation ({}) at {}",
-                          summary.profile.as_str(),
-                          summary.index.as_path());
-    }
-    return 0;
-}
-
 } // namespace
 
 extern "C++" int main() {
-    auto parsed = tenon::cli::parse();
+    auto parsed = lito::cli::parse();
     if (parsed.is_Exit()) {
         auto result = rstd::move(parsed).as_Exit();
         if (result.standard_error)
@@ -137,45 +107,26 @@ extern "C++" int main() {
         return static_cast<int>(result.exit_code.to_primitive());
     }
     auto invocation = rstd::move(parsed).as_Parsed();
-    if (invocation.command.is_Doc()) {
-        auto& options = invocation.command.as_Doc().options;
-        if (options.from_data.is_some()) {
-            auto request = tenon::DocRenderRequest {
-                .working_directory = invocation.working_directory.clone(),
-                .data              = options.from_data->clone(),
-                .output =
-                    options.output.is_some() ? options.output->clone() : rstd::path::PathBuf {},
-                .frontend = options.frontend.is_some() ? Some(options.frontend->clone()) : None(),
-            };
-            auto rendered = tenon::render_documentation(request);
-            if (rendered.is_err()) {
-                auto error = rstd::move(rendered).unwrap_err();
-                rstd::io::eprintln("tenon: {}", error.message.as_str());
-                return 1;
-            }
-            return report_documentation(*rendered);
-        }
-    }
-    auto loaded_config = tenon::load_project_config(invocation.working_directory.as_path());
+    auto loaded_config = lito::load_project_config(invocation.working_directory.as_path());
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
-        rstd::io::eprintln("tenon: {}", error.message.as_str());
+        rstd::io::eprintln("lito: {}", error.message.as_str());
         return 1;
     }
     auto project = rstd::move(loaded_config).unwrap();
 
     if (invocation.command.is_Format()) {
         auto options               = rstd::move(invocation.command).as_Format().options;
-        auto request               = tenon::FormatRequest {};
+        auto request               = lito::FormatRequest {};
         request.selection.root     = rstd::move(project.root);
         request.toolchain          = rstd::move(project.toolchain);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
 
-        auto result = tenon::format(request);
+        auto result = lito::format(request);
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            rstd::io::eprintln("lito: {}", error.message.as_str());
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
@@ -185,7 +136,7 @@ extern "C++" int main() {
 
     if (invocation.command.is_Scan()) {
         auto options               = rstd::move(invocation.command).as_Scan().options;
-        auto request               = tenon::ScanRequest {};
+        auto request               = lito::ScanRequest {};
         request.selection.root     = rstd::move(project.root);
         request.configuration      = build_configuration(rstd::move(project.toolchain));
         request.sources            = rstd::move(project.sources);
@@ -198,47 +149,20 @@ extern "C++" int main() {
         if (options.profile.is_some()) request.configuration.profile = *options.profile;
         request.configuration.exceptions = options.exceptions;
 
-        auto scanned = tenon::scan(request);
+        auto scanned = lito::scan(request);
         if (scanned.is_err()) {
             auto error = rstd::move(scanned).unwrap_err();
-            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            rstd::io::eprintln("lito: {}", error.message.as_str());
             return 1;
         }
-        auto json = tenon::scan_report_json(*scanned);
+        auto json = lito::scan_report_json(*scanned);
         if (json.is_err()) {
             auto error = rstd::move(json).unwrap_err();
-            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            rstd::io::eprintln("lito: {}", error.message.as_str());
             return 1;
         }
         rstd::io::println("{}", json->as_str());
         return 0;
-    }
-
-    if (invocation.command.is_Doc()) {
-        auto options               = rstd::move(invocation.command).as_Doc().options;
-        auto request               = tenon::DocRequest {};
-        request.selection.root     = rstd::move(project.root);
-        request.configuration      = build_configuration(rstd::move(project.toolchain));
-        request.sources            = rstd::move(project.sources);
-        request.pkg_config         = rstd::move(project.pkg_config);
-        request.cmake              = rstd::move(project.cmake);
-        request.selection.packages = rstd::move(options.packages);
-        request.targets            = rstd::move(options.targets);
-        request.locked             = options.locked;
-        request.data_only          = options.data_only;
-        if (options.profile.is_some()) request.configuration.profile = *options.profile;
-        request.configuration.exceptions = options.exceptions;
-        if (options.output.is_some()) request.output = rstd::move(*options.output);
-        if (options.data_output.is_some()) request.data_output = rstd::move(*options.data_output);
-        if (options.frontend.is_some()) request.frontend = rstd::move(options.frontend);
-
-        auto generated = tenon::generate_documentation(request);
-        if (generated.is_err()) {
-            auto error = rstd::move(generated).unwrap_err();
-            rstd::io::eprintln("tenon: {}", error.message.as_str());
-            return 1;
-        }
-        return report_documentation(*generated);
     }
 
     if (invocation.command.is_Test()) {
@@ -246,7 +170,7 @@ extern "C++" int main() {
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
-        auto request                 = tenon::TestRequest {};
+        auto request                 = lito::TestRequest {};
         request.build.selection.root = rstd::move(project.root);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain));
         request.build.sources        = rstd::move(project.sources);
@@ -260,26 +184,26 @@ extern "C++" int main() {
         request.build.configuration.exceptions = options.exceptions;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(tenon::BuildObserver {
+        request.build.observer = Some(lito::BuildObserver {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
-        request.observer       = Some(tenon::TestObserver {
+        request.observer       = Some(lito::TestObserver {
             .context = rstd::addressof(event_context),
             .notify  = observe_test,
         });
 
-        auto result = tenon::test(rstd::move(request));
+        auto result = lito::test(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("tenon: {}", error.message.as_str());
+            rstd::io::eprintln("lito: {}", error.message.as_str());
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
         auto counts  = artifact_counts(summary.build);
-        auto emitted = tenon::timing_output::emit(summary.build, timing);
+        auto emitted = lito::timing_output::emit(summary.build, timing);
         if (emitted.is_err()) {
-            rstd::io::eprintln("tenon: {}", rstd::move(emitted).unwrap_err().as_str());
+            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
             return 1;
         }
         if (options.no_run) {
@@ -354,7 +278,7 @@ extern "C++" int main() {
     auto timing                = make_timing_output(project.root.as_path(),
                                                     rstd::move(options.timing_file),
                                                     options.verbose && ! options.no_timing);
-    auto request               = tenon::BuildRequest {};
+    auto request               = lito::BuildRequest {};
     request.selection.root     = rstd::move(project.root);
     request.configuration      = build_configuration(rstd::move(project.toolchain));
     request.sources            = rstd::move(project.sources);
@@ -368,14 +292,14 @@ extern "C++" int main() {
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 
-    request.observer = Some(tenon::BuildObserver {
+    request.observer = Some(lito::BuildObserver {
         .context = rstd::addressof(event_context),
         .notify  = observe,
     });
-    auto result      = tenon::build(request);
+    auto result      = lito::build(request);
     if (result.is_err()) {
         auto error = rstd::move(result).unwrap_err();
-        rstd::io::eprintln("tenon: {}", error.message.as_str());
+        rstd::io::eprintln("lito: {}", error.message.as_str());
         return 1;
     }
 
@@ -392,9 +316,9 @@ extern "C++" int main() {
                       counts.archives,
                       counts.executables,
                       counts.tests + summary.compile_tests.len());
-    auto emitted = tenon::timing_output::emit(summary, timing);
+    auto emitted = lito::timing_output::emit(summary, timing);
     if (emitted.is_err()) {
-        rstd::io::eprintln("tenon: {}", rstd::move(emitted).unwrap_err().as_str());
+        rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
         return 1;
     }
     return 0;

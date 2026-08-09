@@ -1,10 +1,10 @@
-export module tenon.cache;
+export module lito.cache;
 
 import rstd;
 import rstd.json;
-import tenon.model;
-import tenon.frontend;
-import tenon.build_layout;
+import lito.model;
+import lito.frontend;
+import lito.build_layout;
 import :hash;
 
 using namespace rstd::prelude;
@@ -13,11 +13,11 @@ using Json      = rstd::json::Value;
 using JsonMap   = rstd::json::Map;
 using JsonArray = rstd::json::Array;
 
-namespace tenon
+namespace lito
 {
 
 inline constexpr auto CACHE_VERSION  = u64(3);
-inline constexpr auto SCAN_RECIPE    = "tenon-native-frontend-v1"_str;
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v1"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
 
 template<typename T>
@@ -112,7 +112,7 @@ auto output_content_digest(ref<rstd::path::Path> path) -> Result<String> {
             "cannot hash compiler output '{}': {}", path, rstd::move(contents).unwrap_err()));
     }
     auto hash = cache::FNV_OFFSET;
-    cache::add_text(hash, "tenon-output-content-v1"_str);
+    cache::add_text(hash, "lito-output-content-v1"_str);
     cache::add_bytes(hash, contents->as_slice());
     return Ok(cache::hex(hash));
 }
@@ -234,9 +234,9 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
     return Ok(empty {});
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 struct DependencyArtifact {
@@ -263,7 +263,7 @@ public:
         if (compiler_path.is_err()) return Err(rstd::move(compiler_path).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
 
-        auto identity = String::make("tenon-cache-environment-v2\n"_str);
+        auto identity = String::make("lito-cache-environment-v2\n"_str);
         identity.push_str(owner->as_str());
         identity.push_ascii('\n');
         identity.push_str(profile);
@@ -287,7 +287,7 @@ public:
                                        compiler.modified_seconds,
                                        compiler.modified_nanoseconds)
                               .as_str());
-        auto key = cache::text_identity("tenon-cache-environment-key-v2"_str, identity.as_str());
+        auto key = cache::text_identity("lito-cache-environment-key-v2"_str, identity.as_str());
 
         auto compiler_json = JsonMap::make();
         compiler_json.insert(String::make("modified-nanoseconds"_str),
@@ -702,7 +702,7 @@ class ScanCacheSession {
                 "cannot hash scan cache input '{}': {}", path, rstd::move(contents).unwrap_err()));
         }
         auto hash = cache::FNV_OFFSET;
-        cache::add_text(hash, "tenon-file-content-v1"_str);
+        cache::add_text(hash, "lito-file-content-v1"_str);
         cache::add_bytes(hash, contents->as_slice());
         auto value = FileFingerprint {
             .path        = PathBuf::from(path),
@@ -725,7 +725,7 @@ class ScanCacheSession {
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         if (working.is_err()) return Err(rstd::move(working).unwrap_err());
         auto hash = cache::FNV_OFFSET;
-        cache::add_text(hash, "tenon-scan-receipt-v1"_str);
+        cache::add_text(hash, "lito-scan-receipt-v1"_str);
         cache::add_text(hash, environment_.as_str());
         cache::add_text(hash, input.target.as_str());
         cache::add_text(hash, input.context_identity.as_str());
@@ -1122,11 +1122,11 @@ public:
         if (object.is_err()) return Err(rstd::move(object).unwrap_err());
 
         auto context_key =
-            cache::text_identity("tenon-context-key-v1"_str, unit.unit.context->id.as_str());
+            cache::text_identity("lito-context-key-v1"_str, unit.unit.context->id.as_str());
         auto command_key =
-            cache::text_identity("tenon-command-key-v1"_str, invocation.identity.as_str());
+            cache::text_identity("lito-command-key-v1"_str, invocation.identity.as_str());
         auto artifact_hash = cache::FNV_OFFSET;
-        cache::add_text(artifact_hash, "tenon-artifact-v2"_str);
+        cache::add_text(artifact_hash, "lito-artifact-v2"_str);
         cache::add_text(artifact_hash, environment_.as_str());
         cache::add_text(artifact_hash, context_key.as_str());
         cache::add_text(artifact_hash, command_key.as_str());
@@ -1250,7 +1250,7 @@ public:
         result.insert(String::make("stderr-bytes"_str),
                       cache_u64(rstd::as_cast<u64>(execution.standard_error.len())));
         result.insert(String::make("stderr-fingerprint"_str),
-                      cache_string(cache::text_identity("tenon-compile-test-stderr-v1"_str,
+                      cache_string(cache::text_identity("lito-compile-test-stderr-v1"_str,
                                                         execution.standard_error.as_str())
                                        .as_str()));
         result.insert(String::make("stdout-bytes"_str),
@@ -1325,4 +1325,4 @@ public:
     }
 };
 
-} // namespace tenon
+} // namespace lito

@@ -1,12 +1,12 @@
-export module tenon.toolchain:clang;
+export module lito.toolchain:clang;
 
 import rstd;
-import tenon.model;
-import tenon.process;
-import tenon.frontend;
-import tenon.profiling;
-import tenon.modules;
-import tenon.build_profile;
+import lito.model;
+import lito.process;
+import lito.frontend;
+import lito.profiling;
+import lito.modules;
+import lito.build_profile;
 import :clang_arguments;
 import :clang_options;
 import :clang_preprocessor_environment;
@@ -15,12 +15,12 @@ import :command;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 namespace preprocessor = frontend::preprocessor;
 }
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -121,7 +121,7 @@ auto staging_path(ref<rstd::path::Path> output) -> Result<PathBuf> {
         return failure<PathBuf>(rstd::format("output path '{}' is not valid UTF-8", output));
     }
     auto value = String::make(*text);
-    value.push_str(".tenon-building"_str);
+    value.push_str(".lito-building"_str);
     return Ok(PathBuf::from(rstd::move(value)));
 }
 
@@ -178,7 +178,7 @@ auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> wor
         return failure<String>(
             rstd::format("compile working directory '{}' is not valid UTF-8", working_directory));
     }
-    auto identity = String::make("tenon-clang-compile-invocation-v1\n"_str);
+    auto identity = String::make("lito-clang-compile-invocation-v1\n"_str);
     identity.push_str(rstd::format("{}:{}\n", working->size(), *working).as_str());
     for (const auto& argument : arguments) {
         identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
@@ -279,9 +279,9 @@ auto append_typed_options(Vec<String>&             command,
     }
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 struct ClangBuiltinContext {
@@ -418,7 +418,7 @@ public:
             return failure<ClangToolchain>(
                 "Clang compiler or resource path is not valid UTF-8"_str);
         }
-        auto build_identity = rstd::format("tenon-clang-build-v1\n{}\n{}\n{}\n{}\n{}:{}:{}",
+        auto build_identity = rstd::format("lito-clang-build-v1\n{}\n{}\n{}\n{}\n{}:{}:{}",
                                            *compiler_text,
                                            compiler_version->as_str(),
                                            target->as_str(),
@@ -1047,7 +1047,7 @@ private:
         toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
         append_typed_options(command, context.cpp, true);
-        auto key = argument_identity("tenon-clang-builtin-context-v4"_str, command);
+        auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
         key.push_str(compiler_identity_.version.as_str());
@@ -1114,4 +1114,4 @@ private:
     mutable Vec<toolchain::PreprocessorEnvironment>               preprocessor_environments_;
 };
 
-} // namespace tenon
+} // namespace lito

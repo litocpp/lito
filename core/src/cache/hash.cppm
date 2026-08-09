@@ -1,12 +1,12 @@
 module;
 
-export module tenon.cache:hash;
+export module lito.cache:hash;
 
 import rstd;
 
 using namespace rstd::prelude;
 
-namespace tenon::cache
+namespace lito::cache
 {
 
 inline constexpr uint64_t FNV_OFFSET = 14695981039346656037ull;
@@ -46,4 +46,4 @@ auto text_identity(ref<str> recipe, ref<str> value) -> String {
     return hex(hash);
 }
 
-} // namespace tenon::cache
+} // namespace lito::cache

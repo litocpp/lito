@@ -1,12 +1,12 @@
-export module tenon.frontend_observer;
+export module lito.frontend_observer;
 
 import rstd;
-import tenon.frontend;
-import tenon.profiling;
+import lito.frontend;
+import lito.profiling;
 
 using namespace rstd::prelude;
 
-export namespace tenon
+export namespace lito
 {
 
 class FrontendProfileObserver {
@@ -64,4 +64,4 @@ private:
     Vec<ActiveActivity> active_;
 };
 
-} // namespace tenon
+} // namespace lito

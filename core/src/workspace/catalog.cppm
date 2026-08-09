@@ -1,16 +1,16 @@
-export module tenon.workspace:catalog;
+export module lito.workspace:catalog;
 
 import rstd;
-import tenon.model;
-import tenon.manifest;
+import lito.model;
+import lito.manifest;
 import :member;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using PackageMap = rstd::collections::BTreeMap<String, tenon::PackageManifest>;
+using PackageMap = rstd::collections::BTreeMap<String, lito::PackageManifest>;
 using StringSet  = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -38,9 +38,9 @@ auto workspace_contains(const WorkspaceManifest& workspace, ref<rstd::path::Path
     return Ok(false);
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 class WorkspaceCatalog {
@@ -184,4 +184,4 @@ auto try_containing_workspace(const PackageManifest& manifest)
     return Ok(None());
 }
 
-} // namespace tenon
+} // namespace lito

@@ -1,22 +1,22 @@
-export module tenon.toolchain:clang_preprocessor_environment;
+export module lito.toolchain:clang_preprocessor_environment;
 
 import rstd;
-import tenon.model;
-import tenon.process;
-import tenon.frontend;
+import lito.model;
+import lito.process;
+import lito.frontend;
 import :clang_options;
 import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 namespace lexical      = frontend::lexical;
 namespace preprocessor = frontend::preprocessor;
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon::toolchain
+export namespace lito::toolchain
 {
 
 struct IncludeSearchEntry {
@@ -31,7 +31,7 @@ struct BuiltinSemanticContext {
 };
 
 inline constexpr auto CLANG_STANDARD_LIBRARY_CAPABILITY_ID =
-    "tenon-clang-standard-library-capabilities-v1"_str;
+    "lito-clang-standard-library-capabilities-v1"_str;
 
 struct ClangBuiltinEnvironmentSnapshot {
     String                                   key;
@@ -82,9 +82,9 @@ struct PreprocessorEnvironment {
     Option<String>                              time;
 };
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain
 
-namespace tenon::toolchain
+namespace lito::toolchain
 {
 
 template<typename T>
@@ -414,7 +414,7 @@ auto builtin_snapshot_identity(const Vec<preprocessor::MacroSeed>& macros, ref<s
         hash ^= 0;
         hash *= prime;
     };
-    add("tenon-clang-builtin-environment-v2"_str);
+    add("lito-clang-builtin-environment-v2"_str);
     add(key);
     for (const auto& macro : macros) add(macro.definition.as_str());
     static constexpr char digits[] = "0123456789abcdef";
@@ -441,7 +441,7 @@ auto environment_identity(ref<str>                       builtin_identity,
         hash ^= 0;
         hash *= prime;
     };
-    add("tenon-clang-preprocessor-environment-v2"_str);
+    add("lito-clang-preprocessor-environment-v2"_str);
     add(context_id);
     add(builtin_identity);
     add(lexical::CPP_IDENTIFIER_RULE_ID);
@@ -468,12 +468,12 @@ auto preprocessor_error(const Error& error) -> preprocessor::Error {
     return preprocessor::Error::make(error.message.clone());
 }
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain
 
-namespace tenon::toolchain
+namespace lito::toolchain
 {
 
-inline constexpr auto STANDARD_LIBRARY_HAS_BUILTIN = R"TENON(__add_pointer
+inline constexpr auto STANDARD_LIBRARY_HAS_BUILTIN = R"LITO(__add_pointer
 __array_extent
 __array_rank
 __atomic_fetch_max
@@ -525,9 +525,9 @@ __remove_pointer
 __remove_reference
 __remove_reference_t
 __remove_volatile
-)TENON"_str;
+)LITO"_str;
 
-inline constexpr auto STANDARD_LIBRARY_HAS_FEATURE = R"TENON(address_sanitizer
+inline constexpr auto STANDARD_LIBRARY_HAS_FEATURE = R"LITO(address_sanitizer
 cxx_atomic
 experimental_library
 modules
@@ -536,15 +536,15 @@ objc_arc
 objc_arc_weak
 ptrauth_calls
 ptrauth_type_info_vtable_pointer_discrimination
-)TENON"_str;
+)LITO"_str;
 
-inline constexpr auto STANDARD_LIBRARY_HAS_EXTENSION = R"TENON(blocks
+inline constexpr auto STANDARD_LIBRARY_HAS_EXTENSION = R"LITO(blocks
 c_atomic
 datasizeof
-)TENON"_str;
+)LITO"_str;
 
 inline constexpr auto STANDARD_LIBRARY_HAS_CPP_ATTRIBUTE =
-    R"TENON(_Clang::acquire_shared_capability
+    R"LITO(_Clang::acquire_shared_capability
 _Clang::capability
 _Clang::lifetimebound
 _Clang::no_destroy
@@ -562,10 +562,10 @@ _Clang::try_acquire_shared_capability
 clang::coro_await_elidable
 clang::coro_await_elidable_argument
 msvc::no_unique_address
-)TENON"_str;
+)LITO"_str;
 
 inline constexpr auto STANDARD_LIBRARY_HAS_ATTRIBUTE =
-    R"TENON(acquire_capability
+    R"LITO(acquire_capability
 deprecated
 diagnose_if
 enable_if
@@ -577,13 +577,13 @@ require_constant_initialization
 requires_capability
 type_visibility
 using_if_exists
-)TENON"_str;
+)LITO"_str;
 
-inline constexpr auto STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE = R"TENON(empty_bases
-)TENON"_str;
+inline constexpr auto STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE = R"LITO(empty_bases
+)LITO"_str;
 
-inline constexpr auto STANDARD_LIBRARY_HAS_WARNING = R"TENON(-Winvalid-specialization
-)TENON"_str;
+inline constexpr auto STANDARD_LIBRARY_HAS_WARNING = R"LITO(-Winvalid-specialization
+)LITO"_str;
 
 auto append_standard_library_capabilities(Vec<preprocessor::BuiltinQueryKey>& result,
                                           preprocessor::BuiltinQueryKind      kind,
@@ -687,7 +687,7 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
         auto builtin = preprocessor::builtin_query_name(kind);
         source.push_str(rstd::format("#if !defined({})\n", builtin).as_str());
         source.push_str(rstd::format("#define {}(...) 0\n", builtin).as_str());
-        source.push_str("#define TENON_DEFINED_QUERY_BUILTIN 1\n"_str);
+        source.push_str("#define LITO_DEFINED_QUERY_BUILTIN 1\n"_str);
         source.push_str("#endif\n"_str);
         while (cursor < catalog.len() && catalog[cursor].kind == kind) {
             if (native_capability(catalog[cursor], semantic_context).is_some()) {
@@ -698,14 +698,14 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
             auto argument = render_capability_argument(catalog[cursor]);
             auto index    = pending.len();
             source.push_str(
-                rstd::format("TENON_BUILTIN_QUERY_{} {}({})\n", index, builtin, argument.as_str())
+                rstd::format("LITO_BUILTIN_QUERY_{} {}({})\n", index, builtin, argument.as_str())
                     .as_str());
             pending.push(catalog[cursor].clone());
             ++cursor;
         }
-        source.push_str("#if defined(TENON_DEFINED_QUERY_BUILTIN)\n"_str);
+        source.push_str("#if defined(LITO_DEFINED_QUERY_BUILTIN)\n"_str);
         source.push_str(rstd::format("#undef {}\n", builtin).as_str());
-        source.push_str("#undef TENON_DEFINED_QUERY_BUILTIN\n"_str);
+        source.push_str("#undef LITO_DEFINED_QUERY_BUILTIN\n"_str);
         source.push_str("#endif\n"_str);
     }
 
@@ -729,7 +729,7 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
         each_line(output->standard_output.as_str(), [&values](ref<str> raw) -> Result<empty> {
             auto line = raw.trim_ascii();
             if (line.is_empty()) return Ok(empty {});
-            constexpr auto prefix = "TENON_BUILTIN_QUERY_"_str;
+            constexpr auto prefix = "LITO_BUILTIN_QUERY_"_str;
             if (! line.starts_with(prefix)) {
                 return environment_failure<empty>(
                     rstd::format("unexpected clang builtin query output: {}", line));
@@ -779,9 +779,9 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
     });
 }
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain
 
-export namespace tenon::toolchain
+export namespace lito::toolchain
 {
 
 auto query_clang_builtin_environment_snapshot(const Vec<String>&            base_command,
@@ -839,7 +839,7 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     -> Result<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
     auto native_macros =
-        parse_macro_seeds(native_predefined_macro_seeds(semantic_context), "<tenon-built-in>"_str);
+        parse_macro_seeds(native_predefined_macro_seeds(semantic_context), "<lito-built-in>"_str);
     if (native_macros.is_err()) return Err(rstd::move(native_macros).unwrap_err());
     auto command_line_macros = parse_command_line_macros(macros);
     if (command_line_macros.is_err()) return Err(rstd::move(command_line_macros).unwrap_err());
@@ -1035,7 +1035,7 @@ private:
         command::push_option(command_line, clang_options::STANDARD_INPUT);
         auto output =
             run_command_with_input(command_line,
-                                   "TENON_BUILTIN_DATE __DATE__\nTENON_BUILTIN_TIME __TIME__\n"_str,
+                                   "LITO_BUILTIN_DATE __DATE__\nLITO_BUILTIN_TIME __TIME__\n"_str,
                                    Some(working_directory_.as_path()));
         if (output.is_err()) return Err(preprocessor_error(rstd::move(output).unwrap_err()));
         if (output->exit_code != i32 {}) {
@@ -1047,8 +1047,8 @@ private:
                 auto           line        = raw.trim_ascii();
                 auto           value       = Option<ref<str>> {};
                 auto           target      = static_cast<Option<String>*>(nullptr);
-                constexpr auto date_prefix = "TENON_BUILTIN_DATE "_str;
-                constexpr auto time_prefix = "TENON_BUILTIN_TIME "_str;
+                constexpr auto date_prefix = "LITO_BUILTIN_DATE "_str;
+                constexpr auto time_prefix = "LITO_BUILTIN_TIME "_str;
                 if (line.starts_with(date_prefix)) {
                     value  = line.get(date_prefix.len(), line.len());
                     target = rstd::addressof(environment_.date);
@@ -1127,4 +1127,4 @@ private:
     Vec<PathBuf>                               headers_;
 };
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain

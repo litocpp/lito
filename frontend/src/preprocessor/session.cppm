@@ -1,7 +1,7 @@
-export module tenon.frontend.preprocessor:session;
+export module lito.frontend.preprocessor:session;
 
 import rstd;
-import tenon.frontend.lexical;
+import lito.frontend.lexical;
 import :traits;
 import :macro;
 import :expression;
@@ -9,9 +9,9 @@ import :expression;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-using namespace tenon::frontend::lexical;
+using namespace lito::frontend::lexical;
 
-export namespace tenon::frontend::preprocessor
+export namespace lito::frontend::preprocessor
 {
 
 struct PreprocessRequest {
@@ -1551,4 +1551,4 @@ auto preprocess(PreprocessRequest request,
     return result;
 }
 
-} // namespace tenon::frontend::preprocessor
+} // namespace lito::frontend::preprocessor

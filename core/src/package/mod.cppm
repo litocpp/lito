@@ -1,6 +1,6 @@
-export module tenon.package;
+export module lito.package;
 
 export import :plan;
 export import :adapter;
-export import tenon.source;
+export import lito.source;
 export import :resolver;

@@ -1,17 +1,17 @@
-export module tenon.bmi;
+export module lito.bmi;
 
 import rstd;
-import tenon.cpp;
+import lito.cpp;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
 using PathBuf = rstd::path::PathBuf;
 
-export namespace tenon
+export namespace lito
 {
 
-inline constexpr auto BMI_CONTRACT_VERSION = "tenon-bmi-v1"_str;
+inline constexpr auto BMI_CONTRACT_VERSION = "lito-bmi-v1"_str;
 
 enum class BmiRepresentation
 {
@@ -168,9 +168,9 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
 
 auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey;
 
-} // namespace tenon
+} // namespace lito
 
-namespace tenon
+namespace lito
 {
 
 inline constexpr uint64_t BMI_FNV_OFFSET = 14695981039346656037ull;
@@ -256,9 +256,9 @@ auto add_difference(BmiCompatibilityResult& result,
     });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto BmiFormatIdentity::clone() const -> BmiFormatIdentity {
@@ -276,7 +276,7 @@ auto BmiFormatIdentity::clone() const -> BmiFormatIdentity {
 }
 
 auto bmi_format_identity(const BmiFormatIdentity& format) -> String {
-    auto result = String::make("tenon-bmi-format-v1\n"_str);
+    auto result = String::make("lito-bmi-format-v1\n"_str);
     append_value(result, "family"_str, format.family.as_str());
     append_value(result, "compiler-build"_str, format.compiler_build.as_str());
     append_value(result, "target"_str, format.target.as_str());
@@ -290,7 +290,7 @@ auto bmi_format_identity(const BmiFormatIdentity& format) -> String {
 
 auto bmi_format_key(const BmiFormatIdentity& format) -> String {
     auto identity = bmi_format_identity(format);
-    return digest("tenon-bmi-format-key-v1"_str, identity.as_str());
+    return digest("lito-bmi-format-key-v1"_str, identity.as_str());
 }
 
 auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
@@ -394,8 +394,8 @@ auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey {
                      entry.template get<1>().as_str());
     }
     return BmiArtifactKey {
-        .value = digest("tenon-bmi-artifact-key-v1"_str, identity.as_str()),
+        .value = digest("lito-bmi-artifact-key-v1"_str, identity.as_str()),
     };
 }
 
-} // namespace tenon
+} // namespace lito

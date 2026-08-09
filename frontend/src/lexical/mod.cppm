@@ -1,4 +1,4 @@
-export module tenon.frontend.lexical;
+export module lito.frontend.lexical;
 
 export import :token;
 export import :source;

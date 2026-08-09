@@ -1,18 +1,18 @@
-export module tenon.frontend.parser:documentation;
+export module lito.frontend.parser:documentation;
 
 import rstd;
-import tenon.frontend.result;
-import tenon.frontend.preprocessor;
+import lito.frontend.result;
+import lito.frontend.preprocessor;
 import :module_dependency;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::frontend::parser
+namespace lito::frontend::parser
 {
 
-namespace lexical      = tenon::frontend::lexical;
-namespace preprocessor = tenon::frontend::preprocessor;
+namespace lexical      = lito::frontend::lexical;
+namespace preprocessor = lito::frontend::preprocessor;
 
 auto documentation_span(const preprocessor::PreprocessedTranslationUnit& translation,
                         lexical::SourceLocation                          begin,
@@ -723,9 +723,9 @@ private:
     usize                                            hidden_depth_ {};
 };
 
-} // namespace tenon::frontend::parser
+} // namespace lito::frontend::parser
 
-export namespace tenon::frontend::parser
+export namespace lito::frontend::parser
 {
 
 auto parse_documentation(const preprocessor::PreprocessedTranslationUnit& translation)
@@ -740,4 +740,4 @@ auto parse_documentation(const preprocessor::PreprocessedTranslationUnit& transl
     return DocumentationParser(translation, dependencies).parse();
 }
 
-} // namespace tenon::frontend::parser
+} // namespace lito::frontend::parser

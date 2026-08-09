@@ -1,14 +1,14 @@
-export module tenon.frontend.preprocessor:macro;
+export module lito.frontend.preprocessor:macro;
 
 import rstd;
-import tenon.frontend.lexical;
+import lito.frontend.lexical;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-using namespace tenon::frontend::lexical;
+using namespace lito::frontend::lexical;
 
-export namespace tenon::frontend::preprocessor
+export namespace lito::frontend::preprocessor
 {
 
 auto is_dynamic_builtin_name(ref<str> name) -> bool {
@@ -261,4 +261,4 @@ auto share_macro_definition(MacroDefinition definition) -> SharedMacroDefinition
     return rstd::rc::make_rc<MacroDefinition>(rstd::move(definition)).to_const();
 }
 
-} // namespace tenon::frontend::preprocessor
+} // namespace lito::frontend::preprocessor

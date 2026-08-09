@@ -1,12 +1,12 @@
-export module tenon.toolchain:command;
+export module lito.toolchain:command;
 
 import rstd;
-import tenon.model;
-import tenon.process;
+import lito.model;
+import lito.process;
 
 using namespace rstd::prelude;
 
-namespace tenon::toolchain::command
+namespace lito::toolchain::command
 {
 
 template<typename T>
@@ -14,9 +14,9 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
 }
 
-} // namespace tenon::toolchain::command
+} // namespace lito::toolchain::command
 
-export namespace tenon::toolchain::command
+export namespace lito::toolchain::command
 {
 
 auto is_searchable_tool_name(ref<rstd::path::Path> path) -> bool {
@@ -71,4 +71,4 @@ auto tool_output(Vec<String> arguments, ref<str> description) -> Result<String> 
     return Ok(trim_ascii(rstd::move(value.standard_output)));
 }
 
-} // namespace tenon::toolchain::command
+} // namespace lito::toolchain::command

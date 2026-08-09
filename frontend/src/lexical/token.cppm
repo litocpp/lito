@@ -1,11 +1,11 @@
-export module tenon.frontend.lexical:token;
+export module lito.frontend.lexical:token;
 
 import rstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon::frontend::lexical
+export namespace lito::frontend::lexical
 {
 
 using SourceId = usize;
@@ -143,9 +143,9 @@ auto is_identifier_continue(u8 value) noexcept -> bool {
 }
 
 inline constexpr auto CPP_IDENTIFIER_RULE_ID =
-    "tenon-cpp20-clang-standard-library-identifiers-v1"_str;
+    "lito-cpp20-clang-standard-library-identifiers-v1"_str;
 
-inline constexpr auto CPP_RESERVED_IDENTIFIERS = R"TENON(_Atomic
+inline constexpr auto CPP_RESERVED_IDENTIFIERS = R"LITO(_Atomic
 __datasizeof
 alignas
 alignof
@@ -238,7 +238,7 @@ wchar_t
 while
 xor
 xor_eq
-)TENON"_str;
+)LITO"_str;
 
 auto is_cpp_reserved_identifier(ref<str> value) -> bool {
     auto begin = usize {};
@@ -259,4 +259,4 @@ auto is_cpp_identifier_token(const Token& token, ref<str>) -> bool {
     return token.kind == TokenKind::Identifier && ! is_cpp_reserved_identifier(token.text.as_str());
 }
 
-} // namespace tenon::frontend::lexical
+} // namespace lito::frontend::lexical

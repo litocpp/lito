@@ -2,12 +2,12 @@
 
 import rstd;
 import rstd.test;
-import tenon;
-import tenon.test.support;
+import lito;
+import lito.test.support;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using namespace tenon_test;
+using namespace lito_test;
 
 namespace
 {
@@ -95,66 +95,66 @@ inline constexpr ref<str> INVALID_BUILD_CASES[] = {
 
 auto locked_graph_is_current(ref<str> relative) -> bool {
     auto directory = root(relative);
-    auto session   = tenon::load_lock_session(directory.as_path(), true);
+    auto session   = lito::load_lock_session(directory.as_path(), true);
     if (session.is_err()) return false;
     auto options = session->take_resolution_options();
-    auto graph   = tenon::resolve_package_graph(directory.as_path(), rstd::move(options));
+    auto graph   = lito::resolve_package_graph(directory.as_path(), rstd::move(options));
     if (graph.is_err()) return false;
-    return tenon::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
+    return lito::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
 }
 
-auto executable(const tenon::BuildSummary& summary) -> Option<ref<rstd::path::Path>> {
+auto executable(const lito::BuildSummary& summary) -> Option<ref<rstd::path::Path>> {
     for (const auto& artifact : summary.artifacts) {
-        if (artifact.kind == tenon::ArtifactKind::Executable) {
+        if (artifact.kind == lito::ArtifactKind::Executable) {
             return Some(artifact.path.as_path());
         }
     }
     return None();
 }
 
-auto has_external_macro(const tenon::CompileContext& context) -> bool {
+auto has_external_macro(const lito::CompileContext& context) -> bool {
     for (const auto& macro : context.cpp.preprocessor.macros) {
-        if (macro.value.as_str() == "TENON_EXTERNAL_USAGE=1"_str) return true;
+        if (macro.value.as_str() == "LITO_EXTERNAL_USAGE=1"_str) return true;
     }
     return false;
 }
 
-auto pkg_config_target() -> tenon::TargetInfo {
-    return tenon::TargetInfo {
+auto pkg_config_target() -> lito::TargetInfo {
+    return lito::TargetInfo {
         .triple = String::make("x86_64-unknown-linux-gnu"_str),
         .arch   = String::make("x86_64"_str),
         .os     = String::make("linux"_str),
-        .family = tenon::TargetFamily::Unix,
+        .family = lito::TargetFamily::Unix,
     };
 }
 
-auto fixture_pkg_config() -> tenon::PkgConfigProviderConfig {
+auto fixture_pkg_config() -> lito::PkgConfigProviderConfig {
     auto library_paths = Vec<rstd::path::PathBuf>::make();
     library_paths.push(root("pkg-config"_str));
-    return tenon::PkgConfigProviderConfig {
+    return lito::PkgConfigProviderConfig {
         .executable    = rstd::path::PathBuf::from("pkg-config"_str),
         .library_paths = rstd::move(library_paths),
     };
 }
 
-auto fixture_cmake() -> tenon::CMakeProviderConfig {
-    return tenon::CMakeProviderConfig {
+auto fixture_cmake() -> lito::CMakeProviderConfig {
+    return lito::CMakeProviderConfig {
         .executable = rstd::path::PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
     };
 }
 
 auto versioned_fixture(ref<str>                        alias,
-                       tenon::PkgConfigVersionOperator comparison,
+                       lito::PkgConfigVersionOperator comparison,
                        ref<str>                        version,
-                       tenon::PkgConfigQueryMode       mode = tenon::PkgConfigQueryMode::Shared)
-    -> tenon::PkgConfigExternalDependency {
-    return tenon::PkgConfigExternalDependency {
+                       lito::PkgConfigQueryMode       mode = lito::PkgConfigQueryMode::Shared)
+    -> lito::PkgConfigExternalDependency {
+    return lito::PkgConfigExternalDependency {
         .alias = String::make(alias),
         .requirement =
-            tenon::PkgConfigDependencyRequirement {
-                .module  = String::make("tenon-fixture"_str),
-                .version = Some(tenon::PkgConfigVersionRequirement {
+            lito::PkgConfigDependencyRequirement {
+                .module  = String::make("lito-fixture"_str),
+                .version = Some(lito::PkgConfigVersionRequirement {
                     .comparison = comparison,
                     .value      = String::make(version),
                 }),
@@ -163,65 +163,65 @@ auto versioned_fixture(ref<str>                        alias,
     };
 }
 
-auto external_usage_metadata(tenon::DependencyVisibility     visibility,
-                             const tenon::CppArgumentParser& parser)
-    -> tenon::Result<tenon::PackageMetadata> {
-    auto raw       = strings("-DTENON_EXTERNAL_USAGE=1"_str);
+auto external_usage_metadata(lito::DependencyVisibility     visibility,
+                             const lito::CppArgumentParser& parser)
+    -> lito::Result<lito::PackageMetadata> {
+    auto raw       = strings("-DLITO_EXTERNAL_USAGE=1"_str);
     auto arguments = parser.parse(raw, "pkg-config test fixture"_str);
     if (arguments.is_err()) {
         return Err(
-            tenon::Error::make(tenon::ErrorKind::Dependency, rstd::move(arguments).unwrap_err()));
+            lito::Error::make(lito::ErrorKind::Dependency, rstd::move(arguments).unwrap_err()));
     }
-    auto external         = Vec<tenon::ResolvedExternalDependency>::make();
-    auto external_targets = Vec<tenon::ResolvedExternalTargetUsage>::make();
-    external_targets.push(tenon::ResolvedExternalTargetUsage {
-        .name              = String::make("tenon-fixture"_str),
+    auto external         = Vec<lito::ResolvedExternalDependency>::make();
+    auto external_targets = Vec<lito::ResolvedExternalTargetUsage>::make();
+    external_targets.push(lito::ResolvedExternalTargetUsage {
+        .name              = String::make("lito-fixture"_str),
         .visibility        = visibility,
         .compile_arguments = rstd::move(arguments).unwrap(),
         .identity          = String::make("fixture-resolution-v1"_str),
     });
-    external.push(tenon::ResolvedExternalDependency {
+    external.push(lito::ResolvedExternalDependency {
         .alias    = String::make("fixture"_str),
         .provider = String::make("pkg-config"_str),
         .version  = String::make("2.3.4"_str),
         .targets  = rstd::move(external_targets),
         .link_arguments =
-            tenon::LinkArgumentSequence {
-                .tokens   = strings("-ltenon_fixture"_str),
+            lito::LinkArgumentSequence {
+                .tokens   = strings("-llito_fixture"_str),
                 .source   = String::make("pkg-config fixture"_str),
                 .identity = String::make("fixture-link-v1"_str),
             },
         .identity = String::make("fixture-resolution-v1"_str),
     });
-    auto dependencies = Vec<tenon::DependencySpec>::make();
-    dependencies.push(tenon::DependencySpec {
+    auto dependencies = Vec<lito::DependencySpec>::make();
+    dependencies.push(lito::DependencySpec {
         .target     = String::make("library"_str),
-        .visibility = tenon::DependencyVisibility::Private,
+        .visibility = lito::DependencyVisibility::Private,
     });
-    auto targets = Vec<tenon::TargetMetadata>::make();
-    targets.push(tenon::TargetMetadata {
+    auto targets = Vec<lito::TargetMetadata>::make();
+    targets.push(lito::TargetMetadata {
         .manifest =
-            tenon::PackageManifest {
+            lito::PackageManifest {
                 .name          = String::make("library"_str),
-                .artifact_kind = tenon::ArtifactKind::StaticLibrary,
+                .artifact_kind = lito::ArtifactKind::StaticLibrary,
                 .artifact_name = String::make("library"_str),
             },
         .external_dependencies = rstd::move(external),
     });
-    targets.push(tenon::TargetMetadata {
+    targets.push(lito::TargetMetadata {
         .manifest =
-            tenon::PackageManifest {
+            lito::PackageManifest {
                 .name          = String::make("app"_str),
-                .artifact_kind = tenon::ArtifactKind::Executable,
+                .artifact_kind = lito::ArtifactKind::Executable,
                 .artifact_name = String::make("app"_str),
             },
         .dependencies = rstd::move(dependencies),
     });
-    auto profile = tenon::make_profile_spec(configuration(), parser);
+    auto profile = lito::make_profile_spec(configuration(), parser);
     if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
-    auto profiles = Vec<tenon::ProfileSpec>::make();
+    auto profiles = Vec<lito::ProfileSpec>::make();
     profiles.push(rstd::move(profile).unwrap());
-    return Ok(tenon::PackageMetadata {
+    return Ok(lito::PackageMetadata {
         .name            = String::make("external-usage"_str),
         .default_profile = String::make("debug"_str),
         .default_targets = strings("app"_str),
@@ -234,19 +234,29 @@ auto external_usage_metadata(tenon::DependencyVisibility     visibility,
 
 TEST(Contracts, InvalidManifestDocumentsAreRejectedByManifestOwner) {
     for (const auto path : INVALID_MANIFESTS) {
-        auto loaded = tenon::load_manifest_document(root(path).as_path());
+        auto loaded = lito::load_manifest_document(root(path).as_path());
         if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
+TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
+    auto legacy = lito::load_package_manifest(root("manifest/name/legacy"_str).as_path());
+    ASSERT_TRUE(legacy.is_ok());
+    EXPECT_EQ(legacy->name.as_str(), "legacy-manifest"_str);
+
+    auto preferred = lito::load_package_manifest(root("manifest/name/preferred"_str).as_path());
+    ASSERT_TRUE(preferred.is_ok());
+    EXPECT_EQ(preferred->name.as_str(), "preferred-manifest"_str);
+}
+
 TEST(Contracts, RemovedConfigFieldsAreRejectedByConfigOwner) {
-    auto loaded = tenon::load_project_config(root("config/removed-scanner"_str).as_path());
+    auto loaded = lito::load_project_config(root("config/removed-scanner"_str).as_path());
     EXPECT_TRUE(loaded.is_err());
 }
 
 TEST(Contracts, PkgConfigProviderConfigurationBelongsToProjectConfig) {
-    auto loaded = tenon::load_project_config(root("config/pkg-config"_str).as_path());
+    auto loaded = lito::load_project_config(root("config/pkg-config"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->pkg_config.target_configured);
     EXPECT_EQ(loaded->pkg_config.executable.as_path().to_str().unwrap(), "pkg-config"_str);
@@ -255,20 +265,20 @@ TEST(Contracts, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     EXPECT_TRUE(loaded->pkg_config.sysroot.is_some());
 
     auto search_only =
-        tenon::load_project_config(root("config/pkg-config-search-only"_str).as_path());
+        lito::load_project_config(root("config/pkg-config-search-only"_str).as_path());
     ASSERT_TRUE(search_only.is_ok());
     EXPECT_FALSE(search_only->pkg_config.target_configured);
 }
 
 TEST(Contracts, CMakeProviderConfigurationBelongsToProjectConfig) {
-    auto loaded = tenon::load_project_config(root("config/cmake"_str).as_path());
+    auto loaded = lito::load_project_config(root("config/cmake"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->cmake.executable.as_path().to_str().unwrap(), "custom-cmake"_str);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
 }
 
 TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
-    auto loaded = tenon::load_package_manifest(root("manifest/pkg-config/valid"_str).as_path());
+    auto loaded = lito::load_package_manifest(root("manifest/pkg-config/valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->dependencies.is_empty());
     ASSERT_EQ(loaded->pkg_config_external_dependencies.len(), usize(2));
@@ -277,11 +287,11 @@ TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
     const auto& requirement = curl.requirement;
     EXPECT_EQ(requirement.module.as_str(), "libcurl"_str);
     ASSERT_TRUE(requirement.version.is_some());
-    EXPECT_EQ(requirement.version->comparison, tenon::PkgConfigVersionOperator::GreaterEqual);
+    EXPECT_EQ(requirement.version->comparison, lito::PkgConfigVersionOperator::GreaterEqual);
     EXPECT_EQ(requirement.version->value.as_str(), "7.86.0"_str);
-    EXPECT_EQ(requirement.mode, tenon::PkgConfigQueryMode::Shared);
+    EXPECT_EQ(requirement.mode, lito::PkgConfigQueryMode::Shared);
 
-    auto graph = tenon::resolve_package_graph(root("manifest/pkg-config/valid"_str).as_path());
+    auto graph = lito::resolve_package_graph(root("manifest/pkg-config/valid"_str).as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     EXPECT_TRUE(graph->packages[usize {}].dependencies.is_empty());
@@ -290,13 +300,13 @@ TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
 
 TEST(Contracts, PkgConfigInvalidManifestDocumentsAreRejectedByManifestOwner) {
     for (const auto path : INVALID_PKG_CONFIG_MANIFESTS) {
-        auto loaded = tenon::load_manifest_document(root(path).as_path());
+        auto loaded = lito::load_manifest_document(root(path).as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
 TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
-    auto loaded = tenon::load_package_manifest(root("manifest/cmake/valid"_str).as_path());
+    auto loaded = lito::load_package_manifest(root("manifest/cmake/valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->dependencies.is_empty());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(2));
@@ -312,24 +322,24 @@ TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
     EXPECT_TRUE(installed_requirement.source.is_Installed());
 
     const auto& source_requirement = loaded->cmake_external_dependencies[source_index];
-    EXPECT_EQ(source_requirement.package.as_str(), "TenonFixture"_str);
+    EXPECT_EQ(source_requirement.package.as_str(), "LitoFixture"_str);
     ASSERT_EQ(source_requirement.targets.len(), usize(3));
-    EXPECT_EQ(source_requirement.targets[usize {}].name.as_str(), "TenonFixture::fixture"_str);
-    EXPECT_EQ(source_requirement.targets[usize(1)].name.as_str(), "TenonFixture::headers"_str);
-    EXPECT_EQ(source_requirement.targets[usize(2)].name.as_str(), "TenonFixture::order"_str);
+    EXPECT_EQ(source_requirement.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
+    EXPECT_EQ(source_requirement.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
+    EXPECT_EQ(source_requirement.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
     EXPECT_TRUE(source_requirement.source.is_Path());
     ASSERT_EQ(source_requirement.cache.len(), usize(1));
-    EXPECT_EQ(source_requirement.cache[usize {}].name.as_str(), "TENON_FIXTURE_OPTION"_str);
+    EXPECT_EQ(source_requirement.cache[usize {}].name.as_str(), "LITO_FIXTURE_OPTION"_str);
     EXPECT_EQ(source_requirement.cache[usize {}].value.as_str(), "ON"_str);
     ASSERT_TRUE(source_requirement.config_directory.is_some());
     EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
-              "lib/cmake/TenonFixture"_str);
+              "lib/cmake/LitoFixture"_str);
 
-    auto graph = tenon::resolve_package_graph(root("manifest/cmake/valid"_str).as_path());
+    auto graph = lito::resolve_package_graph(root("manifest/cmake/valid"_str).as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     EXPECT_TRUE(graph->packages[usize {}].cmake_external_dependencies.is_empty());
-    auto external = tenon::resolve_external_dependency_sources(*graph, {});
+    auto external = lito::resolve_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
     ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(2));
     const auto resolved_index =
@@ -344,14 +354,14 @@ TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
 
 TEST(Contracts, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
     for (const auto path : INVALID_CMAKE_MANIFESTS) {
-        auto loaded = tenon::load_manifest_document(root(path).as_path());
+        auto loaded = lito::load_manifest_document(root(path).as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
 TEST(Contracts, CMakeManifestAcceptsUnnamespacedTargets) {
     auto loaded =
-        tenon::load_package_manifest(root("manifest/cmake/unnamespaced-target"_str).as_path());
+        lito::load_package_manifest(root("manifest/cmake/unnamespaced-target"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& requirement = loaded->cmake_external_dependencies[usize {}];
@@ -361,7 +371,7 @@ TEST(Contracts, CMakeManifestAcceptsUnnamespacedTargets) {
 }
 
 TEST(Contracts, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingThem) {
-    auto parsed = tenon::tokenize_pkg_config_fragments(
+    auto parsed = lito::tokenize_pkg_config_fragments(
         "-I'/path with spaces' -DVALUE=\\\"quoted\\\" '' '$()' ';'"_str);
     ASSERT_TRUE(parsed.is_ok());
     ASSERT_EQ(parsed->len(), usize(5));
@@ -371,26 +381,26 @@ TEST(Contracts, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingThem
     EXPECT_EQ((*parsed)[usize(3)].as_str(), "$()"_str);
     EXPECT_EQ((*parsed)[usize(4)].as_str(), ";"_str);
 
-    EXPECT_TRUE(tenon::tokenize_pkg_config_fragments("'unterminated"_str).is_err());
-    EXPECT_TRUE(tenon::tokenize_pkg_config_fragments("dangling\\"_str).is_err());
+    EXPECT_TRUE(lito::tokenize_pkg_config_fragments("'unterminated"_str).is_err());
+    EXPECT_TRUE(lito::tokenize_pkg_config_fragments("dangling\\"_str).is_err());
 
-    auto double_quoted = tenon::tokenize_pkg_config_fragments("\"double\\literal\""_str);
+    auto double_quoted = lito::tokenize_pkg_config_fragments("\"double\\literal\""_str);
     ASSERT_TRUE(double_quoted.is_ok());
     ASSERT_EQ(double_quoted->len(), usize(1));
     EXPECT_EQ((*double_quoted)[usize {}].as_str(), "double\\literal"_str);
 }
 
 TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture("fixture"_str,
-                                        tenon::PkgConfigVersionOperator::GreaterEqual,
+                                        lito::PkgConfigVersionOperator::GreaterEqual,
                                         "2.0.0"_str,
-                                        tenon::PkgConfigQueryMode::Static));
-    auto resolved = tenon::resolve_external_dependencies(declarations,
+                                        lito::PkgConfigQueryMode::Static));
+    auto resolved = lito::resolve_external_dependencies(declarations,
                                                          config,
                                                          fixture_cmake(),
                                                          configuration(),
@@ -407,8 +417,8 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
          (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
         if (! occurrence.argument.is_IncludeDirectory()) continue;
         const auto& include = occurrence.argument.as_IncludeDirectory().directory;
-        user_include        = user_include || include.kind == tenon::CppIncludeDirectoryKind::User;
-        system_include = system_include || include.kind == tenon::CppIncludeDirectoryKind::System;
+        user_include        = user_include || include.kind == lito::CppIncludeDirectoryKind::User;
+        system_include = system_include || include.kind == lito::CppIncludeDirectoryKind::System;
     }
     EXPECT_TRUE(user_include);
     EXPECT_TRUE(system_include);
@@ -417,13 +427,13 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
     auto has_private  = false;
     for (const auto& token : (*resolved)[usize {}].link_arguments.tokens) {
         if (token.as_str() == "-lrepeat"_str) ++repeat_count;
-        if (token.as_str() == "-ltenon_private"_str) has_private = true;
+        if (token.as_str() == "-llito_private"_str) has_private = true;
     }
     EXPECT_EQ(repeat_count, usize(2));
     EXPECT_TRUE(has_private);
 
-    declarations[usize {}].requirement.mode = tenon::PkgConfigQueryMode::Shared;
-    auto shared = tenon::resolve_external_dependencies(declarations,
+    declarations[usize {}].requirement.mode = lito::PkgConfigQueryMode::Shared;
+    auto shared = lito::resolve_external_dependencies(declarations,
                                                        config,
                                                        fixture_cmake(),
                                                        configuration(),
@@ -432,12 +442,12 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                                        *parser);
     ASSERT_TRUE(shared.is_ok());
     for (const auto& token : (*shared)[usize {}].link_arguments.tokens) {
-        EXPECT_NE(token.as_str(), "-ltenon_private"_str);
+        EXPECT_NE(token.as_str(), "-llito_private"_str);
     }
 }
 
 TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto count_directory = output_root("cmake-provider-count"_str);
     ASSERT_TRUE(clear_output(count_directory.as_path()));
@@ -445,36 +455,36 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto count_path =
         count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::ResolvedCMakeDependencyRequirement>::make();
-    auto targets      = Vec<tenon::CMakeTargetRequirement>::make();
-    targets.push(tenon::CMakeTargetRequirement {
-        .name       = String::make("TenonFixture::fixture"_str),
-        .visibility = tenon::DependencyVisibility::Private,
+    auto declarations = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
+    auto targets      = Vec<lito::CMakeTargetRequirement>::make();
+    targets.push(lito::CMakeTargetRequirement {
+        .name       = String::make("LitoFixture::fixture"_str),
+        .visibility = lito::DependencyVisibility::Private,
     });
-    targets.push(tenon::CMakeTargetRequirement {
-        .name       = String::make("TenonFixture::headers"_str),
-        .visibility = tenon::DependencyVisibility::Public,
+    targets.push(lito::CMakeTargetRequirement {
+        .name       = String::make("LitoFixture::headers"_str),
+        .visibility = lito::DependencyVisibility::Public,
     });
-    targets.push(tenon::CMakeTargetRequirement {
-        .name       = String::make("TenonFixture::order"_str),
-        .visibility = tenon::DependencyVisibility::Runtime,
+    targets.push(lito::CMakeTargetRequirement {
+        .name       = String::make("LitoFixture::order"_str),
+        .visibility = lito::DependencyVisibility::Runtime,
     });
-    auto cache = Vec<tenon::CMakeCacheEntry>::make();
-    cache.push(tenon::CMakeCacheEntry {
-        .name  = String::make("TENON_FIXTURE_CONFIGURE_COUNT"_str),
+    auto cache = Vec<lito::CMakeCacheEntry>::make();
+    cache.push(lito::CMakeCacheEntry {
+        .name  = String::make("LITO_FIXTURE_CONFIGURE_COUNT"_str),
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
-    declarations.push(tenon::ResolvedCMakeDependencyRequirement {
+    declarations.push(lito::ResolvedCMakeDependencyRequirement {
         .alias            = String::make("fixture"_str),
-        .package          = String::make("TenonFixture"_str),
-        .source_identity  = Some(String::make("tenon-test-cmake-fixture-v3"_str)),
+        .package          = String::make("LitoFixture"_str),
+        .source_identity  = Some(String::make("lito-test-cmake-fixture-v3"_str)),
         .source_root      = Some(root("cmake/package"_str)),
-        .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/TenonFixture"_str)),
+        .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
     });
     auto resolved =
-        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
                                              declarations,
                                              fixture_pkg_config(),
                                              fixture_cmake(),
@@ -493,14 +503,14 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(dependency.provider.as_str(), "cmake"_str);
     EXPECT_EQ(dependency.version.as_str(), "1.2.3"_str);
     ASSERT_EQ(dependency.targets.len(), usize(3));
-    EXPECT_EQ(dependency.targets[usize {}].name.as_str(), "TenonFixture::fixture"_str);
+    EXPECT_EQ(dependency.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
 
     auto has_macro   = false;
     auto has_include = false;
     for (const auto& occurrence : dependency.targets[usize {}].compile_arguments.occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
-                                         "TENON_CMAKE_USAGE=1"_str;
+                                         "LITO_CMAKE_USAGE=1"_str;
         }
         if (occurrence.argument.is_IncludeDirectory()) has_include = true;
     }
@@ -509,21 +519,21 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 
     auto has_archive = false;
     for (const auto& token : dependency.link_arguments.tokens) {
-        if (token.as_str().contains("libtenon_fixture.a"_str)) has_archive = true;
+        if (token.as_str().contains("liblito_fixture.a"_str)) has_archive = true;
     }
     EXPECT_TRUE(has_archive);
-    EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "TenonFixture::headers"_str);
-    EXPECT_EQ(dependency.targets[usize(1)].visibility, tenon::DependencyVisibility::Public);
-    EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "TenonFixture::order"_str);
-    EXPECT_EQ(dependency.targets[usize(2)].visibility, tenon::DependencyVisibility::Runtime);
+    EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
+    EXPECT_EQ(dependency.targets[usize(1)].visibility, lito::DependencyVisibility::Public);
+    EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
+    EXPECT_EQ(dependency.targets[usize(2)].visibility, lito::DependencyVisibility::Runtime);
 
     auto first_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(first_count.is_ok());
     EXPECT_EQ(first_count->as_str(), "configure\n"_str);
-    declarations[usize {}].targets[usize {}].name = String::make("TenonFixture::headers"_str);
-    declarations[usize {}].targets[usize(1)].name = String::make("TenonFixture::fixture"_str);
+    declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
+    declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
     auto queried_again =
-        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
                                              declarations,
                                              fixture_pkg_config(),
                                              fixture_cmake(),
@@ -536,12 +546,12 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(second_count.is_ok());
     EXPECT_EQ(second_count->as_str(), "configure\n"_str);
 
-    declarations[usize {}].cache.push(tenon::CMakeCacheEntry {
-        .name  = String::make("TENON_FIXTURE_VARIANT"_str),
+    declarations[usize {}].cache.push(lito::CMakeCacheEntry {
+        .name  = String::make("LITO_FIXTURE_VARIANT"_str),
         .value = String::make("ON"_str),
     });
     auto installed_again =
-        tenon::resolve_external_dependencies(Vec<tenon::PkgConfigExternalDependency>::make(),
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
                                              declarations,
                                              fixture_pkg_config(),
                                              fixture_cmake(),
@@ -557,22 +567,22 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 }
 
 TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyContext) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
     declarations.push(
-        versioned_fixture("equal"_str, tenon::PkgConfigVersionOperator::Equal, "2.3.4"_str));
+        versioned_fixture("equal"_str, lito::PkgConfigVersionOperator::Equal, "2.3.4"_str));
     declarations.push(
-        versioned_fixture("less"_str, tenon::PkgConfigVersionOperator::Less, "3.0.0"_str));
+        versioned_fixture("less"_str, lito::PkgConfigVersionOperator::Less, "3.0.0"_str));
     declarations.push(
-        versioned_fixture("greater"_str, tenon::PkgConfigVersionOperator::Greater, "2.0.0"_str));
+        versioned_fixture("greater"_str, lito::PkgConfigVersionOperator::Greater, "2.0.0"_str));
     declarations.push(versioned_fixture(
-        "less-equal"_str, tenon::PkgConfigVersionOperator::LessEqual, "2.3.4"_str));
+        "less-equal"_str, lito::PkgConfigVersionOperator::LessEqual, "2.3.4"_str));
     declarations.push(versioned_fixture(
-        "greater-equal"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "2.3.4"_str));
-    auto resolved = tenon::resolve_external_dependencies(declarations,
+        "greater-equal"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.3.4"_str));
+    auto resolved = lito::resolve_external_dependencies(declarations,
                                                          config,
                                                          fixture_cmake(),
                                                          configuration(),
@@ -582,10 +592,10 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
 
-    auto incompatible = Vec<tenon::PkgConfigExternalDependency>::make();
+    auto incompatible = Vec<lito::PkgConfigExternalDependency>::make();
     incompatible.push(versioned_fixture(
-        "incompatible"_str, tenon::PkgConfigVersionOperator::Greater, "99.0.0"_str));
-    auto failed = tenon::resolve_external_dependencies(incompatible,
+        "incompatible"_str, lito::PkgConfigVersionOperator::Greater, "99.0.0"_str));
+    auto failed = lito::resolve_external_dependencies(incompatible,
                                                        config,
                                                        fixture_cmake(),
                                                        configuration(),
@@ -595,19 +605,19 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
     EXPECT_TRUE(error.message.as_str().contains("incompatible"_str));
-    EXPECT_TRUE(error.message.as_str().contains("tenon-fixture"_str));
+    EXPECT_TRUE(error.message.as_str().contains("lito-fixture"_str));
 }
 
 TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
-        "fixture"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
+        "fixture"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
 
-    auto implicit_cross = tenon::resolve_external_dependencies(declarations,
+    auto implicit_cross = lito::resolve_external_dependencies(declarations,
                                                                config,
                                                                fixture_cmake(),
                                                                configuration(),
@@ -617,7 +627,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     EXPECT_TRUE(implicit_cross.is_err());
 
     config.target_configured = true;
-    auto explicit_cross      = tenon::resolve_external_dependencies(declarations,
+    auto explicit_cross      = lito::resolve_external_dependencies(declarations,
                                                                     config,
                                                                     fixture_cmake(),
                                                                     configuration(),
@@ -626,8 +636,8 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                     *parser);
     EXPECT_TRUE(explicit_cross.is_ok());
 
-    config.executable     = rstd::path::PathBuf::from("tenon-missing-pkg-config-provider"_str);
-    auto missing_provider = tenon::resolve_external_dependencies(declarations,
+    config.executable     = rstd::path::PathBuf::from("lito-missing-pkg-config-provider"_str);
+    auto missing_provider = lito::resolve_external_dependencies(declarations,
                                                                  config,
                                                                  fixture_cmake(),
                                                                  configuration(),
@@ -637,12 +647,12 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     ASSERT_TRUE(missing_provider.is_err());
     auto provider_error = rstd::move(missing_provider).unwrap_err();
     EXPECT_TRUE(provider_error.message.as_str().contains("fixture"_str));
-    EXPECT_TRUE(provider_error.message.as_str().contains("tenon-fixture"_str));
+    EXPECT_TRUE(provider_error.message.as_str().contains("lito-fixture"_str));
 
     config                                    = fixture_pkg_config();
     declarations[usize {}].alias              = String::make("missing-module"_str);
-    declarations[usize {}].requirement.module = String::make("tenon-module-does-not-exist"_str);
-    auto missing_module = tenon::resolve_external_dependencies(declarations,
+    declarations[usize {}].requirement.module = String::make("lito-module-does-not-exist"_str);
+    auto missing_module = lito::resolve_external_dependencies(declarations,
                                                                config,
                                                                fixture_cmake(),
                                                                configuration(),
@@ -652,27 +662,27 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
     EXPECT_TRUE(module_error.message.as_str().contains("missing-module"_str));
-    EXPECT_TRUE(module_error.message.as_str().contains("tenon-module-does-not-exist"_str));
+    EXPECT_TRUE(module_error.message.as_str().contains("lito-module-does-not-exist"_str));
 }
 
 TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto directory = output_root("pkg-config-counting-provider"_str);
     ASSERT_TRUE(clear_output(directory.as_path()));
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
-    auto config = tenon::PkgConfigProviderConfig {
+    auto config = lito::PkgConfigProviderConfig {
         .executable        = root("pkg-config/counting-provider"_str),
         .sysroot           = Some(directory.clone()),
         .target_configured = true,
     };
     auto target       = pkg_config_target();
-    auto declarations = Vec<tenon::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
     declarations.push(
-        versioned_fixture("first"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
+        versioned_fixture("first"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
     declarations.push(versioned_fixture(
-        "second"_str, tenon::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
-    auto resolved = tenon::resolve_external_dependencies(declarations,
+        "second"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
+    auto resolved = lito::resolve_external_dependencies(declarations,
                                                          config,
                                                          fixture_cmake(),
                                                          configuration(),
@@ -689,13 +699,13 @@ TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
 }
 
 TEST(Contracts, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosure) {
-    auto parser = tenon::make_clang_cpp_argument_parser();
+    auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
 
-    auto private_metadata = external_usage_metadata(tenon::DependencyVisibility::Private, *parser);
+    auto private_metadata = external_usage_metadata(lito::DependencyVisibility::Private, *parser);
     ASSERT_TRUE(private_metadata.is_ok());
     auto private_plan =
-        tenon::resolve_source_discovery(*private_metadata, "debug"_str, Vec<String>::make());
+        lito::resolve_source_discovery(*private_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(private_plan.is_ok());
     EXPECT_TRUE(has_external_macro(private_plan->contexts[usize {}]));
     EXPECT_FALSE(has_external_macro(private_plan->contexts[usize(1)]));
@@ -703,18 +713,18 @@ TEST(Contracts, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosure) {
     EXPECT_TRUE(private_plan->link_inputs[usize(1)][usize {}].is_Target());
     EXPECT_TRUE(private_plan->link_inputs[usize(1)][usize(1)].is_External());
 
-    auto public_metadata = external_usage_metadata(tenon::DependencyVisibility::Public, *parser);
+    auto public_metadata = external_usage_metadata(lito::DependencyVisibility::Public, *parser);
     ASSERT_TRUE(public_metadata.is_ok());
     auto public_plan =
-        tenon::resolve_source_discovery(*public_metadata, "debug"_str, Vec<String>::make());
+        lito::resolve_source_discovery(*public_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(public_plan.is_ok());
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize {}]));
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize(1)]));
 
-    auto runtime_metadata = external_usage_metadata(tenon::DependencyVisibility::Runtime, *parser);
+    auto runtime_metadata = external_usage_metadata(lito::DependencyVisibility::Runtime, *parser);
     ASSERT_TRUE(runtime_metadata.is_ok());
     auto runtime_plan =
-        tenon::resolve_source_discovery(*runtime_metadata, "debug"_str, Vec<String>::make());
+        lito::resolve_source_discovery(*runtime_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(runtime_plan.is_ok());
     EXPECT_FALSE(has_external_macro(runtime_plan->contexts[usize {}]));
     EXPECT_FALSE(has_external_macro(runtime_plan->contexts[usize(1)]));
@@ -724,41 +734,41 @@ TEST(Contracts, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosure) {
 
 TEST(Contracts, InvalidDependencyGraphsAreRejectedByResolverOwner) {
     for (const auto path : INVALID_GRAPHS) {
-        auto resolved = tenon::resolve_package_graph(root(path).as_path());
+        auto resolved = lito::resolve_package_graph(root(path).as_path());
         if (resolved.is_ok()) rstd::io::eprintln("unexpected valid graph: {}", path);
         EXPECT_TRUE(resolved.is_err());
     }
 }
 
 TEST(Contracts, ProjectNameComesFromRootManifest) {
-    auto workspace = tenon::resolve_package_graph(root("../demo/workspace"_str).as_path());
+    auto workspace = lito::resolve_package_graph(root("../demo/workspace"_str).as_path());
     ASSERT_TRUE(workspace.is_ok());
     EXPECT_TRUE(workspace->root_is_workspace);
     EXPECT_EQ(workspace->name.as_str(), "demo-workspace"_str);
 
     auto workspace_member =
-        tenon::resolve_package_graph(root("../demo/workspace/app-one"_str).as_path());
+        lito::resolve_package_graph(root("../demo/workspace/app-one"_str).as_path());
     ASSERT_TRUE(workspace_member.is_ok());
     EXPECT_TRUE(workspace_member->root_is_workspace);
     EXPECT_EQ(workspace_member->name.as_str(), "demo-workspace"_str);
 
     auto package =
-        tenon::resolve_package_graph(root("../demo/module-convention/demo-app"_str).as_path());
+        lito::resolve_package_graph(root("../demo/module-convention/demo-app"_str).as_path());
     ASSERT_TRUE(package.is_ok());
     EXPECT_FALSE(package->root_is_workspace);
     EXPECT_EQ(package->name.as_str(), "demo-app"_str);
 }
 
 TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
-    auto missing = tenon::load_manifest_document(root("workspace/name-missing"_str).as_path());
+    auto missing = lito::load_manifest_document(root("workspace/name-missing"_str).as_path());
     ASSERT_TRUE(missing.is_err());
     EXPECT_TRUE(missing.unwrap_err().message.as_str().contains("missing 'name'"_str));
 
-    auto invalid = tenon::load_manifest_document(root("workspace/name-invalid"_str).as_path());
+    auto invalid = lito::load_manifest_document(root("workspace/name-invalid"_str).as_path());
     ASSERT_TRUE(invalid.is_err());
     EXPECT_TRUE(invalid.unwrap_err().message.as_str().contains("workspace.name"_str));
 
-    auto valid = tenon::load_manifest_document(root("../demo/workspace"_str).as_path());
+    auto valid = lito::load_manifest_document(root("../demo/workspace"_str).as_path());
     ASSERT_TRUE(valid.is_ok());
     ASSERT_TRUE(valid->workspace.is_some());
     EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
@@ -766,9 +776,9 @@ TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
 
 TEST(Contracts, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
     for (const auto path : INVALID_EXPLICIT_SOURCES) {
-        auto loaded = tenon::load_package_manifest(root(path).as_path());
+        auto loaded = lito::load_package_manifest(root(path).as_path());
         ASSERT_TRUE(loaded.is_ok());
-        auto discovered = tenon::discover_explicit_sources(*loaded);
+        auto discovered = lito::discover_explicit_sources(*loaded);
         if (discovered.is_ok()) rstd::io::eprintln("unexpected valid sources: {}", path);
         EXPECT_TRUE(discovered.is_err());
     }
@@ -777,7 +787,7 @@ TEST(Contracts, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
 TEST(Contracts, TestAttachmentRequiresADirectLibraryDependency) {
     auto directory = root("manifest/test-attach-not-direct"_str);
     auto output    = output_root("test-attach-not-direct"_str);
-    auto tested    = tenon::test(tenon::TestRequest {
+    auto tested    = lito::test(lito::TestRequest {
         .build  = build_request(directory.as_path(), output.as_path(), Vec<String>::make()),
         .no_run = true,
     });
@@ -793,7 +803,7 @@ TEST(Contracts, LockValidationAndMigrationAreOwnedByLockStore) {
         if (current) rstd::io::eprintln("unexpected current lock: {}", path);
         EXPECT_FALSE(current);
     }
-    EXPECT_TRUE(tenon::load_lock_session(root("lock/v3"_str).as_path(), false).is_ok());
+    EXPECT_TRUE(lito::load_lock_session(root("lock/v3"_str).as_path(), false).is_ok());
 }
 
 TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {
@@ -802,14 +812,14 @@ TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {
     for (const auto path : VALID_BUILD_CASES) {
         auto directory = root(path);
         auto built =
-            tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+            lito::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
         if (built.is_err()) rstd::io::eprintln("unexpected build failure: {}", path);
         EXPECT_TRUE(built.is_ok());
     }
     for (const auto path : INVALID_BUILD_CASES) {
         auto directory = root(path);
         auto built =
-            tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+            lito::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
         if (built.is_ok()) rstd::io::eprintln("unexpected build success: {}", path);
         EXPECT_TRUE(built.is_err());
     }
@@ -822,7 +832,7 @@ TEST(Contracts, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     ASSERT_TRUE(clear_output(output.as_path()));
 
     auto debug =
-        tenon::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+        lito::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
     ASSERT_TRUE(debug.is_ok());
     auto debug_executable = executable(*debug);
     ASSERT_TRUE(debug_executable.is_some());
@@ -833,8 +843,8 @@ TEST(Contracts, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     ASSERT_TRUE(debug_status->code().is_some());
     EXPECT_EQ(*debug_status->code(), i32(1));
 
-    auto release = tenon::build(build_request(
-        directory.as_path(), output.as_path(), Vec<String>::make(), tenon::BuildProfile::Release));
+    auto release = lito::build(build_request(
+        directory.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release));
     ASSERT_TRUE(release.is_ok());
     auto release_executable = executable(*release);
     ASSERT_TRUE(release_executable.is_some());

@@ -1,21 +1,21 @@
-export module tenon.documentation;
+export module lito.documentation;
 
 import rstd;
-import tenon.doc;
-import tenon.model;
-import tenon.project;
-import tenon.package;
-import tenon.source_discovery;
-import tenon.toolchain;
-import tenon.frontend;
-import tenon.frontend_analysis;
-import tenon.frontend_observer;
-import tenon.profiling;
+import lito.doc;
+import lito.model;
+import lito.project;
+import lito.package;
+import lito.source_discovery;
+import lito.toolchain;
+import lito.frontend;
+import lito.frontend_analysis;
+import lito.frontend_observer;
+import lito.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -66,7 +66,7 @@ auto selected_doc_target(const Vec<String>& names, ref<str> name) -> bool {
 }
 
 auto copy_doc_summary(String                       profile,
-                      tenon::doc::Summary          rendered,
+                      lito::doc::Summary          rendered,
                       frontend::FrontendStatistics frontend_statistics,
                       ToolchainStatistics          toolchain_statistics) -> DocSummary {
     auto summary = DocSummary {
@@ -108,9 +108,9 @@ auto copy_doc_summary(String                       profile,
     return summary;
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
@@ -154,7 +154,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
         frontend_path =
             Some(resolved_doc_path(metadata.root.as_path(), request.frontend->as_path()));
     }
-    auto site = tenon::doc::SiteInput {
+    auto site = lito::doc::SiteInput {
         .title = metadata.name.clone(),
         .output =
             default_doc_root(metadata.root.as_path(), profile.as_str(), request.output.as_path()),
@@ -178,7 +178,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
                                                         source_set.package_name.as_str()));
         const auto& manifest = metadata.targets[*target].manifest;
         if (manifest.artifact_kind != ArtifactKind::StaticLibrary) continue;
-        auto package = tenon::doc::PackageInput {
+        auto package = lito::doc::PackageInput {
             .name = manifest.name.clone(),
             .version =
                 manifest.version.value.is_some() ? manifest.version.value->clone() : String::make(),
@@ -201,7 +201,7 @@ auto generate_documentation(const DocRequest& request) -> Result<DocSummary> {
     }
     if (site.packages.is_empty())
         return doc_failure<DocSummary>("doc selection has no library package"_str);
-    auto generated = tenon::doc::generate(rstd::move(site));
+    auto generated = lito::doc::generate(rstd::move(site));
     if (generated.is_err()) return doc_failure<DocSummary>(rstd::move(generated).unwrap_err());
     return Ok(copy_doc_summary(rstd::move(profile),
                                rstd::move(generated).unwrap(),
@@ -224,7 +224,7 @@ auto render_documentation(const DocRenderRequest& request) -> Result<DocSummary>
         frontend_path = Some(
             resolved_doc_path(request.working_directory.as_path(), request.frontend->as_path()));
     }
-    auto rendered = tenon::doc::render(tenon::doc::RenderInput {
+    auto rendered = lito::doc::render(lito::doc::RenderInput {
         .data     = rstd::move(data),
         .output   = rstd::move(output),
         .frontend = rstd::move(frontend_path),
@@ -234,4 +234,4 @@ auto render_documentation(const DocRenderRequest& request) -> Result<DocSummary>
         copy_doc_summary(String::make("from-data"_str), rstd::move(rendered).unwrap(), {}, {}));
 }
 
-} // namespace tenon
+} // namespace lito

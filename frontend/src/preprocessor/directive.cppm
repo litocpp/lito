@@ -1,3 +1,3 @@
-export module tenon.frontend.preprocessor:directive;
+export module lito.frontend.preprocessor:directive;
 
 export import :session;

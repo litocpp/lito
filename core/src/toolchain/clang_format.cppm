@@ -1,14 +1,14 @@
-export module tenon.toolchain:clang_format;
+export module lito.toolchain:clang_format;
 
 import rstd;
-import tenon.model;
+import lito.model;
 import :clang_format_options;
 import :command;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon::toolchain
+namespace lito::toolchain
 {
 
 template<typename T>
@@ -16,9 +16,9 @@ auto clang_format_failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Toolchain, message));
 }
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain
 
-export namespace tenon::toolchain
+export namespace lito::toolchain
 {
 
 class ClangFormat {
@@ -68,4 +68,4 @@ private:
     String  version_;
 };
 
-} // namespace tenon::toolchain
+} // namespace lito::toolchain

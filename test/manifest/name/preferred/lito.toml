@@ -1,0 +1,8 @@
+[package]
+name = "preferred-manifest"
+version = "0.1.0"
+module = "fixture.manifest.preferred"
+
+[library]
+archive = "fixture.manifest.preferred"
+discovery = "module"

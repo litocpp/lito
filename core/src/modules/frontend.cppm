@@ -1,12 +1,12 @@
-export module tenon.modules:frontend;
+export module lito.modules:frontend;
 
 import rstd;
-import tenon.model;
-import tenon.frontend.result;
+import lito.model;
+import lito.frontend.result;
 
 using namespace rstd::prelude;
 
-namespace tenon::modules
+namespace lito::modules
 {
 
 auto contains_name(const Vec<String>& values, ref<str> name) -> bool {
@@ -16,9 +16,9 @@ auto contains_name(const Vec<String>& values, ref<str> name) -> bool {
     return false;
 }
 
-} // namespace tenon::modules
+} // namespace lito::modules
 
-export namespace tenon::modules
+export namespace lito::modules
 {
 
 auto scan_from_frontend(const frontend::FrontendResult& facts, UnitId unit) -> ScanResult {
@@ -45,4 +45,4 @@ auto scan_from_frontend(const frontend::FrontendResult& facts, UnitId unit) -> S
     return result;
 }
 
-} // namespace tenon::modules
+} // namespace lito::modules

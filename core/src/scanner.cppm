@@ -1,15 +1,15 @@
-export module tenon.scanner;
+export module lito.scanner;
 
 import rstd;
 import rstd.json;
-import tenon.model;
-import tenon.project;
-import tenon.package;
-import tenon.source_discovery;
-import tenon.toolchain;
-import tenon.frontend;
-import tenon.profiling;
-import tenon.frontend_observer;
+import lito.model;
+import lito.project;
+import lito.package;
+import lito.source_discovery;
+import lito.toolchain;
+import lito.frontend;
+import lito.profiling;
+import lito.frontend_observer;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -17,7 +17,7 @@ using Json      = rstd::json::Value;
 using JsonMap   = rstd::json::Map;
 using JsonArray = rstd::json::Array;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -53,9 +53,9 @@ auto json_usize(usize value) -> Json {
         rstd::json::Number::from_u64(u64(static_cast<rstd::uint64_t>(value.to_primitive()))));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto scan(const ScanRequest& request) -> Result<ScanReport> {
@@ -162,7 +162,7 @@ auto scan_report_json(const ScanReport& report) -> Result<String> {
     }
 
     auto document = JsonMap::make();
-    document.insert(String::make("format"_str), json_string("tenon-scan"_str));
+    document.insert(String::make("format"_str), json_string("lito-scan"_str));
     document.insert(String::make("version"_str),
                     Json::Number(rstd::json::Number::from_u64(u64(1))));
     document.insert(String::make("target"_str), json_string(report.target.as_str()));
@@ -180,4 +180,4 @@ auto scan_report_json(const ScanReport& report) -> Result<String> {
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
 }
 
-} // namespace tenon
+} // namespace lito

@@ -1,13 +1,13 @@
-export module tenon.package:plan;
+export module lito.package:plan;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using TargetMap = rstd::collections::BTreeMap<String, tenon::TargetId>;
+using TargetMap = rstd::collections::BTreeMap<String, lito::TargetId>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -129,7 +129,7 @@ auto visit_target(const PackageMetadata& package,
 }
 
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("tenon-compile-context-v3\n"_str);
+    auto result = String::make("lito-compile-context-v3\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
@@ -165,16 +165,16 @@ auto attachment_context(const CompileContext&       library,
     result.public_requirements = merge_cpp_public_requirements(
         rstd::move(result.public_requirements), test.public_requirements);
     append_unique(result.external_identities, test.external_identities);
-    result.id = rstd::format("tenon-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
+    result.id = rstd::format("lito-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
                              attachment.test_target.as_str(),
                              attachment.library_target.as_str(),
                              context_id(result).as_str());
     return Ok(rstd::move(result));
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto compile_test_context(const CompileContext& base, const CompileTestCase& test)
@@ -436,4 +436,4 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
     });
 }
 
-} // namespace tenon
+} // namespace lito

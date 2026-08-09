@@ -2,15 +2,15 @@ module;
 #include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
-export module tenon.build_profile;
+export module lito.build_profile;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -18,27 +18,27 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
 }
 
-} // namespace tenon
+} // namespace lito
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::TryFrom<ref<str>>, tenon::BuildProfile> {
-    using Error = tenon::Error;
+struct Impl<convert::TryFrom<ref<str>>, lito::BuildProfile> {
+    using Error = lito::Error;
 
-    static auto try_from(ref<str> name) -> Result<tenon::BuildProfile, Error> {
-        if (name == "debug"_str) return Ok(tenon::BuildProfile::Debug);
-        if (name == "release"_str) return Ok(tenon::BuildProfile::Release);
-        return Err(tenon::Error::make(
-            tenon::ErrorKind::InvalidRequest,
+    static auto try_from(ref<str> name) -> Result<lito::BuildProfile, Error> {
+        if (name == "debug"_str) return Ok(lito::BuildProfile::Debug);
+        if (name == "release"_str) return Ok(lito::BuildProfile::Release);
+        return Err(lito::Error::make(
+            lito::ErrorKind::InvalidRequest,
             rstd::format("unknown profile '{}'; expected debug or release", name)));
     }
 };
 
 } // namespace rstd
 
-export namespace tenon
+export namespace lito
 {
 
 auto build_profile_name(BuildProfile profile) -> ref<str> {
@@ -143,4 +143,4 @@ auto make_profile_spec(const BuildConfiguration& configuration, const CppArgumen
     });
 }
 
-} // namespace tenon
+} // namespace lito

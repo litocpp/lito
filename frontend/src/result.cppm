@@ -1,13 +1,13 @@
-export module tenon.frontend.result;
+export module lito.frontend.result;
 
 import rstd;
-import tenon.frontend.lexical;
+import lito.frontend.lexical;
 
 using namespace rstd::prelude;
 
 using Clone = rstd::clone::Clone;
 
-export namespace tenon::frontend
+export namespace lito::frontend
 {
 
 enum class DocumentationCommentKind
@@ -309,4 +309,4 @@ auto FrontendAnalysis::clone() const -> FrontendAnalysis {
     };
 }
 
-} // namespace tenon::frontend
+} // namespace lito::frontend

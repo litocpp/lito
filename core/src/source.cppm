@@ -1,17 +1,17 @@
-export module tenon.source;
+export module lito.source;
 
 import rstd;
-import tenon.model;
-import tenon.storage;
-import tenon.manifest;
-import tenon.process;
-import tenon.workspace;
+import lito.model;
+import lito.storage;
+import lito.manifest;
+import lito.process;
+import lito.workspace;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using IndexMap = rstd::collections::BTreeMap<String, usize>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -139,9 +139,9 @@ struct SourceEntry {
     Option<WorkspaceCatalog> catalog;
 };
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto path_source_identity(ref<rstd::path::Path> path) -> String {
@@ -485,7 +485,7 @@ class SourceManager {
                 rstd::format("--locked has no source matching Git dependency '{}'", url));
         }
 
-        auto cache = tenon_cache_directory(PathBuf::from("git"_str).as_path(), "Git sources"_str);
+        auto cache = lito_cache_directory(PathBuf::from("git"_str).as_path(), "Git sources"_str);
         if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
         auto cache_directory = rstd::move(cache).unwrap();
         auto created         = rstd::fs::create_dir_all(cache_directory.as_path());
@@ -697,4 +697,4 @@ public:
     }
 };
 
-} // namespace tenon
+} // namespace lito

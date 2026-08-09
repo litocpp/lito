@@ -1,24 +1,24 @@
-export module tenon.builder;
+export module lito.builder;
 
 import rstd;
-import tenon.model;
-import tenon.source_discovery;
-import tenon.project;
-import tenon.package;
-import tenon.toolchain;
-import tenon.modules;
-import tenon.cache;
-import tenon.build_layout;
-import tenon.frontend;
-import tenon.frontend_analysis;
-import tenon.frontend_observer;
-import tenon.compile_test;
-import tenon.profiling;
+import lito.model;
+import lito.source_discovery;
+import lito.project;
+import lito.package;
+import lito.toolchain;
+import lito.modules;
+import lito.cache;
+import lito.build_layout;
+import lito.frontend;
+import lito.frontend_analysis;
+import lito.frontend_observer;
+import lito.compile_test;
+import lito.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -41,9 +41,9 @@ auto emit(const BuildRequest&   request,
     observer.notify(observer.context, BuildEvent { kind, target, path });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto build(const BuildRequest& request) -> Result<BuildSummary> {
@@ -608,4 +608,4 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     });
 }
 
-} // namespace tenon
+} // namespace lito

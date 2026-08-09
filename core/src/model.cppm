@@ -1,19 +1,19 @@
 module;
 #include <rstd/enum.hpp>
 
-export module tenon.model;
+export module lito.model;
 
 import rstd;
 import rstd.bench;
-import tenon.frontend;
-import tenon.profiling;
-export import tenon.cpp;
-export import tenon.bmi;
+import lito.frontend;
+import lito.profiling;
+export import lito.cpp;
+export import lito.bmi;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon
+export namespace lito
 {
 
 using String  = rstd::string::String;
@@ -964,4 +964,4 @@ struct DocSummary {
     ToolchainStatistics          toolchain;
 };
 
-} // namespace tenon
+} // namespace lito

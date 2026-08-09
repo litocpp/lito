@@ -1,13 +1,13 @@
-export module tenon.frontend:service;
+export module lito.frontend:service;
 
 import rstd;
-import tenon.frontend.lexical;
-import tenon.frontend.preprocessor;
+import lito.frontend.lexical;
+import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon::frontend
+export namespace lito::frontend
 {
 
 enum class FrontendActivity
@@ -243,4 +243,4 @@ private:
     FrontendStatistics                                             statistics_;
 };
 
-} // namespace tenon::frontend
+} // namespace lito::frontend

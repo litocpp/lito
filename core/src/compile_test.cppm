@@ -1,21 +1,21 @@
-export module tenon.compile_test;
+export module lito.compile_test;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace tenon
+namespace lito
 {
 
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto compile_test_for_source(const TargetSpec& target, ref<rstd::path::Path> source)
@@ -72,4 +72,4 @@ auto evaluate_compile_test(ref<str>               package,
     };
 }
 
-} // namespace tenon
+} // namespace lito

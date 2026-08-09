@@ -1,14 +1,14 @@
-export module tenon.frontend.preprocessor:traits;
+export module lito.frontend.preprocessor:traits;
 
 import rstd;
-import tenon.frontend.lexical;
-import tenon.frontend.result;
+import lito.frontend.lexical;
+import lito.frontend.result;
 import :macro;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon::frontend::preprocessor
+export namespace lito::frontend::preprocessor
 {
 
 using lexical::Error;
@@ -387,4 +387,4 @@ struct IgnoreEvents {
     auto on_event(const Event&) -> Result<empty> { return Ok(empty {}); }
 };
 
-} // namespace tenon::frontend::preprocessor
+} // namespace lito::frontend::preprocessor

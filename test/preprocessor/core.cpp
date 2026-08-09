@@ -2,14 +2,14 @@
 
 import rstd;
 import rstd.test;
-import tenon.frontend;
+import lito.frontend;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using namespace tenon::frontend::preprocessor;
+using namespace lito::frontend::preprocessor;
 
 template<typename T>
-using PpResult = tenon::frontend::preprocessor::Result<T>;
+using PpResult = lito::frontend::preprocessor::Result<T>;
 
 class MemorySources {
 public:
@@ -23,11 +23,11 @@ public:
         auto text = path.to_str();
         if (text.is_none()) {
             return Err(
-                tenon::frontend::preprocessor::Error::make("memory source path is not UTF-8"_str));
+                lito::frontend::preprocessor::Error::make("memory source path is not UTF-8"_str));
         }
         auto contents = files_.get(*text);
         if (contents.is_none()) {
-            return Err(tenon::frontend::preprocessor::Error::make("memory source is missing"_str));
+            return Err(lito::frontend::preprocessor::Error::make("memory source is missing"_str));
         }
         auto snapshot = make_source_snapshot(SourceBuffer { .path = rstd::path::PathBuf::from(path),
                                                             .contents = (**contents).clone() });
@@ -133,48 +133,48 @@ auto contains_sequence(const Vec<Token>& tokens, ref<str> first, ref<str> second
 
 auto run_preprocessor_test() -> int {
     auto sources = MemorySources {};
-    sources.add("/config.hpp"_str, "#pragma once\n#define TENON_VALUE 7\n"_str);
+    sources.add("/config.hpp"_str, "#pragma once\n#define LITO_VALUE 7\n"_str);
     sources.add("/effects.hpp"_str,
-                "#define TENON_HEADER_COUNTER __COUNTER__\n"
-                "TENON_HEADER_COUNTER\n"
-                "#define TENON_HEADER_PRAGMA(value) _Pragma(#value)\n"
-                "#define TENON_HEADER_STACK 1\n"
-                "TENON_HEADER_PRAGMA(push_macro(\"TENON_HEADER_STACK\"))\n"
-                "#undef TENON_HEADER_STACK\n"
-                "#define TENON_HEADER_STACK 0\n"
-                "TENON_HEADER_PRAGMA(pop_macro(\"TENON_HEADER_STACK\"))\n"
+                "#define LITO_HEADER_COUNTER __COUNTER__\n"
+                "LITO_HEADER_COUNTER\n"
+                "#define LITO_HEADER_PRAGMA(value) _Pragma(#value)\n"
+                "#define LITO_HEADER_STACK 1\n"
+                "LITO_HEADER_PRAGMA(push_macro(\"LITO_HEADER_STACK\"))\n"
+                "#undef LITO_HEADER_STACK\n"
+                "#define LITO_HEADER_STACK 0\n"
+                "LITO_HEADER_PRAGMA(pop_macro(\"LITO_HEADER_STACK\"))\n"
                 "__DATE__\n"_str);
     sources.add("/main.cppm"_str,
                 "#include \"config.hpp\"\n"
                 "#include \"config.hpp\"\n"
                 "#include \"effects.hpp\"\n"
-                "#define TENON_PRAGMA(value) _Pragma(#value)\n"
-                "#define TENON_STACK 1\n"
-                "TENON_PRAGMA(push_macro(\"TENON_STACK\"))\n"
-                "#undef TENON_STACK\n"
-                "#define TENON_STACK 0\n"
-                "TENON_PRAGMA(pop_macro(\"TENON_STACK\"))\n"
-                "#define TENON_MODULE module\n"
-                "#define TENON_IMPORT import\n"
+                "#define LITO_PRAGMA(value) _Pragma(#value)\n"
+                "#define LITO_STACK 1\n"
+                "LITO_PRAGMA(push_macro(\"LITO_STACK\"))\n"
+                "#undef LITO_STACK\n"
+                "#define LITO_STACK 0\n"
+                "LITO_PRAGMA(pop_macro(\"LITO_STACK\"))\n"
+                "#define LITO_MODULE module\n"
+                "#define LITO_IMPORT import\n"
                 "#if 0\n"
                 "/// hidden documentation\n"
                 "#endif\n"
-                "#if TENON_VALUE == 7 && TENON_STACK == 1 && TENON_HEADER_STACK == 1 && "
+                "#if LITO_VALUE == 7 && LITO_STACK == 1 && LITO_HEADER_STACK == 1 && "
                 "__COUNTER__ == 1 && __has_include(\"config.hpp\")\n"
                 "/// active documentation\n"
-                "export TENON_MODULE fixture.memory;\n"
-                "TENON_IMPORT :dependency;\n"
+                "export LITO_MODULE fixture.memory;\n"
+                "LITO_IMPORT :dependency;\n"
                 "#endif\n"
-                "#define TENON_DUP(value) value + value\n"
-                "TENON_DUP(__COUNTER__)\n"
-                "#define TENON_CAT_INNER(left, right) left ## right\n"
-                "#define TENON_CAT(left, right) TENON_CAT_INNER(left, right)\n"
-                "#define TENON_PREFIX TENON_\n"
-                "#define TENON_JOINED 9\n"
-                "TENON_CAT(TENON_PREFIX, JOINED);\n"
-                "TENON_LATE\n"
-                "#define TENON_LATE 42\n"
-                "TENON_LATE\n"_str);
+                "#define LITO_DUP(value) value + value\n"
+                "LITO_DUP(__COUNTER__)\n"
+                "#define LITO_CAT_INNER(left, right) left ## right\n"
+                "#define LITO_CAT(left, right) LITO_CAT_INNER(left, right)\n"
+                "#define LITO_PREFIX LITO_\n"
+                "#define LITO_JOINED 9\n"
+                "LITO_CAT(LITO_PREFIX, JOINED);\n"
+                "LITO_LATE\n"
+                "#define LITO_LATE 42\n"
+                "LITO_LATE\n"_str);
     auto includes = MemoryIncludes(sources);
     auto builtins = TestBuiltins {};
     auto pragmas  = IgnorePragmas {};
@@ -198,7 +198,7 @@ auto run_preprocessor_test() -> int {
     if (builtins.text_queries != usize(1)) return 6;
     if (! contains_sequence(result->tokens, "2"_str, "+"_str, "2"_str)) return 7;
     if (! contains_sequence(result->tokens, "9"_str, ";"_str)) return 11;
-    if (! contains_token(result->tokens, "TENON_LATE"_str) ||
+    if (! contains_token(result->tokens, "LITO_LATE"_str) ||
         ! contains_token(result->tokens, "42"_str)) {
         return 12;
     }
@@ -211,7 +211,7 @@ auto run_preprocessor_test() -> int {
     auto stream_builtins = TestBuiltins {};
     auto stream_pragmas  = IgnorePragmas {};
     auto stream_events   = TestEvents {};
-    auto consumer        = tenon::frontend::parser::ModuleDependencyConsumer::make();
+    auto consumer        = lito::frontend::parser::ModuleDependencyConsumer::make();
     auto streamed        = preprocess_to(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/main.cppm"_str),

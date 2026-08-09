@@ -1,14 +1,14 @@
 module;
 #include <rstd/enum.hpp>
 
-export module tenon.compiler.arguments;
+export module lito.compiler.arguments;
 
 import rstd;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon
+export namespace lito
 {
 
 enum class CompilerArgumentValueForm
@@ -87,9 +87,9 @@ private:
 
 auto compiler_argument_error_message(const CompilerArgumentError& error) -> String;
 
-} // namespace tenon
+} // namespace lito
 
-namespace tenon
+namespace lito
 {
 
 auto accepts_separate(CompilerArgumentValueForm form) noexcept -> bool {
@@ -156,9 +156,9 @@ auto match_spelling(const Vec<CompilerArgumentDefinition>& definitions, ref<str>
     return result;
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto CompilerArgumentSchema::make() -> CompilerArgumentSchema {
@@ -290,4 +290,4 @@ auto compiler_argument_error_message(const CompilerArgumentError& error) -> Stri
     rstd::unreachable();
 }
 
-} // namespace tenon
+} // namespace lito

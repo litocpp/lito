@@ -1,4 +1,4 @@
-export module tenon.manifest;
+export module lito.manifest;
 
 export import :locator;
 export import :schema;

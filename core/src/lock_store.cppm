@@ -1,10 +1,10 @@
-export module tenon.lock_store;
+export module lito.lock_store;
 
 import rstd;
 import rstd.json;
-import tenon.model;
-import tenon.manifest;
-import tenon.package;
+import lito.model;
+import lito.manifest;
+import lito.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -14,7 +14,7 @@ using Array        = rstd::json::Array;
 using StringSet    = rstd::collections::BTreeMap<String, empty>;
 using KeyPredicate = bool (*)(ref<str>);
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -28,7 +28,7 @@ auto failure(ref<str> message) -> Result<T> {
 }
 
 auto lock_path(const ResolvedPackageGraph& graph) -> PathBuf {
-    return graph.root_directory.join(PathBuf::from("tenon.lock"_str).as_path());
+    return graph.root_directory.join(PathBuf::from("lito.lock"_str).as_path());
 }
 
 auto path_string(ref<rstd::path::Path> path) -> Result<String> {
@@ -792,9 +792,9 @@ auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> Resul
     return Ok(empty {});
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 class LockSession {
@@ -814,13 +814,13 @@ public:
 };
 
 auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSession> {
-    auto destination = PathBuf::from(root).join(PathBuf::from("tenon.lock"_str).as_path());
+    auto destination = PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
     auto loaded      = load_existing(destination.as_path());
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto existing = rstd::move(loaded).unwrap();
     if (existing.is_none()) {
         if (locked) {
-            return failure<LockSession>("--locked requires an existing tenon.lock"_str);
+            return failure<LockSession>("--locked requires an existing lito.lock"_str);
         }
         auto session         = LockSession {};
         session.destination_ = rstd::move(destination);
@@ -832,7 +832,7 @@ auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSe
     if (version.is_none() || *version != u64(4)) {
         if (locked) {
             return failure<LockSession>(
-                "--locked requires migrating tenon.lock with a non-locked build"_str);
+                "--locked requires migrating lito.lock with a non-locked build"_str);
         }
         auto session         = LockSession {};
         session.destination_ = rstd::move(destination);
@@ -887,7 +887,7 @@ auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> Result
         if (session.existing_.is_some() && *session.existing_ == desired) {
             return Ok(LockStatus::Unchanged);
         }
-        return failure<LockStatus>("--locked forbids updating stale tenon.lock"_str);
+        return failure<LockStatus>("--locked forbids updating stale lito.lock"_str);
     }
 
     if (session.existing_.is_some() && *session.existing_ == desired) {
@@ -898,4 +898,4 @@ auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> Result
     return Ok(LockStatus::Updated);
 }
 
-} // namespace tenon
+} // namespace lito

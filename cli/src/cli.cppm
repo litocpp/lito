@@ -1,18 +1,18 @@
 module;
 #include <rstd/enum.hpp>
 
-export module tenon.executable:cli;
+export module lito.executable:cli;
 
 import rstd;
 import rstd.argparse;
-import tenon;
+import lito;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace rstd::argparse;
 using rstd::ffi::OsStr;
 
-namespace tenon::cli
+namespace lito::cli
 {
 
 class BuildProfileParser {
@@ -61,16 +61,6 @@ struct CliSchema {
     ArgKey<String>       scan_target;
     ArgKey<bool>         scan_locked;
     ArgKey<String>       format_package;
-    ArgKey<String>       doc_package;
-    ArgKey<BuildProfile> doc_profile;
-    ArgKey<bool>         doc_exceptions;
-    ArgKey<String>       doc_target;
-    ArgKey<String>       doc_output;
-    ArgKey<String>       doc_data_output;
-    ArgKey<String>       doc_frontend;
-    ArgKey<String>       doc_from_data;
-    ArgKey<bool>         doc_data_only;
-    ArgKey<bool>         doc_locked;
     Parser               parser;
 };
 
@@ -178,34 +168,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     format.about("Format package sources"_str);
     auto format_package = format.add_arg(package_arg());
 
-    auto doc = Command::make("doc"_str);
-    doc.about("Generate package documentation"_str);
-    auto doc_package    = doc.add_arg(package_arg());
-    auto doc_profile    = doc.add_arg(profile_arg());
-    auto doc_exceptions = doc.add_arg(exceptions_arg());
-    auto doc_target     = doc.add_arg(target_arg());
-    auto doc_output     = doc.add_arg(Arg<String>::value("out"_str, string_parser())
-                                          .long_name("out"_str)
-                                          .value_name("DIRECTORY"_str)
-                                          .help("Override the documentation output directory"_str));
-    auto doc_data_output = doc.add_arg(Arg<String>::value("data-out"_str, string_parser())
-                                           .long_name("data-out"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Override the documentation data directory"_str));
-    auto doc_frontend    = doc.add_arg(Arg<String>::value("frontend"_str, string_parser())
-                                           .long_name("frontend"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Render with a frontend bundle directory"_str));
-    auto doc_from_data   = doc.add_arg(Arg<String>::value("from-data"_str, string_parser())
-                                           .long_name("from-data"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Render an existing documentation dataset"_str));
-    auto doc_data_only   = doc.add_arg(Arg<bool>::flag("data-only"_str)
-                                           .long_name("data-only"_str)
-                                           .help("Publish documentation data without a site"_str));
-    auto doc_locked      = doc.add_arg(locked_arg());
-
-    auto root = Command::make("tenon"_str);
+    auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
     root.require_subcommand();
     auto directory = root.add_arg(Arg<String>::value("directory"_str, string_parser())
@@ -217,7 +180,6 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
-    root.add_subcommand(rstd::move(doc));
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
@@ -248,16 +210,6 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_target       = scan_target,
         .scan_locked       = scan_locked,
         .format_package    = format_package,
-        .doc_package       = doc_package,
-        .doc_profile       = doc_profile,
-        .doc_exceptions    = doc_exceptions,
-        .doc_target        = doc_target,
-        .doc_output        = doc_output,
-        .doc_data_output   = doc_data_output,
-        .doc_frontend      = doc_frontend,
-        .doc_from_data     = doc_from_data,
-        .doc_data_only     = doc_data_only,
-        .doc_locked        = doc_locked,
         .parser            = rstd::move(parser).unwrap(),
     });
 }
@@ -283,9 +235,9 @@ auto flag_value(const Matches& matches, const ArgKey<bool>& key) -> bool {
     return value.is_some() && **value;
 }
 
-} // namespace tenon::cli
+} // namespace lito::cli
 
-export namespace tenon::cli
+export namespace lito::cli
 {
 
 struct BuildOptions {
@@ -326,26 +278,12 @@ struct FormatOptions {
     Vec<String> packages;
 };
 
-struct DocOptions {
-    Vec<String>          packages;
-    Option<BuildProfile> profile;
-    Vec<String>          targets;
-    Option<PathBuf>      output;
-    Option<PathBuf>      data_output;
-    Option<PathBuf>      frontend;
-    Option<PathBuf>      from_data;
-    bool                 exceptions {};
-    bool                 data_only {};
-    bool                 locked {};
-};
-
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
               (Test, (TestOptions options;)),
               (Scan, (ScanOptions options;)),
-              (Format, (FormatOptions options;)),
-              (Doc, (DocOptions options;)))
+              (Format, (FormatOptions options;)))
 };
 
 class CliOutcome {
@@ -357,7 +295,7 @@ class CliOutcome {
 auto parse() -> CliOutcome {
     auto schema_result = make_schema();
     if (schema_result.is_err()) {
-        return CliOutcome::Exit(rstd::format("tenon: invalid command definition: {}\n",
+        return CliOutcome::Exit(rstd::format("lito: invalid command definition: {}\n",
                                              rstd::move(schema_result).unwrap_err()),
                                 true,
                                 i32(1));
@@ -439,50 +377,6 @@ auto parse() -> CliOutcome {
                 .no_timing = flag_value(*child, schema.test_no_timing),
             }));
     }
-    if (subcommand->get<0>() == "doc"_str) {
-        auto child       = subcommand->get<1>();
-        auto profile     = optional_value(*child, schema.doc_profile);
-        auto output      = optional_value(*child, schema.doc_output);
-        auto data_output = optional_value(*child, schema.doc_data_output);
-        auto frontend    = optional_value(*child, schema.doc_frontend);
-        auto from_data   = optional_value(*child, schema.doc_from_data);
-        auto packages    = string_values(*child, schema.doc_package);
-        auto targets     = string_values(*child, schema.doc_target);
-        auto data_only   = flag_value(*child, schema.doc_data_only);
-        auto locked      = flag_value(*child, schema.doc_locked);
-        auto exceptions  = flag_value(*child, schema.doc_exceptions);
-        if (from_data.is_some() &&
-            (! packages.is_empty() || profile.is_some() || ! targets.is_empty() ||
-             data_output.is_some() || data_only || locked || exceptions)) {
-            return CliOutcome::Exit(
-                String::make("tenon: --from-data cannot be combined with --package, --profile, "
-                             "--exceptions, --target, --data-out, --data-only, or --locked\n"_str),
-                true,
-                i32(2));
-        }
-        if (data_only && frontend.is_some()) {
-            return CliOutcome::Exit(
-                String::make("tenon: --frontend cannot be used with --data-only\n"_str),
-                true,
-                i32(2));
-        }
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            CliCommand::Doc(DocOptions {
-                .packages = rstd::move(packages),
-                .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
-                .targets  = rstd::move(targets),
-                .output   = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .data_output =
-                    data_output.is_some() ? Some(PathBuf::from((**data_output).clone())) : None(),
-                .frontend = frontend.is_some() ? Some(PathBuf::from((**frontend).clone())) : None(),
-                .from_data =
-                    from_data.is_some() ? Some(PathBuf::from((**from_data).clone())) : None(),
-                .exceptions = exceptions,
-                .data_only  = data_only,
-                .locked     = locked,
-            }));
-    }
     auto child = subcommand->get<1>();
     return CliOutcome::Parsed(rstd::move(working_directory),
                               CliCommand::Format(FormatOptions {
@@ -490,4 +384,4 @@ auto parse() -> CliOutcome {
                               }));
 }
 
-} // namespace tenon::cli
+} // namespace lito::cli

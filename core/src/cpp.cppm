@@ -2,10 +2,10 @@ module;
 #include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
-export module tenon.cpp;
+export module lito.cpp;
 
 import rstd;
-import tenon.compiler.arguments;
+import lito.compiler.arguments;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -13,7 +13,7 @@ using namespace rstd::literals;
 using Clone   = rstd::clone::Clone;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace tenon
+export namespace lito
 {
 
 enum class StandardLibrary
@@ -334,40 +334,40 @@ auto cpp_public_requirements_identity(const CppPublicRequirements& requirements)
 auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements,
                                        const CppCompileOptions&     consumer) -> bool;
 
-} // namespace tenon
+} // namespace lito
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::TryFrom<tenon::CppCompilerArgumentOccurrence>, tenon::CppOptionDelta> {
+struct Impl<convert::TryFrom<lito::CppCompilerArgumentOccurrence>, lito::CppOptionDelta> {
     using Error = String;
 
-    static auto try_from(tenon::CppCompilerArgumentOccurrence occurrence)
-        -> Result<tenon::CppOptionDelta, Error> {
+    static auto try_from(lito::CppCompilerArgumentOccurrence occurrence)
+        -> Result<lito::CppOptionDelta, Error> {
         if (occurrence.argument.is_OwnedSetting()) {
             auto field = "language standard"_str;
             switch (occurrence.argument.as_OwnedSetting().setting) {
-            case tenon::CppOwnedSetting::LanguageStandard: break;
-            case tenon::CppOwnedSetting::StandardLibrary: field = "standard library"_str; break;
-            case tenon::CppOwnedSetting::BmiRepresentation: field = "BMI representation"_str; break;
-            case tenon::CppOwnedSetting::Rtti: field = "RTTI"_str; break;
-            case tenon::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
-            case tenon::CppOwnedSetting::Optimization: field = "optimization"_str; break;
-            case tenon::CppOwnedSetting::DebugInfo: field = "debug info"_str; break;
+            case lito::CppOwnedSetting::LanguageStandard: break;
+            case lito::CppOwnedSetting::StandardLibrary: field = "standard library"_str; break;
+            case lito::CppOwnedSetting::BmiRepresentation: field = "BMI representation"_str; break;
+            case lito::CppOwnedSetting::Rtti: field = "RTTI"_str; break;
+            case lito::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
+            case lito::CppOwnedSetting::Optimization: field = "optimization"_str; break;
+            case lito::CppOwnedSetting::DebugInfo: field = "debug info"_str; break;
             }
             auto spelling = occurrence.raw_tokens.is_empty()
                                 ? String::make("<structured compiler option>"_str)
                                 : occurrence.raw_tokens[usize {}].clone();
             return Err(
-                rstd::format("{} arguments {}..{}: compiler option '{}' overrides Tenon-owned {}",
+                rstd::format("{} arguments {}..{}: compiler option '{}' overrides Lito-owned {}",
                              occurrence.source.as_str(),
                              occurrence.range.begin,
                              occurrence.range.end,
                              spelling.as_str(),
                              field));
         }
-        return Ok(tenon::CppOptionDelta {
+        return Ok(lito::CppOptionDelta {
             .argument   = rstd::move(occurrence.argument),
             .raw_tokens = rstd::move(occurrence.raw_tokens),
             .range      = occurrence.range,
@@ -378,7 +378,7 @@ struct Impl<convert::TryFrom<tenon::CppCompilerArgumentOccurrence>, tenon::CppOp
 
 } // namespace rstd
 
-namespace tenon
+namespace lito
 {
 
 template<typename Key, typename Value>
@@ -626,9 +626,9 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     });
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto CppArgumentSchema::make() -> CppArgumentSchema {
@@ -896,7 +896,7 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             }
             RSTD_CASE(OwnedSetting, setting) {
                 static_cast<void>(setting);
-                return option_error("invalid prevalidated Tenon-owned compiler option"_str);
+                return option_error("invalid prevalidated Lito-owned compiler option"_str);
             }
             RSTD_CASE(Family, domain, family, value) {
                 auto* modes = rstd::addressof(language_modes);
@@ -1002,7 +1002,7 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
 }
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("tenon-cpp-compile-context-v1\n"_str);
+    auto result = String::make("lito-cpp-compile-context-v1\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
@@ -1037,7 +1037,7 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("tenon-cpp-bmi-compatibility-v1\n"_str);
+    auto result = String::make("lito-cpp-bmi-compatibility-v1\n"_str);
     append_semantic_identity(result, options);
     for (const auto& value : options.vendor) {
         if (value.effect == CppVendorOptionEffect::Language ||
@@ -1051,7 +1051,7 @@ auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String 
 }
 
 auto cpp_public_requirements_identity(const CppPublicRequirements& requirements) -> String {
-    auto result = String::make("tenon-cpp-public-requirements-v1\n"_str);
+    auto result = String::make("lito-cpp-public-requirements-v1\n"_str);
     for (const auto& include : requirements.include_directories) {
         auto text = include.path.as_path().to_str();
         push_identity(result,
@@ -1094,4 +1094,4 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
     return true;
 }
 
-} // namespace tenon
+} // namespace lito

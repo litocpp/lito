@@ -1,5 +1,5 @@
-#include <tenon_fixture.hpp>
+#include <lito_fixture.hpp>
 
-int tenon_fixture_value() {
+int lito_fixture_value() {
     return 42;
 }

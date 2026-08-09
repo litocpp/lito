@@ -1,8 +1,11 @@
 /build/
+/.lito/
 /.tenon/
+/lito.lock
 /tenon.lock
 demo/**/build/
 test/**/build/
+**/lito.lock.tmp.*
 **/tenon.lock.tmp.*
 doc/frontend/node_modules/
 doc/frontend/dist/

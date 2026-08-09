@@ -1,0 +1,7 @@
+prefix=${pcfiledir}
+libdir=${prefix}/lib
+
+Name: lito-private
+Description: Controlled private pkg-config fixture
+Version: 1.0.0
+Libs: -L${libdir} -llito_private

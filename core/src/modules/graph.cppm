@@ -1,15 +1,15 @@
-export module tenon.modules:graph;
+export module lito.modules:graph;
 
 import rstd;
-import tenon.model;
+import lito.model;
 import :convention;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using ProviderMap = rstd::collections::BTreeMap<String, tenon::UnitId>;
+using ProviderMap = rstd::collections::BTreeMap<String, lito::UnitId>;
 using StringSet   = rstd::collections::BTreeMap<String, empty>;
 
-namespace tenon
+namespace lito
 {
 
 template<typename T>
@@ -58,9 +58,9 @@ auto visit(UnitId                   unit,
     return Ok(empty {});
 }
 
-} // namespace tenon
+} // namespace lito
 
-export namespace tenon
+export namespace lito
 {
 
 auto resolve_modules(const PackagePlan&       package,
@@ -213,4 +213,4 @@ auto resolve_modules(const PackagePlan&       package,
     });
 }
 
-} // namespace tenon
+} // namespace lito

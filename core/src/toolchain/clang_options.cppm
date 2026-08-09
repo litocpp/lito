@@ -1,12 +1,12 @@
-export module tenon.toolchain:clang_options;
+export module lito.toolchain:clang_options;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon::toolchain::clang_options
+export namespace lito::toolchain::clang_options
 {
 
 inline constexpr auto VERSION             = "--version"_str;
@@ -55,4 +55,4 @@ constexpr auto bmi(BmiMode value) noexcept -> ref<str> {
     return value == BmiMode::Reduced ? "-fmodules-reduced-bmi"_str : "-fno-modules-reduced-bmi"_str;
 }
 
-} // namespace tenon::toolchain::clang_options
+} // namespace lito::toolchain::clang_options

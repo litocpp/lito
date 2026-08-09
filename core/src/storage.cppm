@@ -1,15 +1,15 @@
-export module tenon.storage;
+export module lito.storage;
 
 import rstd;
-import tenon.model;
+import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace tenon
+export namespace lito
 {
 
-auto tenon_cache_directory(ref<rstd::path::Path> relative, ref<str> purpose) -> Result<PathBuf> {
+auto lito_cache_directory(ref<rstd::path::Path> relative, ref<str> purpose) -> Result<PathBuf> {
     auto configured = rstd::env::var("XDG_CACHE_HOME"_str);
     auto root       = PathBuf::make();
     if (configured.is_some() && ! configured->is_empty()) {
@@ -30,8 +30,8 @@ auto tenon_cache_directory(ref<rstd::path::Path> relative, ref<str> purpose) -> 
         }
         root.push(PathBuf::from(".cache"_str).as_path());
     }
-    root.push(PathBuf::from("tenon"_str).as_path());
+    root.push(PathBuf::from("lito"_str).as_path());
     return Ok(root.join(relative));
 }
 
-} // namespace tenon
+} // namespace lito
