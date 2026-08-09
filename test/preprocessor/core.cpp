@@ -52,6 +52,9 @@ public:
     explicit MemoryIncludes(const MemorySources& sources): sources_(sources) {}
 
     auto resolve(const IncludeRequest& request) -> PpResult<Option<IncludeResolution>> {
+        if (request.kind == IncludeKind::NextQuoted || request.kind == IncludeKind::NextAngled) {
+            ++next_queries;
+        }
         auto path = rstd::path::PathBuf::from("/"_str).join(
             rstd::path::PathBuf::from(request.name.as_str()).as_path());
         auto text = path.as_path().to_str();
@@ -60,6 +63,8 @@ public:
         }
         return Ok(Some(IncludeResolution { .path = rstd::move(path) }));
     }
+
+    usize next_queries {};
 
 private:
     const MemorySources& sources_;
@@ -169,6 +174,7 @@ auto run_preprocessor_test() -> int {
                 "#endif\n"
                 "#if LITO_VALUE == 7 && LITO_STACK == 1 && LITO_HEADER_STACK == 1 && "
                 "__COUNTER__ == 1 && __has_include(\"config.hpp\") && "
+                "__has_include_next(<config.hpp>) && "
                 "__has_builtin(__builtin_assume)\n"
                 "/// active documentation\n"
                 "export LITO_MODULE fixture.memory;\n"
@@ -204,7 +210,8 @@ auto run_preprocessor_test() -> int {
     if (! contains_sequence(result->tokens, "module"_str, "fixture"_str)) return 2;
     if (! contains_sequence(result->tokens, "import"_str, ":"_str)) return 3;
     if (result->sources.len() != usize(3)) return 4;
-    if (events.includes != usize(3) || events.probes != usize(1)) return 5;
+    if (events.includes != usize(3) || events.probes != usize(2)) return 5;
+    if (includes.next_queries != usize(1)) return 16;
     if (events.unexpected != usize {}) return 13;
     if (builtins.text_queries != usize(1)) return 6;
     if (builtins.query_count != usize(1) || builtins.typed_queries != usize(1)) return 15;

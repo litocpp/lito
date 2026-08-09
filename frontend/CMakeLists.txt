@@ -9,10 +9,12 @@ target_sources(
          FILES
          src/static_name.cppm
          src/result.cppm
+         src/lexical/symbol.cppm
          src/lexical/token.cppm
          src/lexical/traits.cppm
          src/lexical/source.cppm
          src/lexical/error.cppm
+         src/lexical/scanner.cppm
          src/lexical/lexer.cppm
          src/lexical/mod.cppm
          src/preprocessor/builtin.cppm

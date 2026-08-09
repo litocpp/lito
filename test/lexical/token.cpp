@@ -4,11 +4,22 @@ import rstd;
 import rstd.test;
 import lito.cpp;
 import lito.frontend;
+import lito.frontend.static_name;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito;
 using namespace lito::frontend::lexical;
+
+struct CollidingFirstName {
+    static constexpr auto name = "first"_str;
+    static constexpr auto hash = rstd::uint64_t(17);
+};
+
+struct CollidingSecondName {
+    static constexpr auto name = "second"_str;
+    static constexpr auto hash = rstd::uint64_t(17);
+};
 
 TEST(CppReservedIdentifier, StaticTypes) {
     static_assert(CppConceptKeyword::name == "concept"_str);
@@ -52,4 +63,17 @@ TEST(TokenMatcher, GenericKindAndTypedText) {
     EXPECT_TRUE(matches_token(TokenKindMatcher { TokenKind::Identifier }, token));
     EXPECT_TRUE(matches_token(TokenTextMatcher<CppConceptKeyword> {}, token));
     EXPECT_FALSE(matches_token(TokenTextMatcher<CppRequiresKeyword> {}, token));
+}
+
+TEST(StaticNameSet, ConfirmsTextAfterHashMatch) {
+    using CollidingNames = lito::frontend::StaticNameSet<CollidingFirstName, CollidingSecondName>;
+    EXPECT_TRUE(CollidingNames::contains(rstd::uint64_t(17), "first"_str));
+    EXPECT_TRUE(CollidingNames::contains(rstd::uint64_t(17), "second"_str));
+    EXPECT_FALSE(CollidingNames::contains(rstd::uint64_t(17), "third"_str));
+    auto visited = false;
+    CollidingNames::visit(rstd::uint64_t(17), "second"_str, [&](auto name) {
+        using Name = typename decltype(name)::type;
+        visited    = rstd::mtp::same_as<Name, CollidingSecondName>;
+    });
+    EXPECT_TRUE(visited);
 }

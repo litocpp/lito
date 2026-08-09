@@ -11,6 +11,7 @@ target_sources(
          src/profiling.cppm
          src/compiler/arguments.cppm
          src/cpp/token.cppm
+         src/cpp/scanner.cppm
          src/cpp/mod.cppm
          src/bmi.cppm
          src/model.cppm
