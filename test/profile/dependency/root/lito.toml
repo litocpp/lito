@@ -1,0 +1,12 @@
+[package]
+name = "fixture-profile-dependency-root"
+version = "0.1.0"
+
+[executable]
+name = "profile-dependency-root"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-profile-dependency]
+path = "../dependency"
+visibility = "private"

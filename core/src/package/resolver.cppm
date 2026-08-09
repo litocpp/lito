@@ -80,6 +80,10 @@ public:
         return sources_.source_is_workspace(source);
     }
 
+    auto source_profile(usize source) const noexcept -> ProjectProfile {
+        return sources_.source_profile(source);
+    }
+
     auto resolve(usize source, ref<str> expected_name) -> Result<String> {
         auto source_identity = String::make(sources_.source_identity(source));
         auto existing        = coordinates_.get(expected_name);
@@ -154,8 +158,11 @@ public:
         return Ok(String::make(expected_name));
     }
 
-    auto finish(String name, Vec<String> root_names, PathBuf manifest_path, bool root_is_workspace)
-        -> ResolvedPackageGraph {
+    auto finish(String         name,
+                Vec<String>    root_names,
+                PathBuf        manifest_path,
+                bool           root_is_workspace,
+                ProjectProfile profile) -> ResolvedPackageGraph {
         rstd::slice_::sort_unstable_by(
             packages_.as_mut_slice().as_mut_ref(),
             [](const ResolvedPackage& left, const ResolvedPackage& right) {
@@ -168,6 +175,7 @@ public:
             .root_directory    = rstd::move(root_directory_),
             .manifest_path     = rstd::move(manifest_path),
             .root_is_workspace = root_is_workspace,
+            .profile           = profile,
             .sources           = sources_.finish(),
             .packages          = rstd::move(packages_),
         };
@@ -196,6 +204,7 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
     auto project_name      = String::make(resolver.source_name(root_source));
     auto manifest_path     = resolver.source_manifest(root_source);
     auto root_is_workspace = resolver.source_is_workspace(root_source);
+    auto profile           = resolver.source_profile(root_source);
     auto names             = resolver.package_names(root_source);
     auto root_names        = Vec<String>::with_capacity(names.len());
     for (const auto& name : names) {
@@ -206,7 +215,8 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
     return Ok(resolver.finish(rstd::move(project_name),
                               rstd::move(root_names),
                               rstd::move(manifest_path),
-                              root_is_workspace));
+                              root_is_workspace,
+                              profile));
 }
 
 } // namespace lito

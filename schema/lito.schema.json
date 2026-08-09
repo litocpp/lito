@@ -1331,6 +1331,20 @@
       },
       "additionalProperties": false
     },
+    "projectProfile": {
+      "type": "object",
+      "properties": {
+        "exceptions": {
+          "type": "boolean",
+          "default": true
+        },
+        "rtti": {
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
     "workspace": {
       "type": "object",
       "required": [
@@ -1367,6 +1381,9 @@
       "properties": {
         "workspace": {
           "$ref": "#/definitions/workspace"
+        },
+        "profile": {
+          "$ref": "#/definitions/projectProfile"
         }
       },
       "additionalProperties": false
@@ -1400,6 +1417,9 @@
         },
         "external-dependencies": {
           "$ref": "#/definitions/externalDependencies"
+        },
+        "profile": {
+          "$ref": "#/definitions/projectProfile"
         }
       },
       "oneOf": [

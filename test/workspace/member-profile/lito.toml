@@ -1,0 +1,6 @@
+[workspace]
+name = "fixture-workspace-member-profile"
+members = ["app"]
+
+[workspace.package]
+version = "0.1.0"

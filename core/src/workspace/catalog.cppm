@@ -47,13 +47,14 @@ export namespace lito
 {
 
 class WorkspaceCatalog {
-    String      name_;
-    PathBuf     root_;
-    PathBuf     manifest_path_;
-    Vec<String> names_;
-    PackageMap  packages_ { PackageMap::make() };
-    StringSet   member_roots_ { StringSet::make() };
-    bool        workspace_ { false };
+    String         name_;
+    PathBuf        root_;
+    PathBuf        manifest_path_;
+    ProjectProfile profile_;
+    Vec<String>    names_;
+    PackageMap     packages_ { PackageMap::make() };
+    StringSet      member_roots_ { StringSet::make() };
+    bool           workspace_ { false };
 
 public:
     WorkspaceCatalog() = default;
@@ -71,6 +72,7 @@ public:
         catalog.name_          = manifest.name.clone();
         catalog.root_          = manifest.root.clone();
         catalog.manifest_path_ = manifest.manifest_path.clone();
+        if (manifest.profile.is_some()) catalog.profile_ = *manifest.profile;
         catalog.names_.push(manifest.name.clone());
         auto root_text = manifest.root.as_path().to_str();
         if (root_text.is_some()) {
@@ -92,6 +94,8 @@ public:
 
     auto is_workspace() const noexcept -> bool { return workspace_; }
 
+    auto profile() const noexcept -> ProjectProfile { return profile_; }
+
     auto take_package(ref<str> name) -> Option<PackageManifest> { return packages_.remove(name); }
 
     auto contains_package_root(ref<rstd::path::Path> root) const -> bool {
@@ -111,7 +115,8 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     catalog.name_          = rstd::move(workspace.name);
     catalog.root_          = workspace.root.clone();
     catalog.manifest_path_ = workspace.manifest_path.clone();
-    auto directories       = StringSet::make();
+    if (workspace.profile.is_some()) catalog.profile_ = *workspace.profile;
+    auto directories = StringSet::make();
     for (const auto& declared : workspace.members) {
         auto member =
             workspace_member_directory(workspace, declared.as_path(), "workspace member"_str);
@@ -136,6 +141,13 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
                     "workspace member '{}' must contain a package manifest", declared.as_path()));
             }
             manifest = rstd::move(loaded.package).unwrap();
+        }
+
+        if (manifest.profile.is_some()) {
+            return catalog_failure<WorkspaceCatalog>(rstd::format(
+                "workspace member '{}' declares [profile]; project profile must be declared at "
+                "the workspace root",
+                manifest.name.as_str()));
         }
 
         rstd_try(resolve_workspace_member(manifest, workspace));

@@ -64,7 +64,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
     }
-    auto profile = rstd_try(make_profile_spec(configuration, argument_parser));
+    auto profile = rstd_try(make_profile_spec(configuration, graph.profile, argument_parser));
 
     auto selected        = rstd::collections::BTreeMap<String, empty>::make();
     auto roots           = rstd::collections::BTreeMap<String, empty>::make();
@@ -87,6 +87,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
             pkg_config,
             cmake,
             configuration,
+            profile,
             target_info,
             effective_target,
             argument_parser);

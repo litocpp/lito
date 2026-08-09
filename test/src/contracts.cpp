@@ -19,6 +19,8 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/git/url-fragment"_str,
     "manifest/package-name-dot"_str,
     "manifest/package-name-empty"_str,
+    "manifest/profile/nested"_str,
+    "manifest/profile/type"_str,
     "manifest/source-root-descendant"_str,
     "manifest/test-attach-unknown-key"_str,
     "manifest/toml-explicit/dependency"_str,
@@ -63,6 +65,7 @@ inline constexpr ref<str> INVALID_GRAPHS[] = {
     "workspace/inherited-dependency-missing"_str,
     "workspace/inherited-dependency-outside"_str,
     "workspace/inherited-version-missing"_str,
+    "workspace/member-profile"_str,
     "workspace/missing-member"_str,
     "workspace/nested"_str,
     "workspace/outside"_str,
@@ -132,6 +135,11 @@ auto pkg_config_target() -> lito::TargetInfo {
         .os     = String::make("linux"_str),
         .family = lito::TargetFamily::Unix,
     };
+}
+
+auto default_profile(const lito::CppArgumentParser& parser) -> lito::ProfileSpec {
+    auto profile = lito::make_profile_spec(configuration(), lito::ProjectProfile {}, parser);
+    return rstd::move(profile).unwrap();
 }
 
 auto fixture_pkg_config() -> lito::PkgConfigProviderConfig {
@@ -272,10 +280,8 @@ auto external_usage_metadata(lito::DependencyVisibility     visibility,
             },
         .dependencies = rstd::move(dependencies),
     });
-    auto profile = lito::make_profile_spec(configuration(), parser);
-    if (profile.is_err()) return Err(rstd::move(profile).unwrap_err());
     auto profiles = Vec<lito::ProfileSpec>::make();
-    profiles.push(rstd::move(profile).unwrap());
+    profiles.push(default_profile(parser));
     return Ok(lito::PackageMetadata {
         .name            = String::make("external-usage"_str),
         .default_profile = String::make("debug"_str),
@@ -293,6 +299,47 @@ TEST(Contracts, InvalidManifestDocumentsAreRejectedByManifestOwner) {
         if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
         EXPECT_TRUE(loaded.is_err());
     }
+}
+
+TEST(Contracts, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
+    auto defaults = lito::resolve_package_graph(root("profile"_str).as_path());
+    ASSERT_TRUE(defaults.is_ok());
+    EXPECT_TRUE(defaults->profile.exceptions);
+    EXPECT_TRUE(defaults->profile.rtti);
+
+    auto disabled = lito::resolve_package_graph(root("profile/disabled"_str).as_path());
+    ASSERT_TRUE(disabled.is_ok());
+    EXPECT_FALSE(disabled->profile.exceptions);
+    EXPECT_FALSE(disabled->profile.rtti);
+
+    auto workspace = lito::resolve_package_graph(root("workspace/profile"_str).as_path());
+    ASSERT_TRUE(workspace.is_ok());
+    EXPECT_TRUE(workspace->profile.exceptions);
+    EXPECT_FALSE(workspace->profile.rtti);
+
+    auto dependency = lito::resolve_package_graph(root("profile/dependency/root"_str).as_path());
+    ASSERT_TRUE(dependency.is_ok());
+    EXPECT_TRUE(dependency->profile.exceptions);
+    EXPECT_TRUE(dependency->profile.rtti);
+}
+
+TEST(Contracts, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossBuildModes) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto project = lito::ProjectProfile {
+        .exceptions = false,
+        .rtti       = false,
+    };
+    auto debug =
+        lito::make_profile_spec(configuration(lito::BuildProfile::Debug), project, *parser);
+    auto release =
+        lito::make_profile_spec(configuration(lito::BuildProfile::Release), project, *parser);
+    ASSERT_TRUE(debug.is_ok());
+    ASSERT_TRUE(release.is_ok());
+    EXPECT_FALSE(debug->cpp.language.exceptions);
+    EXPECT_FALSE(debug->cpp.language.rtti);
+    EXPECT_FALSE(release->cpp.language.exceptions);
+    EXPECT_FALSE(release->cpp.language.rtti);
 }
 
 TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
@@ -524,6 +571,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                                         config,
                                                         fixture_cmake(),
                                                         configuration(),
+                                                        default_profile(*parser),
                                                         target,
                                                         target.triple.as_str(),
                                                         *parser);
@@ -557,6 +605,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                                       config,
                                                       fixture_cmake(),
                                                       configuration(),
+                                                      default_profile(*parser),
                                                       target,
                                                       target.triple.as_str(),
                                                       *parser);
@@ -609,6 +658,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_pkg_config(),
                                             fixture_cmake(),
                                             configuration(),
+                                            default_profile(*parser),
                                             target,
                                             target.triple.as_str(),
                                             *parser);
@@ -658,6 +708,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_pkg_config(),
                                             fixture_cmake(),
                                             configuration(),
+                                            default_profile(*parser),
                                             target,
                                             target.triple.as_str(),
                                             *parser);
@@ -676,6 +727,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_pkg_config(),
                                             fixture_cmake(),
                                             configuration(),
+                                            default_profile(*parser),
                                             target,
                                             target.triple.as_str(),
                                             *parser);
@@ -683,6 +735,28 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(third_count.is_ok());
     EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
+
+    auto disabled_profile = lito::make_profile_spec(configuration(),
+                                                    lito::ProjectProfile {
+                                                        .exceptions = false,
+                                                        .rtti       = false,
+                                                    },
+                                                    *parser);
+    ASSERT_TRUE(disabled_profile.is_ok());
+    auto profile_variant =
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            *disabled_profile,
+                                            target,
+                                            target.triple.as_str(),
+                                            *parser);
+    ASSERT_TRUE(profile_variant.is_ok());
+    auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
+    ASSERT_TRUE(fourth_count.is_ok());
+    EXPECT_EQ(fourth_count->as_str(), "configure\nconfigure\nconfigure\n"_str);
     EXPECT_TRUE(clear_output(count_directory.as_path()));
 }
 
@@ -711,6 +785,7 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
                                             fixture_pkg_config(),
                                             fixture_cmake(),
                                             configuration(),
+                                            default_profile(*parser),
                                             target,
                                             target.triple.as_str(),
                                             *parser);
@@ -764,6 +839,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
                                                         config,
                                                         fixture_cmake(),
                                                         configuration(),
+                                                        default_profile(*parser),
                                                         target,
                                                         target.triple.as_str(),
                                                         *parser);
@@ -777,6 +853,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
                                                       config,
                                                       fixture_cmake(),
                                                       configuration(),
+                                                      default_profile(*parser),
                                                       target,
                                                       target.triple.as_str(),
                                                       *parser);
@@ -799,6 +876,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               config,
                                                               fixture_cmake(),
                                                               configuration(),
+                                                              default_profile(*parser),
                                                               target,
                                                               "aarch64-unknown-linux-gnu"_str,
                                                               *parser);
@@ -809,6 +887,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                    config,
                                                                    fixture_cmake(),
                                                                    configuration(),
+                                                                   default_profile(*parser),
                                                                    target,
                                                                    "aarch64-unknown-linux-gnu"_str,
                                                                    *parser);
@@ -819,6 +898,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                 config,
                                                                 fixture_cmake(),
                                                                 configuration(),
+                                                                default_profile(*parser),
                                                                 target,
                                                                 target.triple.as_str(),
                                                                 *parser);
@@ -834,6 +914,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               config,
                                                               fixture_cmake(),
                                                               configuration(),
+                                                              default_profile(*parser),
                                                               target,
                                                               target.triple.as_str(),
                                                               *parser);
@@ -864,6 +945,7 @@ TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
                                                         config,
                                                         fixture_cmake(),
                                                         configuration(),
+                                                        default_profile(*parser),
                                                         target,
                                                         target.triple.as_str(),
                                                         *parser);

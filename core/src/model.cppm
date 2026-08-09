@@ -59,6 +59,11 @@ enum class BuildProfile
     Release,
 };
 
+struct ProjectProfile {
+    bool exceptions { true };
+    bool rtti { true };
+};
+
 enum class DependencyVisibility
 {
     Public,
@@ -473,6 +478,7 @@ struct PackageManifest {
     PathBuf                           root;
     PathBuf                           source_root;
     PathBuf                           manifest_path;
+    Option<ProjectProfile>            profile;
     ArtifactKind                      artifact_kind { ArtifactKind::StaticLibrary };
     String                            artifact_name;
     SourceDiscoveryMode               discovery { SourceDiscoveryMode::Explicit };
@@ -518,6 +524,7 @@ struct WorkspaceManifest {
     String                                              name;
     PathBuf                                             root;
     PathBuf                                             manifest_path;
+    Option<ProjectProfile>                              profile;
     Vec<PathBuf>                                        members;
     Vec<PathBuf>                                        default_members;
     WorkspacePackageDefaults                            package;
@@ -641,6 +648,7 @@ struct ResolvedPackageGraph {
     PathBuf                    root_directory;
     PathBuf                    manifest_path;
     bool                       root_is_workspace { false };
+    ProjectProfile             profile;
     Vec<ResolvedPackageSource> sources;
     Vec<ResolvedPackage>       packages;
 };
@@ -673,8 +681,6 @@ struct BuildConfiguration {
     StandardLibrary          standard_library { StandardLibrary::Libstdcxx };
     BmiMode                  bmi_mode { BmiMode::Reduced };
     BmiSourceEmbeddingPolicy bmi_source_embedding { BmiSourceEmbeddingPolicy::ExternalSources };
-    bool                     exceptions { false };
-    bool                     rtti { false };
     String                   language_standard;
     Vec<String>              options;
     Vec<String>              linker_options;
@@ -686,8 +692,6 @@ struct BuildConfiguration {
             .standard_library     = standard_library,
             .bmi_mode             = bmi_mode,
             .bmi_source_embedding = bmi_source_embedding,
-            .exceptions           = exceptions,
-            .rtti                 = rtti,
             .language_standard    = language_standard.clone(),
             .options              = options.clone(),
             .linker_options       = linker_options.clone(),

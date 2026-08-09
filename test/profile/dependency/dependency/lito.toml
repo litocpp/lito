@@ -1,0 +1,13 @@
+[package]
+name = "fixture-profile-dependency"
+version = "0.1.0"
+module = "fixture.profile_dependency"
+
+[library]
+archive = "fixture-profile-dependency"
+discovery = "explicit"
+sources = ["library.cppm"]
+
+[profile]
+exceptions = false
+rtti = false

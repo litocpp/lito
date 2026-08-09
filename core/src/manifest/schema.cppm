@@ -106,11 +106,42 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) 
 auto package_root_key(ref<str> key) -> bool {
     return key == "package"_str || key == "library"_str || key == "executable"_str ||
            key == "test"_str || key == "compile-test"_str || key == "usage"_str ||
-           key == "dependencies"_str || key == "external-dependencies"_str;
+           key == "dependencies"_str || key == "external-dependencies"_str || key == "profile"_str;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {
-    return key == "workspace"_str;
+    return key == "workspace"_str || key == "profile"_str;
+}
+
+auto profile_key(ref<str> key) -> bool {
+    return key == "exceptions"_str || key == "rtti"_str;
+}
+
+auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProfile>> {
+    if (value.is_none()) return Ok(Option<ProjectProfile> {});
+    auto table = table_value(**value, "manifest.profile"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    rstd_try(reject_unknown(**table, "manifest.profile"_str, profile_key));
+
+    auto profile    = ProjectProfile {};
+    auto exceptions = member(**value, "exceptions"_str);
+    if (exceptions.is_some()) {
+        auto parsed = (**exceptions).as_bool();
+        if (parsed.is_none()) {
+            return failure<Option<ProjectProfile>>(
+                "manifest.profile.exceptions must be a bool"_str);
+        }
+        profile.exceptions = *parsed;
+    }
+    auto rtti = member(**value, "rtti"_str);
+    if (rtti.is_some()) {
+        auto parsed = (**rtti).as_bool();
+        if (parsed.is_none()) {
+            return failure<Option<ProjectProfile>>("manifest.profile.rtti must be a bool"_str);
+        }
+        profile.rtti = *parsed;
+    }
+    return Ok(Some(profile));
 }
 
 auto package_key(ref<str> key) -> bool {
@@ -1611,12 +1642,14 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
             rstd_try(parse_workspace_dependencies(member(**workspace_value, "dependencies"_str)));
         auto external_dependencies = rstd_try(parse_workspace_external_dependencies(
             member(**workspace_value, "external-dependencies"_str)));
+        auto profile = rstd_try(parse_project_profile(member(document, "profile"_str)));
         return Ok(ManifestDocument {
             .kind      = ManifestKind::Workspace,
             .workspace = Some(WorkspaceManifest {
                 .name                             = rstd::move(workspace_name).unwrap(),
                 .root                             = rstd::move(root),
                 .manifest_path                    = rstd::move(path),
+                .profile                          = rstd::move(profile),
                 .members                          = rstd::move(members).unwrap(),
                 .default_members                  = rstd::move(default_members).unwrap(),
                 .package                          = rstd::move(package_defaults),
@@ -1759,6 +1792,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_dependencies   = rstd::move(dependencies).unwrap();
     auto external_dependencies = rstd::move(external).unwrap();
+    auto profile               = rstd_try(parse_project_profile(member(document, "profile"_str)));
 
     return Ok(ManifestDocument {
         .kind    = ManifestKind::Package,
@@ -1769,6 +1803,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
             .root          = root.clone(),
             .source_root   = rstd::move(source_root).unwrap(),
             .manifest_path = rstd::move(path),
+            .profile       = rstd::move(profile),
             .artifact_kind = artifact_kind,
             .artifact_name = rstd::move(artifact_name).unwrap(),
             .discovery =

@@ -1,0 +1,9 @@
+[workspace]
+name = "fixture-workspace-profile"
+members = ["app"]
+
+[workspace.package]
+version = "0.1.0"
+
+[profile]
+rtti = false

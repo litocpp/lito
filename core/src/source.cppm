@@ -658,6 +658,10 @@ public:
         return entries_[source].catalog->is_workspace();
     }
 
+    auto source_profile(usize source) const noexcept -> ProjectProfile {
+        return entries_[source].catalog->profile();
+    }
+
     auto source_root(usize source) const -> PathBuf {
         return entries_[source].source.root_directory.clone();
     }

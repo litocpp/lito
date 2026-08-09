@@ -57,8 +57,9 @@ auto is_profile_owned_definition(ref<str> definition) -> bool {
     return definition == "NDEBUG"_str || definition.starts_with("NDEBUG="_str);
 }
 
-auto make_profile_spec(const BuildConfiguration& configuration, const CppArgumentParser& parser)
-    -> Result<ProfileSpec> {
+auto make_profile_spec(const BuildConfiguration& configuration,
+                       const ProjectProfile&     project_profile,
+                       const CppArgumentParser&  parser) -> Result<ProfileSpec> {
     auto arguments =
         rstd_try(parser.parse(configuration.options, "build.options"_str), [](String error) {
             return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
@@ -122,8 +123,8 @@ auto make_profile_spec(const BuildConfiguration& configuration, const CppArgumen
 
     auto cpp = rstd_try(make_cpp_options(configuration.language_standard.as_str(),
                                          configuration.standard_library,
-                                         configuration.exceptions,
-                                         configuration.rtti,
+                                         project_profile.exceptions,
+                                         project_profile.rtti,
                                          optimization,
                                          debug_info,
                                          rstd::move(layer)),

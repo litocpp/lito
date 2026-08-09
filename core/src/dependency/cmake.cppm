@@ -92,6 +92,7 @@ struct CMakeWorkArea {
 auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const CMakeProviderConfig&                provider,
                const BuildConfiguration&                 build,
+               const ProfileSpec&                        profile,
                ref<str> effective_target) -> Result<CMakeWorkArea> {
     auto recipe = String::make("lito-cmake-install-v2\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
@@ -107,11 +108,13 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
     append_identity(recipe, build.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str);
-    append_identity(recipe, build.language_standard.as_str());
-    append_identity(
-        recipe, build.standard_library == StandardLibrary::Libcxx ? "libc++"_str : "libstdc++"_str);
-    append_identity(recipe, build.exceptions ? "exceptions"_str : "no-exceptions"_str);
-    append_identity(recipe, build.rtti ? "rtti"_str : "no-rtti"_str);
+    append_identity(recipe, profile.cpp.language.standard.as_str());
+    append_identity(recipe,
+                    profile.cpp.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
+                                                                                : "libstdc++"_str);
+    append_identity(recipe,
+                    profile.cpp.language.exceptions ? "exceptions"_str : "no-exceptions"_str);
+    append_identity(recipe, profile.cpp.language.rtti ? "rtti"_str : "no-rtti"_str);
     for (const auto& entry : requirement.cache) {
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());
@@ -204,18 +207,19 @@ auto cmake_cxx_standard(ref<str> value) -> ref<str> {
     return value;
 }
 
-auto cmake_cxx_flags(const BuildConfiguration& configuration) -> String {
-    auto result = String::make(configuration.standard_library == StandardLibrary::Libcxx
+auto cmake_cxx_flags(const ProfileSpec& profile) -> String {
+    auto result = String::make(profile.cpp.abi.standard_library == StandardLibrary::Libcxx
                                    ? "-stdlib=libc++"_str
                                    : "-stdlib=libstdc++"_str);
-    result.push_str(configuration.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
-    result.push_str(configuration.rtti ? " -frtti"_str : " -fno-rtti"_str);
+    result.push_str(profile.cpp.language.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
+    result.push_str(profile.cpp.language.rtti ? " -frtti"_str : " -fno-rtti"_str);
     return result;
 }
 
 auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement,
                            const CMakeProviderConfig&                provider,
                            const BuildConfiguration&                 configuration,
+                           const ProfileSpec&                        profile,
                            const CMakeWorkArea&                      area) -> Result<empty> {
     if (requirement.integration == CMakeIntegration::BuildTree ||
         requirement.source.is_Installed()) {
@@ -254,9 +258,9 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     auto build_type = configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str;
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
-                                cmake_cxx_standard(configuration.language_standard.as_str())));
+                                cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(configuration).as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
     for (const auto& entry : requirement.cache) {
         arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
     }
@@ -441,6 +445,7 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
 auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                      const CMakeProviderConfig&                provider,
                      const BuildConfiguration&                 configuration,
+                     const ProfileSpec&                        profile,
                      const CMakeWorkArea&                      area) -> Result<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -465,9 +470,9 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
     auto build_type = configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str;
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
-                                cmake_cxx_standard(configuration.language_standard.as_str())));
+                                cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(configuration).as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
     if (requirement.integration == CMakeIntegration::Install && requirement.source.is_Directory()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
@@ -493,7 +498,8 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
 auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
                  const CMakeProviderConfig&                provider,
                  const BuildConfiguration&                 configuration,
-                 const CMakeWorkArea&                      area) -> Result<empty> {
+                 const ProfileSpec&,
+                 const CMakeWorkArea& area) -> Result<empty> {
     if (requirement.integration != CMakeIntegration::BuildTree) return Ok(empty {});
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -887,6 +893,7 @@ export namespace lito
 auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirement,
                               const CMakeProviderConfig&                provider,
                               const BuildConfiguration&                 configuration,
+                              const ProfileSpec&                        profile,
                               const TargetInfo&                         default_target,
                               ref<str>                                  effective_target,
                               const CppArgumentParser&                  parser)
@@ -898,7 +905,7 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
             requirement.alias.as_str(),
             effective_target));
     }
-    auto area = work_area(requirement, provider, configuration, effective_target);
+    auto area = work_area(requirement, provider, configuration, profile, effective_target);
     if (area.is_err()) return Err(rstd::move(area).unwrap_err());
     auto created = rstd::fs::create_dir_all(area->root.as_path());
     if (created.is_err()) {
@@ -923,9 +930,9 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
                          rstd::move(locked).unwrap_err()));
     }
     rstd_try(write_probe_files(requirement, *area));
-    rstd_try(configure_and_install(requirement, provider, configuration, *area));
-    rstd_try(configure_probe(requirement, provider, configuration, *area));
-    rstd_try(build_probe(requirement, provider, configuration, *area));
+    rstd_try(configure_and_install(requirement, provider, configuration, profile, *area));
+    rstd_try(configure_probe(requirement, provider, configuration, profile, *area));
+    rstd_try(build_probe(requirement, provider, configuration, profile, *area));
     auto snapshots = rstd_try(read_probe_snapshots(*area, requirement));
     auto version_path =
         area->query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());

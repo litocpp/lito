@@ -5,3 +5,7 @@ default-members = ["cli", "test"]
 
 [workspace.package]
 version = "0.1.0"
+
+[profile]
+exceptions = false
+rtti = false

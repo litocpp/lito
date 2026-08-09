@@ -366,6 +366,7 @@ auto resolve_external_dependencies(
     const PkgConfigProviderConfig&                 pkg_config,
     const CMakeProviderConfig&                     cmake_config,
     const BuildConfiguration&                      configuration,
+    const ProfileSpec&                             profile,
     const TargetInfo&                              default_target,
     ref<str>                                       effective_target,
     const CppArgumentParser& parser) -> Result<Vec<ResolvedExternalDependency>> {
@@ -469,8 +470,13 @@ auto resolve_external_dependencies(
         });
     }
     for (const auto& declaration : cmake_declarations) {
-        auto resolved = resolve_cmake_dependency(
-            declaration, cmake_config, configuration, default_target, effective_target, parser);
+        auto resolved = resolve_cmake_dependency(declaration,
+                                                 cmake_config,
+                                                 configuration,
+                                                 profile,
+                                                 default_target,
+                                                 effective_target,
+                                                 parser);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         result.push(rstd::move(resolved).unwrap());
     }
@@ -481,6 +487,7 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const PkgConfigProviderConfig&          pkg_config,
                                    const CMakeProviderConfig&              cmake_config,
                                    const BuildConfiguration&               configuration,
+                                   const ProfileSpec&                      profile,
                                    const TargetInfo&                       default_target,
                                    ref<str>                                effective_target,
                                    const CppArgumentParser&                parser)
@@ -490,6 +497,7 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                          pkg_config,
                                          cmake_config,
                                          configuration,
+                                         profile,
                                          default_target,
                                          effective_target,
                                          parser);
