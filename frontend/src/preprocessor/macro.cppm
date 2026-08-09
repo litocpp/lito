@@ -2,6 +2,7 @@ export module lito.frontend.preprocessor:macro;
 
 import rstd;
 import lito.frontend.lexical;
+import :builtin;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -10,22 +11,6 @@ using namespace lito::frontend::lexical;
 
 export namespace lito::frontend::preprocessor
 {
-
-auto is_dynamic_builtin_name(ref<str> name) -> bool {
-    return name == "__LINE__"_str || name == "__FILE__"_str || name == "__BASE_FILE__"_str ||
-           name == "__FILE_NAME__"_str || name == "__INCLUDE_LEVEL__"_str ||
-           name == "__COUNTER__"_str || name == "__DATE__"_str || name == "__TIME__"_str ||
-           name == "_Pragma"_str || name == "__has_builtin"_str ||
-           name == "__has_constexpr_builtin"_str || name == "__has_feature"_str ||
-           name == "__has_extension"_str || name == "__has_cpp_attribute"_str ||
-           name == "__has_attribute"_str || name == "__has_declspec_attribute"_str ||
-           name == "__has_embed"_str || name == "__has_warning"_str ||
-           name == "__is_identifier"_str || name == "__is_target_arch"_str ||
-           name == "__is_target_vendor"_str || name == "__is_target_os"_str ||
-           name == "__is_target_environment"_str || name == "__is_target_variant_os"_str ||
-           name == "__is_target_variant_environment"_str || name == "__has_include"_str ||
-           name == "__has_include_next"_str;
-}
 
 struct MacroDefinition {
     String              name;
@@ -36,7 +21,7 @@ struct MacroDefinition {
     SourceLocation      location;
 
     auto set_name(String value) -> void {
-        dynamic_builtin_name_ = is_dynamic_builtin_name(value.as_str());
+        dynamic_builtin_name_ = DynamicBuiltinSet::contains(value.as_str());
         name                  = rstd::move(value);
     }
 

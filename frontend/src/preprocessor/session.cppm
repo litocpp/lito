@@ -2,6 +2,7 @@ export module lito.frontend.preprocessor:session;
 
 import rstd;
 import lito.frontend.lexical;
+import :builtin;
 import :traits;
 import :macro;
 import :expression;
@@ -677,13 +678,35 @@ private:
         return result;
     }
 
+    template<typename Query>
+    auto evaluate_builtin_query(const Vec<Token>& argument, const Token& origin) -> Result<i64> {
+        using Handler = typename Query::Handler;
+
+        auto value = String::make();
+        if constexpr (Handler::form == BuiltinQueryArgumentForm::StringLiteral) {
+            if (argument.len() != usize(1)) {
+                return Err(
+                    failure(rstd::format("builtin '{}' requires one string literal", Query::name),
+                            origin.expansion));
+            }
+            auto purpose  = rstd::format("builtin '{}'", Query::name);
+            auto contents = string_contents(argument[usize {}], purpose.as_str());
+            if (contents.is_err()) return Err(rstd::move(contents).unwrap_err());
+            value = rstd::move(contents).unwrap();
+        } else {
+            value = joined_argument(argument);
+        }
+        return rstd::as<BuiltinProvider>(builtin_provider_)
+            .evaluate(BuiltinQueryKey::template make<Query>(value.as_str()));
+    }
+
     auto include_query(const Token& origin, ref<str> name, const Vec<Token>& argument)
         -> Result<bool> {
         if (include_stack_.is_empty()) {
             return Err(failure("include query has no current source"_str, origin.expansion));
         }
         auto kind =
-            name == "__has_include_next"_str ? IncludeKind::NextQuoted : IncludeKind::Quoted;
+            name == HasIncludeNextBuiltin::name ? IncludeKind::NextQuoted : IncludeKind::Quoted;
         auto header = String::make();
         if (argument.len() == usize(1) && argument[usize {}].kind == TokenKind::StringLiteral) {
             auto text  = argument[usize {}].text.as_str();
@@ -696,7 +719,8 @@ private:
             header = String::make(*inside);
         } else if (argument.len() >= usize(2) && argument[usize {}].text.as_str() == "<"_str &&
                    argument[argument.len() - usize(1)].text.as_str() == ">"_str) {
-            kind = name == "__has_include_next"_str ? IncludeKind::NextAngled : IncludeKind::Angled;
+            kind =
+                name == HasIncludeNextBuiltin::name ? IncludeKind::NextAngled : IncludeKind::Angled;
             for (auto index = usize(1); index + usize(1) < argument.len(); ++index) {
                 header.push_str(argument[index].text.as_str());
             }
@@ -754,32 +778,32 @@ private:
                     ++index;
                     continue;
                 }
-                if (name == "__LINE__"_str) {
+                if (name == LineBuiltin::name) {
                     output.push(number_token(rstd::as_cast<i64>(token.expansion.line), token));
                     ++index;
                     continue;
                 }
-                if (name == "__INCLUDE_LEVEL__"_str) {
+                if (name == IncludeLevelBuiltin::name) {
                     auto level =
                         include_stack_.is_empty() ? usize {} : include_stack_.len() - usize(1);
                     output.push(number_token(rstd::as_cast<i64>(level), token));
                     ++index;
                     continue;
                 }
-                if (name == "__COUNTER__"_str) {
+                if (name == CounterBuiltin::name) {
                     output.push(number_token(rstd::as_cast<i64>(counter_), token));
                     ++counter_;
                     ++index;
                     continue;
                 }
-                if (name == "__FILE__"_str || name == "__FILE_NAME__"_str ||
-                    name == "__BASE_FILE__"_str) {
-                    auto source = name == "__BASE_FILE__"_str ? include_stack_[usize {}].source
-                                                              : token.expansion.source;
-                    auto path   = name != "__BASE_FILE__"_str && token.presumed_path.is_some()
+                if (name == FileBuiltin::name || name == FileNameBuiltin::name ||
+                    name == BaseFileBuiltin::name) {
+                    auto source = name == BaseFileBuiltin::name ? include_stack_[usize {}].source
+                                                                : token.expansion.source;
+                    auto path   = name != BaseFileBuiltin::name && token.presumed_path.is_some()
                                       ? token.presumed_path->as_path()
                                       : sources_.path(source);
-                    if (name == "__FILE_NAME__"_str && path.file_name().is_some()) {
+                    if (name == FileNameBuiltin::name && path.file_name().is_some()) {
                         auto text = (*path.file_name()).to_str();
                         if (text.is_some()) {
                             output.push(string_token(*text, token));
@@ -794,9 +818,9 @@ private:
                     ++index;
                     continue;
                 }
-                if (name == "__DATE__"_str || name == "__TIME__"_str) {
+                if (name == DateBuiltin::name || name == TimeBuiltin::name) {
                     auto kind =
-                        name == "__DATE__"_str ? BuiltinTextKind::Date : BuiltinTextKind::Time;
+                        name == DateBuiltin::name ? BuiltinTextKind::Date : BuiltinTextKind::Time;
                     auto value = rstd::as<BuiltinProvider>(builtin_provider_).text(kind);
                     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
                     builtin_identity_.push_str(name);
@@ -807,7 +831,7 @@ private:
                     ++index;
                     continue;
                 }
-                if (name == "_Pragma"_str) {
+                if (name == PragmaBuiltin::name) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
                     if (open >= input.len() || input[open].text.as_str() != "("_str) {
@@ -835,20 +859,16 @@ private:
                     index = parsed->next;
                     continue;
                 }
-                if (name == "__has_embed"_str) {
+                if (name == HasEmbedBuiltin::name) {
                     return Err(
                         failure("builtin '__has_embed' is unsupported"_str, token.expansion));
                 }
 
-                auto query = Option<BuiltinQueryKind> {};
-                if (name_bytes.len() >= usize(2) && name_bytes[usize {}] == u8('_') &&
-                    name_bytes[usize(1)] == u8('_')) {
-                    query = builtin_query_kind(name);
-                }
+                auto query_builtin = BuiltinQuerySet::contains(name);
                 auto include_builtin =
-                    name == "__has_include"_str || name == "__has_include_next"_str;
-                auto identifier_builtin = name == "__is_identifier"_str;
-                if (query.is_some() || include_builtin || identifier_builtin) {
+                    name == HasIncludeBuiltin::name || name == HasIncludeNextBuiltin::name;
+                auto identifier_builtin = name == IsIdentifierBuiltin::name;
+                if (query_builtin || include_builtin || identifier_builtin) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
                     if (open >= input.len() || input[open].text.as_str() != "("_str) {
@@ -877,26 +897,11 @@ private:
                         value = Ok(i64(lexical::is_cpp_identifier_token(
                             arguments[usize {}][usize {}], request_.language_standard.as_str())));
                     } else {
-                        auto argument = String::make();
-                        if (*query == BuiltinQueryKind::HasWarning) {
-                            if (arguments[usize {}].len() != usize(1)) {
-                                return Err(failure(
-                                    "builtin '__has_warning' requires one string literal"_str,
-                                    token.expansion));
-                            }
-                            auto contents = string_contents(arguments[usize {}][usize {}],
-                                                            "builtin '__has_warning'"_str);
-                            if (contents.is_err()) return Err(rstd::move(contents).unwrap_err());
-                            argument = rstd::move(contents).unwrap();
-                        } else {
-                            argument = joined_argument(arguments[usize {}]);
-                        }
-                        value = rstd::as<BuiltinProvider>(builtin_provider_)
-                                    .evaluate(BuiltinQueryKey {
-                                        .kind     = *query,
-                                        .argument = normalize_builtin_query_argument(
-                                            *query, argument.as_str()),
-                                    });
+                        auto matched = BuiltinQuerySet::visit(name, [&](auto query) {
+                            using Query = typename decltype(query)::type;
+                            value       = evaluate_builtin_query<Query>(arguments[usize {}], token);
+                        });
+                        if (! matched) rstd::unreachable();
                     }
                     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
                     output.push(number_token(*value, token));
@@ -1021,7 +1026,7 @@ private:
                 return Err(failure("defined requires an identifier"_str, token.expansion));
             }
             auto value = macros_.contains(line[cursor].text.as_str()) ||
-                         is_dynamic_builtin_name(line[cursor].text.as_str());
+                         DynamicBuiltinSet::contains(line[cursor].text.as_str());
             ++cursor;
             if (parenthesized) {
                 if (cursor >= line.len() || line[cursor].text.as_str() != ")"_str) {
@@ -1175,7 +1180,7 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     value = macros_.contains(rest[usize {}].text.as_str()) ||
-                            is_dynamic_builtin_name(rest[usize {}].text.as_str());
+                            DynamicBuiltinSet::contains(rest[usize {}].text.as_str());
                     if (directive == "ifndef"_str) value = ! value;
                 }
             }
@@ -1206,7 +1211,7 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     value = macros_.contains(rest[usize {}].text.as_str()) ||
-                            is_dynamic_builtin_name(rest[usize {}].text.as_str());
+                            DynamicBuiltinSet::contains(rest[usize {}].text.as_str());
                     if (directive == "elifndef"_str) value = ! value;
                 }
             }

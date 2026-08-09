@@ -71,7 +71,13 @@ public:
         return Ok(Vec<PredefinedMacroOperation>::make());
     }
 
-    auto evaluate(const BuiltinQueryKey&) -> PpResult<i64> { return Ok(i64(1)); }
+    auto evaluate(const BuiltinQueryKey& query) -> PpResult<i64> {
+        ++query_count;
+        if (query.is<HasBuiltinQuery>() && query.argument.as_str() == "__builtin_assume"_str) {
+            ++typed_queries;
+        }
+        return Ok(i64(1));
+    }
 
     auto text(BuiltinTextKind kind) -> PpResult<String> {
         ++text_queries;
@@ -79,6 +85,8 @@ public:
     }
 
     usize text_queries {};
+    usize query_count {};
+    usize typed_queries {};
 };
 
 class TestEvents {
@@ -160,7 +168,8 @@ auto run_preprocessor_test() -> int {
                 "/// hidden documentation\n"
                 "#endif\n"
                 "#if LITO_VALUE == 7 && LITO_STACK == 1 && LITO_HEADER_STACK == 1 && "
-                "__COUNTER__ == 1 && __has_include(\"config.hpp\")\n"
+                "__COUNTER__ == 1 && __has_include(\"config.hpp\") && "
+                "__has_builtin(__builtin_assume)\n"
                 "/// active documentation\n"
                 "export LITO_MODULE fixture.memory;\n"
                 "LITO_IMPORT :dependency;\n"
@@ -196,6 +205,7 @@ auto run_preprocessor_test() -> int {
     if (events.includes != usize(3) || events.probes != usize(1)) return 5;
     if (events.unexpected != usize {}) return 13;
     if (builtins.text_queries != usize(1)) return 6;
+    if (builtins.query_count != usize(1) || builtins.typed_queries != usize(1)) return 15;
     if (! contains_sequence(result->tokens, "2"_str, "+"_str, "2"_str)) return 7;
     if (! contains_sequence(result->tokens, "9"_str, ";"_str)) return 11;
     if (! contains_token(result->tokens, "LITO_LATE"_str) ||
@@ -238,4 +248,21 @@ auto run_preprocessor_test() -> int {
 
 TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
+}
+
+TEST(BuiltinQuery, TypedDefinition) {
+    static_assert(HasBuiltinQuery::name == "__has_builtin"_str);
+    static_assert(HasBuiltinQuery::Handler::form == BuiltinQueryArgumentForm::Tokens);
+    static_assert(HasWarningQuery::Handler::form == BuiltinQueryArgumentForm::StringLiteral);
+    static_assert(DynamicBuiltinSet::contains("__has_builtin"_str));
+    static_assert(DynamicBuiltinSet::contains("__DATE__"_str));
+    static_assert(! DynamicBuiltinSet::contains("__not_a_builtin"_str));
+
+    auto attribute = BuiltinQueryKey::make<HasCppAttributeQuery>("__gnu__::__cold__"_str);
+    EXPECT_TRUE(attribute.is<HasCppAttributeQuery>());
+    EXPECT_EQ(attribute.name(), HasCppAttributeQuery::name);
+    EXPECT_EQ(attribute.argument.as_str(), "gnu::cold"_str);
+
+    auto warning = BuiltinQueryKey::make<HasWarningQuery>("-Winvalid-specialization"_str);
+    EXPECT_EQ(warning.render_argument().as_str(), "\"-Winvalid-specialization\""_str);
 }

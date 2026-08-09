@@ -343,19 +343,18 @@ auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
 }
 
 auto capability_key(const preprocessor::BuiltinQueryKey& query) -> String {
-    return rstd::format(
-        "{}:{}", preprocessor::builtin_query_name(query.kind), query.argument.as_str());
+    return rstd::format("{}:{}", query.name(), query.argument.as_str());
 }
 
 auto native_capability(const preprocessor::BuiltinQueryKey& query,
                        const BuiltinSemanticContext&        context) -> Option<i64> {
-    if ((query.kind == preprocessor::BuiltinQueryKind::HasFeature ||
-         query.kind == preprocessor::BuiltinQueryKind::HasExtension) &&
+    if ((query.is<preprocessor::HasFeatureQuery>() ||
+         query.is<preprocessor::HasExtensionQuery>()) &&
         query.argument.as_str() == "cxx_exceptions"_str) {
         return Some(i64(context.exceptions));
     }
-    if ((query.kind == preprocessor::BuiltinQueryKind::HasFeature ||
-         query.kind == preprocessor::BuiltinQueryKind::HasExtension) &&
+    if ((query.is<preprocessor::HasFeatureQuery>() ||
+         query.is<preprocessor::HasExtensionQuery>()) &&
         query.argument.as_str() == "cxx_rtti"_str) {
         return Some(i64(context.rtti));
     }
@@ -585,8 +584,8 @@ inline constexpr auto STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE = R"LITO(empty_bas
 inline constexpr auto STANDARD_LIBRARY_HAS_WARNING = R"LITO(-Winvalid-specialization
 )LITO"_str;
 
+template<typename Query>
 auto append_standard_library_capabilities(Vec<preprocessor::BuiltinQueryKey>& result,
-                                          preprocessor::BuiltinQueryKind      kind,
                                           ref<str>                            values) -> void {
     auto begin = usize {};
     while (begin < values.len()) {
@@ -594,10 +593,7 @@ auto append_standard_library_capabilities(Vec<preprocessor::BuiltinQueryKey>& re
         while (end < values.len() && values.as_bytes()[end] != u8('\n')) ++end;
         auto value = values.get(begin, end);
         if (value.is_some() && ! value->is_empty()) {
-            result.push(preprocessor::BuiltinQueryKey {
-                .kind     = kind,
-                .argument = String::make(*value),
-            });
+            result.push(preprocessor::BuiltinQueryKey::make<Query>(*value));
         }
         begin = end + usize(1);
     }
@@ -605,22 +601,20 @@ auto append_standard_library_capabilities(Vec<preprocessor::BuiltinQueryKey>& re
 
 auto standard_library_capabilities() -> Vec<preprocessor::BuiltinQueryKey> {
     auto result = Vec<preprocessor::BuiltinQueryKey>::with_capacity(usize(96));
-    append_standard_library_capabilities(
-        result, preprocessor::BuiltinQueryKind::HasBuiltin, STANDARD_LIBRARY_HAS_BUILTIN);
-    append_standard_library_capabilities(
-        result, preprocessor::BuiltinQueryKind::HasFeature, STANDARD_LIBRARY_HAS_FEATURE);
-    append_standard_library_capabilities(
-        result, preprocessor::BuiltinQueryKind::HasExtension, STANDARD_LIBRARY_HAS_EXTENSION);
-    append_standard_library_capabilities(result,
-                                         preprocessor::BuiltinQueryKind::HasCppAttribute,
-                                         STANDARD_LIBRARY_HAS_CPP_ATTRIBUTE);
-    append_standard_library_capabilities(
-        result, preprocessor::BuiltinQueryKind::HasAttribute, STANDARD_LIBRARY_HAS_ATTRIBUTE);
-    append_standard_library_capabilities(result,
-                                         preprocessor::BuiltinQueryKind::HasDeclspecAttribute,
-                                         STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE);
-    append_standard_library_capabilities(
-        result, preprocessor::BuiltinQueryKind::HasWarning, STANDARD_LIBRARY_HAS_WARNING);
+    append_standard_library_capabilities<preprocessor::HasBuiltinQuery>(
+        result, STANDARD_LIBRARY_HAS_BUILTIN);
+    append_standard_library_capabilities<preprocessor::HasFeatureQuery>(
+        result, STANDARD_LIBRARY_HAS_FEATURE);
+    append_standard_library_capabilities<preprocessor::HasExtensionQuery>(
+        result, STANDARD_LIBRARY_HAS_EXTENSION);
+    append_standard_library_capabilities<preprocessor::HasCppAttributeQuery>(
+        result, STANDARD_LIBRARY_HAS_CPP_ATTRIBUTE);
+    append_standard_library_capabilities<preprocessor::HasAttributeQuery>(
+        result, STANDARD_LIBRARY_HAS_ATTRIBUTE);
+    append_standard_library_capabilities<preprocessor::HasDeclspecAttributeQuery>(
+        result, STANDARD_LIBRARY_HAS_DECLSPEC_ATTRIBUTE);
+    append_standard_library_capabilities<preprocessor::HasWarningQuery>(
+        result, STANDARD_LIBRARY_HAS_WARNING);
     return result;
 }
 
@@ -667,12 +661,6 @@ auto parse_capability_value(ref<str> raw) -> Result<i64> {
     return Ok(negative ? -result : result);
 }
 
-auto render_capability_argument(const preprocessor::BuiltinQueryKey& query) -> String {
-    if (query.kind == preprocessor::BuiltinQueryKind::HasWarning)
-        return rstd::format("\"{}\"", query.argument.as_str());
-    return query.argument.clone();
-}
-
 auto query_clang_capabilities(const Vec<String>&            base_command,
                               const BuiltinSemanticContext& semantic_context,
                               ref<rstd::path::Path>         working_directory)
@@ -683,19 +671,19 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
     auto native_count = usize {};
     auto cursor       = usize {};
     while (cursor < catalog.len()) {
-        auto kind    = catalog[cursor].kind;
-        auto builtin = preprocessor::builtin_query_name(kind);
+        const auto& query   = catalog[cursor];
+        auto        builtin = query.name();
         source.push_str(rstd::format("#if !defined({})\n", builtin).as_str());
         source.push_str(rstd::format("#define {}(...) 0\n", builtin).as_str());
         source.push_str("#define LITO_DEFINED_QUERY_BUILTIN 1\n"_str);
         source.push_str("#endif\n"_str);
-        while (cursor < catalog.len() && catalog[cursor].kind == kind) {
+        while (cursor < catalog.len() && catalog[cursor].same_query(query)) {
             if (native_capability(catalog[cursor], semantic_context).is_some()) {
                 ++native_count;
                 ++cursor;
                 continue;
             }
-            auto argument = render_capability_argument(catalog[cursor]);
+            auto argument = catalog[cursor].render_argument();
             auto index    = pending.len();
             source.push_str(
                 rstd::format("LITO_BUILTIN_QUERY_{} {}({})\n", index, builtin, argument.as_str())

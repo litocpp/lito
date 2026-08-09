@@ -13,6 +13,7 @@ target_sources(
          src/lexical/error.cppm
          src/lexical/lexer.cppm
          src/lexical/mod.cppm
+         src/preprocessor/builtin.cppm
          src/preprocessor/traits.cppm
          src/preprocessor/macro.cppm
          src/preprocessor/expression.cppm
