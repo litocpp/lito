@@ -57,7 +57,7 @@ auto pkg_config_key(ref<str> key) -> bool {
 }
 
 auto cmake_key(ref<str> key) -> bool {
-    return key == "executable"_str || key == "generator"_str;
+    return key == "executable"_str || key == "generator"_str || key == "search-path"_str;
 }
 
 auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
@@ -176,7 +176,8 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
     return Ok(rstd::move(result));
 }
 
-auto configured_cmake(const Toml& document) -> Result<CMakeProviderConfig> {
+auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
+    -> Result<CMakeProviderConfig> {
     auto result = CMakeProviderConfig {
         .executable = PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
@@ -198,6 +199,8 @@ auto configured_cmake(const Toml& document) -> Result<CMakeProviderConfig> {
         }
         result.generator = String::make(*text);
     }
+    result.search_paths = rstd_try(
+        configured_directories(**value, "search-path"_str, "config.cmake"_str, project_root));
     return Ok(rstd::move(result));
 }
 
@@ -381,7 +384,7 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
-    auto cmake = configured_cmake(document);
+    auto cmake = configured_cmake(document, root.as_path());
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
 
     return Ok(ProjectConfig {

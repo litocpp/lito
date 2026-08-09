@@ -43,6 +43,16 @@ auto append_identity(String& output, ref<str> value) -> void {
     output.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
 }
 
+auto append_search_path_identity(String& output, const CMakeProviderConfig& provider)
+    -> Result<empty> {
+    for (const auto& path : provider.search_paths) {
+        auto value = path_text(path.as_path(), "CMake search path"_str);
+        if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+        append_identity(output, value->as_str());
+    }
+    return Ok(empty {});
+}
+
 auto identity_hash(ref<str> value) -> String {
     auto hash = uint64_t(14695981039346656037ull);
     for (auto byte : value) {
@@ -104,6 +114,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
     append_identity(recipe, executable->as_str());
     append_identity(recipe, provider.generator.as_str());
+    rstd_try(append_search_path_identity(recipe, provider));
     append_identity(recipe, compiler->as_str());
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
@@ -201,6 +212,20 @@ auto push_path_argument(Vec<String>&          arguments,
     return Ok(empty {});
 }
 
+auto push_cmake_search_path(Vec<String>& arguments, const CMakeProviderConfig& provider)
+    -> Result<empty> {
+    if (provider.search_paths.is_empty()) return Ok(empty {});
+    auto value = String::make("-DCMAKE_PREFIX_PATH="_str);
+    for (usize index {}; index < provider.search_paths.len(); ++index) {
+        auto path = path_text(provider.search_paths[index].as_path(), "CMake search path"_str);
+        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+        if (index != usize {}) value.push_ascii(u8(';'));
+        value.push_str(path->as_str());
+    }
+    arguments.push(rstd::move(value));
+    return Ok(empty {});
+}
+
 auto cmake_cxx_standard(ref<str> value) -> ref<str> {
     if (value.starts_with("c++"_str)) return *value.strip_prefix("c++"_str);
     if (value.starts_with("gnu++"_str)) return *value.strip_prefix("gnu++"_str);
@@ -247,6 +272,7 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
+    rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
     rstd_try(push_path_argument(arguments,
@@ -461,6 +487,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
+    rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_CXX_COMPILER="_str,
                                 configuration.toolchain.compiler.as_path(),
@@ -852,6 +879,7 @@ auto target_snapshot_identity(const CMakeProviderConfig&                provider
     auto result = String::make("lito-cmake-dependency-v1\n"_str);
     append_identity(result, executable->as_str());
     append_identity(result, provider.generator.as_str());
+    rstd_try(append_search_path_identity(result, provider));
     append_identity(result, requirement.package.as_str());
     append_identity(result, target);
     append_identity(result, version);
@@ -871,6 +899,7 @@ auto dependency_identity(const CMakeProviderConfig&                provider,
     auto result = String::make("lito-cmake-declaration-v1\n"_str);
     append_identity(result, executable->as_str());
     append_identity(result, provider.generator.as_str());
+    rstd_try(append_search_path_identity(result, provider));
     append_identity(result, requirement.package.as_str());
     append_identity(result, version);
     append_identity(result, effective_target);

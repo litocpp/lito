@@ -277,13 +277,15 @@ struct PkgConfigProviderConfig {
 };
 
 struct CMakeProviderConfig {
-    PathBuf executable;
-    String  generator;
+    PathBuf      executable;
+    String       generator;
+    Vec<PathBuf> search_paths;
 
     auto clone() const -> CMakeProviderConfig {
         return CMakeProviderConfig {
-            .executable = executable.clone(),
-            .generator  = generator.clone(),
+            .executable   = executable.clone(),
+            .generator    = generator.clone(),
+            .search_paths = as<rstd::clone::Clone>(search_paths).clone(),
         };
     }
 };

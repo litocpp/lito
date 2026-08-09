@@ -420,6 +420,9 @@ TEST(Contracts, CMakeProviderConfigurationBelongsToProjectConfig) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->cmake.executable.as_path().to_str().unwrap(), "custom-cmake"_str);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
+    ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
+    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(),
+              root("config/cmake"_str).as_path());
 }
 
 TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {
