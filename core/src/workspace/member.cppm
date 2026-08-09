@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.workspace:member;
 
 import rstd;
@@ -56,6 +59,154 @@ auto resolve_workspace_member_version(PackageManifest& manifest, const Workspace
     }
     manifest.version.value = Some(workspace.package.version->clone());
     return Ok(empty {});
+}
+
+auto clone_package_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
+    if (source.is_Path()) {
+        return PackageSourceRequirement::Path(source.as_Path().path.clone());
+    }
+    return PackageSourceRequirement::Git(source.as_Git().url.clone(),
+                                         GitReference {
+                                             .kind  = source.as_Git().reference.kind,
+                                             .value = source.as_Git().reference.value.clone(),
+                                         });
+}
+
+auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& requirement)
+    -> PkgConfigDependencyRequirement {
+    auto version = Option<PkgConfigVersionRequirement> {};
+    if (requirement.version.is_some()) {
+        version = Some(PkgConfigVersionRequirement {
+            .comparison = requirement.version->comparison,
+            .value      = requirement.version->value.clone(),
+        });
+    }
+    return PkgConfigDependencyRequirement {
+        .module  = requirement.module.clone(),
+        .version = rstd::move(version),
+        .mode    = requirement.mode,
+    };
+}
+
+auto clone_cmake_source(const CMakeDependencySource& source) -> CMakeDependencySource {
+    if (source.is_Path()) return CMakeDependencySource::Path(source.as_Path().path.clone());
+    if (source.is_Git()) {
+        return CMakeDependencySource::Git(source.as_Git().url.clone(),
+                                          GitReference {
+                                              .kind  = source.as_Git().reference.kind,
+                                              .value = source.as_Git().reference.value.clone(),
+                                          });
+    }
+    if (source.is_Archive()) {
+        return CMakeDependencySource::Archive(source.as_Archive().url.clone(),
+                                              source.as_Archive().sha256.clone());
+    }
+    return CMakeDependencySource::Installed();
+}
+
+auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
+                                           const WorkspaceManifest& workspace) -> Result<empty> {
+    for (const auto& reference : manifest.workspace_dependencies) {
+        const WorkspaceDependencyDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.dependencies) {
+            if (candidate.name == reference.name) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' inherits dependency '{}' but workspace.dependencies has "
+                "no matching definition",
+                manifest.name.as_str(),
+                reference.name.as_str()));
+        }
+        manifest.dependencies.push(DeclaredDependency {
+            .name             = reference.name.clone(),
+            .source           = clone_package_source(definition->source),
+            .visibility       = reference.visibility,
+            .declaration_root = Some(workspace.root.clone()),
+        });
+    }
+    manifest.workspace_dependencies.clear();
+
+    for (const auto& reference : manifest.workspace_pkg_config_external_dependencies) {
+        const WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.pkg_config_external_dependencies) {
+            if (candidate.alias == reference.alias) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' inherits pkg-config dependency '{}' but "
+                "workspace.external-dependencies.pkg-config has no matching definition",
+                manifest.name.as_str(),
+                reference.alias.as_str()));
+        }
+        manifest.pkg_config_external_dependencies.push(PkgConfigExternalDependency {
+            .alias       = reference.alias.clone(),
+            .requirement = clone_pkg_config_requirement(definition->requirement),
+            .visibility  = reference.visibility,
+        });
+    }
+    manifest.workspace_pkg_config_external_dependencies.clear();
+
+    for (const auto& reference : manifest.workspace_cmake_external_dependencies) {
+        const WorkspaceCMakeExternalDependencyDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.cmake_external_dependencies) {
+            if (candidate.alias == reference.alias) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(
+                rstd::format("workspace member '{}' inherits CMake dependency '{}' but "
+                             "workspace.external-dependencies.cmake has no matching definition",
+                             manifest.name.as_str(),
+                             reference.alias.as_str()));
+        }
+        auto adapter = Option<PathBuf> {};
+        if (definition->adapter.is_some()) adapter = Some(definition->adapter->clone());
+        auto config_directory = Option<PathBuf> {};
+        if (definition->config_directory.is_some()) {
+            config_directory = Some(definition->config_directory->clone());
+        }
+        auto cache = Vec<CMakeCacheEntry>::with_capacity(definition->cache.len());
+        for (const auto& entry : definition->cache) {
+            cache.push(
+                CMakeCacheEntry { .name = entry.name.clone(), .value = entry.value.clone() });
+        }
+        auto targets = Vec<CMakeTargetRequirement>::with_capacity(reference.targets.len());
+        for (const auto& target : reference.targets) {
+            targets.push(CMakeTargetRequirement {
+                .name       = target.name.clone(),
+                .visibility = target.visibility,
+            });
+        }
+        manifest.cmake_external_dependencies.push(CMakeDependencyRequirement {
+            .alias            = reference.alias.clone(),
+            .package          = definition->package.clone(),
+            .source           = clone_cmake_source(definition->source),
+            .integration      = definition->integration,
+            .adapter          = rstd::move(adapter),
+            .config_directory = rstd::move(config_directory),
+            .cache            = rstd::move(cache),
+            .targets          = rstd::move(targets),
+            .declaration_root = Some(workspace.root.clone()),
+            .adapter_root     = Some(workspace.root.clone()),
+        });
+    }
+    manifest.workspace_cmake_external_dependencies.clear();
+    return Ok(empty {});
+}
+
+auto resolve_workspace_member(PackageManifest& manifest, const WorkspaceManifest& workspace)
+    -> Result<empty> {
+    rstd_try(resolve_workspace_member_version(manifest, workspace));
+    return resolve_workspace_member_dependencies(manifest, workspace);
 }
 
 auto resolve_containing_workspace_version(PackageManifest& manifest) -> Result<empty> {

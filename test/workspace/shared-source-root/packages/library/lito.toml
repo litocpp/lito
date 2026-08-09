@@ -1,0 +1,10 @@
+[package]
+name = "fixture-shared-source-root-library"
+version.workspace = true
+module = "fixture.shared_source_root"
+source-root = "../.."
+
+[library]
+archive = "fixture-shared-source-root"
+discovery = "explicit"
+sources = ["src/shared.cppm"]

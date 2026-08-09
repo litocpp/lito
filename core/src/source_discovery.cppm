@@ -45,7 +45,7 @@ struct SourceEntry {
 
 auto resolve_declared_source(const PackageManifest& manifest, ref<rstd::path::Path> declared)
     -> Result<ResolvedSource> {
-    auto requested = manifest.root.join(declared);
+    auto requested = manifest.source_root.join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return discovery_failure<ResolvedSource>(
@@ -54,12 +54,12 @@ auto resolve_declared_source(const PackageManifest& manifest, ref<rstd::path::Pa
                          rstd::move(canonical).unwrap_err()));
     }
     auto resolved = rstd::move(canonical).unwrap();
-    auto relative = resolved.as_path().strip_prefix(manifest.root.as_path());
+    auto relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
     if (relative.is_none() || (*relative).is_empty()) {
         return discovery_failure<ResolvedSource>(
-            rstd::format("declared source '{}' resolves outside package root '{}'",
+            rstd::format("declared source '{}' resolves outside package source root '{}'",
                          declared,
-                         manifest.root.as_path()));
+                         manifest.source_root.as_path()));
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
@@ -122,7 +122,7 @@ auto collect_format_directory(const PackageManifest& manifest,
                                                          rstd::move(canonical).unwrap_err()));
         }
         auto resolved = rstd::move(canonical).unwrap();
-        auto relative = resolved.as_path().strip_prefix(manifest.root.as_path());
+        auto relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
         if (relative.is_none() || (*relative).is_empty()) {
             return discovery_failure<empty>(rstd::format(
                 "source candidate '{}' resolves outside package root", path.as_path()));
@@ -315,7 +315,7 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
     if (manifest.discovery == SourceDiscoveryMode::Explicit) {
         return discover_explicit_sources_impl(manifest, true);
     }
-    auto source_root = manifest.root.join(PathBuf::from("src"_str).as_path());
+    auto source_root = manifest.source_root.join(PathBuf::from("src"_str).as_path());
     auto entries     = Vec<SourceEntry>::make();
     auto collected   = collect_format_directory(manifest, source_root.as_path(), entries);
     if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
@@ -378,7 +378,7 @@ auto resolve_source_target(const PackageMetadata&     package,
     auto selected_root_length = usize {};
     for (auto target : discovery.target_order) {
         if (package.targets[target].test_attachment.is_some()) continue;
-        const auto root = package.targets[target].manifest.root.as_path();
+        const auto root = package.targets[target].manifest.source_root.as_path();
         if (source.strip_prefix(root).is_none()) continue;
         auto root_length = root.as_os_str().as_encoded_bytes().len();
         if (selected.is_some() && root_length == selected_root_length) {
@@ -394,7 +394,7 @@ auto resolve_source_target(const PackageMetadata&     package,
         return discovery_failure<TargetId>(
             rstd::format("source '{}' is outside the selected package targets", source));
     }
-    auto relative = source.strip_prefix(package.targets[*selected].manifest.root.as_path());
+    auto relative = source.strip_prefix(package.targets[*selected].manifest.source_root.as_path());
     if (relative.is_none() || relative->is_empty()) {
         return discovery_failure<TargetId>(
             rstd::format("source '{}' does not name a file inside target '{}'",
@@ -498,7 +498,7 @@ auto discover_sources(const PackageMetadata&       package,
                                                  candidate.source.relative_path.as_path(),
                                                  candidate.source.canonical_path.as_path(),
                                                  *context,
-                                                 target.manifest.root.as_path(),
+                                                 target.manifest.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
             prepared.push(Some(rstd::move(task).unwrap()));

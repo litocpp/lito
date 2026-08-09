@@ -1,0 +1,13 @@
+[package]
+name = "fixture-multiple-primary-modules"
+version = "0.1.0"
+
+[executable]
+name = "fixture-multiple-primary-modules"
+discovery = "explicit"
+sources = [
+  "src/alpha.cppm",
+  "src/alpha-detail.cppm",
+  "src/beta.cppm",
+  "src/main.cpp",
+]

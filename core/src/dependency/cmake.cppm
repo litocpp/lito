@@ -59,6 +59,26 @@ auto identity_hash(ref<str> value) -> String {
         ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
 }
 
+auto source_identity(const ResolvedCMakeDependencyRequirement& requirement) -> String {
+    if (requirement.source.is_Directory()) {
+        return requirement.source.as_Directory().identity.clone();
+    }
+    if (requirement.source.is_Archive()) {
+        return rstd::format("archive+{}#sha256:{}",
+                            requirement.source.as_Archive().url.as_str(),
+                            requirement.source.as_Archive().sha256.as_str());
+    }
+    return String::make("installed"_str);
+}
+
+auto cmake_quoted(ref<str> value, ref<str> context) -> Result<String> {
+    if (value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
+        value.contains("\n"_str) || value.contains("\r"_str)) {
+        return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
+    }
+    return Ok(rstd::format("\"{}\"", value));
+}
+
 struct CMakeWorkArea {
     PathBuf root;
     PathBuf source;
@@ -74,9 +94,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const BuildConfiguration&                 build,
                ref<str> effective_target) -> Result<CMakeWorkArea> {
     auto recipe = String::make("lito-cmake-install-v2\n"_str);
-    append_identity(recipe,
-                    requirement.source_identity.is_some() ? requirement.source_identity->as_str()
-                                                          : "installed"_str);
+    append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto compiler = path_text(build.toolchain.compiler.as_path(), "C++ compiler"_str);
@@ -104,6 +122,21 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
     auto query_recipe = String::make("lito-cmake-query-v2\n"_str);
     append_identity(query_recipe, requirement.package.as_str());
+    append_identity(query_recipe,
+                    requirement.integration == CMakeIntegration::BuildTree ? "build-tree"_str
+                                                                           : "install"_str);
+    if (requirement.adapter.is_some()) {
+        auto adapter_path = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
+        if (adapter_path.is_err()) return Err(rstd::move(adapter_path).unwrap_err());
+        auto adapter = rstd::fs::read_to_string(requirement.adapter->as_path());
+        if (adapter.is_err()) {
+            return cmake_failure<CMakeWorkArea>(rstd::format("cannot read CMake adapter '{}': {}",
+                                                             requirement.adapter->as_path(),
+                                                             rstd::move(adapter).unwrap_err()));
+        }
+        append_identity(query_recipe, adapter_path->as_str());
+        append_identity(query_recipe, adapter->as_str());
+    }
     if (requirement.config_directory.is_some()) {
         auto directory =
             path_text(requirement.config_directory->as_path(), "CMake config directory"_str);
@@ -119,10 +152,10 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     auto query_root = root.join(PathBuf::from("queries"_str).as_path())
                           .join(PathBuf::from(identity_hash(query_recipe.as_str())).as_path());
     return Ok(CMakeWorkArea {
-        .root = root.clone(),
-        .source =
-            requirement.source_root.is_some() ? requirement.source_root->clone() : PathBuf::make(),
-        .build        = root.join(PathBuf::from("build"_str).as_path()),
+        .root   = root.clone(),
+        .source = requirement.source.is_Directory() ? requirement.source.as_Directory().root.clone()
+                                                    : PathBuf::make(),
+        .build  = root.join(PathBuf::from("build"_str).as_path()),
         .install      = root.join(PathBuf::from("install"_str).as_path()),
         .query_root   = query_root.clone(),
         .query_source = query_root.join(PathBuf::from("source"_str).as_path()),
@@ -184,7 +217,10 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
                            const CMakeProviderConfig&                provider,
                            const BuildConfiguration&                 configuration,
                            const CMakeWorkArea&                      area) -> Result<empty> {
-    if (requirement.source_root.is_none()) return Ok(empty {});
+    if (requirement.integration == CMakeIntegration::BuildTree ||
+        requirement.source.is_Installed()) {
+        return Ok(empty {});
+    }
     auto marker = area.root.join(PathBuf::from("installed"_str).as_path());
     auto ready  = rstd::fs::exists(marker.as_path());
     if (ready.is_err()) {
@@ -264,11 +300,55 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     return Ok(empty {});
 }
 
-auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> String {
+auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
+    -> Result<String> {
     auto result = String::make("cmake_minimum_required(VERSION 3.28)\n"
                                "project(lito_cmake_probe LANGUAGES CXX)\n"
                                "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"_str);
-    if (requirement.source_root.is_some()) {
+    if (requirement.integration == CMakeIntegration::BuildTree) {
+        if (requirement.source.is_Archive()) {
+            auto base_path = area.root.join(PathBuf::from("sources"_str).as_path());
+            auto base      = path_text(base_path.as_path(), "CMake FetchContent base"_str);
+            if (base.is_err()) return Err(rstd::move(base).unwrap_err());
+            auto quoted_base = cmake_quoted(base->as_str(), "CMake FetchContent base"_str);
+            if (quoted_base.is_err()) return Err(rstd::move(quoted_base).unwrap_err());
+            auto quoted_url =
+                cmake_quoted(requirement.source.as_Archive().url.as_str(), "CMake archive URL"_str);
+            if (quoted_url.is_err()) return Err(rstd::move(quoted_url).unwrap_err());
+            result.push_str("include(FetchContent)\nset(FETCHCONTENT_BASE_DIR "_str);
+            result.push_str(quoted_base->as_str());
+            result.push_str(")\nFetchContent_Declare(lito_dependency URL "_str);
+            result.push_str(quoted_url->as_str());
+            result.push_str(" URL_HASH \"SHA256="_str);
+            result.push_str(requirement.source.as_Archive().sha256.as_str());
+            result.push_str(
+                "\" DOWNLOAD_EXTRACT_TIMESTAMP TRUE)\nFetchContent_MakeAvailable(lito_dependency)\n"_str);
+            result.push_str("set("_str);
+            result.push_str(requirement.alias.as_str());
+            result.push_str("_SOURCE_DIR \"${lito_dependency_SOURCE_DIR}\")\n"_str);
+        } else {
+            auto source = path_text(area.source.as_path(), "CMake build-tree source"_str);
+            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+            auto quoted_source = cmake_quoted(source->as_str(), "CMake build-tree source"_str);
+            if (quoted_source.is_err()) return Err(rstd::move(quoted_source).unwrap_err());
+            result.push_str("set("_str);
+            result.push_str(requirement.alias.as_str());
+            result.push_str("_SOURCE_DIR "_str);
+            result.push_str(quoted_source->as_str());
+            result.push_str(")\nadd_subdirectory("_str);
+            result.push_str(quoted_source->as_str());
+            result.push_str(" \"${CMAKE_BINARY_DIR}/lito-dependency\")\n"_str);
+        }
+        if (requirement.adapter.is_some()) {
+            auto adapter = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
+            if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
+            auto quoted_adapter = cmake_quoted(adapter->as_str(), "CMake adapter"_str);
+            if (quoted_adapter.is_err()) return Err(rstd::move(quoted_adapter).unwrap_err());
+            result.push_str("include("_str);
+            result.push_str(quoted_adapter->as_str());
+            result.push_str(")\n"_str);
+        }
+    } else if (requirement.source.is_Directory()) {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
         result.push_str(
@@ -309,7 +389,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement) -> Str
         result.push_str(target.name.as_str());
     }
     result.push_str(")\n"_str);
-    return result;
+    return Ok(rstd::move(result));
 }
 
 auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
@@ -335,8 +415,9 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     auto cmake_lists = area.query_source.join(PathBuf::from("CMakeLists.txt"_str).as_path());
     auto source      = area.query_source.join(PathBuf::from("probe.cpp"_str).as_path());
     auto query_file  = query.join(PathBuf::from("query.json"_str).as_path());
-    auto project     = probe_project(requirement);
-    auto written     = rstd::fs::write_atomic(cmake_lists.as_path(), project.as_str().as_bytes());
+    auto project     = probe_project(requirement, area);
+    if (project.is_err()) return Err(rstd::move(project).unwrap_err());
+    auto written = rstd::fs::write_atomic(cmake_lists.as_path(), project->as_str().as_bytes());
     if (written.is_err()) {
         return cmake_failure<empty>(
             rstd::format("cannot write CMake probe project: {}", rstd::move(written).unwrap_err()));
@@ -379,13 +460,15 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                                 "-DCMAKE_CXX_COMPILER="_str,
                                 configuration.toolchain.compiler.as_path(),
                                 "C++ compiler"_str));
+    rstd_try(push_path_argument(
+        arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
     auto build_type = configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str;
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
                                 cmake_cxx_standard(configuration.language_standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(configuration).as_str()));
-    if (requirement.source_root.is_some()) {
+    if (requirement.integration == CMakeIntegration::Install && requirement.source.is_Directory()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
                                     area.install.as_path(),
@@ -397,9 +480,38 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                 arguments, prefix.as_str(), directory.as_path(), "CMake config directory"_str));
         }
     }
+    if (requirement.integration == CMakeIntegration::BuildTree) {
+        for (const auto& entry : requirement.cache) {
+            arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
+        }
+    }
     return run_cmake(
         rstd::move(arguments),
         rstd::format("CMake package '{}' query", requirement.package.as_str()).as_str());
+}
+
+auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
+                 const CMakeProviderConfig&                provider,
+                 const BuildConfiguration&                 configuration,
+                 const CMakeWorkArea&                      area) -> Result<empty> {
+    if (requirement.integration != CMakeIntegration::BuildTree) return Ok(empty {});
+    auto arguments  = Vec<String>::make();
+    auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
+    if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
+    arguments.push(rstd::move(executable).unwrap());
+    arguments.push(String::make("--build"_str));
+    auto build = path_text(area.query_build.as_path(), "CMake query build"_str);
+    if (build.is_err()) return Err(rstd::move(build).unwrap_err());
+    arguments.push(rstd::move(build).unwrap());
+    arguments.push(String::make("--target"_str));
+    arguments.push(String::make("lito_cmake_combined"_str));
+    arguments.push(String::make("--config"_str));
+    arguments.push(
+        String::make(configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str));
+    return run_cmake(
+        rstd::move(arguments),
+        rstd::format("CMake build-tree dependency '{}' build", requirement.alias.as_str())
+            .as_str());
 }
 
 auto read_json(ref<rstd::path::Path> path, ref<str> context) -> Result<Json> {
@@ -738,9 +850,7 @@ auto target_snapshot_identity(const CMakeProviderConfig&                provider
     append_identity(result, target);
     append_identity(result, version);
     append_identity(result, effective_target);
-    if (requirement.source_identity.is_some()) {
-        append_identity(result, requirement.source_identity->as_str());
-    }
+    append_identity(result, source_identity(requirement).as_str());
     for (const auto& token : snapshot.compile) append_identity(result, token.as_str());
     return Ok(rstd::move(result));
 }
@@ -758,9 +868,7 @@ auto dependency_identity(const CMakeProviderConfig&                provider,
     append_identity(result, requirement.package.as_str());
     append_identity(result, version);
     append_identity(result, effective_target);
-    if (requirement.source_identity.is_some()) {
-        append_identity(result, requirement.source_identity->as_str());
-    }
+    append_identity(result, source_identity(requirement).as_str());
     for (usize index {}; index < requirement.targets.len(); ++index) {
         append_identity(result, requirement.targets[index].name.as_str());
         for (const auto& token : snapshots.targets[index].compile) {
@@ -817,6 +925,7 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
     rstd_try(write_probe_files(requirement, *area));
     rstd_try(configure_and_install(requirement, provider, configuration, *area));
     rstd_try(configure_probe(requirement, provider, configuration, *area));
+    rstd_try(build_probe(requirement, provider, configuration, *area));
     auto snapshots = rstd_try(read_probe_snapshots(*area, requirement));
     auto version_path =
         area->query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());

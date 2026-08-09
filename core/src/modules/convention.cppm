@@ -40,7 +40,7 @@ auto valid_segment(ref<str> value) -> bool {
 }
 
 auto canonical_source_root(const PackageManifest& manifest) -> Result<PathBuf> {
-    auto requested = manifest.root.join(PathBuf::from("src"_str).as_path());
+    auto requested = manifest.source_root.join(PathBuf::from("src"_str).as_path());
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return convention_failure<PathBuf>(
@@ -70,7 +70,7 @@ auto canonical_candidate(const PackageManifest& manifest,
     }
     auto resolved         = rstd::move(canonical).unwrap();
     auto source_relative  = resolved.as_path().strip_prefix(source_root);
-    auto package_relative = resolved.as_path().strip_prefix(manifest.root.as_path());
+    auto package_relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
     if (source_relative.is_none() || package_relative.is_none() || (*source_relative).is_empty()) {
         return convention_failure<ResolvedSource>(rstd::format(
             "module convention source '{}' resolves outside package source root", requested));
@@ -218,7 +218,7 @@ auto module_companion_source(const PackageManifest& manifest, const ResolvedSour
 
     auto companion = String::make(*relative);
     companion.truncate(companion.len() - usize(1));
-    auto requested = manifest.root.join(PathBuf::from(companion.as_str()).as_path());
+    auto requested = manifest.source_root.join(PathBuf::from(companion.as_str()).as_path());
     auto exists    = file_exists(requested.as_path());
     if (exists.is_err()) return Err(rstd::move(exists).unwrap_err());
     if (! *exists) return Ok(None());

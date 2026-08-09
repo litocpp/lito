@@ -19,10 +19,14 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/git/url-fragment"_str,
     "manifest/package-name-dot"_str,
     "manifest/package-name-empty"_str,
+    "manifest/source-root-descendant"_str,
     "manifest/test-attach-unknown-key"_str,
     "manifest/toml-explicit/dependency"_str,
     "manifest/toml-explicit/version-workspace-false"_str,
     "profile/owned-definition"_str,
+    "workspace/cmake-definition-targets"_str,
+    "workspace/dependency-definition-visibility"_str,
+    "workspace/dependency-reference-mixed"_str,
     "workspace/mixed"_str,
 };
 
@@ -33,15 +37,12 @@ inline constexpr ref<str> INVALID_PKG_CONFIG_MANIFESTS[] = {
 };
 
 inline constexpr ref<str> INVALID_CMAKE_MANIFESTS[] = {
-    "manifest/cmake/config-directory-parent"_str,
-    "manifest/cmake/duplicate-target"_str,
-    "manifest/cmake/empty-targets"_str,
-    "manifest/cmake/installed-cache"_str,
-    "manifest/cmake/installed-config-directory"_str,
-    "manifest/cmake/legacy-dependency"_str,
-    "manifest/cmake/missing-target"_str,
-    "manifest/cmake/provider-mix"_str,
-    "manifest/cmake/unsafe-target"_str,
+    "manifest/cmake/adapter-install"_str,      "manifest/cmake/archive-missing-sha"_str,
+    "manifest/cmake/build-tree-installed"_str, "manifest/cmake/config-directory-parent"_str,
+    "manifest/cmake/duplicate-target"_str,     "manifest/cmake/empty-targets"_str,
+    "manifest/cmake/installed-cache"_str,      "manifest/cmake/installed-config-directory"_str,
+    "manifest/cmake/legacy-dependency"_str,    "manifest/cmake/missing-target"_str,
+    "manifest/cmake/provider-mix"_str,         "manifest/cmake/unsafe-target"_str,
 };
 
 inline constexpr ref<str> INVALID_EXPLICIT_SOURCES[] = {
@@ -59,6 +60,8 @@ inline constexpr ref<str> INVALID_GRAPHS[] = {
     "workspace/default-not-member"_str,
     "workspace/duplicate-name"_str,
     "workspace/duplicate"_str,
+    "workspace/inherited-dependency-missing"_str,
+    "workspace/inherited-dependency-outside"_str,
     "workspace/inherited-version-missing"_str,
     "workspace/missing-member"_str,
     "workspace/nested"_str,
@@ -80,10 +83,12 @@ inline constexpr ref<str> INVALID_LOCKS[] = {
 inline constexpr ref<str> VALID_BUILD_CASES[] = {
     "cache/long-path"_str,
     "discovery/preprocess/app"_str,
+    "manifest/multiple-primary-modules"_str,
     "manifest/toml-module/directory-markers"_str,
     "manifest/toml-module/multiple-implementations"_str,
     "scanner/module-kinds"_str,
     "scanner/stdlib-header"_str,
+    "workspace/shared-source-root"_str,
 };
 
 inline constexpr ref<str> INVALID_BUILD_CASES[] = {
@@ -194,9 +199,9 @@ auto resolved_git_commit(const lito::ResolvedPackageGraph& graph) -> Option<ref<
     return None();
 }
 
-auto versioned_fixture(ref<str>                        alias,
+auto versioned_fixture(ref<str>                       alias,
                        lito::PkgConfigVersionOperator comparison,
-                       ref<str>                        version,
+                       ref<str>                       version,
                        lito::PkgConfigQueryMode       mode = lito::PkgConfigQueryMode::Shared)
     -> lito::PkgConfigExternalDependency {
     return lito::PkgConfigExternalDependency {
@@ -300,13 +305,13 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
     auto target   = pkg_config_target();
     auto packages = strings("fixture-profile-owned_option"_str);
     auto metadata = lito::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
-                                                        packages,
-                                                        packages,
-                                                        configuration(),
-                                                        lito::PkgConfigProviderConfig {},
-                                                        lito::CMakeProviderConfig {},
-                                                        target,
-                                                        *parser);
+                                                       packages,
+                                                       packages,
+                                                       configuration(),
+                                                       lito::PkgConfigProviderConfig {},
+                                                       lito::CMakeProviderConfig {},
+                                                       target,
+                                                       *parser);
     ASSERT_TRUE(metadata.is_ok());
 
     auto planned = lito::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
@@ -322,6 +327,14 @@ TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
     auto preferred = lito::load_package_manifest(root("manifest/name/preferred"_str).as_path());
     ASSERT_TRUE(preferred.is_ok());
     EXPECT_EQ(preferred->name.as_str(), "preferred-manifest"_str);
+}
+
+TEST(Contracts, PackageSourceRootIsIndependentFromWorkspaceMemberDirectory) {
+    auto loaded = lito::load_package_manifest(
+        root("workspace/shared-source-root/packages/library"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_NE(loaded->root.as_path(), loaded->source_root.as_path());
+    EXPECT_EQ(loaded->source_root.as_path(), root("workspace/shared-source-root"_str).as_path());
 }
 
 TEST(Contracts, ManifestGitCommitIsTypedAndValidated) {
@@ -433,8 +446,30 @@ TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
             ? usize {}
             : usize(1);
     const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[resolved_index];
-    EXPECT_TRUE(resolved.source_root.is_some());
-    EXPECT_TRUE(resolved.source_identity.is_some());
+    ASSERT_TRUE(resolved.source.is_Directory());
+    EXPECT_FALSE(resolved.source.as_Directory().identity.is_empty());
+    EXPECT_FALSE(resolved.source.as_Directory().root.as_path().to_str().unwrap().is_empty());
+}
+
+TEST(Contracts, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
+    auto directory = root("manifest/cmake/build-tree"_str);
+    auto loaded    = lito::load_package_manifest(directory.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
+    const auto& declared = loaded->cmake_external_dependencies[usize {}];
+    EXPECT_EQ(declared.integration, lito::CMakeIntegration::BuildTree);
+    ASSERT_TRUE(declared.source.is_Path());
+    ASSERT_TRUE(declared.adapter.is_some());
+    EXPECT_EQ(declared.adapter->as_path().to_str().unwrap(), "adapter.cmake"_str);
+
+    auto graph = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_TRUE(lito::resolve_external_dependency_sources(*graph, {}).is_ok());
+    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    EXPECT_TRUE(resolved.source.is_Directory());
+    EXPECT_EQ(resolved.integration, lito::CMakeIntegration::BuildTree);
+    ASSERT_TRUE(resolved.adapter.is_some());
+    EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
 }
 
 TEST(Contracts, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
@@ -486,12 +521,12 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                         "2.0.0"_str,
                                         lito::PkgConfigQueryMode::Static));
     auto resolved = lito::resolve_external_dependencies(declarations,
-                                                         config,
-                                                         fixture_cmake(),
-                                                         configuration(),
-                                                         target,
-                                                         target.triple.as_str(),
-                                                         *parser);
+                                                        config,
+                                                        fixture_cmake(),
+                                                        configuration(),
+                                                        target,
+                                                        target.triple.as_str(),
+                                                        *parser);
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(1));
     EXPECT_EQ((*resolved)[usize {}].version.as_str(), "2.3.4"_str);
@@ -519,12 +554,12 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
 
     declarations[usize {}].requirement.mode = lito::PkgConfigQueryMode::Shared;
     auto shared = lito::resolve_external_dependencies(declarations,
-                                                       config,
-                                                       fixture_cmake(),
-                                                       configuration(),
-                                                       target,
-                                                       target.triple.as_str(),
-                                                       *parser);
+                                                      config,
+                                                      fixture_cmake(),
+                                                      configuration(),
+                                                      target,
+                                                      target.triple.as_str(),
+                                                      *parser);
     ASSERT_TRUE(shared.is_ok());
     for (const auto& token : (*shared)[usize {}].link_arguments.tokens) {
         EXPECT_NE(token.as_str(), "-llito_private"_str);
@@ -560,23 +595,23 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
     declarations.push(lito::ResolvedCMakeDependencyRequirement {
-        .alias            = String::make("fixture"_str),
-        .package          = String::make("LitoFixture"_str),
-        .source_identity  = Some(String::make("lito-test-cmake-fixture-v3"_str)),
-        .source_root      = Some(root("cmake/package"_str)),
+        .alias   = String::make("fixture"_str),
+        .package = String::make("LitoFixture"_str),
+        .source  = lito::ResolvedCMakeDependencySource::Directory(
+            root("cmake/package"_str), String::make("lito-test-cmake-fixture-v3"_str)),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
     });
     auto resolved =
         lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                             declarations,
-                                             fixture_pkg_config(),
-                                             fixture_cmake(),
-                                             configuration(),
-                                             target,
-                                             target.triple.as_str(),
-                                             *parser);
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            target,
+                                            target.triple.as_str(),
+                                            *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error.message.as_str());
@@ -619,13 +654,13 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
     auto queried_again =
         lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                             declarations,
-                                             fixture_pkg_config(),
-                                             fixture_cmake(),
-                                             configuration(),
-                                             target,
-                                             target.triple.as_str(),
-                                             *parser);
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            target,
+                                            target.triple.as_str(),
+                                            *parser);
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(second_count.is_ok());
@@ -637,18 +672,76 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     });
     auto installed_again =
         lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                             declarations,
-                                             fixture_pkg_config(),
-                                             fixture_cmake(),
-                                             configuration(),
-                                             target,
-                                             target.triple.as_str(),
-                                             *parser);
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            target,
+                                            target.triple.as_str(),
+                                            *parser);
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(third_count.is_ok());
     EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
     EXPECT_TRUE(clear_output(count_directory.as_path()));
+}
+
+TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto targets = Vec<lito::CMakeTargetRequirement>::make();
+    targets.push(lito::CMakeTargetRequirement {
+        .name       = String::make("LitoBuildTree::fixture"_str),
+        .visibility = lito::DependencyVisibility::Private,
+    });
+    auto declarations = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
+    declarations.push(lito::ResolvedCMakeDependencyRequirement {
+        .alias   = String::make("fixture"_str),
+        .package = String::make("LitoBuildTree"_str),
+        .source  = lito::ResolvedCMakeDependencySource::Directory(
+            root("cmake/build-tree"_str), String::make("lito-test-cmake-build-tree-v1"_str)),
+        .integration = lito::CMakeIntegration::BuildTree,
+        .adapter     = Some(root("manifest/cmake/build-tree/adapter.cmake"_str)),
+        .targets     = rstd::move(targets),
+    });
+    auto target = pkg_config_target();
+    auto resolved =
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            target,
+                                            target.triple.as_str(),
+                                            *parser);
+    if (resolved.is_err()) {
+        auto error = rstd::move(resolved).unwrap_err();
+        rstd::io::eprintln("{}", error.message.as_str());
+        EXPECT_TRUE(false);
+        return;
+    }
+    ASSERT_EQ(resolved->len(), usize(1));
+    const auto& dependency = (*resolved)[usize {}];
+    EXPECT_EQ(dependency.version.as_str(), "4.5.6"_str);
+    ASSERT_EQ(dependency.targets.len(), usize(1));
+
+    auto has_macro   = false;
+    auto has_include = false;
+    for (const auto& occurrence : dependency.targets[usize {}].compile_arguments.occurrences) {
+        if (occurrence.argument.is_Macro()) {
+            has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
+                                         "LITO_CMAKE_BUILD_TREE_USAGE=1"_str;
+        }
+        if (occurrence.argument.is_IncludeDirectory()) has_include = true;
+    }
+    EXPECT_TRUE(has_macro);
+    EXPECT_TRUE(has_include);
+
+    auto has_archive = false;
+    for (const auto& token : dependency.link_arguments.tokens) {
+        if (token.as_str().contains("liblito_build_tree.a"_str)) has_archive = true;
+    }
+    EXPECT_TRUE(has_archive);
 }
 
 TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyContext) {
@@ -668,12 +761,12 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     declarations.push(versioned_fixture(
         "greater-equal"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.3.4"_str));
     auto resolved = lito::resolve_external_dependencies(declarations,
-                                                         config,
-                                                         fixture_cmake(),
-                                                         configuration(),
-                                                         target,
-                                                         target.triple.as_str(),
-                                                         *parser);
+                                                        config,
+                                                        fixture_cmake(),
+                                                        configuration(),
+                                                        target,
+                                                        target.triple.as_str(),
+                                                        *parser);
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
 
@@ -681,12 +774,12 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
     incompatible.push(versioned_fixture(
         "incompatible"_str, lito::PkgConfigVersionOperator::Greater, "99.0.0"_str));
     auto failed = lito::resolve_external_dependencies(incompatible,
-                                                       config,
-                                                       fixture_cmake(),
-                                                       configuration(),
-                                                       target,
-                                                       target.triple.as_str(),
-                                                       *parser);
+                                                      config,
+                                                      fixture_cmake(),
+                                                      configuration(),
+                                                      target,
+                                                      target.triple.as_str(),
+                                                      *parser);
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
     EXPECT_TRUE(error.message.as_str().contains("incompatible"_str));
@@ -703,32 +796,32 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
         "fixture"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
 
     auto implicit_cross = lito::resolve_external_dependencies(declarations,
-                                                               config,
-                                                               fixture_cmake(),
-                                                               configuration(),
-                                                               target,
-                                                               "aarch64-unknown-linux-gnu"_str,
-                                                               *parser);
+                                                              config,
+                                                              fixture_cmake(),
+                                                              configuration(),
+                                                              target,
+                                                              "aarch64-unknown-linux-gnu"_str,
+                                                              *parser);
     EXPECT_TRUE(implicit_cross.is_err());
 
     config.target_configured = true;
     auto explicit_cross      = lito::resolve_external_dependencies(declarations,
-                                                                    config,
-                                                                    fixture_cmake(),
-                                                                    configuration(),
-                                                                    target,
-                                                                    "aarch64-unknown-linux-gnu"_str,
-                                                                    *parser);
+                                                                   config,
+                                                                   fixture_cmake(),
+                                                                   configuration(),
+                                                                   target,
+                                                                   "aarch64-unknown-linux-gnu"_str,
+                                                                   *parser);
     EXPECT_TRUE(explicit_cross.is_ok());
 
     config.executable     = rstd::path::PathBuf::from("lito-missing-pkg-config-provider"_str);
     auto missing_provider = lito::resolve_external_dependencies(declarations,
-                                                                 config,
-                                                                 fixture_cmake(),
-                                                                 configuration(),
-                                                                 target,
-                                                                 target.triple.as_str(),
-                                                                 *parser);
+                                                                config,
+                                                                fixture_cmake(),
+                                                                configuration(),
+                                                                target,
+                                                                target.triple.as_str(),
+                                                                *parser);
     ASSERT_TRUE(missing_provider.is_err());
     auto provider_error = rstd::move(missing_provider).unwrap_err();
     EXPECT_TRUE(provider_error.message.as_str().contains("fixture"_str));
@@ -738,12 +831,12 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     declarations[usize {}].alias              = String::make("missing-module"_str);
     declarations[usize {}].requirement.module = String::make("lito-module-does-not-exist"_str);
     auto missing_module = lito::resolve_external_dependencies(declarations,
-                                                               config,
-                                                               fixture_cmake(),
-                                                               configuration(),
-                                                               target,
-                                                               target.triple.as_str(),
-                                                               *parser);
+                                                              config,
+                                                              fixture_cmake(),
+                                                              configuration(),
+                                                              target,
+                                                              target.triple.as_str(),
+                                                              *parser);
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
     EXPECT_TRUE(module_error.message.as_str().contains("missing-module"_str));
@@ -765,15 +858,15 @@ TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
     auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
     declarations.push(
         versioned_fixture("first"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
-    declarations.push(versioned_fixture(
-        "second"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
+    declarations.push(
+        versioned_fixture("second"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
     auto resolved = lito::resolve_external_dependencies(declarations,
-                                                         config,
-                                                         fixture_cmake(),
-                                                         configuration(),
-                                                         target,
-                                                         target.triple.as_str(),
-                                                         *parser);
+                                                        config,
+                                                        fixture_cmake(),
+                                                        configuration(),
+                                                        target,
+                                                        target.triple.as_str(),
+                                                        *parser);
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(2));
     auto count = rstd::fs::read_to_string(
@@ -857,6 +950,78 @@ TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
     ASSERT_TRUE(valid.is_ok());
     ASSERT_TRUE(valid->workspace.is_some());
     EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
+}
+
+TEST(Contracts, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
+    auto directory = root("workspace/inherited-dependencies"_str);
+    auto member =
+        lito::load_package_manifest(root("workspace/inherited-dependencies/app"_str).as_path());
+    ASSERT_TRUE(member.is_ok());
+    EXPECT_TRUE(member->dependencies.is_empty());
+    EXPECT_TRUE(member->pkg_config_external_dependencies.is_empty());
+    EXPECT_TRUE(member->cmake_external_dependencies.is_empty());
+    ASSERT_EQ(member->workspace_dependencies.len(), usize(1));
+    ASSERT_EQ(member->workspace_pkg_config_external_dependencies.len(), usize(1));
+    ASSERT_EQ(member->workspace_cmake_external_dependencies.len(), usize(1));
+
+    auto document = lito::load_manifest_document(directory.as_path());
+    ASSERT_TRUE(document.is_ok());
+    ASSERT_TRUE(document->workspace.is_some());
+    ASSERT_EQ(document->workspace->dependencies.len(), usize(1));
+    ASSERT_EQ(document->workspace->pkg_config_external_dependencies.len(), usize(1));
+    ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
+    EXPECT_TRUE(document->workspace->dependencies[usize {}].source.is_Path());
+    EXPECT_TRUE(document->workspace->cmake_external_dependencies[usize {}].source.is_Path());
+
+    auto graph = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->packages.len(), usize(2));
+    const auto& app = graph->packages[usize {}];
+    EXPECT_EQ(app.manifest.name.as_str(), "fixture-workspace-inherited-app"_str);
+    EXPECT_TRUE(app.manifest.workspace_dependencies.is_empty());
+    EXPECT_TRUE(app.manifest.workspace_pkg_config_external_dependencies.is_empty());
+    EXPECT_TRUE(app.manifest.workspace_cmake_external_dependencies.is_empty());
+    ASSERT_EQ(app.dependencies.len(), usize(1));
+    EXPECT_EQ(app.dependencies[usize {}].name.as_str(), "fixture-workspace-inherited-library"_str);
+    ASSERT_EQ(app.manifest.dependencies.len(), usize(1));
+    ASSERT_TRUE(app.manifest.dependencies[usize {}].declaration_root.is_some());
+    EXPECT_EQ(app.manifest.dependencies[usize {}].declaration_root->as_path(), directory.as_path());
+
+    ASSERT_EQ(app.manifest.pkg_config_external_dependencies.len(), usize(1));
+    const auto& curl = app.manifest.pkg_config_external_dependencies[usize {}];
+    EXPECT_EQ(curl.alias.as_str(), "curl"_str);
+    EXPECT_EQ(curl.requirement.module.as_str(), "libcurl"_str);
+    EXPECT_EQ(curl.requirement.mode, lito::PkgConfigQueryMode::Static);
+    EXPECT_EQ(curl.visibility, lito::DependencyVisibility::Public);
+
+    ASSERT_EQ(app.manifest.cmake_external_dependencies.len(), usize(1));
+    const auto& cmake = app.manifest.cmake_external_dependencies[usize {}];
+    EXPECT_EQ(cmake.alias.as_str(), "fixture"_str);
+    ASSERT_EQ(cmake.targets.len(), usize(1));
+    EXPECT_EQ(cmake.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
+    EXPECT_EQ(cmake.integration, lito::CMakeIntegration::BuildTree);
+    ASSERT_TRUE(cmake.adapter.is_some());
+    EXPECT_EQ(cmake.adapter->as_path().to_str().unwrap(), "fixture-adapter.cmake"_str);
+    ASSERT_TRUE(cmake.declaration_root.is_some());
+    EXPECT_EQ(cmake.declaration_root->as_path(), directory.as_path());
+    ASSERT_TRUE(cmake.adapter_root.is_some());
+    EXPECT_EQ(cmake.adapter_root->as_path(), directory.as_path());
+
+    ASSERT_TRUE(lito::resolve_external_dependency_sources(*graph, {}).is_ok());
+    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
+    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    ASSERT_TRUE(resolved.source.is_Directory());
+    EXPECT_EQ(resolved.source.as_Directory().root.as_path(), root("cmake/package"_str).as_path());
+    ASSERT_TRUE(resolved.adapter.is_some());
+    EXPECT_EQ(resolved.adapter->as_path(),
+              root("workspace/inherited-dependencies/fixture-adapter.cmake"_str).as_path());
+
+    auto member_graph =
+        lito::resolve_package_graph(root("workspace/inherited-dependencies/app"_str).as_path());
+    ASSERT_TRUE(member_graph.is_ok());
+    EXPECT_TRUE(member_graph->root_is_workspace);
+    ASSERT_EQ(member_graph->packages.len(), usize(2));
+    EXPECT_EQ(member_graph->packages[usize {}].dependencies.len(), usize(1));
 }
 
 TEST(Contracts, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {

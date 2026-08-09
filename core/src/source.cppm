@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.source;
 
 import rstd;
@@ -128,7 +131,7 @@ auto load_git_catalog(ref<rstd::path::Path> root) -> Result<WorkspaceCatalog> {
         return load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
     }
     if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-        return Ok(WorkspaceCatalog::single(rstd::move(loaded.package).unwrap()));
+        return WorkspaceCatalog::single(rstd::move(loaded.package).unwrap());
     }
     return source_failure<WorkspaceCatalog>(
         "Git source root manifest has no package or workspace"_str);
@@ -426,7 +429,7 @@ class SourceManager {
                     if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
                     loaded_catalog = rstd::move(workspace).unwrap();
                 } else {
-                    loaded_catalog = WorkspaceCatalog::single(rstd::move(package));
+                    loaded_catalog = rstd_try(WorkspaceCatalog::single(rstd::move(package)));
                 }
             } else {
                 return source_failure<usize>("source manifest has no package or workspace"_str);

@@ -139,7 +139,14 @@ class CMakeDependencySource {
     RSTD_ENUM(CMakeDependencySource,
               (Installed),
               (Path, (PathBuf path;)),
-              (Git, (String url; GitReference reference;)))
+              (Git, (String url; GitReference reference;)),
+              (Archive, (String url; String sha256;)))
+};
+
+enum class CMakeIntegration
+{
+    Install,
+    BuildTree,
 };
 
 struct CMakeTargetRequirement {
@@ -151,9 +158,13 @@ struct CMakeDependencyRequirement {
     String                      alias;
     String                      package;
     CMakeDependencySource       source;
+    CMakeIntegration            integration { CMakeIntegration::Install };
+    Option<PathBuf>             adapter;
     Option<PathBuf>             config_directory;
     Vec<CMakeCacheEntry>        cache;
     Vec<CMakeTargetRequirement> targets;
+    Option<PathBuf>             declaration_root;
+    Option<PathBuf>             adapter_root;
 };
 
 struct PkgConfigExternalDependency {
@@ -360,6 +371,22 @@ struct DeclaredDependency {
     String                   name;
     PackageSourceRequirement source;
     DependencyVisibility     visibility { DependencyVisibility::Private };
+    Option<PathBuf>          declaration_root;
+};
+
+struct WorkspaceDependencyReference {
+    String               name;
+    DependencyVisibility visibility { DependencyVisibility::Private };
+};
+
+struct WorkspacePkgConfigExternalDependencyReference {
+    String               alias;
+    DependencyVisibility visibility { DependencyVisibility::Private };
+};
+
+struct WorkspaceCMakeExternalDependencyReference {
+    String                      alias;
+    Vec<CMakeTargetRequirement> targets;
 };
 
 enum class TargetFamily
@@ -440,36 +467,63 @@ struct CompileTestCase {
 };
 
 struct PackageManifest {
-    String                           name;
-    PackageVersion                   version;
-    Option<String>                   root_module;
-    PathBuf                          root;
-    PathBuf                          manifest_path;
-    ArtifactKind                     artifact_kind { ArtifactKind::StaticLibrary };
-    String                           artifact_name;
-    SourceDiscoveryMode              discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>                     declared_sources;
-    Vec<ConditionalSourceGroup>      conditional_source_groups;
-    Vec<TestAttachmentManifest>      test_attachments;
-    TargetPredicate                  target;
-    Vec<CompileTestCase>             compile_tests;
-    UsageRequirements                usage;
-    Vec<DeclaredDependency>          dependencies;
-    Vec<PkgConfigExternalDependency> pkg_config_external_dependencies;
-    Vec<CMakeDependencyRequirement>  cmake_external_dependencies;
+    String                            name;
+    PackageVersion                    version;
+    Option<String>                    root_module;
+    PathBuf                           root;
+    PathBuf                           source_root;
+    PathBuf                           manifest_path;
+    ArtifactKind                      artifact_kind { ArtifactKind::StaticLibrary };
+    String                            artifact_name;
+    SourceDiscoveryMode               discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>                      declared_sources;
+    Vec<ConditionalSourceGroup>       conditional_source_groups;
+    Vec<TestAttachmentManifest>       test_attachments;
+    TargetPredicate                   target;
+    Vec<CompileTestCase>              compile_tests;
+    UsageRequirements                 usage;
+    Vec<DeclaredDependency>           dependencies;
+    Vec<WorkspaceDependencyReference> workspace_dependencies;
+    Vec<PkgConfigExternalDependency>  pkg_config_external_dependencies;
+    Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
+    Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
+    Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
 };
 
 struct WorkspacePackageDefaults {
     Option<String> version;
 };
 
-struct WorkspaceManifest {
+struct WorkspaceDependencyDefinition {
     String                   name;
-    PathBuf                  root;
-    PathBuf                  manifest_path;
-    Vec<PathBuf>             members;
-    Vec<PathBuf>             default_members;
-    WorkspacePackageDefaults package;
+    PackageSourceRequirement source;
+};
+
+struct WorkspacePkgConfigExternalDependencyDefinition {
+    String                         alias;
+    PkgConfigDependencyRequirement requirement;
+};
+
+struct WorkspaceCMakeExternalDependencyDefinition {
+    String                alias;
+    String                package;
+    CMakeDependencySource source;
+    CMakeIntegration      integration { CMakeIntegration::Install };
+    Option<PathBuf>       adapter;
+    Option<PathBuf>       config_directory;
+    Vec<CMakeCacheEntry>  cache;
+};
+
+struct WorkspaceManifest {
+    String                                              name;
+    PathBuf                                             root;
+    PathBuf                                             manifest_path;
+    Vec<PathBuf>                                        members;
+    Vec<PathBuf>                                        default_members;
+    WorkspacePackageDefaults                            package;
+    Vec<WorkspaceDependencyDefinition>                  dependencies;
+    Vec<WorkspacePkgConfigExternalDependencyDefinition> pkg_config_external_dependencies;
+    Vec<WorkspaceCMakeExternalDependencyDefinition>     cmake_external_dependencies;
 };
 
 enum class ManifestKind
@@ -511,14 +565,22 @@ struct ResolvedDependency {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+class ResolvedCMakeDependencySource {
+    RSTD_ENUM(ResolvedCMakeDependencySource,
+              (Installed),
+              (Directory, (PathBuf root; String identity;)),
+              (Archive, (String url; String sha256;)))
+};
+
 struct ResolvedCMakeDependencyRequirement {
-    String                      alias;
-    String                      package;
-    Option<String>              source_identity;
-    Option<PathBuf>             source_root;
-    Option<PathBuf>             config_directory;
-    Vec<CMakeCacheEntry>        cache;
-    Vec<CMakeTargetRequirement> targets;
+    String                        alias;
+    String                        package;
+    ResolvedCMakeDependencySource source;
+    CMakeIntegration              integration { CMakeIntegration::Install };
+    Option<PathBuf>               adapter;
+    Option<PathBuf>               config_directory;
+    Vec<CMakeCacheEntry>          cache;
+    Vec<CMakeTargetRequirement>   targets;
 };
 
 struct ResolvedPackageSource {

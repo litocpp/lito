@@ -265,10 +265,13 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&    graph,
         auto resolved = Vec<ResolvedCMakeDependencyRequirement>::with_capacity(
             package.manifest.cmake_external_dependencies.len());
         for (const auto& declaration : package.manifest.cmake_external_dependencies) {
-            auto source_identity = Option<String> {};
-            auto source_root     = Option<PathBuf> {};
-            if (! declaration.source.is_Installed()) {
-                auto source =
+            auto source = ResolvedCMakeDependencySource::Installed();
+            if (declaration.source.is_Archive()) {
+                source = ResolvedCMakeDependencySource::Archive(
+                    declaration.source.as_Archive().url.clone(),
+                    declaration.source.as_Archive().sha256.clone());
+            } else if (! declaration.source.is_Installed()) {
+                auto acquisition =
                     declaration.source.is_Git()
                         ? PackageSourceRequirement::Git(
                               declaration.source.as_Git().url.clone(),
@@ -277,10 +280,14 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&    graph,
                                   .value = declaration.source.as_Git().reference.value.clone(),
                               })
                         : PackageSourceRequirement::Path(declaration.source.as_Path().path.clone());
-                auto acquired = sources.acquire_external(source, package.manifest.root.as_path());
+                auto declaring_root = package.manifest.root.as_path();
+                if (declaration.declaration_root.is_some()) {
+                    declaring_root = declaration.declaration_root->as_path();
+                }
+                auto acquired = sources.acquire_external(acquisition, declaring_root);
                 if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                source_identity = Some(rstd::move(acquired->identity));
-                source_root     = Some(rstd::move(acquired->root));
+                source = ResolvedCMakeDependencySource::Directory(rstd::move(acquired->root),
+                                                                  rstd::move(acquired->identity));
             }
             auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
             for (const auto& entry : declaration.cache) {
@@ -300,11 +307,34 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&    graph,
             if (declaration.config_directory.is_some()) {
                 config_directory = Some(declaration.config_directory->clone());
             }
+            auto adapter = Option<PathBuf> {};
+            if (declaration.adapter.is_some()) {
+                auto adapter_root = package.manifest.source_root.as_path();
+                if (declaration.adapter_root.is_some()) {
+                    adapter_root = declaration.adapter_root->as_path();
+                }
+                auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
+                auto canonical = rstd::fs::canonicalize(path.as_path());
+                if (canonical.is_err()) {
+                    return dependency_failure<empty>(
+                        rstd::format("cannot resolve CMake adapter '{}': {}",
+                                     path.as_path(),
+                                     rstd::move(canonical).unwrap_err()));
+                }
+                if (! canonical->as_path().starts_with(adapter_root)) {
+                    return dependency_failure<empty>(
+                        rstd::format("CMake adapter '{}' escapes declaration root '{}'",
+                                     canonical->as_path(),
+                                     adapter_root));
+                }
+                adapter = Some(rstd::move(canonical).unwrap());
+            }
             resolved.push(ResolvedCMakeDependencyRequirement {
                 .alias            = declaration.alias.clone(),
                 .package          = declaration.package.clone(),
-                .source_identity  = rstd::move(source_identity),
-                .source_root      = rstd::move(source_root),
+                .source           = rstd::move(source),
+                .integration      = declaration.integration,
+                .adapter          = rstd::move(adapter),
                 .config_directory = rstd::move(config_directory),
                 .cache            = rstd::move(cache),
                 .targets          = rstd::move(targets),

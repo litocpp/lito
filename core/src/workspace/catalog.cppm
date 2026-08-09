@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.workspace:catalog;
 
 import rstd;
@@ -55,7 +58,15 @@ class WorkspaceCatalog {
 public:
     WorkspaceCatalog() = default;
 
-    static auto single(PackageManifest manifest) -> WorkspaceCatalog {
+    static auto single(PackageManifest manifest) -> Result<WorkspaceCatalog> {
+        if (! manifest.workspace_dependencies.is_empty() ||
+            ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
+            ! manifest.workspace_cmake_external_dependencies.is_empty()) {
+            return catalog_failure<WorkspaceCatalog>(rstd::format(
+                "package '{}' inherits workspace dependencies but is not a member of a "
+                "containing workspace",
+                manifest.name.as_str()));
+        }
         auto catalog           = WorkspaceCatalog {};
         catalog.name_          = manifest.name.clone();
         catalog.root_          = manifest.root.clone();
@@ -66,7 +77,7 @@ public:
             catalog.member_roots_.insert(String::make(*root_text), empty {});
         }
         catalog.packages_.insert(manifest.name.clone(), rstd::move(manifest));
-        return catalog;
+        return Ok(rstd::move(catalog));
     }
 
     auto name() const noexcept -> ref<str> { return name_.as_str(); }
@@ -127,8 +138,7 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
             manifest = rstd::move(loaded.package).unwrap();
         }
 
-        auto version = resolve_workspace_member_version(manifest, workspace);
-        if (version.is_err()) return Err(rstd::move(version).unwrap_err());
+        rstd_try(resolve_workspace_member(manifest, workspace));
         if (catalog.packages_.contains_key(manifest.name.as_str())) {
             return catalog_failure<WorkspaceCatalog>(rstd::format(
                 "workspace contains more than one package named '{}'", manifest.name.as_str()));

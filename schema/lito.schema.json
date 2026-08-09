@@ -184,6 +184,10 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
+        "source-root": {
+          "description": "Source and usage path base, relative to the package manifest directory. It must contain the package directory.",
+          "$ref": "#/definitions/relativePath"
+        },
         "target": {
           "$ref": "#/definitions/targetPredicate"
         }
@@ -446,7 +450,7 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/nonEmptyString"
+          "$ref": "#/definitions/packageName"
         },
         "source": {
           "$ref": "#/definitions/relativePath"
@@ -564,6 +568,16 @@
       "type": "string",
       "pattern": "^[0-9A-Fa-f]{40}$"
     },
+    "archiveUrl": {
+      "description": "A non-empty archive URL safe for a generated CMake project.",
+      "type": "string",
+      "pattern": "^[^-#\\\"\\\\;\\r\\n][^#\\\"\\\\;\\r\\n]*$"
+    },
+    "sha256": {
+      "description": "A full hexadecimal SHA-256 digest.",
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{64}$"
+    },
     "pkgConfigModule": {
       "description": "A non-empty pkg-config module name not starting with '-'.",
       "type": "string",
@@ -662,11 +676,8 @@
         ]
       }
     },
-    "dependency": {
+    "dependencySource": {
       "type": "object",
-      "required": [
-        "visibility"
-      ],
       "properties": {
         "path": {
           "$ref": "#/definitions/relativePath"
@@ -745,6 +756,60 @@
       ],
       "additionalProperties": false
     },
+    "explicitDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/dependencySource"
+        },
+        {
+          "required": [
+            "visibility"
+          ]
+        }
+      ]
+    },
+    "workspaceDependencyReference": {
+      "type": "object",
+      "required": [
+        "workspace",
+        "visibility"
+      ],
+      "properties": {
+        "workspace": {
+          "enum": [
+            true
+          ]
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        }
+      },
+      "additionalProperties": false
+    },
+    "dependency": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitDependency"
+        },
+        {
+          "$ref": "#/definitions/workspaceDependencyReference"
+        }
+      ]
+    },
+    "workspaceDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/dependencySource"
+        },
+        {
+          "not": {
+            "required": [
+              "visibility"
+            ]
+          }
+        }
+      ]
+    },
     "dependencies": {
       "type": "object",
       "patternProperties": {
@@ -754,11 +819,19 @@
       },
       "additionalProperties": false
     },
-    "pkgConfigExternalDependency": {
+    "workspaceDependencies": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/workspaceDependency"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pkgConfigExternalDependencyDefinition": {
       "type": "object",
       "required": [
-        "module",
-        "visibility"
+        "module"
       ],
       "properties": {
         "module": {
@@ -776,6 +849,60 @@
       },
       "additionalProperties": false
     },
+    "explicitPkgConfigExternalDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/pkgConfigExternalDependencyDefinition"
+        },
+        {
+          "required": [
+            "visibility"
+          ]
+        }
+      ]
+    },
+    "workspacePkgConfigExternalDependencyReference": {
+      "type": "object",
+      "required": [
+        "workspace",
+        "visibility"
+      ],
+      "properties": {
+        "workspace": {
+          "enum": [
+            true
+          ]
+        },
+        "visibility": {
+          "$ref": "#/definitions/dependencyVisibility"
+        }
+      },
+      "additionalProperties": false
+    },
+    "pkgConfigExternalDependency": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitPkgConfigExternalDependency"
+        },
+        {
+          "$ref": "#/definitions/workspacePkgConfigExternalDependencyReference"
+        }
+      ]
+    },
+    "workspacePkgConfigExternalDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/pkgConfigExternalDependencyDefinition"
+        },
+        {
+          "not": {
+            "required": [
+              "visibility"
+            ]
+          }
+        }
+      ]
+    },
     "cmakeExternalTarget": {
       "type": "object",
       "required": [
@@ -792,11 +919,10 @@
       },
       "additionalProperties": false
     },
-    "cmakeExternalDependency": {
+    "cmakeExternalDependencyDefinition": {
       "type": "object",
       "required": [
-        "find-package",
-        "targets"
+        "find-package"
       ],
       "properties": {
         "find-package": {
@@ -816,6 +942,21 @@
         },
         "rev": {
           "$ref": "#/definitions/gitSelector"
+        },
+        "archive": {
+          "$ref": "#/definitions/archiveUrl"
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "integration": {
+          "enum": [
+            "install",
+            "build-tree"
+          ]
+        },
+        "adapter": {
+          "$ref": "#/definitions/relativePath"
         },
         "cache": {
           "$ref": "#/definitions/cmakeCache"
@@ -837,14 +978,6 @@
           "$ref": "#/definitions/gitSelectors"
         },
         {
-          "not": {
-            "required": [
-              "path",
-              "git"
-            ]
-          }
-        },
-        {
           "oneOf": [
             {
               "required": [
@@ -855,6 +988,16 @@
                   {
                     "required": [
                       "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archive"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sha256"
                     ]
                   },
                   {
@@ -880,12 +1023,38 @@
                 "git"
               ],
               "not": {
-                "required": [
-                  "path"
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archive"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sha256"
+                    ]
+                  }
                 ]
               }
             },
             {
+              "required": [
+                "archive",
+                "sha256",
+                "integration"
+              ],
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "build-tree"
+                  ]
+                }
+              },
               "not": {
                 "anyOf": [
                   {
@@ -915,6 +1084,59 @@
                   },
                   {
                     "required": [
+                      "config-directory"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "install"
+                  ]
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archive"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sha256"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  },
+                  {
+                    "required": [
                       "cache"
                     ]
                   },
@@ -922,7 +1144,69 @@
                     "required": [
                       "config-directory"
                     ]
+                  },
+                  {
+                    "required": [
+                      "adapter"
+                    ]
                   }
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "adapter"
+                ]
+              }
+            },
+            {
+              "required": [
+                "integration"
+              ],
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "build-tree"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "integration"
+                ]
+              }
+            },
+            {
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "install"
+                  ]
+                }
+              }
+            },
+            {
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "build-tree"
+                  ]
+                }
+              },
+              "not": {
+                "required": [
+                  "config-directory"
                 ]
               }
             }
@@ -930,6 +1214,65 @@
         }
       ],
       "additionalProperties": false
+    },
+    "explicitCmakeExternalDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/cmakeExternalDependencyDefinition"
+        },
+        {
+          "required": [
+            "targets"
+          ]
+        }
+      ]
+    },
+    "workspaceCmakeExternalDependencyReference": {
+      "type": "object",
+      "required": [
+        "workspace",
+        "targets"
+      ],
+      "properties": {
+        "workspace": {
+          "enum": [
+            true
+          ]
+        },
+        "targets": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/cmakeExternalTarget"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeExternalDependency": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitCmakeExternalDependency"
+        },
+        {
+          "$ref": "#/definitions/workspaceCmakeExternalDependencyReference"
+        }
+      ]
+    },
+    "workspaceCmakeExternalDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/cmakeExternalDependencyDefinition"
+        },
+        {
+          "not": {
+            "required": [
+              "targets"
+            ]
+          }
+        }
+      ]
     },
     "externalDependencies": {
       "type": "object",
@@ -955,6 +1298,30 @@
       },
       "additionalProperties": false
     },
+    "workspaceExternalDependencies": {
+      "type": "object",
+      "properties": {
+        "pkg-config": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/workspacePkgConfigExternalDependency"
+            }
+          },
+          "additionalProperties": false
+        },
+        "cmake": {
+          "type": "object",
+          "patternProperties": {
+            "^[A-Za-z0-9_-]+$": {
+              "$ref": "#/definitions/workspaceCmakeExternalDependency"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "workspacePackage": {
       "type": "object",
       "properties": {
@@ -967,9 +1334,13 @@
     "workspace": {
       "type": "object",
       "required": [
+        "name",
         "members"
       ],
       "properties": {
+        "name": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
         "members": {
           "$ref": "#/definitions/nonEmptyPathArray"
         },
@@ -978,6 +1349,12 @@
         },
         "package": {
           "$ref": "#/definitions/workspacePackage"
+        },
+        "dependencies": {
+          "$ref": "#/definitions/workspaceDependencies"
+        },
+        "external-dependencies": {
+          "$ref": "#/definitions/workspaceExternalDependencies"
         }
       },
       "additionalProperties": false

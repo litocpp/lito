@@ -110,7 +110,7 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
     auto facts = toolchain.preprocess(source.as_path(),
                                       discovery.contexts[source_target],
-                                      metadata.targets[source_target].manifest.root.as_path(),
+                                      metadata.targets[source_target].manifest.source_root.as_path(),
                                       frontend_service,
                                       profiler);
     if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());

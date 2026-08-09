@@ -108,9 +108,10 @@ auto resolve_modules(const PackagePlan&       package,
             package.package->targets[primary_target].module_affiliation;
         const auto& partition_affiliation =
             package.package->targets[partition_target].module_affiliation;
-        if (primary_affiliation.is_none() || partition_affiliation.is_none() ||
-            ! module_name_belongs(primary_affiliation->as_str(), primary_name) ||
-            ! module_name_belongs(partition_affiliation->as_str(), primary_name)) {
+        if (primary_target != partition_target &&
+            (primary_affiliation.is_none() || partition_affiliation.is_none() ||
+             ! module_name_belongs(primary_affiliation->as_str(), primary_name) ||
+             ! module_name_belongs(partition_affiliation->as_str(), primary_name))) {
             return graph_failure<ModulePlan>(
                 rstd::format("partition '{}' has primary module '{}' with a "
                              "different named-module affiliation",

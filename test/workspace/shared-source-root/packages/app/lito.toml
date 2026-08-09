@@ -1,0 +1,13 @@
+[package]
+name = "fixture-shared-source-root-app"
+version.workspace = true
+source-root = "../.."
+
+[executable]
+name = "fixture-shared-source-root-app"
+discovery = "explicit"
+sources = ["app/main.cpp"]
+
+[dependencies.fixture-shared-source-root-library]
+path = "../library"
+visibility = "private"

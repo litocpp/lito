@@ -1,0 +1,12 @@
+[package]
+name = "fixture-workspace-inherited-missing-app"
+version.workspace = true
+
+[executable]
+name = "fixture-workspace-inherited-missing-app"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.missing]
+workspace = true
+visibility = "private"

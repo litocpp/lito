@@ -120,8 +120,11 @@ public:
 
         auto dependencies = Vec<ResolvedDependency>::make();
         for (const auto& dependency : loaded.package.dependencies) {
-            auto dependency_source =
-                sources_.acquire(dependency.source, loaded.package.root.as_path());
+            auto declaring_root = loaded.package.root.as_path();
+            if (dependency.declaration_root.is_some()) {
+                declaring_root = dependency.declaration_root->as_path();
+            }
+            auto dependency_source = sources_.acquire(dependency.source, declaring_root);
             if (dependency_source.is_err()) {
                 return Err(rstd::move(dependency_source).unwrap_err());
             }
