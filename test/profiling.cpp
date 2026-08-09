@@ -71,7 +71,10 @@ auto run_profiling_test() -> int {
         .origin = lito::ScanSourceOrigin::Classify,
     });
     auto report = lito::ScanProfileReport(
-        rstd::move(aggregate).finish(), rstd::move(source_collector).finish(), rstd::move(frames));
+        rstd::move(aggregate).finish(),
+        rstd::move(source_collector).finish(),
+        rstd::move(frames),
+        lito::ScanExecutionStatistics {});
 
     auto slow = report.slow_sources(lito::ScanProbe::Preprocessor, usize(1));
     if (slow.len() != usize(1) || slow[usize()].frame != u64(2)) return 1;

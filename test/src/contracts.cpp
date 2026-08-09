@@ -806,6 +806,24 @@ TEST(Contracts, LockValidationAndMigrationAreOwnedByLockStore) {
     EXPECT_TRUE(lito::load_lock_session(root("lock/v3"_str).as_path(), false).is_ok());
 }
 
+TEST(Contracts, UnlockedResolutionRefreshesGitSources) {
+    auto directory = root("lock/git-update"_str);
+
+    auto updating = lito::load_lock_session(directory.as_path(), false);
+    ASSERT_TRUE(updating.is_ok());
+    auto updating_options = updating->take_resolution_options();
+    EXPECT_FALSE(updating_options.locked);
+    EXPECT_TRUE(updating_options.git_sources.is_empty());
+
+    auto locked = lito::load_lock_session(directory.as_path(), true);
+    ASSERT_TRUE(locked.is_ok());
+    auto locked_options = locked->take_resolution_options();
+    EXPECT_TRUE(locked_options.locked);
+    ASSERT_EQ(locked_options.git_sources.len(), usize(1));
+    EXPECT_EQ(locked_options.git_sources[usize()].commit.as_str(),
+              "0000000000000000000000000000000000000001"_str);
+}
+
 TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {
     auto output = output_root("contracts-build"_str);
     ASSERT_TRUE(clear_output(output.as_path()));
