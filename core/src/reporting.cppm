@@ -135,6 +135,35 @@ auto detailed_report(const BuildSummary& summary) -> String {
                              "task work"_str,
                              display_duration(execution.task_work).as_str()));
 
+    append_line(output, "\ncompile execution"_str);
+    const auto& compile_execution = summary.compile_execution;
+    append_metric(output, "jobs"_str, compile_execution.jobs);
+    append_metric(output, "max in flight"_str, compile_execution.max_in_flight);
+    append_metric(output, "tasks"_str, compile_execution.tasks);
+    append_metric(output, "reused"_str, compile_execution.reused);
+    append_metric(output, "failed"_str, compile_execution.failed);
+    append_metric(output, "blocked"_str, compile_execution.blocked);
+    append_metric(output, "max active"_str, compile_execution.max_active);
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "ready wait"_str,
+                             display_duration(compile_execution.ready_wait).as_str()));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "completion wait"_str,
+                             display_duration(compile_execution.completion_wait).as_str()));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "task work"_str,
+                             display_duration(compile_execution.task_work).as_str()));
+    append_line(output,
+                rstd::format("  {:<38} {}",
+                             "coordinator work"_str,
+                             display_duration(compile_execution.coordinator_work).as_str()));
+    append_line(
+        output,
+        rstd::format("  {:<38} {}", "wall"_str, display_duration(compile_execution.wall).as_str()));
+
     append_line(output, "\ntoolchain"_str);
     append_metric(output,
                   "preprocessor environment entries"_str,
@@ -267,6 +296,12 @@ void print_summary(const BuildSummary& summary) {
                       display_duration(execution.task_work).as_str());
 
     rstd::io::println("  build");
+    const auto& compile_execution = summary.compile_execution;
+    rstd::io::println("    jobs: {}; max in flight: {}; max active: {}; task work: {}",
+                      compile_execution.jobs,
+                      compile_execution.max_in_flight,
+                      compile_execution.max_active,
+                      display_duration(compile_execution.task_work).as_str());
     rstd::io::println("    {:<24} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);

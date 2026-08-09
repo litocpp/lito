@@ -1391,7 +1391,7 @@ public:
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
-    auto commit_success(PreparedUnit& unit, const CacheDecision& decision) -> Result<empty> {
+    auto commit_success(const PreparedUnit& unit, const CacheDecision& decision) -> Result<empty> {
         auto object = output_exists(unit.unit.object.as_path());
         if (object.is_err()) return Err(rstd::move(object).unwrap_err());
         if (! *object) {
@@ -1411,7 +1411,6 @@ public:
             }
             auto bmi_digest = output_content_digest(unit.unit.bmi->path.as_path());
             if (bmi_digest.is_err()) return Err(rstd::move(bmi_digest).unwrap_err());
-            unit.unit.bmi->content_digest = Some(bmi_digest->clone());
             digests.insert(String::make("bmi"_str), cache_string(bmi_digest->as_str()));
         }
         auto complete        = decision.complete_.clone();

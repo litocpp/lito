@@ -100,6 +100,21 @@ struct BuildOperationTiming {
     rstd::time::Duration total;
 };
 
+struct CompileExecutionStatistics {
+    usize                jobs {};
+    usize                max_in_flight {};
+    usize                tasks {};
+    usize                reused {};
+    usize                failed {};
+    usize                blocked {};
+    usize                max_active {};
+    rstd::time::Duration ready_wait;
+    rstd::time::Duration completion_wait;
+    rstd::time::Duration task_work;
+    rstd::time::Duration coordinator_work;
+    rstd::time::Duration wall;
+};
+
 class BuildTimingReport {
     BuildOperationTiming compile_;
     BuildOperationTiming archive_;

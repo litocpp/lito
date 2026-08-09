@@ -200,7 +200,8 @@ extern "C++" int main() {
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) request.build.configuration.profile = *options.profile;
-        request.build.execution.scan.jobs = options.jobs;
+        request.build.execution.scan.jobs    = options.jobs;
+        request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
         request.build.observer = Some(lito::BuildObserver {
@@ -307,7 +308,8 @@ extern "C++" int main() {
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked;
     if (options.profile.is_some()) request.configuration.profile = *options.profile;
-    request.execution.scan.jobs = options.jobs;
+    request.execution.scan.jobs    = options.jobs;
+    request.execution.compile.jobs = options.jobs;
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 

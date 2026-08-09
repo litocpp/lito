@@ -894,8 +894,14 @@ struct ScanExecutionPolicy {
     Option<usize> max_in_flight;
 };
 
+struct CompileExecutionPolicy {
+    Option<usize> jobs;
+    Option<usize> max_in_flight;
+};
+
 struct BuildExecutionPolicy {
-    ScanExecutionPolicy scan;
+    ScanExecutionPolicy    scan;
+    CompileExecutionPolicy compile;
 };
 
 struct ToolchainStatistics {
@@ -965,6 +971,7 @@ struct BuildSummary {
     frontend::FrontendStatistics frontend;
     ToolchainStatistics          toolchain;
     ScanProfileReport            scan_profile;
+    CompileExecutionStatistics   compile_execution;
     BuildTimingReport            build_timing;
     Vec<CompileTestExecution>    compile_tests;
 };

@@ -212,8 +212,9 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
     clear_output(output.as_path());
     auto request =
         build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
-    request.execution.scan.jobs = Some(usize(2));
-    auto summary                = lito::build(request);
+    request.execution.scan.jobs    = Some(usize(2));
+    request.execution.compile.jobs = Some(usize(2));
+    auto summary                   = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
     EXPECT_EQ(summary->toolchain.preprocessor_environment_entries, usize(1));
     EXPECT_EQ(summary->toolchain.preprocessor_environment_queries, usize(1));
@@ -223,6 +224,11 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
     EXPECT_EQ(summary->scan_profile.execution().max_active, usize(2));
     EXPECT_FALSE(summary->scan_profile.execution().task_work.is_zero());
     EXPECT_FALSE(summary->scan_profile.execution().completion_wait.is_zero());
+    EXPECT_EQ(summary->compile_execution.jobs, usize(2));
+    EXPECT_EQ(summary->compile_execution.tasks, usize(2));
+    EXPECT_EQ(summary->compile_execution.max_active, usize(2));
+    EXPECT_FALSE(summary->compile_execution.task_work.is_zero());
+    EXPECT_FALSE(summary->compile_execution.wall.is_zero());
     EXPECT_EQ(summary->frontend.source_requests, usize(4));
     EXPECT_EQ(summary->frontend.source_reads, usize(3));
     EXPECT_EQ(summary->frontend.lex_builds, usize(3));
@@ -238,6 +244,7 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
     auto contents = rstd::fs::read_to_string(report.as_path());
     ASSERT_TRUE(contents.is_ok());
     EXPECT_TRUE(contents->as_str().contains("frontend"_str));
+    EXPECT_TRUE(contents->as_str().contains("compile execution"_str));
     EXPECT_TRUE(contents->as_str().contains("build.compile"_str));
     EXPECT_TRUE(contents->as_str().contains("aggregate timing"_str));
     clear_output(output.as_path());

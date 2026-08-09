@@ -111,7 +111,7 @@ auto jobs_arg() -> Arg<usize> {
         .short_name(u8('j'))
         .long_name("jobs"_str)
         .value_name("N"_str)
-        .help("Set the dependency scan worker count"_str);
+        .help("Set the scan and compile worker count"_str);
 }
 
 auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {

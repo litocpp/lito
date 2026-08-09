@@ -11,6 +11,7 @@ sources = [
   "src/support/mod.cppm",
   "src/integration.cpp",
   "src/contracts.cpp",
+  "compile_executor.cpp",
   "contracts/cpp_bmi.cpp",
   "profiling.cpp",
   "lexical/token.cpp",

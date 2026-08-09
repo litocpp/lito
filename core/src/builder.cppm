@@ -13,6 +13,7 @@ import lito.frontend;
 import lito.frontend_analysis;
 import lito.frontend_observer;
 import lito.compile_test;
+import lito.compile_executor;
 import lito.profiling;
 
 using namespace rstd::prelude;
@@ -111,6 +112,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto discovery_plan = rstd::move(resolved).unwrap();
     auto execution      = resolve_scan_execution(request.execution.scan);
     if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
+    auto compile_execution = resolve_compile_execution(request.execution.compile);
+    if (compile_execution.is_err()) return Err(rstd::move(compile_execution).unwrap_err());
 
     auto selected_layout =
         BuildLayout::create(metadata.root.as_path(),
@@ -307,168 +310,23 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     analysis_service.release_source_cache();
 
     auto cache = CompileCacheSession::create(cache_environment, layout.output());
-
-    auto format_identity = bmi_format_identity(toolchain.bmi_format());
-    auto format_key      = bmi_format_key(toolchain.bmi_format());
-    auto compiled        = usize {};
-    auto reused          = usize {};
-    auto compile_tests   = Vec<CompileTestExecution>::make();
-    auto build_timing    = BuildTimingReport {};
-    for (auto unit : module_plan.compile_order) {
-        auto dependencies        = Vec<DependencyArtifact>::make();
-        auto recipe_dependencies = Vec<BmiRecipeDependency>::make();
-        for (auto input : module_plan.direct_inputs[unit]) {
-            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
-                return failure<BuildSummary>(
-                    ErrorKind::Dependency,
-                    rstd::format("module dependency '{}' has no resolved BMI artifact",
-                                 units[input].unit.source.as_path()));
-            }
-            const auto& artifact = *units[input].unit.bmi;
-            dependencies.push(DependencyArtifact {
-                .logical_name = artifact.logical_name.clone(),
-                .artifact     = artifact.key.value.clone(),
-            });
-            recipe_dependencies.push(BmiRecipeDependency {
-                .logical_name = artifact.logical_name.clone(),
-                .artifact_key = artifact.key.value.clone(),
-            });
-        }
-        auto module_dependencies = Vec<ModuleArtifactDependency>::make();
-        for (auto input : module_plan.resolved_inputs[unit]) {
-            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
-                return failure<BuildSummary>(
-                    ErrorKind::Dependency,
-                    rstd::format("module dependency '{}' has no resolved BMI artifact",
-                                 units[input].unit.source.as_path()));
-            }
-            const auto& artifact = *units[input].unit.bmi;
-            module_dependencies.push(ModuleArtifactDependency {
-                .logical_name = artifact.logical_name.clone(),
-                .artifact_key = BmiArtifactKey { .value = artifact.key.value.clone() },
-                .path         = artifact.path.clone(),
-            });
-        }
-        const auto target = units[unit].unit.target;
-        if (scans[unit].provided.is_some()) {
-            auto source_identity   = units[unit].unit.source.as_path().to_str();
-            auto relative_identity = units[unit].unit.relative_source.as_path().to_str();
-            if (source_identity.is_none() || relative_identity.is_none()) {
-                return failure<BuildSummary>(ErrorKind::Artifact,
-                                             "BMI provider path is not valid UTF-8"_str);
-            }
-            auto provider_identity = rstd::format("{}:{}:{}",
-                                                  package.targets[target].name.as_str(),
-                                                  *relative_identity,
-                                                  units[unit].unit.context->id.as_str());
-            auto key               = make_bmi_artifact_key(BmiRecipe {
-                .request                 = units[unit].unit.context->bmi,
-                .logical_name            = scans[unit].provided->logical_name.clone(),
-                .provider_identity       = provider_identity.clone(),
-                .source_identity         = String::make(*source_identity),
-                .source_content_identity = units[unit].frontend_analysis->receipt.clone(),
-                .cpp_context_identity    = cpp_compile_identity(units[unit].unit.context->cpp),
-                .public_requirements_identity =
-                    cpp_public_requirements_identity(units[unit].unit.context->public_requirements),
-                .format_identity     = format_identity.clone(),
-                .direct_dependencies = rstd::move(recipe_dependencies),
-            });
-            auto bmi_path          = layout.bmi(format_key.as_str(),
-                                                key.value.as_str(),
-                                                scans[unit].provided->logical_name.as_str());
-            auto direct            = Vec<BmiRecipeDependency>::with_capacity(dependencies.len());
-            for (const auto& dependency : dependencies) {
-                direct.push(BmiRecipeDependency {
-                    .logical_name = dependency.logical_name.clone(),
-                    .artifact_key = dependency.artifact.clone(),
-                });
-            }
-            units[unit].unit.bmi = Some(BmiArtifact {
-                .logical_name        = scans[unit].provided->logical_name.clone(),
-                .provider_identity   = rstd::move(provider_identity),
-                .key                 = rstd::move(key),
-                .format              = as<rstd::clone::Clone>(toolchain.bmi_format()).clone(),
-                .request             = units[unit].unit.context->bmi,
-                .path                = rstd::move(bmi_path),
-                .direct_dependencies = rstd::move(direct),
-                .paired_object       = Some(units[unit].unit.object.clone()),
-            });
-        }
-        auto invocation = toolchain.prepare_compile(units[unit], scans[unit], module_dependencies);
-        if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
-        auto decision = cache.evaluate(package.targets[target].name.as_str(),
-                                       units[unit],
-                                       units[unit].frontend_analysis->receipt.as_str(),
-                                       *invocation,
-                                       dependencies);
-        if (decision.is_err()) return Err(rstd::move(decision).unwrap_err());
-        auto cache_decision = rstd::move(decision).unwrap();
-        if (units[unit].unit.compile_test != nullptr) {
-            const auto& test = *units[unit].unit.compile_test;
-            if (cache_decision.current() && test.outcome == CompileTestOutcome::Success) {
-                ++reused;
-                emit(request,
-                     BuildEventKind::Reuse,
-                     package.targets[target].name.as_str(),
-                     units[unit].unit.source.as_path());
-                auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
-                                                       test,
-                                                       units[unit].unit.source.as_path(),
-                                                       CompileCommandResult {});
-                auto recorded  = cache.record_compile_test(
-                    cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
-                if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
-                compile_tests.push(rstd::move(execution));
-                continue;
-            }
-            auto begun = cache.begin_compile_test(
-                cache_decision, (*units[unit].unit.compile_test_record).as_path(), test);
-            if (begun.is_err()) return Err(rstd::move(begun).unwrap_err());
-            emit(request,
-                 BuildEventKind::Compile,
-                 package.targets[target].name.as_str(),
-                 units[unit].unit.source.as_path());
-            auto output = toolchain.execute_compile_capture(*invocation);
-            if (output.is_err()) return Err(rstd::move(output).unwrap_err());
-            auto command_output = rstd::move(output).unwrap();
-            auto elapsed        = command_output.elapsed;
-            build_timing.record(BuildOperation::Compile, elapsed);
-            auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
-                                                   test,
-                                                   units[unit].unit.source.as_path(),
-                                                   rstd::move(command_output));
-            if (execution.exit_code == i32 {}) {
-                auto committed = cache.commit_success(units[unit], cache_decision);
-                if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
-            }
-            auto recorded = cache.record_compile_test(
-                cache_decision, (*units[unit].unit.compile_test_record).as_path(), execution);
-            if (recorded.is_err()) return Err(rstd::move(recorded).unwrap_err());
-            compile_tests.push(rstd::move(execution));
-            ++compiled;
-            continue;
-        }
-        if (cache_decision.current()) {
-            ++reused;
-            emit(request,
-                 BuildEventKind::Reuse,
-                 package.targets[target].name.as_str(),
-                 units[unit].unit.source.as_path());
-        } else {
-            auto begun = cache.begin_compile(cache_decision);
-            if (begun.is_err()) return Err(rstd::move(begun).unwrap_err());
-            emit(request,
-                 BuildEventKind::Compile,
-                 package.targets[target].name.as_str(),
-                 units[unit].unit.source.as_path());
-            auto result = toolchain.execute_compile(*invocation, units[unit].unit.source.as_path());
-            if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-            build_timing.record(BuildOperation::Compile, *result);
-            auto committed = cache.commit_success(units[unit], cache_decision);
-            if (committed.is_err()) return Err(rstd::move(committed).unwrap_err());
-            ++compiled;
-        }
-    }
+    auto materialized =
+        materialize_compile_plan(package, layout, toolchain, units, scans, module_plan);
+    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+    auto executed = execute_compile_plan(package,
+                                         units,
+                                         rstd::move(materialized).unwrap(),
+                                         cache,
+                                         toolchain.compile_executor(),
+                                         request.observer,
+                                         *compile_execution);
+    if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
+    auto compile_result     = rstd::move(executed).unwrap();
+    auto compiled           = compile_result.compiled;
+    auto reused             = compile_result.reused;
+    auto compile_tests      = rstd::move(compile_result.compile_tests);
+    auto compile_statistics = compile_result.statistics;
+    auto build_timing       = rstd::move(compile_result.timing);
 
     for (auto target : package_plan.target_order) {
         auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
@@ -608,18 +466,19 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
     }
 
     return Ok(BuildSummary {
-        .package       = package.name.clone(),
-        .profile       = package_plan.profile->name.clone(),
-        .output        = PathBuf::from(layout.output()),
-        .scanned       = scans.len(),
-        .compiled      = compiled,
-        .reused        = reused,
-        .artifacts     = rstd::move(artifacts),
-        .frontend      = frontend_statistics,
-        .toolchain     = toolchain.statistics(),
-        .scan_profile  = rstd::move(scan_profile),
-        .build_timing  = rstd::move(build_timing),
-        .compile_tests = rstd::move(compile_tests),
+        .package           = package.name.clone(),
+        .profile           = package_plan.profile->name.clone(),
+        .output            = PathBuf::from(layout.output()),
+        .scanned           = scans.len(),
+        .compiled          = compiled,
+        .reused            = reused,
+        .artifacts         = rstd::move(artifacts),
+        .frontend          = frontend_statistics,
+        .toolchain         = toolchain.statistics(),
+        .scan_profile      = rstd::move(scan_profile),
+        .compile_execution = compile_statistics,
+        .build_timing      = rstd::move(build_timing),
+        .compile_tests     = rstd::move(compile_tests),
     });
 }
 
