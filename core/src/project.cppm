@@ -12,6 +12,37 @@ import lito.dependency;
 import lito.toolchain;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
+
+namespace lito
+{
+
+struct ProjectResolution {
+    ResolvedPackageSelection selection;
+    LockStatus               lock;
+};
+
+auto resolve_project(const PackageSelection&    selection,
+                     PackageSelectionPurpose    purpose,
+                     const PackageSourceConfig& sources,
+                     bool                       locked,
+                     GitResolutionMode          git,
+                     const TargetInfo*          target) -> Result<ProjectResolution> {
+    auto lock_session        = rstd_try(load_lock_session(selection.root.as_path(), locked, git));
+    auto resolution          = lock_session.take_resolution_options();
+    resolution.sources       = sources.clone();
+    auto external_resolution = resolution.clone();
+    auto project =
+        rstd_try(resolve_package_selection(selection, purpose, rstd::move(resolution), target));
+    rstd_try(resolve_external_dependency_sources(project.graph, rstd::move(external_resolution)));
+    auto lock = rstd_try(sync_lock(project.graph, rstd::move(lock_session)));
+    return Ok(ProjectResolution {
+        .selection = rstd::move(project),
+        .lock      = lock,
+    });
+}
+
+} // namespace lito
 
 export namespace lito
 {
@@ -25,14 +56,13 @@ auto resolve_project_metadata(const PackageSelection&        selection,
                               bool                           locked,
                               PackageSelectionPurpose        purpose = PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
-    auto lock_session        = rstd_try(load_lock_session(selection.root.as_path(), locked));
-    auto resolution          = lock_session.take_resolution_options();
-    resolution.sources       = sources.clone();
-    auto external_resolution = resolution.clone();
-    auto project             = rstd_try(resolve_package_selection(
-        selection, purpose, rstd::move(resolution), rstd::addressof(toolchain.target_info())));
-    rstd_try(resolve_external_dependency_sources(project.graph, rstd::move(external_resolution)));
-    rstd_try(sync_lock(project.graph, rstd::move(lock_session)));
+    auto resolved = rstd_try(resolve_project(selection,
+                                             purpose,
+                                             sources,
+                                             locked,
+                                             GitResolutionMode::ReuseLocked,
+                                             rstd::addressof(toolchain.target_info())));
+    auto project  = rstd::move(resolved.selection);
     auto resolved_configuration               = configuration.clone();
     resolved_configuration.toolchain.compiler = PathBuf::from(toolchain.compiler_path());
     resolved_configuration.toolchain.archiver = PathBuf::from(toolchain.archiver_path());
@@ -44,6 +74,22 @@ auto resolve_project_metadata(const PackageSelection&        selection,
                                         cmake,
                                         toolchain.target_info(),
                                         toolchain.argument_parser());
+}
+
+auto update_dependencies(const UpdateRequest& request) -> Result<LockStatus> {
+    if (request.root.is_empty()) {
+        return Err(Error::make(ErrorKind::InvalidRequest, "update directory is required"_str));
+    }
+    auto selection = PackageSelection {
+        .root = request.root.clone(),
+    };
+    auto resolved = rstd_try(resolve_project(selection,
+                                             PackageSelectionPurpose::All,
+                                             request.sources,
+                                             false,
+                                             GitResolutionMode::Refresh,
+                                             nullptr));
+    return Ok(resolved.lock);
 }
 
 } // namespace lito

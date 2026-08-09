@@ -559,6 +559,11 @@
       "type": "string",
       "pattern": "^[^-]"
     },
+    "gitCommit": {
+      "description": "A full hexadecimal Git commit object id.",
+      "type": "string",
+      "pattern": "^[0-9A-Fa-f]{40}$"
+    },
     "pkgConfigModule": {
       "description": "A non-empty pkg-config module name not starting with '-'.",
       "type": "string",
@@ -611,6 +616,9 @@
         },
         "rev": {
           "$ref": "#/definitions/gitSelector"
+        },
+        "commit": {
+          "$ref": "#/definitions/gitCommit"
         }
       },
       "not": {
@@ -631,6 +639,24 @@
             "required": [
               "tag",
               "rev"
+            ]
+          },
+          {
+            "required": [
+              "branch",
+              "commit"
+            ]
+          },
+          {
+            "required": [
+              "tag",
+              "commit"
+            ]
+          },
+          {
+            "required": [
+              "rev",
+              "commit"
             ]
           }
         ]
@@ -656,6 +682,9 @@
         },
         "rev": {
           "$ref": "#/definitions/gitSelector"
+        },
+        "commit": {
+          "$ref": "#/definitions/gitCommit"
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
@@ -691,6 +720,11 @@
                   {
                     "required": [
                       "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "commit"
                     ]
                   }
                 ]

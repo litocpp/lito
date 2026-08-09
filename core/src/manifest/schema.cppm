@@ -159,7 +159,7 @@ auto usage_key(ref<str> key) -> bool {
 
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
-           key == "rev"_str || key == "visibility"_str;
+           key == "rev"_str || key == "commit"_str || key == "visibility"_str;
 }
 
 auto external_dependencies_key(ref<str> key) -> bool {
@@ -864,19 +864,23 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Result<
     auto branch = optional_string(specification, "branch"_str, context);
     auto tag    = optional_string(specification, "tag"_str, context);
     auto rev    = optional_string(specification, "rev"_str, context);
+    auto commit = optional_string(specification, "commit"_str, context);
     if (branch.is_err()) return Err(rstd::move(branch).unwrap_err());
     if (tag.is_err()) return Err(rstd::move(tag).unwrap_err());
     if (rev.is_err()) return Err(rstd::move(rev).unwrap_err());
+    if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
     auto branch_value = rstd::move(branch).unwrap();
     auto tag_value    = rstd::move(tag).unwrap();
     auto rev_value    = rstd::move(rev).unwrap();
+    auto commit_value = rstd::move(commit).unwrap();
     auto count        = usize {};
     if (branch_value.is_some()) ++count;
     if (tag_value.is_some()) ++count;
     if (rev_value.is_some()) ++count;
+    if (commit_value.is_some()) ++count;
     if (count > usize(1)) {
-        return failure<GitReference>(
-            rstd::format("{} may contain only one of 'branch', 'tag', or 'rev'", context));
+        return failure<GitReference>(rstd::format(
+            "{} may contain only one of 'branch', 'tag', 'rev', or 'commit'", context));
     }
     auto reference = GitReference {};
     if (branch_value.is_some()) {
@@ -888,10 +892,18 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Result<
     } else if (rev_value.is_some()) {
         reference.kind  = GitReferenceKind::Rev;
         reference.value = rstd::move(rev_value).unwrap();
+    } else if (commit_value.is_some()) {
+        reference.kind  = GitReferenceKind::Commit;
+        reference.value = rstd::move(commit_value).unwrap();
     }
     if (reference.kind != GitReferenceKind::DefaultBranch &&
         (reference.value.is_empty() || reference.value.as_str().starts_with("-"_str))) {
         return failure<GitReference>(rstd::format("{} Git selector is invalid", context));
+    }
+    if (reference.kind == GitReferenceKind::Commit &&
+        ! git_commit_is_valid(reference.value.as_str())) {
+        return failure<GitReference>(
+            rstd::format("{} Git commit must be a full hexadecimal object id", context));
     }
     return Ok(rstd::move(reference));
 }

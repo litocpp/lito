@@ -326,7 +326,8 @@ class SourceManager {
             revision = rstd::format("refs/heads/{}", reference.value.as_str());
         } else if (reference.kind == GitReferenceKind::Tag) {
             revision = rstd::format("refs/tags/{}", reference.value.as_str());
-        } else if (reference.kind == GitReferenceKind::Rev) {
+        } else if (reference.kind == GitReferenceKind::Rev ||
+                   reference.kind == GitReferenceKind::Commit) {
             revision = reference.value.clone();
         }
         auto fetched = fetch(repository, revision.as_str());
@@ -480,6 +481,10 @@ class SourceManager {
         auto locked = locked_source(url, reference);
         if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
         auto pin = rstd::move(locked).unwrap();
+        if (options_.git == GitResolutionMode::Refresh &&
+            reference.kind != GitReferenceKind::Commit) {
+            pin = Option<ref<LockedGitSource>> {};
+        }
         if (options_.locked && pin.is_none()) {
             return source_failure<usize>(
                 rstd::format("--locked has no source matching Git dependency '{}'", url));

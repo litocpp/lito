@@ -13,6 +13,7 @@ namespace
 {
 
 inline constexpr ref<str> INVALID_MANIFESTS[] = {
+    "manifest/git/commit-invalid"_str,
     "manifest/git/multiple-selectors"_str,
     "manifest/git/path-and-git"_str,
     "manifest/git/url-fragment"_str,
@@ -69,6 +70,7 @@ inline constexpr ref<str> INVALID_LOCKS[] = {
     "lock/missing"_str,
     "lock/stale"_str,
     "lock/v3"_str,
+    "lock/v4-commit-mismatch"_str,
     "lock/v4-dangling"_str,
     "lock/v4-duplicate-name"_str,
     "lock/v4-duplicate-source"_str,
@@ -141,6 +143,55 @@ auto fixture_cmake() -> lito::CMakeProviderConfig {
         .executable = rstd::path::PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
     };
+}
+
+auto git_revision(ref<rstd::path::Path> repository, ref<str> revision) -> Option<String> {
+    auto command = rstd::process::Command::make("git"_str);
+    command.arg("-C"_str).arg(repository.as_os_str()).arg("rev-parse"_str).arg(revision);
+    auto output = command.output();
+    if (output.is_err() || ! output->status.success()) return None();
+    auto text = String::from_utf8(rstd::move(output->stdout_buf));
+    if (text.is_err()) return None();
+    return Some(String::make(text->as_str().trim_ascii()));
+}
+
+template<typename... Arguments>
+auto git_succeeds(ref<rstd::path::Path> repository, Arguments... arguments) -> bool {
+    auto command = rstd::process::Command::make("git"_str);
+    (command.arg(arguments), ...);
+    command.current_dir(repository)
+        .set_stdout(rstd::process::Stdio::null())
+        .set_stderr(rstd::process::Stdio::null());
+    auto status = command.status();
+    return status.is_ok() && status->success();
+}
+
+auto external_git_graph(ref<str> url, lito::GitReference reference) -> lito::ResolvedPackageGraph {
+    auto declarations = Vec<lito::CMakeDependencyRequirement>::make();
+    declarations.push(lito::CMakeDependencyRequirement {
+        .alias   = String::make("fixture"_str),
+        .package = String::make("Fixture"_str),
+        .source  = lito::CMakeDependencySource::Git(String::make(url), rstd::move(reference)),
+    });
+    auto packages = Vec<lito::ResolvedPackage>::make();
+    packages.push(lito::ResolvedPackage {
+        .manifest =
+            lito::PackageManifest {
+                .name                        = String::make("fixture-root"_str),
+                .cmake_external_dependencies = rstd::move(declarations),
+            },
+    });
+    return lito::ResolvedPackageGraph {
+        .root_directory = root("lock/git-update"_str),
+        .packages       = rstd::move(packages),
+    };
+}
+
+auto resolved_git_commit(const lito::ResolvedPackageGraph& graph) -> Option<ref<str>> {
+    for (const auto& source : graph.sources) {
+        if (source.kind == lito::PackageSourceKind::Git) return Some(source.commit.as_str());
+    }
+    return None();
 }
 
 auto versioned_fixture(ref<str>                        alias,
@@ -271,6 +322,17 @@ TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
     auto preferred = lito::load_package_manifest(root("manifest/name/preferred"_str).as_path());
     ASSERT_TRUE(preferred.is_ok());
     EXPECT_EQ(preferred->name.as_str(), "preferred-manifest"_str);
+}
+
+TEST(Contracts, ManifestGitCommitIsTypedAndValidated) {
+    auto loaded = lito::load_package_manifest(root("manifest/git/commit"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    const auto& source = loaded->dependencies[usize {}].source;
+    ASSERT_TRUE(source.is_Git());
+    EXPECT_EQ(source.as_Git().reference.kind, lito::GitReferenceKind::Commit);
+    EXPECT_EQ(source.as_Git().reference.value.as_str(),
+              "0123456789abcdef0123456789abcdef01234567"_str);
 }
 
 TEST(Contracts, RemovedConfigFieldsAreRejectedByConfigOwner) {
@@ -829,14 +891,25 @@ TEST(Contracts, LockValidationAndMigrationAreOwnedByLockStore) {
     EXPECT_TRUE(lito::load_lock_session(root("lock/v3"_str).as_path(), false).is_ok());
 }
 
-TEST(Contracts, UnlockedResolutionRefreshesGitSources) {
+TEST(Contracts, BuildResolutionReusesLockedGitSources) {
     auto directory = root("lock/git-update"_str);
 
-    auto updating = lito::load_lock_session(directory.as_path(), false);
+    auto building = lito::load_lock_session(directory.as_path(), false);
+    ASSERT_TRUE(building.is_ok());
+    auto building_options = building->take_resolution_options();
+    EXPECT_FALSE(building_options.locked);
+    EXPECT_EQ(building_options.git, lito::GitResolutionMode::ReuseLocked);
+    ASSERT_EQ(building_options.git_sources.len(), usize(1));
+    EXPECT_EQ(building_options.git_sources[usize()].commit.as_str(),
+              "0000000000000000000000000000000000000001"_str);
+
+    auto updating =
+        lito::load_lock_session(directory.as_path(), false, lito::GitResolutionMode::Refresh);
     ASSERT_TRUE(updating.is_ok());
     auto updating_options = updating->take_resolution_options();
     EXPECT_FALSE(updating_options.locked);
-    EXPECT_TRUE(updating_options.git_sources.is_empty());
+    EXPECT_EQ(updating_options.git, lito::GitResolutionMode::Refresh);
+    ASSERT_EQ(updating_options.git_sources.len(), usize(1));
 
     auto locked = lito::load_lock_session(directory.as_path(), true);
     ASSERT_TRUE(locked.is_ok());
@@ -845,6 +918,106 @@ TEST(Contracts, UnlockedResolutionRefreshesGitSources) {
     ASSERT_EQ(locked_options.git_sources.len(), usize(1));
     EXPECT_EQ(locked_options.git_sources[usize()].commit.as_str(),
               "0000000000000000000000000000000000000001"_str);
+
+    auto pinned = lito::load_lock_session(root("lock/git-commit"_str).as_path(), false);
+    ASSERT_TRUE(pinned.is_ok());
+    auto pinned_options = pinned->take_resolution_options();
+    ASSERT_EQ(pinned_options.git_sources.len(), usize(1));
+    EXPECT_EQ(pinned_options.git_sources[usize()].reference.kind, lito::GitReferenceKind::Commit);
+    EXPECT_EQ(pinned_options.git_sources[usize()].reference.value.as_str(),
+              "1111111111111111111111111111111111111111"_str);
+}
+
+TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
+    auto repository = output_root("git-resolution"_str);
+    ASSERT_TRUE(clear_output(repository.as_path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(repository.as_path()).is_ok());
+    ASSERT_TRUE(git_succeeds(repository.as_path(), "init"_str));
+    ASSERT_TRUE(git_succeeds(repository.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
+    ASSERT_TRUE(git_succeeds(
+        repository.as_path(), "config"_str, "user.email"_str, "lito@example.invalid"_str));
+    auto content = repository.join(rstd::path::PathBuf::from("content.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(content.as_path(), "first\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(git_succeeds(repository.as_path(), "add"_str, "content.txt"_str));
+    ASSERT_TRUE(git_succeeds(repository.as_path(),
+                             "-c"_str,
+                             "commit.gpgsign=false"_str,
+                             "commit"_str,
+                             "-m"_str,
+                             "first"_str));
+    auto previous = git_revision(repository.as_path(), "HEAD"_str);
+    ASSERT_TRUE(previous.is_some());
+    ASSERT_TRUE(rstd::fs::write(content.as_path(), "second\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(git_succeeds(repository.as_path(), "add"_str, "content.txt"_str));
+    ASSERT_TRUE(git_succeeds(repository.as_path(),
+                             "-c"_str,
+                             "commit.gpgsign=false"_str,
+                             "commit"_str,
+                             "-m"_str,
+                             "second"_str));
+    auto url = repository.as_path().to_str();
+    ASSERT_TRUE(url.is_some());
+    auto current = git_revision(repository.as_path(), "HEAD"_str);
+    ASSERT_TRUE(current.is_some());
+    ASSERT_NE(current->as_str(), previous->as_str());
+
+    auto locked_sources = Vec<lito::LockedGitSource>::make();
+    locked_sources.push(lito::LockedGitSource {
+        .git       = String::make(*url),
+        .reference = lito::GitReference {},
+        .commit    = previous->clone(),
+    });
+    auto reuse_graph = external_git_graph(*url, lito::GitReference {});
+    auto reused =
+        lito::resolve_external_dependency_sources(reuse_graph,
+                                                  lito::PackageResolutionOptions {
+                                                      .git_sources = rstd::move(locked_sources),
+                                                  });
+    ASSERT_TRUE(reused.is_ok());
+    auto reused_commit = resolved_git_commit(reuse_graph);
+    ASSERT_TRUE(reused_commit.is_some());
+    EXPECT_EQ(*reused_commit, previous->as_str());
+
+    locked_sources.push(lito::LockedGitSource {
+        .git       = String::make(*url),
+        .reference = lito::GitReference {},
+        .commit    = previous->clone(),
+    });
+    auto update_graph = external_git_graph(*url, lito::GitReference {});
+    auto updated =
+        lito::resolve_external_dependency_sources(update_graph,
+                                                  lito::PackageResolutionOptions {
+                                                      .git = lito::GitResolutionMode::Refresh,
+                                                      .git_sources = rstd::move(locked_sources),
+                                                  });
+    ASSERT_TRUE(updated.is_ok());
+    auto updated_commit = resolved_git_commit(update_graph);
+    ASSERT_TRUE(updated_commit.is_some());
+    EXPECT_EQ(*updated_commit, current->as_str());
+
+    auto pinned_graph = external_git_graph(*url,
+                                           lito::GitReference {
+                                               .kind  = lito::GitReferenceKind::Commit,
+                                               .value = previous->clone(),
+                                           });
+    auto pinned =
+        lito::resolve_external_dependency_sources(pinned_graph,
+                                                  lito::PackageResolutionOptions {
+                                                      .git = lito::GitResolutionMode::Refresh,
+                                                  });
+    ASSERT_TRUE(pinned.is_ok());
+    auto pinned_commit = resolved_git_commit(pinned_graph);
+    ASSERT_TRUE(pinned_commit.is_some());
+    EXPECT_EQ(*pinned_commit, previous->as_str());
+    EXPECT_TRUE(clear_output(repository.as_path()));
+}
+
+TEST(Contracts, DependencyUpdateOwnsExplicitLockRefresh) {
+    auto updated = lito::update_dependencies(lito::UpdateRequest {
+        .root = root("lock/default-update"_str),
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(*updated, lito::LockStatus::Unchanged);
 }
 
 TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {

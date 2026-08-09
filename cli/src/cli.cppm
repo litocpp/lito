@@ -180,6 +180,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     format.about("Format package sources"_str);
     auto format_package = format.add_arg(package_arg());
 
+    auto update = Command::make("update"_str);
+    update.about("Update Git dependencies and the lock file"_str);
+
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
     root.require_subcommand();
@@ -192,6 +195,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
+    root.add_subcommand(rstd::move(update));
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
@@ -299,7 +303,8 @@ class CliCommand {
               (Build, (BuildOptions options;)),
               (Test, (TestOptions options;)),
               (Scan, (ScanOptions options;)),
-              (Format, (FormatOptions options;)))
+              (Format, (FormatOptions options;)),
+              (Update))
 };
 
 class CliOutcome {
@@ -396,6 +401,9 @@ auto parse() -> CliOutcome {
                 .no_timing = flag_value(*child, schema.test_no_timing),
                 .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
             }));
+    }
+    if (subcommand->get<0>() == "update"_str) {
+        return CliOutcome::Parsed(rstd::move(working_directory), CliCommand::Update());
     }
     auto child = subcommand->get<1>();
     return CliOutcome::Parsed(rstd::move(working_directory),

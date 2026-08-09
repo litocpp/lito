@@ -78,12 +78,31 @@ enum class GitReferenceKind
     Branch,
     Tag,
     Rev,
+    Commit,
 };
 
 struct GitReference {
     GitReferenceKind kind { GitReferenceKind::DefaultBranch };
     String           value;
 };
+
+enum class GitResolutionMode
+{
+    ReuseLocked,
+    Refresh,
+};
+
+auto git_commit_is_valid(ref<str> value) noexcept -> bool {
+    if (value.len() != usize(40)) return false;
+    for (const auto character : value) {
+        const auto ascii = character.to_primitive();
+        if (! ((ascii >= '0' && ascii <= '9') || (ascii >= 'a' && ascii <= 'f') ||
+               (ascii >= 'A' && ascii <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
+}
 
 enum class PkgConfigVersionOperator
 {
@@ -520,6 +539,7 @@ struct LockedGitSource {
 
 struct PackageResolutionOptions {
     bool                 locked { false };
+    GitResolutionMode    git { GitResolutionMode::ReuseLocked };
     Vec<LockedGitSource> git_sources;
     PackageSourceConfig  sources;
 
@@ -538,6 +558,7 @@ struct PackageResolutionOptions {
         }
         return PackageResolutionOptions {
             .locked      = locked,
+            .git         = git,
             .git_sources = rstd::move(locked_sources),
             .sources     = sources.clone(),
         };
@@ -902,6 +923,11 @@ struct ScanReport {
 struct FormatRequest {
     PackageSelection    selection;
     ToolchainSpec       toolchain;
+    PackageSourceConfig sources;
+};
+
+struct UpdateRequest {
+    PathBuf             root;
     PackageSourceConfig sources;
 };
 

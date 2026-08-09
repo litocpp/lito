@@ -115,6 +115,26 @@ extern "C++" int main() {
     }
     auto project = rstd::move(loaded_config).unwrap();
 
+    if (invocation.command.is_Update()) {
+        auto request = lito::UpdateRequest {
+            .root    = rstd::move(project.root),
+            .sources = rstd::move(project.sources),
+        };
+        auto result = lito::update_dependencies(request);
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        if (*result == lito::LockStatus::Updated)
+            rstd::io::println(
+                "updated {}",
+                request.root.join(lito::PathBuf::from("lito.lock"_str).as_path()).as_path());
+        else
+            rstd::io::println("dependencies are up to date");
+        return 0;
+    }
+
     if (invocation.command.is_Format()) {
         auto options               = rstd::move(invocation.command).as_Format().options;
         auto request               = lito::FormatRequest {};

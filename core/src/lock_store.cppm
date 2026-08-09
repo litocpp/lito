@@ -49,6 +49,7 @@ auto reference_kind(GitReferenceKind kind) -> ref<str> {
     case GitReferenceKind::Branch: return "branch"_str;
     case GitReferenceKind::Tag: return "tag"_str;
     case GitReferenceKind::Rev: return "rev"_str;
+    case GitReferenceKind::Commit: return "commit"_str;
     }
     return "default"_str;
 }
@@ -357,17 +358,6 @@ auto validate_lock_v2(const Json& document) -> Result<empty> {
     return Ok(empty {});
 }
 
-auto valid_commit(ref<str> value) -> bool {
-    if (value.len() != usize(40)) return false;
-    for (auto byte : value) {
-        const bool digit = byte >= u8('0') && byte <= u8('9');
-        const bool lower = byte >= u8('a') && byte <= u8('f');
-        const bool upper = byte >= u8('A') && byte <= u8('F');
-        if (! digit && ! lower && ! upper) return false;
-    }
-    return true;
-}
-
 auto valid_source_manifest(ref<str> value) -> bool {
     if (value.is_empty()) return false;
     auto path       = PathBuf::from(value);
@@ -436,7 +426,7 @@ auto validate_lock_v3(const Json& document) -> Result<empty> {
             if (url->is_empty()) {
                 return failure<empty>("lock Git source URL must not be empty"_str);
             }
-            if (! valid_commit(*commit)) {
+            if (! git_commit_is_valid(*commit)) {
                 return failure<empty>(
                     "lock Git source commit must be a full hexadecimal object id"_str);
             }
@@ -602,7 +592,7 @@ auto validate_lock_v4(const Json& document) -> Result<empty> {
             if (url->is_empty()) {
                 return failure<empty>("lock Git source URL must not be empty"_str);
             }
-            if (! valid_commit(*commit)) {
+            if (! git_commit_is_valid(*commit)) {
                 return failure<empty>(
                     "lock Git source commit must be a full hexadecimal object id"_str);
             }
@@ -620,16 +610,20 @@ auto validate_lock_v4(const Json& document) -> Result<empty> {
                 return Err(rstd::move(reference_value).unwrap_err());
             }
             const auto default_reference = *reference_kind == "default"_str;
-            const auto named_reference   = *reference_kind == "branch"_str ||
-                                           *reference_kind == "tag"_str ||
-                                           *reference_kind == "rev"_str;
+            const auto named_reference =
+                *reference_kind == "branch"_str || *reference_kind == "tag"_str ||
+                *reference_kind == "rev"_str || *reference_kind == "commit"_str;
             if (! default_reference && ! named_reference) {
                 return failure<empty>(
-                    "lock Git reference kind must be default, branch, tag, or rev"_str);
+                    "lock Git reference kind must be default, branch, tag, rev, or commit"_str);
             }
             if (default_reference != reference_value->is_empty()) {
                 return failure<empty>(
                     "lock Git reference value must be empty only for default"_str);
+            }
+            if (*reference_kind == "commit"_str && *reference_value != *commit) {
+                return failure<empty>(
+                    "lock Git commit reference must match the resolved commit"_str);
             }
             auto requirement = rstd::format("{}\n{}\n{}", *url, *reference_kind, *reference_value);
             if (git_requirements.contains_key(requirement.as_str())) {
@@ -808,12 +802,19 @@ public:
 
     auto take_resolution_options() -> PackageResolutionOptions { return rstd::move(options_); }
 
-    friend auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSession>;
+    friend auto load_lock_session(ref<rstd::path::Path> root, bool locked, GitResolutionMode git)
+        -> Result<LockSession>;
     friend auto sync_lock(const ResolvedPackageGraph& graph, LockSession session)
         -> Result<LockStatus>;
 };
 
-auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSession> {
+auto load_lock_session(ref<rstd::path::Path> root,
+                       bool                  locked,
+                       GitResolutionMode     git = GitResolutionMode::ReuseLocked)
+    -> Result<LockSession> {
+    if (locked && git == GitResolutionMode::Refresh) {
+        return failure<LockSession>("--locked cannot refresh Git dependencies"_str);
+    }
     auto destination = PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
     auto loaded      = load_existing(destination.as_path());
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
@@ -824,6 +825,7 @@ auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSe
         }
         auto session         = LockSession {};
         session.destination_ = rstd::move(destination);
+        session.options_     = PackageResolutionOptions { .locked = locked, .git = git };
         return Ok(rstd::move(session));
     }
 
@@ -837,36 +839,36 @@ auto load_lock_session(ref<rstd::path::Path> root, bool locked) -> Result<LockSe
         auto session         = LockSession {};
         session.destination_ = rstd::move(destination);
         session.existing_    = rstd::move(existing);
+        session.options_     = PackageResolutionOptions { .locked = locked, .git = git };
         return Ok(rstd::move(session));
     }
 
-    auto options = PackageResolutionOptions { .locked = locked };
-    if (locked) {
-        auto sources = (**(*existing).get("sources"_str)).as_array();
-        for (const auto& source : **sources) {
-            auto kind_value = source.get("kind"_str);
-            auto kind       = *(**kind_value).as_str();
-            if (kind != "git"_str) continue;
-            const auto& reference            = **source.get("reference"_str);
-            auto        reference_kind_value = reference.get("kind"_str);
-            auto        reference_kind       = *(**reference_kind_value).as_str();
-            auto        parsed_kind          = GitReferenceKind::DefaultBranch;
-            if (reference_kind == "branch"_str) parsed_kind = GitReferenceKind::Branch;
-            if (reference_kind == "tag"_str) parsed_kind = GitReferenceKind::Tag;
-            if (reference_kind == "rev"_str) parsed_kind = GitReferenceKind::Rev;
-            auto url             = source.get("url"_str);
-            auto reference_value = reference.get("value"_str);
-            auto commit          = source.get("commit"_str);
-            options.git_sources.push(LockedGitSource {
-                .git = String::make(*(**url).as_str()),
-                .reference =
-                    GitReference {
-                        .kind  = parsed_kind,
-                        .value = String::make(*(**reference_value).as_str()),
-                    },
-                .commit = String::make(*(**commit).as_str()),
-            });
-        }
+    auto options = PackageResolutionOptions { .locked = locked, .git = git };
+    auto sources = (**(*existing).get("sources"_str)).as_array();
+    for (const auto& source : **sources) {
+        auto kind_value = source.get("kind"_str);
+        auto kind       = *(**kind_value).as_str();
+        if (kind != "git"_str) continue;
+        const auto& reference            = **source.get("reference"_str);
+        auto        reference_kind_value = reference.get("kind"_str);
+        auto        reference_kind       = *(**reference_kind_value).as_str();
+        auto        parsed_kind          = GitReferenceKind::DefaultBranch;
+        if (reference_kind == "branch"_str) parsed_kind = GitReferenceKind::Branch;
+        if (reference_kind == "tag"_str) parsed_kind = GitReferenceKind::Tag;
+        if (reference_kind == "rev"_str) parsed_kind = GitReferenceKind::Rev;
+        if (reference_kind == "commit"_str) parsed_kind = GitReferenceKind::Commit;
+        auto url             = source.get("url"_str);
+        auto reference_value = reference.get("value"_str);
+        auto commit          = source.get("commit"_str);
+        options.git_sources.push(LockedGitSource {
+            .git = String::make(*(**url).as_str()),
+            .reference =
+                GitReference {
+                    .kind  = parsed_kind,
+                    .value = String::make(*(**reference_value).as_str()),
+                },
+            .commit = String::make(*(**commit).as_str()),
+        });
     }
     auto session         = LockSession {};
     session.locked_      = locked;
