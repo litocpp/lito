@@ -57,6 +57,12 @@ inline constexpr ref<str> INVALID_EXPLICIT_SOURCES[] = {
 };
 
 inline constexpr ref<str> INVALID_GRAPHS[] = {
+    "conventional-test/invalid-kind"_str,
+    "conventional-test/invalid-name"_str,
+    "conventional-test/invalid-overlap"_str,
+    "conventional-test/invalid-profile"_str,
+    "conventional-test/invalid-version"_str,
+    "conventional-test/invalid-workspace-kind"_str,
     "resolver/cycle/a"_str,
     "resolver/missing"_str,
     "resolver/name-mismatch/root"_str,
@@ -121,6 +127,24 @@ auto executable(const lito::BuildSummary& summary) -> Option<ref<rstd::path::Pat
         }
     }
     return None();
+}
+
+auto project_root_role(const lito::ResolvedPackageGraph& graph, ref<str> name)
+    -> Option<lito::ProjectRootRole> {
+    for (const auto& root : graph.roots) {
+        if (root.name.as_str() == name) {
+            auto role = root.role;
+            return Some(role);
+        }
+    }
+    return None();
+}
+
+auto contains_name(const Vec<String>& names, ref<str> name) -> bool {
+    for (const auto& candidate : names) {
+        if (candidate.as_str() == name) return true;
+    }
+    return false;
 }
 
 auto has_external_macro(const lito::CompileContext& context) -> bool {
@@ -1213,6 +1237,111 @@ TEST(Contracts, ProjectNameComesFromRootManifest) {
     ASSERT_TRUE(package.is_ok());
     EXPECT_FALSE(package->root_is_workspace);
     EXPECT_EQ(package->name.as_str(), "demo-app"_str);
+}
+
+TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
+    auto directory = root("conventional-test/package"_str);
+    auto graph     = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->roots.len(), usize(2));
+    auto primary = project_root_role(*graph, "fixture-conventional-library"_str);
+    auto test     = project_root_role(*graph, "fixture-conventional-test"_str);
+    ASSERT_TRUE(primary.is_some());
+    ASSERT_TRUE(test.is_some());
+    EXPECT_EQ(*primary, lito::ProjectRootRole::PrimaryPackage);
+    EXPECT_EQ(*test, lito::ProjectRootRole::AssociatedTest);
+
+    auto production = lito::resolve_package_selection(
+        lito::PackageSelection { .root = directory.clone() },
+        lito::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(production.is_ok());
+    ASSERT_EQ(production->selected_root_names.len(), usize(1));
+    EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
+              "fixture-conventional-library"_str);
+
+    auto tests = lito::resolve_package_selection(
+        lito::PackageSelection { .root = directory.clone() },
+        lito::PackageSelectionPurpose::Test);
+    ASSERT_TRUE(tests.is_ok());
+    ASSERT_EQ(tests->selected_root_names.len(), usize(1));
+    EXPECT_EQ(tests->selected_root_names[usize {}].as_str(),
+              "fixture-conventional-test"_str);
+    EXPECT_TRUE(
+        contains_name(tests->selected_package_names, "fixture-conventional-library"_str));
+
+    auto selected = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-conventional-test"_str),
+        },
+        lito::PackageSelectionPurpose::Test);
+    ASSERT_TRUE(selected.is_ok());
+    ASSERT_EQ(selected->selected_root_names.len(), usize(1));
+
+    auto selected_primary = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-conventional-library"_str),
+        },
+        lito::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(selected_primary.is_ok());
+    ASSERT_EQ(selected_primary->selected_root_names.len(), usize(1));
+
+    auto test_as_production = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-conventional-test"_str),
+        },
+        lito::PackageSelectionPurpose::Production);
+    EXPECT_TRUE(test_as_production.is_err());
+}
+
+TEST(Contracts, WorkspaceDiscoversAssociatedTestWorkspace) {
+    auto directory = root("conventional-test/workspace"_str);
+    auto graph     = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->roots.len(), usize(3));
+    auto library = project_root_role(*graph, "fixture-conventional-workspace-library"_str);
+    auto runtime = project_root_role(*graph, "fixture-conventional-workspace-test"_str);
+    auto compile =
+        project_root_role(*graph, "fixture-conventional-workspace-compile-test"_str);
+    ASSERT_TRUE(library.is_some());
+    ASSERT_TRUE(runtime.is_some());
+    ASSERT_TRUE(compile.is_some());
+    EXPECT_EQ(*library, lito::ProjectRootRole::WorkspaceMember);
+    EXPECT_EQ(*runtime, lito::ProjectRootRole::AssociatedTest);
+    EXPECT_EQ(*compile, lito::ProjectRootRole::AssociatedTest);
+
+    auto production = lito::resolve_package_selection(
+        lito::PackageSelection { .root = directory.clone() },
+        lito::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(production.is_ok());
+    ASSERT_EQ(production->selected_root_names.len(), usize(1));
+    EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
+              "fixture-conventional-workspace-library"_str);
+
+    auto tests = lito::resolve_package_selection(
+        lito::PackageSelection { .root = directory.clone() },
+        lito::PackageSelectionPurpose::Test);
+    ASSERT_TRUE(tests.is_ok());
+    EXPECT_EQ(tests->selected_root_names.len(), usize(2));
+    EXPECT_TRUE(contains_name(tests->selected_root_names,
+                              "fixture-conventional-workspace-test"_str));
+    EXPECT_TRUE(contains_name(tests->selected_root_names,
+                              "fixture-conventional-workspace-compile-test"_str));
+    EXPECT_TRUE(contains_name(tests->selected_package_names,
+                              "fixture-conventional-workspace-library"_str));
+}
+
+TEST(Contracts, DependencyTestsAreNotAssociatedWithTheRootProject) {
+    auto graph = lito::resolve_package_graph(
+        root("conventional-test/dependency-boundary/root"_str).as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->roots.len(), usize(1));
+    EXPECT_EQ(graph->roots[usize {}].name.as_str(), "fixture-conventional-boundary-root"_str);
+    EXPECT_EQ(graph->packages.len(), usize(2));
+    EXPECT_TRUE(project_root_role(*graph, "fixture-conventional-boundary-dependency-test"_str)
+                    .is_none());
 }
 
 TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {

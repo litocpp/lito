@@ -1,0 +1,9 @@
+[package]
+name = "fixture-conventional-boundary-dependency"
+version = "0.1.0"
+module = "fixture.conventional.boundary"
+
+[library]
+archive = "fixture-conventional-boundary"
+discovery = "explicit"
+sources = ["lib.cppm"]

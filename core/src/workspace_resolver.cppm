@@ -30,12 +30,15 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
     return result;
 }
 
-auto selected_by_purpose(ArtifactKind kind, PackageSelectionPurpose purpose) -> bool {
+auto selected_by_purpose(ProjectRootRole        role,
+                         ArtifactKind           kind,
+                         PackageSelectionPurpose purpose) -> bool {
     if (purpose == PackageSelectionPurpose::All) return true;
     if (purpose == PackageSelectionPurpose::Test) {
         return kind == ArtifactKind::TestExecutable || kind == ArtifactKind::CompileTest;
     }
-    return kind != ArtifactKind::TestExecutable && kind != ArtifactKind::CompileTest;
+    return role != ProjectRootRole::AssociatedTest && kind != ArtifactKind::TestExecutable &&
+           kind != ArtifactKind::CompileTest;
 }
 
 auto selected_closure(const ResolvedPackageGraph& graph,
@@ -92,22 +95,19 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
         selection.root.as_path(), rstd::move(options), tool_resolver, environment);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph = rstd::move(resolved).unwrap();
-    if (! graph.root_is_workspace && ! selection.packages.is_empty()) {
-        return failure<ResolvedPackageSelection>("--package requires a workspace directory"_str);
-    }
-
-    auto roots = StringSet::make();
-    for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
+    auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
+    for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
     auto root_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
     for (const auto& package : graph.packages) {
-        if (roots.contains_key(package.manifest.name.as_str())) {
+        if (root_roles.contains_key(package.manifest.name.as_str())) {
             root_kinds.insert(package.manifest.name.clone(), package.manifest.artifact_kind);
         }
     }
 
     auto selected_roots = Vec<String>::make();
     if (selection.packages.is_empty()) {
-        for (const auto& name : graph.root_names) {
+        for (const auto& root : graph.roots) {
+            const auto& name = root.name;
             auto kind      = root_kinds.get(name.as_str());
             auto supported = true;
             if (target != nullptr) {
@@ -118,7 +118,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                     }
                 }
             }
-            if (kind.is_some() && selected_by_purpose(**kind, purpose) && supported) {
+            if (kind.is_some() && selected_by_purpose(root.role, **kind, purpose) && supported) {
                 selected_roots.push(name.clone());
             }
         }
@@ -133,17 +133,19 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
             }
             if (selected_names.contains_key(name.as_str())) {
                 return failure<ResolvedPackageSelection>(rstd::format(
-                    "workspace package '{}' was selected more than once", name.as_str()));
+                    "project package '{}' was selected more than once", name.as_str()));
             }
-            if (! roots.contains_key(name.as_str())) {
+            auto role = root_roles.get(name.as_str());
+            if (role.is_none()) {
                 return failure<ResolvedPackageSelection>(
-                    rstd::format("workspace has no member package named '{}'", name.as_str()));
+                    rstd::format("project has no root package named '{}'", name.as_str()));
             }
             auto kind = root_kinds.get(name.as_str());
-            if (purpose == PackageSelectionPurpose::Test &&
-                (kind.is_none() || ! selected_by_purpose(**kind, purpose))) {
-                return failure<ResolvedPackageSelection>(
-                    rstd::format("workspace package '{}' is not a test package", name.as_str()));
+            if (kind.is_none() || ! selected_by_purpose(**role, **kind, purpose)) {
+                auto expected = purpose == PackageSelectionPurpose::Test ? "test"_str
+                                                                         : "production"_str;
+                return failure<ResolvedPackageSelection>(rstd::format(
+                    "project package '{}' is not a {} package", name.as_str(), expected));
             }
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
@@ -162,8 +164,8 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     }
     if (selected_roots.is_empty()) {
         if (purpose == PackageSelectionPurpose::Test)
-            return failure<ResolvedPackageSelection>("workspace has no selected test package"_str);
-        return failure<ResolvedPackageSelection>("workspace has no selected package"_str);
+            return failure<ResolvedPackageSelection>("project has no selected test package"_str);
+        return failure<ResolvedPackageSelection>("project has no selected package"_str);
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 

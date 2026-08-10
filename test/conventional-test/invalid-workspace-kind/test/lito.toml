@@ -1,0 +1,6 @@
+[workspace]
+name = "fixture-conventional-invalid-test-workspace"
+members = ["library"]
+
+[workspace.package]
+version = "0.1.0"

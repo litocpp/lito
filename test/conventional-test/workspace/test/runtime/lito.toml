@@ -1,0 +1,12 @@
+[package]
+name = "fixture-conventional-workspace-test"
+version.workspace = true
+
+[test]
+name = "fixture-conventional-workspace-test"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-conventional-workspace-library]
+path = "../../library"
+visibility = "private"

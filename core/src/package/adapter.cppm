@@ -73,7 +73,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
     auto roots           = rstd::collections::BTreeMap<String, empty>::make();
     auto requested_roots = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
-    for (const auto& name : graph.root_names) roots.insert(name.clone(), empty {});
+    for (const auto& root : graph.roots) roots.insert(root.name.clone(), empty {});
     for (const auto& name : selected_root_names) requested_roots.insert(name.clone(), empty {});
 
     auto external_by_package =

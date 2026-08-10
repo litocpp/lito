@@ -1,0 +1,8 @@
+[package]
+name = "fixture-conventional-invalid-profile-root"
+version = "0.1.0"
+
+[executable]
+name = "fixture-conventional-invalid-profile-root"
+discovery = "explicit"
+sources = ["main.cpp"]

@@ -212,6 +212,13 @@ enum class PackageSelectionPurpose
     Test,
 };
 
+enum class ProjectRootRole
+{
+    PrimaryPackage,
+    WorkspaceMember,
+    AssociatedTest,
+};
+
 enum class PackageVersionSource
 {
     Explicit,
@@ -655,9 +662,15 @@ struct ResolvedPackage {
     Vec<ResolvedCMakeDependencyRequirement> cmake_external_dependencies;
 };
 
+struct ResolvedProjectRoot {
+    String          name;
+    String          source_identity;
+    ProjectRootRole role { ProjectRootRole::PrimaryPackage };
+};
+
 struct ResolvedPackageGraph {
     String                     name;
-    Vec<String>                root_names;
+    Vec<ResolvedProjectRoot>   roots;
     PathBuf                    root_directory;
     PathBuf                    manifest_path;
     bool                       root_is_workspace { false };

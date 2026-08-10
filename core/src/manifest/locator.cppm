@@ -85,6 +85,14 @@ auto locate_manifest(ref<rstd::path::Path> requested_directory) -> Result<Manife
 
 auto try_locate_manifest(ref<rstd::path::Path> requested_directory)
     -> Result<Option<ManifestLocation>> {
+    auto exists = rstd::fs::exists(requested_directory);
+    if (exists.is_err()) {
+        return locator_failure<Option<ManifestLocation>>(
+            rstd::format("cannot inspect manifest directory '{}': {}",
+                         requested_directory,
+                         rstd::move(exists).unwrap_err()));
+    }
+    if (! *exists) return Ok(None());
     auto directory = manifest_directory(requested_directory);
     if (directory.is_err()) return Err(rstd::move(directory).unwrap_err());
     auto manifest = try_manifest_path(directory->as_path());

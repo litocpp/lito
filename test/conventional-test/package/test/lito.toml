@@ -1,0 +1,12 @@
+[package]
+name = "fixture-conventional-test"
+version = "0.1.0"
+
+[test]
+name = "fixture-conventional-test"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-conventional-library]
+path = ".."
+visibility = "private"

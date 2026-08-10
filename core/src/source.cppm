@@ -171,6 +171,11 @@ struct AcquiredSource {
     String  identity;
 };
 
+struct AcquiredProjectSources {
+    usize         primary;
+    Option<usize> tests;
+};
+
 class SourceManager {
     PathBuf                           graph_root_;
     PackageResolutionOptions          options_;
@@ -623,8 +628,39 @@ public:
           resolver_(rstd::addressof(resolver)),
           environment_(rstd::addressof(environment)) {}
 
-    auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
-        return acquire_path(root, true);
+    auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
+        auto primary = acquire_path(root, true);
+        if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
+        const auto primary_source = *primary;
+        auto test_root = PathBuf::from(entries_[primary_source].catalog->root())
+                             .join(PathBuf::from("test"_str).as_path());
+        auto located = try_locate_manifest(test_root.as_path());
+        if (located.is_err()) return Err(rstd::move(located).unwrap_err());
+        if (located->is_none()) {
+            return Ok(AcquiredProjectSources { .primary = primary_source });
+        }
+        const auto& test_location = **located;
+        if (! (test_location.directory.as_path() == test_root.as_path())) {
+            return source_failure<AcquiredProjectSources>(rstd::format(
+                "associated test manifest directory '{}' must be the exact project directory '{}'",
+                test_location.directory.as_path(),
+                test_root.as_path()));
+        }
+        if (entries_[primary_source].catalog->contains_package_root(
+                test_location.directory.as_path())) {
+            return Ok(AcquiredProjectSources { .primary = primary_source });
+        }
+
+        auto tests = acquire_path(test_location.directory.as_path(), true);
+        if (tests.is_err()) return Err(rstd::move(tests).unwrap_err());
+        auto test_source = *tests;
+        auto validated = validate_associated_test_catalog(*entries_[primary_source].catalog,
+                                                          *entries_[test_source].catalog);
+        if (validated.is_err()) return Err(rstd::move(validated).unwrap_err());
+        return Ok(AcquiredProjectSources {
+            .primary = primary_source,
+            .tests   = Some(test_source),
+        });
     }
 
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)

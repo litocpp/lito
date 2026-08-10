@@ -1,0 +1,14 @@
+[package]
+name = "fixture-conventional-workspace-compile-test"
+version.workspace = true
+
+[compile-test]
+
+[[compile-test.cases]]
+name = "AssociatedWorkspace.Success"
+source = "pass.cpp"
+outcome = "success"
+
+[dependencies.fixture-conventional-workspace-library]
+path = "../../library"
+visibility = "private"

@@ -68,7 +68,7 @@ public:
         : root_directory_(PathBuf::from(root_directory)),
           sources_(root_directory, rstd::move(options), resolver, environment) {}
 
-    auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
+    auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
         return sources_.acquire_root(root);
     }
 
@@ -76,6 +76,10 @@ public:
 
     auto source_name(usize source) const noexcept -> ref<str> {
         return sources_.source_name(source);
+    }
+
+    auto source_identity(usize source) const noexcept -> ref<str> {
+        return sources_.source_identity(source);
     }
 
     auto source_manifest(usize source) const -> PathBuf { return sources_.source_manifest(source); }
@@ -163,7 +167,7 @@ public:
     }
 
     auto finish(String         name,
-                Vec<String>    root_names,
+                Vec<ResolvedProjectRoot> roots,
                 PathBuf        manifest_path,
                 bool           root_is_workspace,
                 ProjectProfile profile) -> ResolvedPackageGraph {
@@ -172,10 +176,14 @@ public:
             [](const ResolvedPackage& left, const ResolvedPackage& right) {
                 return left.manifest.name < right.manifest.name;
             });
-        rstd::slice_::sort_unstable(root_names.as_mut_slice().as_mut_ref());
+        rstd::slice_::sort_unstable_by(
+            roots.as_mut_slice().as_mut_ref(),
+            [](const ResolvedProjectRoot& left, const ResolvedProjectRoot& right) {
+                return left.name < right.name;
+            });
         return ResolvedPackageGraph {
             .name              = rstd::move(name),
-            .root_names        = rstd::move(root_names),
+            .roots             = rstd::move(roots),
             .root_directory    = rstd::move(root_directory_),
             .manifest_path     = rstd::move(manifest_path),
             .root_is_workspace = root_is_workspace,
@@ -207,20 +215,37 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
     auto resolver = Resolver(root.as_path(), rstd::move(options), tool_resolver, environment);
     auto source   = resolver.acquire_root(root.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-    auto root_source       = *source;
+    auto project_sources   = rstd::move(source).unwrap();
+    auto root_source       = project_sources.primary;
     auto project_name      = String::make(resolver.source_name(root_source));
     auto manifest_path     = resolver.source_manifest(root_source);
     auto root_is_workspace = resolver.source_is_workspace(root_source);
     auto profile           = resolver.source_profile(root_source);
-    auto names             = resolver.package_names(root_source);
-    auto root_names        = Vec<String>::with_capacity(names.len());
-    for (const auto& name : names) {
-        auto resolved_name = resolver.resolve(root_source, name.as_str());
-        if (resolved_name.is_err()) return Err(rstd::move(resolved_name).unwrap_err());
-        root_names.push(rstd::move(resolved_name).unwrap());
+    auto roots             = Vec<ResolvedProjectRoot>::make();
+    auto resolve_roots     = [&](usize source_index, ProjectRootRole role) -> Result<empty> {
+        auto names = resolver.package_names(source_index);
+        for (const auto& name : names) {
+            auto resolved_name = resolver.resolve(source_index, name.as_str());
+            if (resolved_name.is_err()) return Err(rstd::move(resolved_name).unwrap_err());
+            roots.push(ResolvedProjectRoot {
+                .name            = rstd::move(resolved_name).unwrap(),
+                .source_identity = String::make(resolver.source_identity(source_index)),
+                .role            = role,
+            });
+        }
+        return Ok(empty {});
+    };
+    auto primary_role = root_is_workspace ? ProjectRootRole::WorkspaceMember
+                                          : ProjectRootRole::PrimaryPackage;
+    auto resolved_primary = resolve_roots(root_source, primary_role);
+    if (resolved_primary.is_err()) return Err(rstd::move(resolved_primary).unwrap_err());
+    if (project_sources.tests.is_some()) {
+        auto resolved_tests =
+            resolve_roots(*project_sources.tests, ProjectRootRole::AssociatedTest);
+        if (resolved_tests.is_err()) return Err(rstd::move(resolved_tests).unwrap_err());
     }
     return Ok(resolver.finish(rstd::move(project_name),
-                              rstd::move(root_names),
+                              rstd::move(roots),
                               rstd::move(manifest_path),
                               root_is_workspace,
                               profile));

@@ -1,0 +1,6 @@
+[workspace]
+name = "fixture-conventional-test-workspace"
+members = ["runtime", "compile"]
+
+[workspace.package]
+version = "0.1.0"

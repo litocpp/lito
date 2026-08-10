@@ -98,7 +98,7 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
     }
 
     auto roots = Array::make();
-    for (const auto& name : graph.root_names) roots.push(string_json(name.as_str()));
+    for (const auto& root : graph.roots) roots.push(string_json(root.name.as_str()));
     auto root = Map::make();
     root.insert(String::make("packages"_str), Json::Array(rstd::move(packages)));
     root.insert(String::make("roots"_str), Json::Array(rstd::move(roots)));

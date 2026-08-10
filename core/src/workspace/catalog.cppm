@@ -55,6 +55,7 @@ class WorkspaceCatalog {
     PackageMap     packages_ { PackageMap::make() };
     StringSet      member_roots_ { StringSet::make() };
     bool           workspace_ { false };
+    bool           profile_declared_ { false };
 
 public:
     WorkspaceCatalog() = default;
@@ -72,7 +73,10 @@ public:
         catalog.name_          = manifest.name.clone();
         catalog.root_          = manifest.root.clone();
         catalog.manifest_path_ = manifest.manifest_path.clone();
-        if (manifest.profile.is_some()) catalog.profile_ = *manifest.profile;
+        if (manifest.profile.is_some()) {
+            catalog.profile_          = *manifest.profile;
+            catalog.profile_declared_ = true;
+        }
         catalog.names_.push(manifest.name.clone());
         auto root_text = manifest.root.as_path().to_str();
         if (root_text.is_some()) {
@@ -106,6 +110,8 @@ public:
     friend auto load_workspace_catalog(WorkspaceManifest       workspace,
                                        Option<PackageManifest> preloaded)
         -> Result<WorkspaceCatalog>;
+    friend auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
+                                                 const WorkspaceCatalog& tests) -> Result<empty>;
 };
 
 auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest> preloaded = None())
@@ -115,7 +121,10 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     catalog.name_          = rstd::move(workspace.name);
     catalog.root_          = workspace.root.clone();
     catalog.manifest_path_ = workspace.manifest_path.clone();
-    if (workspace.profile.is_some()) catalog.profile_ = *workspace.profile;
+    if (workspace.profile.is_some()) {
+        catalog.profile_          = *workspace.profile;
+        catalog.profile_declared_ = true;
+    }
     auto directories = StringSet::make();
     for (const auto& declared : workspace.members) {
         auto member =
@@ -183,6 +192,64 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     }
     rstd::slice_::sort_unstable(catalog.names_.as_mut_slice().as_mut_ref());
     return Ok(rstd::move(catalog));
+}
+
+auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
+                                      const WorkspaceCatalog& tests) -> Result<empty> {
+    if (tests.profile_declared_) {
+        return catalog_failure<empty>(rstd::format(
+            "associated test manifest '{}' declares [profile]; project profile belongs to '{}'",
+            tests.manifest_path_.as_path(),
+            primary.manifest_path_.as_path()));
+    }
+
+    if (! primary.workspace_ && primary.names_.len() == usize(1)) {
+        const auto root = primary.packages_.get(primary.names_[usize {}].as_str());
+        if (root.is_some() && ((**root).artifact_kind == ArtifactKind::TestExecutable ||
+                               (**root).artifact_kind == ArtifactKind::CompileTest)) {
+            return catalog_failure<empty>(rstd::format(
+                "primary package '{}' is already a test artifact and cannot attach '{}'",
+                (**root).name.as_str(),
+                tests.manifest_path_.as_path()));
+        }
+    }
+
+    for (const auto& name : tests.names_) {
+        const auto package = tests.packages_.get(name.as_str());
+        if (package.is_none()) {
+            return catalog_failure<empty>(
+                rstd::format("associated test catalog is missing package '{}'", name.as_str()));
+        }
+        const auto& manifest = **package;
+        if (manifest.artifact_kind != ArtifactKind::TestExecutable &&
+            manifest.artifact_kind != ArtifactKind::CompileTest) {
+            return catalog_failure<empty>(rstd::format(
+                "associated test package '{}' at '{}' must declare [test] or [compile-test]",
+                manifest.name.as_str(),
+                manifest.manifest_path.as_path()));
+        }
+        if (! tests.workspace_ && manifest.version.source == PackageVersionSource::Workspace) {
+            return catalog_failure<empty>(rstd::format(
+                "associated test package '{}' at '{}' must declare an explicit version",
+                manifest.name.as_str(),
+                manifest.manifest_path.as_path()));
+        }
+        if (primary.packages_.contains_key(name.as_str())) {
+            return catalog_failure<empty>(rstd::format(
+                "associated test package '{}' at '{}' conflicts with primary project manifest '{}'",
+                name.as_str(),
+                manifest.manifest_path.as_path(),
+                primary.manifest_path_.as_path()));
+        }
+        if (primary.contains_package_root(manifest.root.as_path())) {
+            return catalog_failure<empty>(rstd::format(
+                "associated test package '{}' at '{}' is already owned by primary project manifest '{}'",
+                name.as_str(),
+                manifest.manifest_path.as_path(),
+                primary.manifest_path_.as_path()));
+        }
+    }
+    return Ok(empty {});
 }
 
 auto try_containing_workspace(const PackageManifest& manifest)

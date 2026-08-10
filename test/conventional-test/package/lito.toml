@@ -1,0 +1,9 @@
+[package]
+name = "fixture-conventional-library"
+version = "0.1.0"
+module = "fixture.conventional"
+
+[library]
+archive = "fixture-conventional"
+discovery = "explicit"
+sources = ["src/lib.cppm"]

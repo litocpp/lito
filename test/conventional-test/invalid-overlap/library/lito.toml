@@ -1,0 +1,9 @@
+[package]
+name = "fixture-conventional-overlap-library"
+version.workspace = true
+module = "fixture.conventional.overlap"
+
+[library]
+archive = "fixture-conventional-overlap"
+discovery = "explicit"
+sources = ["lib.cppm"]
