@@ -48,7 +48,8 @@ auto environment_config_key(ref<str> key) -> bool {
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
-    return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str;
+    return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str ||
+           key == "stripper"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool {
@@ -229,6 +230,7 @@ auto default_toolchain() -> ToolchainSpec {
         .compiler  = PathBuf::from("clang++"_str),
         .archiver  = PathBuf::from("llvm-ar"_str),
         .formatter = PathBuf::from("clang-format"_str),
+        .stripper  = PathBuf::from("llvm-strip"_str),
     };
 }
 
@@ -391,13 +393,17 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
             **toolchain_value, "archiver"_str, "llvm-ar"_str, "config.toolchain"_str);
         auto formatter = configured_tool(
             **toolchain_value, "formatter"_str, "clang-format"_str, "config.toolchain"_str);
+        auto stripper = configured_tool(
+            **toolchain_value, "stripper"_str, "llvm-strip"_str, "config.toolchain"_str);
         if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
         if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
         if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
+        if (stripper.is_err()) return Err(rstd::move(stripper).unwrap_err());
         toolchain = ToolchainSpec {
             .compiler  = rstd::move(compiler).unwrap(),
             .archiver  = rstd::move(archiver).unwrap(),
             .formatter = rstd::move(formatter).unwrap(),
+            .stripper  = rstd::move(stripper).unwrap(),
         };
     }
 

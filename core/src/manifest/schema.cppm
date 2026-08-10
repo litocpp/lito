@@ -113,15 +113,131 @@ auto workspace_root_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "profile"_str;
 }
 
-auto profile_key(ref<str> key) -> bool {
-    return key == "exceptions"_str || key == "rtti"_str;
+auto build_profile_key(ref<str> key) -> bool {
+    return key == "inherits"_str || key == "opt-level"_str || key == "debug"_str ||
+           key == "strip"_str || key == "lto"_str;
+}
+
+auto parse_profile_optimization(const Toml& value, ref<str> context) -> Result<CppOptimization> {
+    auto integer = value.as_integer();
+    if (integer.is_some()) {
+        switch (integer->to_primitive()) {
+        case 0: return Ok(CppOptimization::None);
+        case 1: return Ok(CppOptimization::Level1);
+        case 2: return Ok(CppOptimization::Level2);
+        case 3: return Ok(CppOptimization::Level3);
+        default: break;
+        }
+    }
+    auto text = value.as_str();
+    if (text.is_some() && *text == "s"_str) return Ok(CppOptimization::Size);
+    if (text.is_some() && *text == "z"_str) return Ok(CppOptimization::SizeMin);
+    return failure<CppOptimization>(rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
+}
+
+auto parse_profile_debug(const Toml& value, ref<str> context) -> Result<CppDebugInfo> {
+    auto boolean = value.as_bool();
+    if (boolean.is_some()) return Ok(*boolean ? CppDebugInfo::Full : CppDebugInfo::None);
+    auto integer = value.as_integer();
+    if (integer.is_some()) {
+        switch (integer->to_primitive()) {
+        case 0: return Ok(CppDebugInfo::None);
+        case 1: return Ok(CppDebugInfo::Limited);
+        case 2: return Ok(CppDebugInfo::Full);
+        default: break;
+        }
+    }
+    auto text = value.as_str();
+    if (text.is_some() && *text == "none"_str) return Ok(CppDebugInfo::None);
+    if (text.is_some() && *text == "line-directives-only"_str) {
+        return Ok(CppDebugInfo::LineDirectivesOnly);
+    }
+    if (text.is_some() && *text == "line-tables-only"_str) {
+        return Ok(CppDebugInfo::LineTablesOnly);
+    }
+    if (text.is_some() && *text == "limited"_str) return Ok(CppDebugInfo::Limited);
+    if (text.is_some() && *text == "full"_str) return Ok(CppDebugInfo::Full);
+    return failure<CppDebugInfo>(
+        rstd::format("{} must be false, true, 0, 1, 2, 'none', 'line-directives-only', "
+                     "'line-tables-only', 'limited', or 'full'",
+                     context));
+}
+
+auto parse_profile_strip(const Toml& value, ref<str> context) -> Result<StripMode> {
+    auto boolean = value.as_bool();
+    if (boolean.is_some()) return Ok(*boolean ? StripMode::Symbols : StripMode::None);
+    auto text = value.as_str();
+    if (text.is_some() && *text == "none"_str) return Ok(StripMode::None);
+    if (text.is_some() && *text == "debuginfo"_str) return Ok(StripMode::DebugInfo);
+    if (text.is_some() && *text == "symbols"_str) return Ok(StripMode::Symbols);
+    return failure<StripMode>(
+        rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context));
+}
+
+auto parse_profile_lto(const Toml& value, ref<str> context) -> Result<CppLto> {
+    auto boolean = value.as_bool();
+    if (boolean.is_some()) return Ok(*boolean ? CppLto::Fat : CppLto::Off);
+    auto text = value.as_str();
+    if (text.is_some() && *text == "off"_str) return Ok(CppLto::Off);
+    if (text.is_some() && *text == "thin"_str) return Ok(CppLto::Thin);
+    if (text.is_some() && *text == "fat"_str) return Ok(CppLto::Fat);
+    return failure<CppLto>(
+        rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context));
+}
+
+auto parse_build_profile(ref<str> name, const Toml& value) -> Result<BuildProfileDefinition> {
+    auto context = rstd::format("manifest.profile.{}", name);
+    if (! valid_build_profile_name(name)) {
+        return failure<BuildProfileDefinition>(
+            rstd::format("{} is not a valid build profile name", context.as_str()));
+    }
+    auto table = table_value(value, context.as_str());
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    rstd_try(reject_unknown(**table, context.as_str(), build_profile_key));
+    auto result = BuildProfileDefinition {
+        .name =
+            BuildProfileName {
+                .value = String::make(name),
+            },
+    };
+    auto inherits = member(value, "inherits"_str);
+    if (inherits.is_some()) {
+        auto text = (**inherits).as_str();
+        if (text.is_none() || ! valid_build_profile_name(*text)) {
+            return failure<BuildProfileDefinition>(
+                rstd::format("{}.inherits must name a valid build profile", context.as_str()));
+        }
+        result.inherits = Some(BuildProfileName {
+            .value = String::make(*text),
+        });
+    }
+    auto optimization = member(value, "opt-level"_str);
+    if (optimization.is_some()) {
+        result.optimization = Some(rstd_try(parse_profile_optimization(
+            **optimization, rstd::format("{}.opt-level", context.as_str()).as_str())));
+    }
+    auto debug = member(value, "debug"_str);
+    if (debug.is_some()) {
+        result.debug_info = Some(rstd_try(
+            parse_profile_debug(**debug, rstd::format("{}.debug", context.as_str()).as_str())));
+    }
+    auto strip = member(value, "strip"_str);
+    if (strip.is_some()) {
+        result.strip = Some(rstd_try(
+            parse_profile_strip(**strip, rstd::format("{}.strip", context.as_str()).as_str())));
+    }
+    auto lto = member(value, "lto"_str);
+    if (lto.is_some()) {
+        result.lto = Some(
+            rstd_try(parse_profile_lto(**lto, rstd::format("{}.lto", context.as_str()).as_str())));
+    }
+    return Ok(rstd::move(result));
 }
 
 auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProfile>> {
     if (value.is_none()) return Ok(Option<ProjectProfile> {});
     auto table = table_value(**value, "manifest.profile"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    rstd_try(reject_unknown(**table, "manifest.profile"_str, profile_key));
 
     auto profile    = ProjectProfile {};
     auto exceptions = member(**value, "exceptions"_str);
@@ -141,7 +257,17 @@ auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProf
         }
         profile.rtti = *parsed;
     }
-    return Ok(Some(profile));
+    auto keys = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        if ((**key).as_str() == "exceptions"_str || (**key).as_str() == "rtti"_str) continue;
+        auto item = (**table).get((**key).as_str());
+        profile.build_profiles.push(rstd_try(parse_build_profile((**key).as_str(), **item)));
+    }
+    auto valid = validate_build_profiles(profile);
+    if (valid.is_err()) {
+        return failure<Option<ProjectProfile>>(rstd::move(valid).unwrap_err().message);
+    }
+    return Ok(Some<ProjectProfile>(rstd::move(profile)));
 }
 
 auto package_key(ref<str> key) -> bool {
@@ -757,7 +883,8 @@ auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> R
 
 auto validate_linker_options(const Vec<String>& options, ref<str> context) -> Result<empty> {
     for (const auto& option : options) {
-        if (option.as_str().starts_with("-stdlib="_str)) {
+        if (option.as_str().starts_with("-stdlib="_str) ||
+            is_profile_owned_linker_option(option.as_str())) {
             return failure<empty>(rstd::format(
                 "{} option '{}' overrides a Lito-owned setting", context, option.as_str()));
         }

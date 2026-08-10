@@ -17,6 +17,7 @@ inline constexpr BuildOperation BUILD_OPERATIONS[] = {
     BuildOperation::Compile,
     BuildOperation::Archive,
     BuildOperation::Link,
+    BuildOperation::Strip,
 };
 
 inline constexpr ScanTimingCategory SCAN_CATEGORIES[] = {

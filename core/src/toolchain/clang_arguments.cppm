@@ -114,22 +114,17 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
                 "-fno-exceptions"_str);
 
     auto optimization = definition("optimization"_str);
-    spelling(optimization, "-O"_str);
-    spelling(optimization, "-O0"_str);
-    spelling(optimization, "-O1"_str);
-    spelling(optimization, "-O2"_str);
-    spelling(optimization, "-O3"_str);
-    spelling(optimization, "-O4"_str);
-    spelling(optimization, "-Og"_str);
-    spelling(optimization, "-Os"_str);
-    spelling(optimization, "-Oz"_str);
-    spelling(optimization, "-Ofast"_str);
+    spelling(optimization, "-O"_str, CompilerArgumentValueForm::OptionalJoined);
     schema.add(CppCompilerArgumentKind::OwnedOptimization, rstd::move(optimization));
     add(schema,
         CppCompilerArgumentKind::OwnedDebugInfo,
         "debug-info"_str,
         "-g"_str,
         CompilerArgumentValueForm::OptionalJoined);
+    auto lto = definition("lto"_str);
+    spelling(lto, "-flto"_str, CompilerArgumentValueForm::OptionalEquals);
+    spelling(lto, "-fno-lto"_str);
+    schema.add(CppCompilerArgumentKind::OwnedLto, rstd::move(lto));
 
     add_toggles(schema,
                 CppCompilerArgumentKind::CodegenMode,

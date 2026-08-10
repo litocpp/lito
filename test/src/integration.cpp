@@ -66,8 +66,8 @@ TEST(Integration, ScanUsesNativePreprocessorAndDefinitions) {
     EXPECT_TRUE(p1689_json->as_str().contains("\"revision\": 0"_str));
     EXPECT_TRUE(p1689_json->as_str().contains("\"primary-output\":"_str));
     EXPECT_TRUE(p1689_json->as_str().contains("\"provides\":"_str));
-    EXPECT_TRUE(p1689_json->as_str().contains(
-        "\"logical-name\": \"fixture.preprocessor.native\""_str));
+    EXPECT_TRUE(
+        p1689_json->as_str().contains("\"logical-name\": \"fixture.preprocessor.native\""_str));
     EXPECT_TRUE(p1689_json->as_str().contains(
         "\"logical-name\": \"fixture.preprocessor.native:dependency\""_str));
     EXPECT_FALSE(p1689_json->as_str().contains("\"format\":"_str));
@@ -155,7 +155,7 @@ TEST(Integration, TestRunsPassFailureSignalAndNoRun) {
             root.as_path(),
             output.as_path(),
             strings("fixture-test-pass"_str, "fixture-test-fail"_str, "fixture-test-signal"_str),
-            lito::BuildProfile::Release),
+            build_profile("release"_str)),
         .no_run = true,
     };
     auto no_run = lito::test(rstd::move(no_run_request));

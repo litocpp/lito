@@ -66,6 +66,7 @@ enum class BuildOperation
     Compile,
     Archive,
     Link,
+    Strip,
 };
 
 enum class ScanTimingCategory
@@ -91,6 +92,7 @@ auto build_operation_label(BuildOperation operation) noexcept -> ref<str> {
     case BuildOperation::Compile: return "build.compile"_str;
     case BuildOperation::Archive: return "build.archive"_str;
     case BuildOperation::Link: return "build.link"_str;
+    case BuildOperation::Strip: return "build.strip"_str;
     }
     return "build.unknown"_str;
 }
@@ -119,12 +121,14 @@ class BuildTimingReport {
     BuildOperationTiming compile_;
     BuildOperationTiming archive_;
     BuildOperationTiming link_;
+    BuildOperationTiming strip_;
 
     auto timing_mut(BuildOperation operation) noexcept -> BuildOperationTiming& {
         switch (operation) {
         case BuildOperation::Compile: return compile_;
         case BuildOperation::Archive: return archive_;
         case BuildOperation::Link: return link_;
+        case BuildOperation::Strip: return strip_;
         }
         return link_;
     }
@@ -141,6 +145,7 @@ public:
         case BuildOperation::Compile: return compile_;
         case BuildOperation::Archive: return archive_;
         case BuildOperation::Link: return link_;
+        case BuildOperation::Strip: return strip_;
         }
         return link_;
     }

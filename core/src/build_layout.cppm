@@ -56,8 +56,10 @@ export namespace lito
 
 class BuildLayout {
     PathBuf output_;
+    PathBuf scan_cache_;
 
-    explicit BuildLayout(PathBuf output): output_(rstd::move(output)) {}
+    BuildLayout(PathBuf output, PathBuf scan_cache)
+        : output_(rstd::move(output)), scan_cache_(rstd::move(scan_cache)) {}
 
     auto source_path(ref<rstd::path::Path> root,
                      ref<str>              target,
@@ -80,15 +82,20 @@ public:
     static auto resolve(ref<rstd::path::Path> owner_root,
                         ref<rstd::path::Path> requested_output,
                         ref<str>              profile) -> BuildLayout {
-        auto output = PathBuf::make();
+        auto output     = PathBuf::make();
+        auto scan_cache = PathBuf::make();
         if (requested_output.is_empty()) {
-            output = join(join(owner_root, "build"_str).as_path(), profile);
+            auto build = join(owner_root, "build"_str);
+            output     = join(build.as_path(), profile);
+            scan_cache = join(build.as_path(), "lito-scan-cache"_str);
         } else if (requested_output.is_absolute()) {
-            output = PathBuf::from(requested_output);
+            output     = PathBuf::from(requested_output);
+            scan_cache = join(output.as_path(), "lito-scan-cache"_str);
         } else {
-            output = PathBuf::from(owner_root).join(requested_output);
+            output     = PathBuf::from(owner_root).join(requested_output);
+            scan_cache = join(output.as_path(), "lito-scan-cache"_str);
         }
-        return BuildLayout(rstd::move(output));
+        return BuildLayout(rstd::move(output), rstd::move(scan_cache));
     }
 
     static auto create(ref<rstd::path::Path> owner_root,
@@ -107,7 +114,19 @@ public:
                                                      layout.output(),
                                                      rstd::move(canonical).unwrap_err()));
         }
-        return Ok(BuildLayout(rstd::move(canonical).unwrap()));
+        auto scan_created = rstd::fs::create_dir_all(layout.scan_cache_.as_path());
+        if (scan_created.is_err()) {
+            return failure<BuildLayout>(rstd::format("cannot create scan cache directory '{}': {}",
+                                                     layout.scan_cache_.as_path(),
+                                                     rstd::move(scan_created).unwrap_err()));
+        }
+        auto canonical_scan = rstd::fs::canonicalize(layout.scan_cache_.as_path());
+        if (canonical_scan.is_err()) {
+            return failure<BuildLayout>(rstd::format("cannot resolve scan cache directory '{}': {}",
+                                                     layout.scan_cache_.as_path(),
+                                                     rstd::move(canonical_scan).unwrap_err()));
+        }
+        return Ok(BuildLayout(rstd::move(canonical).unwrap(), rstd::move(canonical_scan).unwrap()));
     }
 
     auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
@@ -135,8 +154,7 @@ public:
 
     auto cache_scan(ref<str> target, ref<rstd::path::Path> relative_source) const
         -> Result<PathBuf> {
-        auto scans = join(compile_cache_directory().as_path(), "scans"_str);
-        return source_path(scans.as_path(), target, relative_source, ".json"_str);
+        return source_path(scan_cache_.as_path(), target, relative_source, ".json"_str);
     }
 
     auto cache_unit(ref<str> target, ref<rstd::path::Path> relative_source) const

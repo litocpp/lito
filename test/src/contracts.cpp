@@ -22,6 +22,8 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/package-name-dot"_str,
     "manifest/package-name-empty"_str,
     "manifest/package-version-missing"_str,
+    "manifest/profile/cycle"_str,
+    "manifest/profile/linker-owned"_str,
     "manifest/profile/nested"_str,
     "manifest/profile/type"_str,
     "manifest/source-root-descendant"_str,
@@ -367,15 +369,114 @@ TEST(Contracts, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossBuildM
         .rtti       = false,
     };
     auto debug =
-        lito::make_profile_spec(configuration(lito::BuildProfile::Debug), project, *parser);
+        lito::make_profile_spec(configuration(build_profile("debug"_str)), project, *parser);
     auto release =
-        lito::make_profile_spec(configuration(lito::BuildProfile::Release), project, *parser);
+        lito::make_profile_spec(configuration(build_profile("release"_str)), project, *parser);
     ASSERT_TRUE(debug.is_ok());
     ASSERT_TRUE(release.is_ok());
     EXPECT_FALSE(debug->cpp.language.exceptions);
     EXPECT_FALSE(debug->cpp.language.rtti);
     EXPECT_FALSE(release->cpp.language.exceptions);
     EXPECT_FALSE(release->cpp.language.rtti);
+}
+
+TEST(Contracts, BuildProfilesResolveCargoStyleValuesAndInheritance) {
+    auto graph = lito::resolve_package_graph(root("profile"_str).as_path());
+    ASSERT_TRUE(graph.is_ok());
+
+    auto perf = lito::resolve_build_profile(graph->profile, build_profile("perf"_str));
+    ASSERT_TRUE(perf.is_ok());
+    EXPECT_EQ(perf->family, lito::BuildProfileFamily::Release);
+    EXPECT_EQ(perf->optimization, lito::CppOptimization::Level2);
+    EXPECT_EQ(perf->debug_info, lito::CppDebugInfo::LineTablesOnly);
+    EXPECT_EQ(perf->strip, lito::StripMode::None);
+    EXPECT_EQ(perf->lto, lito::CppLto::Off);
+    EXPECT_TRUE(perf->ndebug);
+
+    auto aliases = lito::resolve_build_profile(graph->profile, build_profile("aliases"_str));
+    ASSERT_TRUE(aliases.is_ok());
+    EXPECT_EQ(aliases->optimization, lito::CppOptimization::SizeMin);
+    EXPECT_EQ(aliases->debug_info, lito::CppDebugInfo::Limited);
+    EXPECT_EQ(aliases->strip, lito::StripMode::Symbols);
+    EXPECT_EQ(aliases->lto, lito::CppLto::Fat);
+}
+
+TEST(Contracts, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
+    auto unknown = lito::ProjectProfile {};
+    unknown.build_profiles.push(lito::BuildProfileDefinition {
+        .name     = build_profile("custom"_str),
+        .inherits = Some(build_profile("missing"_str)),
+    });
+    auto unknown_result = lito::validate_build_profiles(unknown);
+    ASSERT_TRUE(unknown_result.is_err());
+    EXPECT_TRUE(unknown_result.unwrap_err().message.as_str().contains("unknown profile"_str));
+
+    auto cycle = lito::ProjectProfile {};
+    cycle.build_profiles.push(lito::BuildProfileDefinition {
+        .name     = build_profile("first"_str),
+        .inherits = Some(build_profile("second"_str)),
+    });
+    cycle.build_profiles.push(lito::BuildProfileDefinition {
+        .name     = build_profile("second"_str),
+        .inherits = Some(build_profile("first"_str)),
+    });
+    auto cycle_result = lito::validate_build_profiles(cycle);
+    ASSERT_TRUE(cycle_result.is_err());
+    EXPECT_TRUE(cycle_result.unwrap_err().message.as_str().contains("inheritance cycle"_str));
+}
+
+TEST(Contracts, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentities) {
+    EXPECT_EQ(lito::cpp_optimization_option(lito::CppOptimization::Level2), "-O2"_str);
+    EXPECT_EQ(lito::cpp_optimization_option(lito::CppOptimization::Size), "-Os"_str);
+    EXPECT_EQ(lito::cpp_optimization_option(lito::CppOptimization::SizeMin), "-Oz"_str);
+    EXPECT_EQ(lito::cpp_debug_option(lito::CppDebugInfo::LineDirectivesOnly),
+              "-gline-directives-only"_str);
+    EXPECT_EQ(lito::cpp_debug_option(lito::CppDebugInfo::LineTablesOnly), "-gline-tables-only"_str);
+    EXPECT_EQ(lito::cpp_debug_option(lito::CppDebugInfo::Limited), "-g1"_str);
+    EXPECT_EQ(lito::cpp_lto_option(lito::CppLto::Off), "-fno-lto"_str);
+    EXPECT_EQ(lito::cpp_lto_option(lito::CppLto::Thin), "-flto=thin"_str);
+    EXPECT_EQ(lito::cpp_lto_option(lito::CppLto::Fat), "-flto=full"_str);
+
+    auto graph = lito::resolve_package_graph(root("profile"_str).as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto perf =
+        lito::make_profile_spec(configuration(build_profile("perf"_str)), graph->profile, *parser);
+    auto variant = lito::make_profile_spec(
+        configuration(build_profile("codegen-variant"_str)), graph->profile, *parser);
+    ASSERT_TRUE(perf.is_ok());
+    ASSERT_TRUE(variant.is_ok());
+    EXPECT_NE(lito::cpp_compile_identity(perf->cpp).as_str(),
+              lito::cpp_compile_identity(variant->cpp).as_str());
+    EXPECT_EQ(lito::cpp_scan_identity(perf->cpp).as_str(),
+              lito::cpp_scan_identity(variant->cpp).as_str());
+    EXPECT_EQ(lito::cpp_bmi_compatibility_identity(perf->cpp).as_str(),
+              lito::cpp_bmi_compatibility_identity(variant->cpp).as_str());
+
+    auto aliases = lito::make_profile_spec(
+        configuration(build_profile("aliases"_str)), graph->profile, *parser);
+    ASSERT_TRUE(aliases.is_ok());
+    EXPECT_NE(lito::cpp_scan_identity(perf->cpp).as_str(),
+              lito::cpp_scan_identity(aliases->cpp).as_str());
+}
+
+TEST(Contracts, RawCompilerAndLinkerOptionsCannotOverrideCodegenProfiles) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+
+    auto compiler_configuration = configuration();
+    compiler_configuration.options.push(String::make("-flto=auto"_str));
+    auto compiler =
+        lito::make_profile_spec(compiler_configuration, lito::ProjectProfile {}, *parser);
+    ASSERT_TRUE(compiler.is_err());
+    EXPECT_TRUE(compiler.unwrap_err().message.as_str().contains("selected profile"_str));
+
+    auto linker_configuration = configuration();
+    linker_configuration.linker_options.push(String::make("-Wl,--strip-debug"_str));
+    auto linker = lito::make_profile_spec(linker_configuration, lito::ProjectProfile {}, *parser);
+    ASSERT_TRUE(linker.is_err());
+    EXPECT_TRUE(linker.unwrap_err().message.as_str().contains("selected profile"_str));
 }
 
 TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
@@ -590,7 +691,7 @@ TEST(Contracts, BuildUsesConfiguredAppendedToolPath) {
     auto output = output_root("environment-append-path"_str);
     ASSERT_TRUE(clear_output(output.as_path()));
     auto request = build_request(
-        project.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release);
+        project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
     request.configuration.toolchain = rstd::move(config->toolchain);
     auto built                      = lito::build(request);
@@ -606,7 +707,7 @@ TEST(Contracts, TestArtifactReceivesConfiguredEffectivePath) {
     auto output = output_root("environment-test-path"_str);
     ASSERT_TRUE(clear_output(output.as_path()));
     auto request = build_request(
-        project.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release);
+        project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
     request.configuration.toolchain = rstd::move(config->toolchain);
     auto tested                     = lito::test(lito::TestRequest {
@@ -1243,11 +1344,11 @@ TEST(Contracts, ProjectNameComesFromRootManifest) {
 TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
     auto directory = root("conventional-test/package"_str);
     EXPECT_TRUE(locked_graph_is_current("conventional-test/package"_str));
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(2));
     auto primary = project_root_role(*graph, "fixture-conventional-library"_str);
-    auto test     = project_root_role(*graph, "fixture-conventional-test"_str);
+    auto test    = project_root_role(*graph, "fixture-conventional-test"_str);
     ASSERT_TRUE(primary.is_some());
     ASSERT_TRUE(test.is_some());
     EXPECT_EQ(*primary, lito::ProjectRootRole::PrimaryPackage);
@@ -1258,23 +1359,20 @@ TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
         EXPECT_TRUE(package.manifest.version.value.is_none());
     }
 
-    auto production = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() },
-        lito::PackageSelectionPurpose::Production);
+    auto production =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Production);
     ASSERT_TRUE(production.is_ok());
     ASSERT_EQ(production->selected_root_names.len(), usize(1));
     EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
               "fixture-conventional-library"_str);
 
     auto tests = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() },
-        lito::PackageSelectionPurpose::Test);
+        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     ASSERT_EQ(tests->selected_root_names.len(), usize(1));
-    EXPECT_EQ(tests->selected_root_names[usize {}].as_str(),
-              "fixture-conventional-test"_str);
-    EXPECT_TRUE(
-        contains_name(tests->selected_package_names, "fixture-conventional-library"_str));
+    EXPECT_EQ(tests->selected_root_names[usize {}].as_str(), "fixture-conventional-test"_str);
+    EXPECT_TRUE(contains_name(tests->selected_package_names, "fixture-conventional-library"_str));
 
     auto selected = lito::resolve_package_selection(
         lito::PackageSelection {
@@ -1306,13 +1404,12 @@ TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
 TEST(Contracts, WorkspaceDiscoversAssociatedTestWorkspace) {
     auto directory = root("conventional-test/workspace"_str);
     EXPECT_TRUE(locked_graph_is_current("conventional-test/workspace"_str));
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(3));
     auto library = project_root_role(*graph, "fixture-conventional-workspace-library"_str);
     auto runtime = project_root_role(*graph, "fixture-conventional-workspace-test"_str);
-    auto compile =
-        project_root_role(*graph, "fixture-conventional-workspace-compile-test"_str);
+    auto compile = project_root_role(*graph, "fixture-conventional-workspace-compile-test"_str);
     ASSERT_TRUE(library.is_some());
     ASSERT_TRUE(runtime.is_some());
     ASSERT_TRUE(compile.is_some());
@@ -1320,25 +1417,24 @@ TEST(Contracts, WorkspaceDiscoversAssociatedTestWorkspace) {
     EXPECT_EQ(*runtime, lito::ProjectRootRole::AssociatedTest);
     EXPECT_EQ(*compile, lito::ProjectRootRole::AssociatedTest);
 
-    auto production = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() },
-        lito::PackageSelectionPurpose::Production);
+    auto production =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Production);
     ASSERT_TRUE(production.is_ok());
     ASSERT_EQ(production->selected_root_names.len(), usize(1));
     EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
               "fixture-conventional-workspace-library"_str);
 
     auto tests = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() },
-        lito::PackageSelectionPurpose::Test);
+        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     EXPECT_EQ(tests->selected_root_names.len(), usize(2));
-    EXPECT_TRUE(contains_name(tests->selected_root_names,
-                              "fixture-conventional-workspace-test"_str));
+    EXPECT_TRUE(
+        contains_name(tests->selected_root_names, "fixture-conventional-workspace-test"_str));
     EXPECT_TRUE(contains_name(tests->selected_root_names,
                               "fixture-conventional-workspace-compile-test"_str));
-    EXPECT_TRUE(contains_name(tests->selected_package_names,
-                              "fixture-conventional-workspace-library"_str));
+    EXPECT_TRUE(
+        contains_name(tests->selected_package_names, "fixture-conventional-workspace-library"_str));
 }
 
 TEST(Contracts, DependencyTestsAreNotAssociatedWithTheRootProject) {
@@ -1348,8 +1444,8 @@ TEST(Contracts, DependencyTestsAreNotAssociatedWithTheRootProject) {
     ASSERT_EQ(graph->roots.len(), usize(1));
     EXPECT_EQ(graph->roots[usize {}].name.as_str(), "fixture-conventional-boundary-root"_str);
     EXPECT_EQ(graph->packages.len(), usize(2));
-    EXPECT_TRUE(project_root_role(*graph, "fixture-conventional-boundary-dependency-test"_str)
-                    .is_none());
+    EXPECT_TRUE(
+        project_root_role(*graph, "fixture-conventional-boundary-dependency-test"_str).is_none());
 }
 
 TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
@@ -1640,7 +1736,7 @@ TEST(Contracts, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     EXPECT_EQ(*debug_status->code(), i32(1));
 
     auto release = lito::build(build_request(
-        directory.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release));
+        directory.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str)));
     ASSERT_TRUE(release.is_ok());
     auto release_executable = executable(*release);
     ASSERT_TRUE(release_executable.is_some());

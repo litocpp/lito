@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.toolchain:clang;
 
 import rstd;
@@ -242,7 +245,7 @@ auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
 
 auto append_typed_options(Vec<String>&             command,
                           const CppCompileOptions& options,
-                          bool                     builtin_query) -> void {
+                          bool                     semantic_only) -> void {
     if (options.target.target.is_some()) {
         command.push(rstd::format("--target={}", options.target.target->as_str()));
     }
@@ -252,7 +255,9 @@ auto append_typed_options(Vec<String>&             command,
     auto optimization = cpp_optimization_option(options.codegen.optimization);
     if (! optimization.is_empty()) toolchain::command::push_option(command, optimization);
     auto debug = cpp_debug_option(options.codegen.debug_info);
-    if (! builtin_query && ! debug.is_empty()) toolchain::command::push_option(command, debug);
+    if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
+    auto lto = cpp_lto_option(options.codegen.lto);
+    if (! semantic_only) toolchain::command::push_option(command, lto);
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
     for (const auto& option : options.target.features) command.push(option.value.clone());
@@ -266,7 +271,7 @@ auto append_typed_options(Vec<String>&             command,
                                         ? toolchain::clang_options::EXCEPTIONS
                                         : toolchain::clang_options::NO_EXCEPTIONS);
     for (const auto& option : options.vendor) {
-        if (builtin_query && (option.effect == CppVendorOptionEffect::Codegen ||
+        if (semantic_only && (option.effect == CppVendorOptionEffect::Codegen ||
                               option.effect == CppVendorOptionEffect::Diagnostic)) {
             continue;
         }
@@ -276,7 +281,7 @@ auto append_typed_options(Vec<String>&             command,
             command.push(option.value.clone());
         }
     }
-    if (! builtin_query) {
+    if (! semantic_only) {
         for (const auto& option : options.diagnostics.options) command.push(option.clone());
     }
 }
@@ -656,7 +661,7 @@ public:
         if (staged_object.is_err()) return Err(rstd::move(staged_object).unwrap_err());
         auto staged_bmi = Option<PathBuf> {};
         auto command    = Vec<String>::make();
-        auto context    = append_compile_context(command, *prepared.unit.context);
+        auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         if (scan_result.provided.is_some()) {
             if (prepared.unit.bmi.is_none()) {
@@ -783,6 +788,7 @@ public:
                          const Vec<PathBuf>&           objects,
                          const Vec<ResolvedLinkInput>& inputs,
                          StandardLibrary               standard_library,
+                         CppLto                        lto,
                          const Vec<String>&            linker_options,
                          ref<rstd::path::Path>         working_directory) const
         -> Result<rstd::time::Duration> {
@@ -793,6 +799,7 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(standard_library));
+        toolchain::command::push_option(command, cpp_lto_option(lto));
         for (const auto& option : linker_options) command.push(option.clone());
         for (const auto& object : objects) {
             pushed = toolchain::command::push_path(command, object.as_path());
@@ -858,6 +865,37 @@ public:
         return Ok(command_output.elapsed);
     }
 
+    auto strip_artifact(ref<rstd::path::Path> output_path,
+                        ref<rstd::path::Path> stripper,
+                        StripMode             mode,
+                        ref<rstd::path::Path> working_directory) const
+        -> Result<rstd::time::Duration> {
+        if (mode == StripMode::None) return Ok(rstd::time::Duration {});
+        auto staged = staging_path(output_path);
+        if (staged.is_err()) return Err(rstd::move(staged).unwrap_err());
+        rstd_try(clear_staged_output(staged->as_path()));
+        auto command = Vec<String>::make();
+        rstd_try(toolchain::command::push_path(command, stripper));
+        toolchain::command::push_option(
+            command, mode == StripMode::DebugInfo ? "--strip-debug"_str : "--strip-all"_str);
+        toolchain::command::push_option(command, "-o"_str);
+        rstd_try(toolchain::command::push_path(command, staged->as_path()));
+        rstd_try(toolchain::command::push_path(command, output_path));
+        auto output = run_command(command, environment_, Some(working_directory));
+        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        auto command_output = rstd::move(output).unwrap();
+        if (command_output.exit_code != i32 {}) {
+            static_cast<void>(rstd::fs::remove_file(staged->as_path()));
+            return failure<rstd::time::Duration>(
+                rstd::format("llvm-strip failed for '{}'\n{}\n{}",
+                             output_path,
+                             command_text(command).as_str(),
+                             command_output.standard_error.as_str()));
+        }
+        rstd_try(publish_output(staged->as_path(), output_path));
+        return Ok(command_output.elapsed);
+    }
+
 private:
     ClangToolchain(PathBuf                    compiler,
                    PathBuf                    archiver,
@@ -887,7 +925,7 @@ private:
                 "preprocessor working directory '{}' is not valid UTF-8", working_directory));
         }
         for (const auto& existing : preprocessor_environments_) {
-            if (existing->key.matches(compile_context.id.as_str(), working_directory)) {
+            if (existing->key.matches(compile_context.scan_id.as_str(), working_directory)) {
                 ++toolchain_statistics_.preprocessor_environment_hits;
                 return Ok(existing.clone());
             }
@@ -933,12 +971,12 @@ private:
             builtin_environment = Some(rstd::move(queried).unwrap());
         }
         auto command = Vec<String>::make();
-        auto context = append_compile_context(command, compile_context);
+        auto context = append_compile_context(command, compile_context, true);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         ++toolchain_statistics_.preprocessor_environment_queries;
         auto queried = toolchain::query_preprocessor_environment(
             command,
-            toolchain::PreprocessorEnvironmentKey::make(compile_context.id.as_str(),
+            toolchain::PreprocessorEnvironmentKey::make(compile_context.scan_id.as_str(),
                                                         working_directory),
             rstd::move(builtin_environment).unwrap(),
             rstd::move(builtin_values.semantic),
@@ -996,8 +1034,9 @@ private:
         });
     }
 
-    auto append_compile_context(Vec<String>& command, const CompileContext& context) const
-        -> Result<empty> {
+    auto append_compile_context(Vec<String>&          command,
+                                const CompileContext& context,
+                                bool                  semantic_only) const -> Result<empty> {
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
         toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
@@ -1009,7 +1048,7 @@ private:
             command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
         toolchain::command::push_option(command,
                                         toolchain::clang_options::bmi(context.bmi.representation));
-        append_typed_options(command, context.cpp, false);
+        append_typed_options(command, context.cpp, semantic_only);
         for (const auto& macro : context.cpp.preprocessor.macros) {
             command.push(rstd::format("{}{}",
                                       macro.action == CppMacroAction::Define ? "-D"_str : "-U"_str,

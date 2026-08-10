@@ -19,8 +19,8 @@ auto failure(String message) -> Result<T> {
 
 struct PackageCoordinate {
     Option<String> version;
-    String  source_identity;
-    PathBuf manifest;
+    String         source_identity;
+    PathBuf        manifest;
 };
 
 using CoordinateMap = rstd::collections::BTreeMap<String, PackageCoordinate>;
@@ -34,8 +34,8 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
     if (selected.package.version.value.is_none() &&
         selected.package.artifact_kind != ArtifactKind::TestExecutable &&
         selected.package.artifact_kind != ArtifactKind::CompileTest) {
-        return failure<PackageCoordinate>(rstd::format(
-            "package '{}' has no version", selected.package.name.as_str()));
+        return failure<PackageCoordinate>(
+            rstd::format("package '{}' has no version", selected.package.name.as_str()));
     }
     return Ok(PackageCoordinate {
         .version         = selected.package.version.value.clone(),
@@ -47,8 +47,7 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
 auto package_conflict(ref<str>                 name,
                       const PackageCoordinate& existing,
                       const PackageCoordinate& candidate) -> Error {
-    auto existing_version =
-        existing.version.is_some() ? existing.version->as_str() : "<none>"_str;
+    auto existing_version = existing.version.is_some() ? existing.version->as_str() : "<none>"_str;
     auto candidate_version =
         candidate.version.is_some() ? candidate.version->as_str() : "<none>"_str;
     return Error::make(
@@ -99,7 +98,7 @@ public:
         return sources_.source_is_workspace(source);
     }
 
-    auto source_profile(usize source) const noexcept -> ProjectProfile {
+    auto source_profile(usize source) const -> ProjectProfile {
         return sources_.source_profile(source);
     }
 
@@ -177,11 +176,11 @@ public:
         return Ok(String::make(expected_name));
     }
 
-    auto finish(String         name,
+    auto finish(String                   name,
                 Vec<ResolvedProjectRoot> roots,
-                PathBuf        manifest_path,
-                bool           root_is_workspace,
-                ProjectProfile profile) -> ResolvedPackageGraph {
+                PathBuf                  manifest_path,
+                bool                     root_is_workspace,
+                ProjectProfile           profile) -> ResolvedPackageGraph {
         rstd::slice_::sort_unstable_by(
             packages_.as_mut_slice().as_mut_ref(),
             [](const ResolvedPackage& left, const ResolvedPackage& right) {
@@ -198,7 +197,7 @@ public:
             .root_directory    = rstd::move(root_directory_),
             .manifest_path     = rstd::move(manifest_path),
             .root_is_workspace = root_is_workspace,
-            .profile           = profile,
+            .profile           = rstd::move(profile),
             .sources           = sources_.finish(),
             .packages          = rstd::move(packages_),
         };
@@ -246,8 +245,8 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
         }
         return Ok(empty {});
     };
-    auto primary_role = root_is_workspace ? ProjectRootRole::WorkspaceMember
-                                          : ProjectRootRole::PrimaryPackage;
+    auto primary_role =
+        root_is_workspace ? ProjectRootRole::WorkspaceMember : ProjectRootRole::PrimaryPackage;
     auto resolved_primary = resolve_roots(root_source, primary_role);
     if (resolved_primary.is_err()) return Err(rstd::move(resolved_primary).unwrap_err());
     if (project_sources.tests.is_some()) {
@@ -259,7 +258,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                               rstd::move(roots),
                               rstd::move(manifest_path),
                               root_is_workspace,
-                              profile));
+                              rstd::move(profile)));
 }
 
 auto resolve_package_graph(ref<rstd::path::Path>    requested_root,

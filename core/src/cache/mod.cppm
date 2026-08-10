@@ -246,6 +246,7 @@ struct DependencyArtifact {
 
 class CacheEnvironment {
     String key_;
+    String scan_key_;
     bool   force_refresh_ { false };
 
     friend class ScanCacheSession;
@@ -288,6 +289,29 @@ public:
                                        compiler.modified_nanoseconds)
                               .as_str());
         auto key = cache::text_identity("lito-cache-environment-key-v2"_str, identity.as_str());
+
+        auto scan_identity = String::make("lito-scan-cache-environment-v1\n"_str);
+        scan_identity.push_str(owner->as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(SCAN_RECIPE);
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(compiler_path->as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(compiler.version.as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(compiler.target.as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(compiler.build_identity.as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(resource->as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(rstd::format("{}\n{}\n{}",
+                                            compiler.size,
+                                            compiler.modified_seconds,
+                                            compiler.modified_nanoseconds)
+                                   .as_str());
+        auto scan_key =
+            cache::text_identity("lito-scan-cache-environment-key-v1"_str, scan_identity.as_str());
 
         auto compiler_json = JsonMap::make();
         compiler_json.insert(String::make("modified-nanoseconds"_str),
@@ -352,6 +376,7 @@ public:
         }
         auto result           = CacheEnvironment {};
         result.key_           = rstd::move(key);
+        result.scan_key_      = rstd::move(scan_key);
         result.force_refresh_ = refresh;
         return Ok(rstd::move(result));
     }
@@ -750,11 +775,11 @@ class ScanCacheSession {
             initialized   = true;
             auto metadata = rstd::fs::metadata(path);
             if (metadata.is_err()) {
-                return Err(rstd::sync::Arc<Error>::make(Error::make(
-                    ErrorKind::Filesystem,
-                    rstd::format("cannot inspect scan cache input '{}': {}",
-                                 path,
-                                 rstd::move(metadata).unwrap_err()))));
+                return Err(rstd::sync::Arc<Error>::make(
+                    Error::make(ErrorKind::Filesystem,
+                                rstd::format("cannot inspect scan cache input '{}': {}",
+                                             path,
+                                             rstd::move(metadata).unwrap_err()))));
             }
             if (! metadata->is_file()) {
                 return Err(rstd::sync::Arc<Error>::make(
@@ -763,11 +788,11 @@ class ScanCacheSession {
             }
             auto contents = rstd::fs::read(path);
             if (contents.is_err()) {
-                return Err(rstd::sync::Arc<Error>::make(Error::make(
-                    ErrorKind::Filesystem,
-                    rstd::format("cannot hash scan cache input '{}': {}",
-                                 path,
-                                 rstd::move(contents).unwrap_err()))));
+                return Err(rstd::sync::Arc<Error>::make(
+                    Error::make(ErrorKind::Filesystem,
+                                rstd::format("cannot hash scan cache input '{}': {}",
+                                             path,
+                                             rstd::move(contents).unwrap_err()))));
             }
             auto hash = cache::FNV_OFFSET;
             cache::add_text(hash, "lito-file-content-v1"_str);
@@ -860,8 +885,8 @@ class ScanCacheSession {
 
 public:
     static auto create(const CacheEnvironment& environment) -> ScanCacheSession {
-        return ScanCacheSession { rstd::sync::Arc<State>::make(environment.key_.clone(),
-                                                               environment.force_refresh_) };
+        return ScanCacheSession { rstd::sync::Arc<State>::make(environment.scan_key_.clone(),
+                                                               false) };
     }
 
     auto clone() const -> ScanCacheSession { return ScanCacheSession { state_.clone() }; }

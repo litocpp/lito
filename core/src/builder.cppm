@@ -117,7 +117,16 @@ auto build_with_environment(const BuildRequest&               request,
     });
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto discovery_plan = rstd::move(resolved).unwrap();
-    auto execution      = resolve_scan_execution(request.execution.scan);
+    auto stripper       = Option<PathBuf> {};
+    if (metadata.profiles[discovery_plan.profile].strip != StripMode::None) {
+        auto resolved_stripper = tool_resolver.resolve(
+            request.configuration.toolchain.stripper.as_path(), "LLVM strip executable"_str);
+        if (resolved_stripper.is_err()) {
+            return Err(rstd::move(resolved_stripper).unwrap_err());
+        }
+        stripper = Some(rstd::move(resolved_stripper).unwrap().executable);
+    }
+    auto execution = resolve_scan_execution(request.execution.scan);
     if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
     auto compile_execution = resolve_compile_execution(request.execution.compile);
     if (compile_execution.is_err()) return Err(rstd::move(compile_execution).unwrap_err());
@@ -232,7 +241,7 @@ auto build_with_environment(const BuildRequest&               request,
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
             auto unit = rstd::move(prepared).unwrap();
             if (source.frontend_analysis.is_some() &&
-                source.frontend_analysis->context_identity.as_str() == context->id.as_str()) {
+                source.frontend_analysis->context_identity.as_str() == context->scan_id.as_str()) {
                 unit.frontend_analysis =
                     Some(as<rstd::clone::Clone>(*source.frontend_analysis).clone());
             }
@@ -459,10 +468,27 @@ auto build_with_environment(const BuildRequest&               request,
                                                 objects,
                                                 link_inputs,
                                                 package_plan.profile->cpp.abi.standard_library,
+                                                package_plan.profile->cpp.codegen.lto,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
         if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
         build_timing.record(BuildOperation::Link, *linked);
+        if (package_plan.profile->strip != StripMode::None) {
+            if (stripper.is_none()) {
+                return failure<BuildSummary>(ErrorKind::Toolchain,
+                                             "strip tool was not resolved"_str);
+            }
+            emit(request,
+                 BuildEventKind::Strip,
+                 target_spec.name.as_str(),
+                 executable_path.as_path());
+            auto stripped = toolchain.strip_artifact(executable_path.as_path(),
+                                                     stripper->as_path(),
+                                                     package_plan.profile->strip,
+                                                     target_spec.root.as_path());
+            if (stripped.is_err()) return Err(rstd::move(stripped).unwrap_err());
+            build_timing.record(BuildOperation::Strip, *stripped);
+        }
         artifacts.push(BuiltArtifact {
             .package      = target_spec.name.clone(),
             .target       = target_spec.name.clone(),

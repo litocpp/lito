@@ -42,7 +42,17 @@ enum class CppOptimization
 enum class CppDebugInfo
 {
     None,
+    LineDirectivesOnly,
+    LineTablesOnly,
+    Limited,
     Full,
+};
+
+enum class CppLto
+{
+    Off,
+    Thin,
+    Fat,
 };
 
 enum class CppMacroAction
@@ -76,6 +86,7 @@ enum class CppOwnedSetting
     Exceptions,
     Optimization,
     DebugInfo,
+    Lto,
 };
 
 enum class CppOptionFamilyDomain
@@ -101,6 +112,7 @@ enum class CppCompilerArgumentKind
     OwnedExceptions,
     OwnedOptimization,
     OwnedDebugInfo,
+    OwnedLto,
     LanguageMode,
     AbiMode,
     TargetMode,
@@ -169,6 +181,7 @@ struct CppPreprocessorOptions {
 struct CppCodegenOptions {
     CppOptimization      optimization { CppOptimization::Default };
     CppDebugInfo         debug_info { CppDebugInfo::None };
+    CppLto               lto { CppLto::Off };
     Vec<CppFamilyOption> modes;
     Vec<String>          instrumentation;
 };
@@ -306,7 +319,23 @@ auto cpp_optimization_option(CppOptimization value) noexcept -> ref<str> {
 }
 
 auto cpp_debug_option(CppDebugInfo value) noexcept -> ref<str> {
-    return value == CppDebugInfo::Full ? "-g"_str : ""_str;
+    switch (value) {
+    case CppDebugInfo::None: return "-g0"_str;
+    case CppDebugInfo::LineDirectivesOnly: return "-gline-directives-only"_str;
+    case CppDebugInfo::LineTablesOnly: return "-gline-tables-only"_str;
+    case CppDebugInfo::Limited: return "-g1"_str;
+    case CppDebugInfo::Full: return "-g2"_str;
+    }
+    return "-g0"_str;
+}
+
+auto cpp_lto_option(CppLto value) noexcept -> ref<str> {
+    switch (value) {
+    case CppLto::Off: return "-fno-lto"_str;
+    case CppLto::Thin: return "-flto=thin"_str;
+    case CppLto::Fat: return "-flto=full"_str;
+    }
+    return "-fno-lto"_str;
 }
 
 auto cpp_public_requirements(const CppCompileOptions& input) -> CppPublicRequirements;
@@ -329,6 +358,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
     -> CppOptionResult<CppCompileOptions>;
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String;
+
+auto cpp_scan_identity(const CppCompileOptions& options) -> String;
 
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String;
 
@@ -358,6 +389,7 @@ struct Impl<convert::TryFrom<lito::CppCompilerArgumentOccurrence>, lito::CppOpti
             case lito::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
             case lito::CppOwnedSetting::Optimization: field = "optimization"_str; break;
             case lito::CppOwnedSetting::DebugInfo: field = "debug info"_str; break;
+            case lito::CppOwnedSetting::Lto: field = "LTO"_str; break;
             }
             auto spelling = occurrence.raw_tokens.is_empty()
                                 ? String::make("<structured compiler option>"_str)
@@ -509,6 +541,7 @@ auto owned_setting(CppCompilerArgumentKind kind) noexcept -> CppOwnedSetting {
     case CppCompilerArgumentKind::OwnedExceptions: return CppOwnedSetting::Exceptions;
     case CppCompilerArgumentKind::OwnedOptimization: return CppOwnedSetting::Optimization;
     case CppCompilerArgumentKind::OwnedDebugInfo: return CppOwnedSetting::DebugInfo;
+    case CppCompilerArgumentKind::OwnedLto: return CppOwnedSetting::Lto;
     default: return CppOwnedSetting::LanguageStandard;
     }
 }
@@ -585,6 +618,7 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedExceptions:
     case CppCompilerArgumentKind::OwnedOptimization:
     case CppCompilerArgumentKind::OwnedDebugInfo:
+    case CppCompilerArgumentKind::OwnedLto:
         return CppCompilerArgument::OwnedSetting(owned_setting(kind));
     case CppCompilerArgumentKind::LanguageMode:
     case CppCompilerArgumentKind::AbiMode:
@@ -784,6 +818,7 @@ auto CppCompileOptions::clone() const -> CppCompileOptions {
             CppCodegenOptions {
                 .optimization    = input.codegen.optimization,
                 .debug_info      = input.codegen.debug_info,
+                .lto             = input.codegen.lto,
                 .modes           = as<Clone>(input.codegen.modes).clone(),
                 .instrumentation = as<Clone>(input.codegen.instrumentation).clone(),
             },
@@ -1010,6 +1045,7 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
     push_identity(result, "debug-info"_str, cpp_debug_option(options.codegen.debug_info));
+    push_identity(result, "lto"_str, cpp_lto_option(options.codegen.lto));
     for (const auto& value : options.codegen.modes) {
         push_identity(result,
                       rstd::format("codegen:{}", value.family.as_str()).as_str(),
@@ -1034,6 +1070,41 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
         push_identity(result, "diagnostic"_str, value.as_str());
     }
     for (const auto& value : options.vendor) {
+        push_identity(result, option_effect_name(value.effect), value.value.as_str());
+    }
+    return result;
+}
+
+auto cpp_scan_identity(const CppCompileOptions& options) -> String {
+    auto result = String::make("lito-cpp-scan-context-v1\n"_str);
+    append_semantic_identity(result, options);
+    push_identity(
+        result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
+    for (const auto& value : options.codegen.modes) {
+        push_identity(result,
+                      rstd::format("codegen:{}", value.family.as_str()).as_str(),
+                      value.value.as_str());
+    }
+    for (const auto& value : options.codegen.instrumentation) {
+        push_identity(result, "instrumentation"_str, value.as_str());
+    }
+    for (const auto& include : options.preprocessor.include_directories) {
+        auto text = include.path.as_path().to_str();
+        push_identity(result,
+                      include.kind == CppIncludeDirectoryKind::System ? "system-include"_str
+                                                                      : "include"_str,
+                      text.is_some() ? *text : "<non-utf8>"_str);
+    }
+    for (const auto& macro : options.preprocessor.macros) {
+        push_identity(result,
+                      macro.action == CppMacroAction::Define ? "define"_str : "undefine"_str,
+                      macro.value.as_str());
+    }
+    for (const auto& value : options.vendor) {
+        if (value.effect == CppVendorOptionEffect::Codegen ||
+            value.effect == CppVendorOptionEffect::Diagnostic) {
+            continue;
+        }
         push_identity(result, option_effect_name(value.effect), value.value.as_str());
     }
     return result;

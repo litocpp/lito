@@ -143,6 +143,21 @@ auto context_id(const CompileContext& context) -> String {
     return result;
 }
 
+auto scan_context_id(const CompileContext& context) -> String {
+    auto result = String::make("lito-scan-context-v1\n"_str);
+    result.push_str(bmi_representation_name(context.bmi.representation));
+    result.push_ascii('\n');
+    result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
+    result.push_ascii('\n');
+    result.push_str(cpp_scan_identity(context.cpp).as_str());
+    result.push_str(cpp_public_requirements_identity(context.public_requirements).as_str());
+    for (const auto& identity : context.external_identities) {
+        result.push_str(
+            rstd::format("external:{}:{}\n", identity.len(), identity.as_str()).as_str());
+    }
+    return result;
+}
+
 auto attachment_context(const CompileContext&       library,
                         const CompileContext&       test,
                         const TestAttachmentTarget& attachment) -> Result<CompileContext> {
@@ -165,10 +180,11 @@ auto attachment_context(const CompileContext&       library,
     result.public_requirements = merge_cpp_public_requirements(
         rstd::move(result.public_requirements), test.public_requirements);
     append_unique(result.external_identities, test.external_identities);
-    result.id = rstd::format("lito-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
-                             attachment.test_target.as_str(),
-                             attachment.library_target.as_str(),
-                             context_id(result).as_str());
+    result.id      = rstd::format("lito-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
+                                  attachment.test_target.as_str(),
+                                  attachment.library_target.as_str(),
+                                  context_id(result).as_str());
+    result.scan_id = scan_context_id(result);
     return Ok(rstd::move(result));
 }
 
@@ -191,8 +207,9 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
     if (applied.is_err()) {
         return plan_failure<CompileContext>(rstd::move(applied).unwrap_err());
     }
-    context.cpp = rstd::move(applied).unwrap();
-    context.id  = context_id(context);
+    context.cpp     = rstd::move(applied).unwrap();
+    context.id      = context_id(context);
+    context.scan_id = scan_context_id(context);
     return Ok(rstd::move(context));
 }
 
@@ -330,6 +347,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         }
         context.cpp             = rstd::move(applied).unwrap();
         context.id              = context_id(context);
+        context.scan_id         = scan_context_id(context);
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);

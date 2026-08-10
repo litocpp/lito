@@ -36,15 +36,19 @@ auto clear_output(ref<rstd::path::Path> path) -> bool {
     return ! *exists || rstd::fs::remove_dir_all(path).is_ok();
 }
 
-auto configuration(lito::BuildProfile profile = lito::BuildProfile::Debug)
-    -> lito::BuildConfiguration {
+auto build_profile(ref<str> name) -> lito::BuildProfileName {
+    return lito::parse_build_profile(name).unwrap();
+}
+
+auto configuration(lito::BuildProfileName profile = {}) -> lito::BuildConfiguration {
     return lito::BuildConfiguration {
-        .profile = profile,
+        .profile = rstd::move(profile),
         .toolchain =
             lito::ToolchainSpec {
                 .compiler  = PathBuf::from("clang++"_str),
                 .archiver  = PathBuf::from("llvm-ar"_str),
                 .formatter = PathBuf::from("clang-format"_str),
+                .stripper  = PathBuf::from("llvm-strip"_str),
             },
         .standard_library  = lito::StandardLibrary::Libcxx,
         .bmi_mode          = lito::BmiMode::Reduced,
@@ -52,11 +56,10 @@ auto configuration(lito::BuildProfile profile = lito::BuildProfile::Debug)
     };
 }
 
-auto build_request(ref<rstd::path::Path> root,
-                   ref<rstd::path::Path> output,
-                   Vec<String>           packages,
-                   lito::BuildProfile   profile = lito::BuildProfile::Debug)
-    -> lito::BuildRequest {
+auto build_request(ref<rstd::path::Path>  root,
+                   ref<rstd::path::Path>  output,
+                   Vec<String>            packages,
+                   lito::BuildProfileName profile = {}) -> lito::BuildRequest {
     return lito::BuildRequest {
         .selection =
             lito::PackageSelection {
@@ -64,7 +67,7 @@ auto build_request(ref<rstd::path::Path> root,
                 .packages = rstd::move(packages),
             },
         .output        = PathBuf::from(output),
-        .configuration = configuration(profile),
+        .configuration = configuration(rstd::move(profile)),
         .locked        = true,
     };
 }

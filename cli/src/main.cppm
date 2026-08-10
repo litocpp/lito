@@ -23,6 +23,7 @@ auto event_name(lito::BuildEventKind kind) -> ref<str> {
     case lito::BuildEventKind::Reuse: return "reuse"_str;
     case lito::BuildEventKind::Archive: return "archive"_str;
     case lito::BuildEventKind::Link: return "link"_str;
+    case lito::BuildEventKind::Strip: return "strip"_str;
     }
     return "unknown"_str;
 }
@@ -31,7 +32,8 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose && event.kind != lito::BuildEventKind::Scan &&
         event.kind != lito::BuildEventKind::Compile &&
-        event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link) {
+        event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link &&
+        event.kind != lito::BuildEventKind::Strip) {
         return;
     }
     rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
@@ -170,7 +172,7 @@ extern "C++" int main() {
         request.targets            = rstd::move(options.targets);
         request.source             = rstd::move(options.source);
         request.locked             = options.locked;
-        if (options.profile.is_some()) request.configuration.profile = *options.profile;
+        if (options.profile.is_some()) request.configuration.profile = options.profile->clone();
 
         auto scanned = lito::scan(request);
         if (scanned.is_err()) {
@@ -204,7 +206,9 @@ extern "C++" int main() {
         request.build.locked             = options.locked;
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
-        if (options.profile.is_some()) request.build.configuration.profile = *options.profile;
+        if (options.profile.is_some()) {
+            request.build.configuration.profile = options.profile->clone();
+        }
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
@@ -313,7 +317,7 @@ extern "C++" int main() {
     request.selection.packages = rstd::move(options.packages);
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked;
-    if (options.profile.is_some()) request.configuration.profile = *options.profile;
+    if (options.profile.is_some()) request.configuration.profile = options.profile->clone();
     request.execution.scan.jobs    = options.jobs;
     request.execution.compile.jobs = options.jobs;
     if (options.output.is_some()) request.output = rstd::move(*options.output);

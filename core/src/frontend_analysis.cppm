@@ -112,7 +112,7 @@ public:
             .target                   = String::make(target),
             .relative_source          = PathBuf::from(relative_source),
             .source                   = PathBuf::from(source),
-            .context_identity         = context.id.clone(),
+            .context_identity         = context.scan_id.clone(),
             .working_directory        = PathBuf::from(working_directory),
             .preprocessor_environment = (*environment)->identity.clone(),
         };

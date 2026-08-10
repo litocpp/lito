@@ -9,3 +9,10 @@ version = "0.1.0"
 [profile]
 exceptions = false
 rtti = false
+
+[profile.perf]
+inherits = "release"
+opt-level = 2
+debug = "line-tables-only"
+strip = "none"
+lto = "off"

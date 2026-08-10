@@ -1331,6 +1331,71 @@
       },
       "additionalProperties": false
     },
+    "buildProfile": {
+      "type": "object",
+      "properties": {
+        "inherits": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9_-]+$"
+        },
+        "opt-level": {
+          "oneOf": [
+            {
+              "type": "integer",
+              "enum": [0, 1, 2, 3]
+            },
+            {
+              "type": "string",
+              "enum": ["s", "z"]
+            }
+          ]
+        },
+        "debug": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "integer",
+              "enum": [0, 1, 2]
+            },
+            {
+              "type": "string",
+              "enum": [
+                "none",
+                "line-directives-only",
+                "line-tables-only",
+                "limited",
+                "full"
+              ]
+            }
+          ]
+        },
+        "strip": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": ["none", "debuginfo", "symbols"]
+            }
+          ]
+        },
+        "lto": {
+          "oneOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "string",
+              "enum": ["off", "thin", "fat"]
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "projectProfile": {
       "type": "object",
       "properties": {
@@ -1341,6 +1406,11 @@
         "rtti": {
           "type": "boolean",
           "default": true
+        }
+      },
+      "patternProperties": {
+        "^(?!exceptions$|rtti$)[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/buildProfile"
         }
       },
       "additionalProperties": false

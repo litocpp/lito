@@ -44,6 +44,10 @@ auto append_identity(String& output, ref<str> value) -> void {
     output.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
 }
 
+auto cmake_build_type(const ProfileSpec& profile) -> ref<str> {
+    return profile.family == BuildProfileFamily::Debug ? "Debug"_str : "Release"_str;
+}
+
 auto append_search_path_identity(String& output, const CMakeProviderConfig& provider)
     -> Result<empty> {
     for (const auto& path : provider.search_paths) {
@@ -119,7 +123,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe, compiler->as_str());
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
-    append_identity(recipe, build.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str);
+    append_identity(recipe, cmake_build_type(profile));
     append_identity(recipe, profile.cpp.language.standard.as_str());
     append_identity(recipe,
                     profile.cpp.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
@@ -127,6 +131,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe,
                     profile.cpp.language.exceptions ? "exceptions"_str : "no-exceptions"_str);
     append_identity(recipe, profile.cpp.language.rtti ? "rtti"_str : "no-rtti"_str);
+    append_identity(recipe, cpp_optimization_option(profile.cpp.codegen.optimization));
+    append_identity(recipe, cpp_debug_option(profile.cpp.codegen.debug_info));
+    append_identity(recipe, cpp_lto_option(profile.cpp.codegen.lto));
     for (const auto& entry : requirement.cache) {
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());
@@ -240,6 +247,12 @@ auto cmake_cxx_flags(const ProfileSpec& profile) -> String {
                                    : "-stdlib=libstdc++"_str);
     result.push_str(profile.cpp.language.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
     result.push_str(profile.cpp.language.rtti ? " -frtti"_str : " -fno-rtti"_str);
+    result.push_ascii(' ');
+    result.push_str(cpp_optimization_option(profile.cpp.codegen.optimization));
+    result.push_ascii(' ');
+    result.push_str(cpp_debug_option(profile.cpp.codegen.debug_info));
+    result.push_ascii(' ');
+    result.push_str(cpp_lto_option(profile.cpp.codegen.lto));
     return result;
 }
 
@@ -284,7 +297,7 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
                                 "C++ compiler"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
-    auto build_type = configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str;
+    auto build_type = cmake_build_type(profile);
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
@@ -501,7 +514,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                                 "C++ compiler"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
-    auto build_type = configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str;
+    auto build_type = cmake_build_type(profile);
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
@@ -532,8 +545,8 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
 
 auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
                  const CMakeProviderConfig&                provider,
-                 const BuildConfiguration&                 configuration,
-                 const ProfileSpec&,
+                 const BuildConfiguration&,
+                 const ProfileSpec&                profile,
                  const CMakeWorkArea&              area,
                  const ResolvedProcessEnvironment& environment) -> Result<empty> {
     if (requirement.integration != CMakeIntegration::BuildTree) return Ok(empty {});
@@ -548,8 +561,7 @@ auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
     arguments.push(String::make("--target"_str));
     arguments.push(String::make("lito_cmake_combined"_str));
     arguments.push(String::make("--config"_str));
-    arguments.push(
-        String::make(configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str));
+    arguments.push(String::make(cmake_build_type(profile)));
     return run_cmake(
         rstd::move(arguments),
         rstd::format("CMake build-tree dependency '{}' build", requirement.alias.as_str()).as_str(),
