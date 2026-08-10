@@ -1005,6 +1005,7 @@ struct ScanRequest {
 struct ScanReport {
     String         target;
     String         profile;
+    PathBuf        primary_output;
     FrontendResult result;
 };
 

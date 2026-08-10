@@ -11,6 +11,7 @@ import lito.frontend;
 import lito.profiling;
 import lito.frontend_observer;
 import lito.environment;
+import lito.build_layout;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -58,6 +59,27 @@ auto json_usize(usize value) -> Json {
 
 export namespace lito
 {
+
+enum class ScanOutputFormat
+{
+    Lito,
+    P1689,
+};
+
+auto scan_output_format_name(ScanOutputFormat format) -> ref<str> {
+    switch (format) {
+    case ScanOutputFormat::Lito: return "lito"_str;
+    case ScanOutputFormat::P1689: return "p1689"_str;
+    }
+    return "lito"_str;
+}
+
+auto parse_scan_output_format(ref<str> name) -> Result<ScanOutputFormat> {
+    if (name == "lito"_str) return Ok(ScanOutputFormat::Lito);
+    if (name == "p1689"_str) return Ok(ScanOutputFormat::P1689);
+    return scan_failure<ScanOutputFormat>(
+        rstd::format("unknown scan output format '{}'; expected lito or p1689", name));
+}
 
 auto scan(const ScanRequest& request) -> Result<ScanReport> {
     if (request.selection.root.is_empty()) {
@@ -107,6 +129,26 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
     auto source_target = *selected;
 
+    const auto& target = metadata.targets[source_target];
+    auto relative_source = source.as_path().strip_prefix(target.manifest.source_root.as_path());
+    if (relative_source.is_none() || relative_source->is_empty()) {
+        return scan_failure<ScanReport>(
+            rstd::format("source '{}' has no build-relative path in target '{}'",
+                         source.as_path(),
+                         target.manifest.name.as_str()));
+    }
+    auto requested_output = PathBuf::make();
+    auto layout = BuildLayout::resolve(metadata.root.as_path(),
+                                       requested_output.as_path(),
+                                       metadata.profiles[discovery.profile].name.as_str());
+    auto primary_output =
+        target.test_attachment.is_some()
+            ? layout.test_attachment_object(target.test_attachment->test_target.as_str(),
+                                            target.test_attachment->library_target.as_str(),
+                                            *relative_source)
+            : layout.object(target.manifest.name.as_str(), *relative_source);
+    if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
+
     auto created_profiler = ScanProfiler::create();
     if (created_profiler.is_err()) {
         return Err(
@@ -124,13 +166,14 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
 
     return Ok(ScanReport {
-        .target  = metadata.targets[source_target].manifest.name.clone(),
-        .profile = metadata.profiles[discovery.profile].name.clone(),
-        .result  = rstd::move(facts).unwrap().result,
+        .target         = target.manifest.name.clone(),
+        .profile        = metadata.profiles[discovery.profile].name.clone(),
+        .primary_output = rstd::move(primary_output).unwrap(),
+        .result         = rstd::move(facts).unwrap().result,
     });
 }
 
-auto scan_report_json(const ScanReport& report) -> Result<String> {
+auto lito_scan_report_json(const ScanReport& report) -> Result<String> {
     auto source = scan_path(report.result.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
 
@@ -186,6 +229,73 @@ auto scan_report_json(const ScanReport& report) -> Result<String> {
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
+}
+
+auto p1689_scan_report_json(const ScanReport& report) -> Result<String> {
+    auto primary_output = json_path(report.primary_output.as_path());
+    if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
+    auto source = json_path(report.result.source.as_path());
+    if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+
+    auto rule = JsonMap::make();
+    rule.insert(String::make("primary-output"_str), rstd::move(primary_output).unwrap());
+
+    if (report.result.provided.is_some()) {
+        auto provided = JsonMap::make();
+        provided.insert(String::make("logical-name"_str),
+                        json_string(report.result.provided->logical_name.as_str()));
+        provided.insert(String::make("source-path"_str), rstd::move(source).unwrap());
+        provided.insert(String::make("is-interface"_str),
+                        Json::Bool(report.result.provided->is_interface));
+        auto provides = JsonArray::make();
+        provides.push(Json::Object(rstd::move(provided)));
+        rule.insert(String::make("provides"_str), Json::Array(rstd::move(provides)));
+    }
+
+    auto required_names = Vec<String>::make();
+    if (report.result.implementation_module.is_some()) {
+        required_names.push(report.result.implementation_module->clone());
+    }
+    for (const auto& imported : report.result.imports) {
+        auto exists = false;
+        for (const auto& required : required_names) {
+            if (required.as_str() == imported.logical_name.as_str()) {
+                exists = true;
+                break;
+            }
+        }
+        if (! exists) required_names.push(imported.logical_name.clone());
+    }
+    if (! required_names.is_empty()) {
+        auto required_modules = JsonArray::with_capacity(required_names.len());
+        for (const auto& name : required_names) {
+            auto required = JsonMap::make();
+            required.insert(String::make("logical-name"_str), json_string(name.as_str()));
+            required_modules.push(Json::Object(rstd::move(required)));
+        }
+        rule.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
+    }
+
+    auto rules = JsonArray::with_capacity(usize(1));
+    rules.push(Json::Object(rstd::move(rule)));
+    auto document = JsonMap::make();
+    document.insert(String::make("version"_str),
+                    Json::Number(rstd::json::Number::from_u64(u64(1))));
+    document.insert(String::make("revision"_str),
+                    Json::Number(rstd::json::Number::from_u64(u64 {})));
+    document.insert(String::make("rules"_str), Json::Array(rstd::move(rules)));
+    return Ok(
+        rstd::json::to_string(Json::Object(rstd::move(document)),
+                              rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
+}
+
+auto scan_report_json(const ScanReport& report,
+                      ScanOutputFormat format = ScanOutputFormat::Lito) -> Result<String> {
+    switch (format) {
+    case ScanOutputFormat::Lito: return lito_scan_report_json(report);
+    case ScanOutputFormat::P1689: return p1689_scan_report_json(report);
+    }
+    return scan_failure<String>("unsupported scan output format"_str);
 }
 
 } // namespace lito

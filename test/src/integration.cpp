@@ -56,6 +56,23 @@ TEST(Integration, ScanUsesNativePreprocessorAndDefinitions) {
     EXPECT_TRUE(has_import(*native, "fixture.preprocessor.native:dependency"_str));
     EXPECT_FALSE(has_import(*native, "fixture.preprocessor.native:native_builtin_failure"_str));
 
+    auto native_json = lito::scan_report_json(*native);
+    ASSERT_TRUE(native_json.is_ok());
+    EXPECT_TRUE(native_json->as_str().contains("\"format\": \"lito-scan\""_str));
+
+    auto p1689_json = lito::scan_report_json(*native, lito::ScanOutputFormat::P1689);
+    ASSERT_TRUE(p1689_json.is_ok());
+    EXPECT_TRUE(p1689_json->as_str().contains("\"version\": 1"_str));
+    EXPECT_TRUE(p1689_json->as_str().contains("\"revision\": 0"_str));
+    EXPECT_TRUE(p1689_json->as_str().contains("\"primary-output\":"_str));
+    EXPECT_TRUE(p1689_json->as_str().contains("\"provides\":"_str));
+    EXPECT_TRUE(p1689_json->as_str().contains(
+        "\"logical-name\": \"fixture.preprocessor.native\""_str));
+    EXPECT_TRUE(p1689_json->as_str().contains(
+        "\"logical-name\": \"fixture.preprocessor.native:dependency\""_str));
+    EXPECT_FALSE(p1689_json->as_str().contains("\"format\":"_str));
+    EXPECT_FALSE(p1689_json->as_str().contains("\"headers\":"_str));
+
     auto definitions = lito::scan(lito::ScanRequest {
         .selection =
             lito::PackageSelection {

@@ -178,7 +178,7 @@ extern "C++" int main() {
             rstd::io::eprintln("lito: {}", error.message.as_str());
             return 1;
         }
-        auto json = lito::scan_report_json(*scanned);
+        auto json = lito::scan_report_json(*scanned, options.format);
         if (json.is_err()) {
             auto error = rstd::move(json).unwrap_err();
             rstd::io::eprintln("lito: {}", error.message.as_str());

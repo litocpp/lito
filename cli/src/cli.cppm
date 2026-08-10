@@ -33,6 +33,24 @@ public:
     }
 };
 
+class ScanOutputFormatParser {
+public:
+    auto parse(ref<OsStr> value) const -> rstd::Result<ScanOutputFormat, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        auto format = parse_scan_output_format(*text);
+        if (format.is_ok()) return Ok(rstd::move(format).unwrap());
+        return Err(ValueError::Message(rstd::move(format).unwrap_err().message));
+    }
+
+    auto possible_values() const -> Vec<String> {
+        auto values = Vec<String>::with_capacity(usize(2));
+        values.push(String::make(scan_output_format_name(ScanOutputFormat::Lito)));
+        values.push(String::make(scan_output_format_name(ScanOutputFormat::P1689)));
+        return values;
+    }
+};
+
 struct CliSchema {
     ArgKey<String>       directory;
     ArgKey<String>       build_package;
@@ -54,11 +72,12 @@ struct CliSchema {
     ArgKey<bool>         test_no_timing;
     ArgKey<usize>        test_jobs;
     ArgKey<String>       test_arguments;
-    ArgKey<String>       scan_source;
-    ArgKey<String>       scan_package;
-    ArgKey<BuildProfile> scan_profile;
-    ArgKey<String>       scan_target;
-    ArgKey<bool>         scan_locked;
+    ArgKey<String>           scan_source;
+    ArgKey<String>           scan_package;
+    ArgKey<BuildProfile>     scan_profile;
+    ArgKey<String>           scan_target;
+    ArgKey<ScanOutputFormat> scan_format;
+    ArgKey<bool>             scan_locked;
     ArgKey<String>       format_package;
     Parser               parser;
 };
@@ -162,6 +181,11 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto scan_package = scan.add_arg(package_arg());
     auto scan_profile = scan.add_arg(profile_arg());
     auto scan_target  = scan.add_arg(target_arg());
+    auto scan_format  = scan.add_arg(
+        Arg<ScanOutputFormat>::value("format"_str, ScanOutputFormatParser {})
+            .long_name("format"_str)
+            .value_name("FORMAT"_str)
+            .help("Select the JSON output format"_str));
     auto scan_locked  = scan.add_arg(locked_arg());
 
     auto format = Command::make("format"_str);
@@ -211,6 +235,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_package      = scan_package,
         .scan_profile      = scan_profile,
         .scan_target       = scan_target,
+        .scan_format       = scan_format,
         .scan_locked       = scan_locked,
         .format_package    = format_package,
         .parser            = rstd::move(parser).unwrap(),
@@ -260,6 +285,7 @@ struct ScanOptions {
     Vec<String>          packages;
     Option<BuildProfile> profile;
     Vec<String>          targets;
+    ScanOutputFormat     format { ScanOutputFormat::Lito };
     bool                 locked {};
 };
 
@@ -349,6 +375,7 @@ auto parse() -> CliOutcome {
         auto child   = subcommand->get<1>();
         auto source  = optional_value(*child, schema.scan_source);
         auto profile = optional_value(*child, schema.scan_profile);
+        auto format  = optional_value(*child, schema.scan_format);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
             CliCommand::Scan(ScanOptions {
@@ -356,6 +383,7 @@ auto parse() -> CliOutcome {
                 .packages = string_values(*child, schema.scan_package),
                 .profile  = profile.is_some() ? Some<BuildProfile>(**profile) : None(),
                 .targets  = string_values(*child, schema.scan_target),
+                .format   = format.is_some() ? **format : ScanOutputFormat::Lito,
                 .locked   = flag_value(*child, schema.scan_locked),
             }));
     }

@@ -77,9 +77,9 @@ class BuildLayout {
     }
 
 public:
-    static auto create(ref<rstd::path::Path> owner_root,
-                       ref<rstd::path::Path> requested_output,
-                       ref<str>              profile) -> Result<BuildLayout> {
+    static auto resolve(ref<rstd::path::Path> owner_root,
+                        ref<rstd::path::Path> requested_output,
+                        ref<str>              profile) -> BuildLayout {
         auto output = PathBuf::make();
         if (requested_output.is_empty()) {
             output = join(join(owner_root, "build"_str).as_path(), profile);
@@ -88,16 +88,23 @@ public:
         } else {
             output = PathBuf::from(owner_root).join(requested_output);
         }
-        auto created = rstd::fs::create_dir_all(output.as_path());
+        return BuildLayout(rstd::move(output));
+    }
+
+    static auto create(ref<rstd::path::Path> owner_root,
+                       ref<rstd::path::Path> requested_output,
+                       ref<str>              profile) -> Result<BuildLayout> {
+        auto layout  = resolve(owner_root, requested_output, profile);
+        auto created = rstd::fs::create_dir_all(layout.output());
         if (created.is_err()) {
             return failure<BuildLayout>(rstd::format("cannot create output directory '{}': {}",
-                                                     output.as_path(),
+                                                     layout.output(),
                                                      rstd::move(created).unwrap_err()));
         }
-        auto canonical = rstd::fs::canonicalize(output.as_path());
+        auto canonical = rstd::fs::canonicalize(layout.output());
         if (canonical.is_err()) {
             return failure<BuildLayout>(rstd::format("cannot resolve output directory '{}': {}",
-                                                     output.as_path(),
+                                                     layout.output(),
                                                      rstd::move(canonical).unwrap_err()));
         }
         return Ok(BuildLayout(rstd::move(canonical).unwrap()));
