@@ -1,0 +1,8 @@
+[package]
+name = "fixture-environment-build"
+version = "0.1.0"
+
+[executable]
+name = "fixture-environment-build"
+discovery = "explicit"
+sources = ["src/main.cpp"]

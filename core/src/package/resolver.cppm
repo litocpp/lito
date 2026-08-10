@@ -3,6 +3,7 @@ export module lito.package:resolver;
 import rstd;
 import lito.model;
 import lito.source;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -60,9 +61,12 @@ class Resolver {
     StringSet            active_ { StringSet::make() };
 
 public:
-    explicit Resolver(ref<rstd::path::Path> root_directory, PackageResolutionOptions options)
+    explicit Resolver(ref<rstd::path::Path>             root_directory,
+                      PackageResolutionOptions          options,
+                      ToolResolver&                     resolver,
+                      const ResolvedProcessEnvironment& environment)
         : root_directory_(PathBuf::from(root_directory)),
-          sources_(root_directory, rstd::move(options)) {}
+          sources_(root_directory, rstd::move(options), resolver, environment) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
         return sources_.acquire_root(root);
@@ -187,8 +191,11 @@ public:
 export namespace lito
 {
 
-auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
-                           PackageResolutionOptions options = {}) -> Result<ResolvedPackageGraph> {
+auto resolve_package_graph_with_environment(ref<rstd::path::Path>             requested_root,
+                                            PackageResolutionOptions          options,
+                                            ToolResolver&                     tool_resolver,
+                                            const ResolvedProcessEnvironment& environment)
+    -> Result<ResolvedPackageGraph> {
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
         return failure<ResolvedPackageGraph>(
@@ -197,7 +204,7 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
                          rstd::move(canonical).unwrap_err()));
     }
     auto root     = rstd::move(canonical).unwrap();
-    auto resolver = Resolver(root.as_path(), rstd::move(options));
+    auto resolver = Resolver(root.as_path(), rstd::move(options), tool_resolver, environment);
     auto source   = resolver.acquire_root(root.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto root_source       = *source;
@@ -217,6 +224,15 @@ auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
                               rstd::move(manifest_path),
                               root_is_workspace,
                               profile));
+}
+
+auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
+                           PackageResolutionOptions options = {}) -> Result<ResolvedPackageGraph> {
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto resolver = ToolResolver(*environment);
+    return resolve_package_graph_with_environment(
+        requested_root, rstd::move(options), resolver, *environment);
 }
 
 } // namespace lito

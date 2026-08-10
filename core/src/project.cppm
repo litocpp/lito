@@ -10,6 +10,7 @@ import lito.lock_store;
 import lito.package;
 import lito.dependency;
 import lito.toolchain;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,19 +23,22 @@ struct ProjectResolution {
     LockStatus               lock;
 };
 
-auto resolve_project(const PackageSelection&    selection,
-                     PackageSelectionPurpose    purpose,
-                     const PackageSourceConfig& sources,
-                     bool                       locked,
-                     GitResolutionMode          git,
-                     const TargetInfo*          target) -> Result<ProjectResolution> {
+auto resolve_project(const PackageSelection&           selection,
+                     PackageSelectionPurpose           purpose,
+                     const PackageSourceConfig&        sources,
+                     bool                              locked,
+                     GitResolutionMode                 git,
+                     const TargetInfo*                 target,
+                     ToolResolver&                     tool_resolver,
+                     const ResolvedProcessEnvironment& environment) -> Result<ProjectResolution> {
     auto lock_session        = rstd_try(load_lock_session(selection.root.as_path(), locked, git));
     auto resolution          = lock_session.take_resolution_options();
     resolution.sources       = sources.clone();
     auto external_resolution = resolution.clone();
-    auto project =
-        rstd_try(resolve_package_selection(selection, purpose, rstd::move(resolution), target));
-    rstd_try(resolve_external_dependency_sources(project.graph, rstd::move(external_resolution)));
+    auto project             = rstd_try(resolve_package_selection_with_environment(
+        selection, purpose, rstd::move(resolution), target, tool_resolver, environment));
+    rstd_try(resolve_external_dependency_sources(
+        project.graph, rstd::move(external_resolution), tool_resolver, environment));
     auto lock = rstd_try(sync_lock(project.graph, rstd::move(lock_session)));
     return Ok(ProjectResolution {
         .selection = rstd::move(project),
@@ -47,23 +51,27 @@ auto resolve_project(const PackageSelection&    selection,
 export namespace lito
 {
 
-auto resolve_project_metadata(const PackageSelection&        selection,
-                              const BuildConfiguration&      configuration,
-                              const PackageSourceConfig&     sources,
-                              const PkgConfigProviderConfig& pkg_config,
-                              const CMakeProviderConfig&     cmake,
-                              const ClangToolchain&          toolchain,
-                              bool                           locked,
-                              PackageSelectionPurpose        purpose = PackageSelectionPurpose::All)
+auto resolve_project_metadata(const PackageSelection&           selection,
+                              const BuildConfiguration&         configuration,
+                              const PackageSourceConfig&        sources,
+                              const PkgConfigProviderConfig&    pkg_config,
+                              const CMakeProviderConfig&        cmake,
+                              const ClangToolchain&             toolchain,
+                              ToolResolver&                     tool_resolver,
+                              const ResolvedProcessEnvironment& environment,
+                              bool                              locked,
+                              PackageSelectionPurpose purpose = PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
-    auto resolved = rstd_try(resolve_project(selection,
-                                             purpose,
-                                             sources,
-                                             locked,
-                                             GitResolutionMode::ReuseLocked,
-                                             rstd::addressof(toolchain.target_info())));
-    auto project  = rstd::move(resolved.selection);
-    auto resolved_configuration               = configuration.clone();
+    auto resolved               = rstd_try(resolve_project(selection,
+                                                           purpose,
+                                                           sources,
+                                                           locked,
+                                                           GitResolutionMode::ReuseLocked,
+                                                           rstd::addressof(toolchain.target_info()),
+                                                           tool_resolver,
+                                                           environment));
+    auto project                = rstd::move(resolved.selection);
+    auto resolved_configuration = configuration.clone();
     resolved_configuration.toolchain.compiler = PathBuf::from(toolchain.compiler_path());
     resolved_configuration.toolchain.archiver = PathBuf::from(toolchain.archiver_path());
     return adapt_package_graph_metadata(rstd::move(project.graph),
@@ -73,7 +81,9 @@ auto resolve_project_metadata(const PackageSelection&        selection,
                                         pkg_config,
                                         cmake,
                                         toolchain.target_info(),
-                                        toolchain.argument_parser());
+                                        toolchain.argument_parser(),
+                                        tool_resolver,
+                                        environment);
 }
 
 auto update_dependencies(const UpdateRequest& request) -> Result<LockStatus> {
@@ -83,12 +93,16 @@ auto update_dependencies(const UpdateRequest& request) -> Result<LockStatus> {
     auto selection = PackageSelection {
         .root = request.root.clone(),
     };
-    auto resolved = rstd_try(resolve_project(selection,
-                                             PackageSelectionPurpose::All,
-                                             request.sources,
-                                             false,
-                                             GitResolutionMode::Refresh,
-                                             nullptr));
+    auto environment   = rstd_try(ResolvedProcessEnvironment::resolve(request.environment));
+    auto tool_resolver = ToolResolver(environment);
+    auto resolved      = rstd_try(resolve_project(selection,
+                                                  PackageSelectionPurpose::All,
+                                                  request.sources,
+                                                  false,
+                                                  GitResolutionMode::Refresh,
+                                                  nullptr,
+                                                  tool_resolver,
+                                                  environment));
     return Ok(resolved.lock);
 }
 

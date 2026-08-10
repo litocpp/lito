@@ -117,8 +117,9 @@ extern "C++" int main() {
 
     if (invocation.command.is_Update()) {
         auto request = lito::UpdateRequest {
-            .root    = rstd::move(project.root),
-            .sources = rstd::move(project.sources),
+            .root        = rstd::move(project.root),
+            .environment = rstd::move(project.environment),
+            .sources     = rstd::move(project.sources),
         };
         auto result = lito::update_dependencies(request);
         if (result.is_err()) {
@@ -139,6 +140,7 @@ extern "C++" int main() {
         auto options               = rstd::move(invocation.command).as_Format().options;
         auto request               = lito::FormatRequest {};
         request.selection.root     = rstd::move(project.root);
+        request.environment        = rstd::move(project.environment);
         request.toolchain          = rstd::move(project.toolchain);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
@@ -158,6 +160,7 @@ extern "C++" int main() {
         auto options               = rstd::move(invocation.command).as_Scan().options;
         auto request               = lito::ScanRequest {};
         request.selection.root     = rstd::move(project.root);
+        request.environment        = rstd::move(project.environment);
         request.configuration      = build_configuration(rstd::move(project.toolchain));
         request.sources            = rstd::move(project.sources);
         request.pkg_config         = rstd::move(project.pkg_config);
@@ -191,6 +194,7 @@ extern "C++" int main() {
                                                           options.verbose && ! options.no_timing);
         auto request                 = lito::TestRequest {};
         request.build.selection.root = rstd::move(project.root);
+        request.build.environment    = rstd::move(project.environment);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain));
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
@@ -300,6 +304,7 @@ extern "C++" int main() {
                                                     options.verbose && ! options.no_timing);
     auto request               = lito::BuildRequest {};
     request.selection.root     = rstd::move(project.root);
+    request.environment        = rstd::move(project.environment);
     request.configuration      = build_configuration(rstd::move(project.toolchain));
     request.sources            = rstd::move(project.sources);
     request.pkg_config         = rstd::move(project.pkg_config);

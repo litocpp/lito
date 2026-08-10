@@ -3,6 +3,7 @@ export module lito.toolchain:clang;
 import rstd;
 import lito.model;
 import lito.process;
+import lito.environment;
 import lito.frontend;
 import lito.profiling;
 import lito.modules;
@@ -294,6 +295,9 @@ struct ClangBuiltinContext {
 
 class ClangCompileExecutor {
 public:
+    explicit ClangCompileExecutor(const ResolvedProcessEnvironment& environment)
+        : environment_(rstd::addressof(environment)) {}
+
     auto execute(const CompileInvocation& invocation) const -> Result<CompileCommandResult> {
         auto cleared = clear_staged_output(invocation.staged_object.as_path());
         if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
@@ -301,8 +305,8 @@ public:
             cleared = clear_staged_output(invocation.staged_bmi->as_path());
             if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
         }
-        auto output =
-            run_command(invocation.arguments, Some(invocation.working_directory.as_path()));
+        auto output = run_command(
+            invocation.arguments, *environment_, Some(invocation.working_directory.as_path()));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code == i32 {}) {
@@ -332,68 +336,39 @@ public:
             .elapsed         = command_output.elapsed,
         });
     }
+
+private:
+    const ResolvedProcessEnvironment* environment_ {};
 };
 
 class ClangToolchain {
 public:
     static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
+        auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        auto resolver = ToolResolver(*environment);
+        return create(specification, resolver, *environment);
+    }
+
+    static auto create(const ToolchainSpec&              specification,
+                       ToolResolver&                     resolver,
+                       const ResolvedProcessEnvironment& environment) -> Result<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
             return failure<ClangToolchain>(rstd::move(argument_parser).unwrap_err());
         }
         auto configured_compiler =
-            toolchain::command::resolve_tool(specification.compiler.as_path(), "clang++"_str);
+            resolver.resolve(specification.compiler.as_path(), "clang++"_str);
         auto configured_archiver =
-            toolchain::command::resolve_tool(specification.archiver.as_path(), "llvm-ar"_str);
+            resolver.resolve(specification.archiver.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::move(configured_compiler).unwrap_err());
         }
         if (configured_archiver.is_err()) {
             return Err(rstd::move(configured_archiver).unwrap_err());
         }
-        auto compiler_path = rstd::move(configured_compiler).unwrap();
-        auto archiver_path = rstd::move(configured_archiver).unwrap();
-
-        if (toolchain::command::is_searchable_tool_name(specification.compiler.as_path())) {
-            auto path_command = Vec<String>::make();
-            auto pushed = toolchain::command::push_path(path_command, compiler_path.as_path());
-            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-            toolchain::command::push_option(path_command,
-                                            toolchain::clang_options::PRINT_COMPILER_PATH);
-            auto queried = toolchain::command::tool_output(rstd::move(path_command),
-                                                           "clang++ executable query"_str);
-            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-            auto queried_path = PathBuf::from(queried->as_str());
-            auto resolved = toolchain::command::resolve_tool(queried_path.as_path(), "clang++"_str);
-            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-            compiler_path = rstd::move(resolved).unwrap();
-        }
-
-        if (toolchain::command::is_searchable_tool_name(specification.archiver.as_path())) {
-            auto archiver_name = specification.archiver.as_path().to_str();
-            if (archiver_name.is_none()) {
-                return failure<ClangToolchain>(
-                    rstd::format("configured archiver '{}' is not valid UTF-8",
-                                 specification.archiver.as_path()));
-            }
-            auto path_command = Vec<String>::make();
-            auto pushed = toolchain::command::push_path(path_command, compiler_path.as_path());
-            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-            toolchain::command::push_option(
-                path_command, rstd::format("-print-prog-name={}", *archiver_name).as_str());
-            auto queried = toolchain::command::tool_output(rstd::move(path_command),
-                                                           "clang++ archiver query"_str);
-            if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
-            auto queried_path = PathBuf::from(queried->as_str());
-            if (! queried_path.as_path().is_absolute()) {
-                return failure<ClangToolchain>(
-                    rstd::format("configured archiver '{}' could not be resolved by clang++",
-                                 specification.archiver.as_path()));
-            }
-            auto resolved = toolchain::command::resolve_tool(queried_path.as_path(), "llvm-ar"_str);
-            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-            archiver_path = rstd::move(resolved).unwrap();
-        }
+        auto compiler_path = rstd::move(configured_compiler).unwrap().executable;
+        auto archiver_path = rstd::move(configured_archiver).unwrap().executable;
 
         auto compiler_command = Vec<String>::make();
         auto target_command   = Vec<String>::make();
@@ -414,14 +389,14 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(help_command, toolchain::clang_options::HELP);
 
-        auto compiler_version =
-            toolchain::command::tool_output(rstd::move(compiler_command), "clang++ --version"_str);
-        auto target =
-            toolchain::command::tool_output(rstd::move(target_command), "clang++ target query"_str);
-        auto resource = toolchain::command::tool_output(rstd::move(resource_command),
-                                                        "clang++ resource query"_str);
-        auto help =
-            toolchain::command::tool_output(rstd::move(help_command), "clang++ help query"_str);
+        auto compiler_version = toolchain::command::tool_output(
+            rstd::move(compiler_command), "clang++ --version"_str, environment);
+        auto target = toolchain::command::tool_output(
+            rstd::move(target_command), "clang++ target query"_str, environment);
+        auto resource = toolchain::command::tool_output(
+            rstd::move(resource_command), "clang++ resource query"_str, environment);
+        auto help = toolchain::command::tool_output(
+            rstd::move(help_command), "clang++ help query"_str, environment);
         if (compiler_version.is_err()) return Err(rstd::move(compiler_version).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
@@ -433,7 +408,7 @@ public:
         if (target_info.is_err()) return Err(rstd::move(target_info).unwrap_err());
 
         auto resource_path      = PathBuf::from(resource->as_str());
-        auto canonical_resource = toolchain::command::resolve_tool(resource_path.as_path(),
+        auto canonical_resource = toolchain::command::resolve_path(resource_path.as_path(),
                                                                    "Clang resource directory"_str);
         if (canonical_resource.is_err()) {
             return Err(rstd::move(canonical_resource).unwrap_err());
@@ -500,16 +475,15 @@ public:
             .resource_environment = String::make(*resource_text),
         };
 
-        return Ok(ClangToolchain {
-            rstd::move(compiler_path),
-            rstd::move(archiver_path),
-            rstd::move(resolved_resource),
-            rstd::move(identity),
-            rstd::move(target_info).unwrap(),
-            rstd::move(format),
-            capabilities,
-            rstd::move(argument_parser).unwrap(),
-        });
+        return Ok(ClangToolchain { rstd::move(compiler_path),
+                                   rstd::move(archiver_path),
+                                   rstd::move(resolved_resource),
+                                   rstd::move(identity),
+                                   rstd::move(target_info).unwrap(),
+                                   rstd::move(format),
+                                   capabilities,
+                                   rstd::move(argument_parser).unwrap(),
+                                   environment.clone() });
     }
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
@@ -752,7 +726,9 @@ public:
         return Ok(output->elapsed);
     }
 
-    auto compile_executor() const noexcept -> ClangCompileExecutor { return {}; }
+    auto compile_executor() const noexcept -> ClangCompileExecutor {
+        return ClangCompileExecutor(environment_);
+    }
 
     auto execute_compile_capture(const CompileInvocation& invocation) const
         -> Result<CompileCommandResult> {
@@ -790,7 +766,7 @@ public:
             pushed = toolchain::command::push_path(command, object.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
-        auto output = run_command(command, Some(working_directory));
+        auto output = run_command(command, environment_, Some(working_directory));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
@@ -869,7 +845,7 @@ public:
         pushed = toolchain::command::push_path(command, output_path);
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
-        auto output = run_command(command, Some(working_directory));
+        auto output = run_command(command, environment_, Some(working_directory));
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
@@ -883,14 +859,15 @@ public:
     }
 
 private:
-    ClangToolchain(PathBuf                  compiler,
-                   PathBuf                  archiver,
-                   PathBuf                  resource_dir,
-                   CompilerIdentity         identity,
-                   TargetInfo               target_info,
-                   BmiFormatIdentity        format,
-                   CppToolchainCapabilities capabilities,
-                   CppArgumentParser        argument_parser)
+    ClangToolchain(PathBuf                    compiler,
+                   PathBuf                    archiver,
+                   PathBuf                    resource_dir,
+                   CompilerIdentity           identity,
+                   TargetInfo                 target_info,
+                   BmiFormatIdentity          format,
+                   CppToolchainCapabilities   capabilities,
+                   CppArgumentParser          argument_parser,
+                   ResolvedProcessEnvironment environment)
         : compiler_(rstd::move(compiler)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
@@ -898,7 +875,8 @@ private:
           target_info_(rstd::move(target_info)),
           bmi_format_(rstd::move(format)),
           capabilities_(capabilities),
-          argument_parser_(rstd::move(argument_parser)) {}
+          argument_parser_(rstd::move(argument_parser)),
+          environment_(rstd::move(environment)) {}
 
     auto environment_for(const CompileContext& compile_context,
                          ref<rstd::path::Path> working_directory) const
@@ -932,8 +910,12 @@ private:
             }
         }
         if (builtin_environment.is_none()) {
-            auto queried = toolchain::query_clang_builtin_environment_snapshot(
-                builtin_command, builtin_key.as_str(), builtin_values.semantic, working_directory);
+            auto queried =
+                toolchain::query_clang_builtin_environment_snapshot(builtin_command,
+                                                                    builtin_key.as_str(),
+                                                                    builtin_values.semantic,
+                                                                    working_directory,
+                                                                    environment_);
             if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
             ++toolchain_statistics_.builtin_refreshes;
             ++toolchain_statistics_.builtin_macro_processes;
@@ -960,11 +942,11 @@ private:
                                                         working_directory),
             rstd::move(builtin_environment).unwrap(),
             rstd::move(builtin_values.semantic),
-            compile_context.cpp.preprocessor.macros);
+            compile_context.cpp.preprocessor.macros,
+            environment_);
         if (queried.is_err()) return Err(rstd::move(queried).unwrap_err());
         auto environment =
-            rstd::sync::Arc<toolchain::PreprocessorEnvironment>::make(
-                rstd::move(queried).unwrap());
+            rstd::sync::Arc<toolchain::PreprocessorEnvironment>::make(rstd::move(queried).unwrap());
         preprocessor_environments_.push(environment.clone());
         return Ok(rstd::move(environment));
     }
@@ -1052,6 +1034,7 @@ private:
     BmiFormatIdentity                                             bmi_format_;
     CppToolchainCapabilities                                      capabilities_;
     CppArgumentParser                                             argument_parser_;
+    ResolvedProcessEnvironment                                    environment_;
     mutable ToolchainStatistics                                   toolchain_statistics_;
     mutable Vec<toolchain::SharedClangBuiltinEnvironmentSnapshot> builtin_environment_snapshots_;
     mutable Vec<toolchain::SharedPreprocessorEnvironment>         preprocessor_environments_;

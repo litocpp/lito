@@ -10,6 +10,7 @@ import lito.toolchain;
 import lito.frontend;
 import lito.profiling;
 import lito.frontend_observer;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -77,7 +78,11 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     }
     auto source = rstd::move(canonical_source).unwrap();
 
-    auto created_toolchain = ClangToolchain::create(request.configuration.toolchain);
+    auto environment = ResolvedProcessEnvironment::resolve(request.environment);
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto tool_resolver = ToolResolver(*environment);
+    auto created_toolchain =
+        ClangToolchain::create(request.configuration.toolchain, tool_resolver, *environment);
     if (created_toolchain.is_err()) {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
@@ -88,6 +93,8 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                               request.pkg_config,
                                               request.cmake,
                                               toolchain,
+                                              tool_resolver,
+                                              *environment,
                                               request.locked,
                                               PackageSelectionPurpose::All);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
@@ -108,11 +115,12 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
-    auto facts = toolchain.preprocess(source.as_path(),
-                                      discovery.contexts[source_target],
-                                      metadata.targets[source_target].manifest.source_root.as_path(),
-                                      frontend_service,
-                                      profiler);
+    auto facts =
+        toolchain.preprocess(source.as_path(),
+                             discovery.contexts[source_target],
+                             metadata.targets[source_target].manifest.source_root.as_path(),
+                             frontend_service,
+                             profiler);
     if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
 
     return Ok(ScanReport {

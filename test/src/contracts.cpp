@@ -1,8 +1,10 @@
 #include <rstd/test/gtest.hpp>
+#include <rstd/macro.hpp>
 
 import rstd;
 import rstd.test;
 import lito;
+import lito.process;
 import lito.test.support;
 
 using namespace rstd::prelude;
@@ -207,6 +209,15 @@ auto resolved_git_commit(const lito::ResolvedPackageGraph& graph) -> Option<ref<
     return None();
 }
 
+auto write_executable(ref<rstd::path::Path> path) -> bool {
+    if (rstd::fs::write(path, "fixture\n"_str.as_bytes()).is_err()) return false;
+#if RSTD_OS_UNIX
+    return rstd::fs::set_permissions(path, rstd::fs::Permissions::from_mode(u32(0755))).is_ok();
+#else
+    return true;
+#endif
+}
+
 auto versioned_fixture(ref<str>                       alias,
                        lito::PkgConfigVersionOperator comparison,
                        ref<str>                       version,
@@ -400,6 +411,189 @@ TEST(Contracts, RemovedConfigFieldsAreRejectedByConfigOwner) {
     EXPECT_TRUE(loaded.is_err());
 }
 
+TEST(Contracts, EnvironmentAppendPathBelongsToProjectConfig) {
+    auto loaded = lito::load_project_config(root("config/environment-valid"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->environment.append_path.len(), usize(2));
+    EXPECT_EQ(loaded->environment.append_path[usize {}].as_path(),
+              root("config/environment-valid"_str).as_path());
+    EXPECT_EQ(loaded->environment.append_path[usize(1)].as_path(), root("config"_str).as_path());
+
+    auto empty = lito::load_project_config(root("config/environment-empty"_str).as_path());
+    ASSERT_TRUE(empty.is_ok());
+    EXPECT_TRUE(empty->environment.append_path.is_empty());
+
+    auto unconfigured = lito::load_project_config(root("config"_str).as_path());
+    ASSERT_TRUE(unconfigured.is_ok());
+    EXPECT_TRUE(unconfigured->environment.append_path.is_empty());
+}
+
+TEST(Contracts, InvalidEnvironmentAppendPathIsRejectedByConfigOwner) {
+    constexpr ref<str> cases[] = {
+        "config/environment-wrong-type"_str, "config/environment-empty-entry"_str,
+        "config/environment-missing"_str,    "config/environment-file"_str,
+        "config/environment-unknown"_str,
+    };
+    for (const auto path : cases) {
+        EXPECT_TRUE(lito::load_project_config(root(path).as_path()).is_err());
+    }
+}
+
+TEST(Contracts, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
+    auto directory = output_root("tool-resolver"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto inherited = directory.join(rstd::path::PathBuf::from("inherited"_str).as_path());
+    auto first     = directory.join(rstd::path::PathBuf::from("first"_str).as_path());
+    auto second    = directory.join(rstd::path::PathBuf::from("second"_str).as_path());
+    auto relative  = directory.join(rstd::path::PathBuf::from("relative"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(inherited.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(first.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(second.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(relative.as_path()).is_ok());
+
+    auto inherited_tool  = inherited.join(rstd::path::PathBuf::from("lito-tool"_str).as_path());
+    auto appended_tool   = first.join(rstd::path::PathBuf::from("lito-tool"_str).as_path());
+    auto first_fallback  = first.join(rstd::path::PathBuf::from("lito-fallback"_str).as_path());
+    auto second_fallback = second.join(rstd::path::PathBuf::from("lito-fallback"_str).as_path());
+    auto absolute_tool   = second.join(rstd::path::PathBuf::from("lito-absolute"_str).as_path());
+    auto non_executable =
+        first.join(rstd::path::PathBuf::from("lito-non-executable"_str).as_path());
+    ASSERT_TRUE(write_executable(inherited_tool.as_path()));
+    ASSERT_TRUE(write_executable(appended_tool.as_path()));
+    ASSERT_TRUE(write_executable(first_fallback.as_path()));
+    ASSERT_TRUE(write_executable(second_fallback.as_path()));
+    ASSERT_TRUE(write_executable(absolute_tool.as_path()));
+#if RSTD_OS_WINDOWS
+    auto extension_tool =
+        second.join(rstd::path::PathBuf::from("lito-extension.EXE"_str).as_path());
+    ASSERT_TRUE(write_executable(extension_tool.as_path()));
+#endif
+    ASSERT_TRUE(rstd::fs::write(non_executable.as_path(), "fixture\n"_str.as_bytes()).is_ok());
+#if RSTD_OS_UNIX
+    ASSERT_TRUE(rstd::fs::set_permissions(non_executable.as_path(),
+                                          rstd::fs::Permissions::from_mode(u32(0644)))
+                    .is_ok());
+#endif
+
+    auto inherited_entries = Vec<rstd::path::PathBuf>::make();
+    inherited_entries.push(inherited.clone());
+    inherited_entries.push(rstd::path::PathBuf::make());
+    inherited_entries.push(rstd::path::PathBuf::from("relative"_str));
+    auto inherited_path = rstd::env::join_paths(inherited_entries.as_slice());
+    ASSERT_TRUE(inherited_path.is_ok());
+    auto append = Vec<rstd::path::PathBuf>::make();
+    append.push(first.clone());
+    append.push(second.clone());
+    auto environment = lito::ResolvedProcessEnvironment::resolve(
+        lito::ProcessEnvironmentSpec { .append_path = rstd::move(append) },
+        Some(inherited_path->as_os_str()),
+        directory.as_path());
+    ASSERT_TRUE(environment.is_ok());
+    ASSERT_EQ(environment->search_directories().len(), usize(5));
+    EXPECT_EQ(environment->search_directories()[usize {}].as_path(), inherited.as_path());
+    EXPECT_EQ(environment->search_directories()[usize(1)].as_path(), directory.as_path());
+    EXPECT_EQ(environment->search_directories()[usize(2)].as_path(), relative.as_path());
+    EXPECT_EQ(environment->search_directories()[usize(3)].as_path(), first.as_path());
+    EXPECT_EQ(environment->search_directories()[usize(4)].as_path(), second.as_path());
+
+    auto child_entries =
+        rstd::env::split_paths(environment->child_path()).collect<Vec<rstd::path::PathBuf>>();
+    ASSERT_EQ(child_entries.len(), environment->search_directories().len());
+    for (usize index {}; index < child_entries.len(); ++index) {
+        EXPECT_EQ(child_entries[index].as_path(),
+                  environment->search_directories()[index].as_path());
+    }
+
+    auto resolver = lito::ToolResolver(*environment);
+    auto selected = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
+                                     "test executable"_str);
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_EQ(selected->executable.as_path(), inherited_tool.as_path());
+
+    auto fallback = resolver.resolve(rstd::path::PathBuf::from("lito-fallback"_str).as_path(),
+                                     "test executable"_str);
+    ASSERT_TRUE(fallback.is_ok());
+    EXPECT_EQ(fallback->executable.as_path(), first_fallback.as_path());
+
+    auto absolute = resolver.resolve(absolute_tool.as_path(), "test executable"_str);
+    ASSERT_TRUE(absolute.is_ok());
+    EXPECT_EQ(absolute->executable.as_path(), absolute_tool.as_path());
+    EXPECT_TRUE(absolute->executable.as_path().is_absolute());
+#if RSTD_OS_WINDOWS
+    auto extension = resolver.resolve(rstd::path::PathBuf::from("lito-extension"_str).as_path(),
+                                      "test executable"_str);
+    ASSERT_TRUE(extension.is_ok());
+    EXPECT_EQ(extension->executable.as_path(), extension_tool.as_path());
+#endif
+
+    EXPECT_TRUE(
+        resolver
+            .resolve(rstd::path::PathBuf::from("nested/tool"_str).as_path(), "test executable"_str)
+            .is_err());
+    EXPECT_TRUE(resolver
+                    .resolve(rstd::path::PathBuf::from("lito-non-executable"_str).as_path(),
+                             "test executable"_str)
+                    .is_err());
+    auto missing = resolver.resolve(rstd::path::PathBuf::from("lito-missing"_str).as_path(),
+                                    "test executable"_str);
+    ASSERT_TRUE(missing.is_err());
+    auto missing_error = rstd::move(missing).unwrap_err();
+    EXPECT_TRUE(missing_error.message.as_str().contains("lito-missing"_str));
+    EXPECT_TRUE(missing_error.message.as_str().contains(first.as_path().to_str().unwrap()));
+
+    ASSERT_TRUE(rstd::fs::remove_file(inherited_tool.as_path()).is_ok());
+    auto cached = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
+                                   "test executable"_str);
+    ASSERT_TRUE(cached.is_ok());
+    EXPECT_EQ(cached->executable.as_path(), inherited_tool.as_path());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Contracts, ProcessExecutionRejectsUnresolvedToolNames) {
+    auto environment = lito::ResolvedProcessEnvironment::resolve(
+        lito::ProcessEnvironmentSpec {}, None(), root("config"_str).as_path());
+    ASSERT_TRUE(environment.is_ok());
+    auto arguments = strings("lito-unresolved-tool"_str);
+    EXPECT_TRUE(lito::run_command(arguments, *environment).is_err());
+    EXPECT_TRUE(lito::run_command_with_input(arguments, ""_str, *environment).is_err());
+}
+
+TEST(Contracts, BuildUsesConfiguredAppendedToolPath) {
+    auto project = root("environment/append-path"_str);
+    auto config  = lito::load_project_config(project.as_path());
+    ASSERT_TRUE(config.is_ok());
+    auto output = output_root("environment-append-path"_str);
+    ASSERT_TRUE(clear_output(output.as_path()));
+    auto request = build_request(
+        project.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release);
+    request.environment             = rstd::move(config->environment);
+    request.configuration.toolchain = rstd::move(config->toolchain);
+    auto built                      = lito::build(request);
+    ASSERT_TRUE(built.is_ok());
+    EXPECT_EQ(artifact_count(*built, lito::ArtifactKind::Executable), usize(1));
+    EXPECT_TRUE(clear_output(output.as_path()));
+}
+
+TEST(Contracts, TestArtifactReceivesConfiguredEffectivePath) {
+    auto project = root("environment/test-path"_str);
+    auto config  = lito::load_project_config(project.as_path());
+    ASSERT_TRUE(config.is_ok());
+    auto output = output_root("environment-test-path"_str);
+    ASSERT_TRUE(clear_output(output.as_path()));
+    auto request = build_request(
+        project.as_path(), output.as_path(), Vec<String>::make(), lito::BuildProfile::Release);
+    request.environment             = rstd::move(config->environment);
+    request.configuration.toolchain = rstd::move(config->toolchain);
+    auto tested                     = lito::test(lito::TestRequest {
+        .build = rstd::move(request),
+    });
+    ASSERT_TRUE(tested.is_ok());
+    EXPECT_TRUE(tested->success());
+    ASSERT_EQ(tested->executions.len(), usize(1));
+    EXPECT_TRUE(tested->executions[usize {}].success());
+    EXPECT_TRUE(clear_output(output.as_path()));
+}
+
 TEST(Contracts, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     auto loaded = lito::load_project_config(root("config/pkg-config"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
@@ -421,8 +615,7 @@ TEST(Contracts, CMakeProviderConfigurationBelongsToProjectConfig) {
     EXPECT_EQ(loaded->cmake.executable.as_path().to_str().unwrap(), "custom-cmake"_str);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
-    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(),
-              root("config/cmake"_str).as_path());
+    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), root("config/cmake"_str).as_path());
 }
 
 TEST(Contracts, PkgConfigManifestIsTypedBeforeResolution) {

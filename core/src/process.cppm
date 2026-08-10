@@ -2,6 +2,7 @@ export module lito.process;
 
 import rstd;
 import lito.model;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -49,14 +50,28 @@ struct CommandOutput {
 };
 
 struct CommandEnvironmentEntry {
-    String         key;
-    Option<String> value;
+    String                      key;
+    Option<rstd::ffi::OsString> value;
 };
 
 struct CommandEnvironment {
     bool                         clear { false };
     Vec<CommandEnvironmentEntry> entries;
 };
+
+auto apply_command_environment(rstd::process::Command&           command,
+                               const ResolvedProcessEnvironment& environment,
+                               Option<ref<CommandEnvironment>>   overrides = None()) -> void {
+    command.env("PATH"_str, environment.child_path());
+    if (overrides.is_none()) return;
+    if ((*overrides)->clear) command.env_clear().env("PATH"_str, environment.child_path());
+    for (const auto& entry : (*overrides)->entries) {
+        if (entry.value.is_some())
+            command.env(entry.key.as_str(), entry.value->as_os_str());
+        else
+            command.env_remove(entry.key.as_str());
+    }
+}
 
 auto decode_command_output(rstd::process::Output value, rstd::time::Duration elapsed)
     -> Result<CommandOutput> {
@@ -74,11 +89,18 @@ auto decode_command_output(rstd::process::Output value, rstd::time::Duration ela
     });
 }
 
-auto run_command(const Vec<String>&              arguments,
-                 Option<ref<rstd::path::Path>>   working_directory = None(),
-                 Option<ref<CommandEnvironment>> environment = None()) -> Result<CommandOutput> {
+auto run_command(const Vec<String>&                arguments,
+                 const ResolvedProcessEnvironment& environment,
+                 Option<ref<rstd::path::Path>>     working_directory = None(),
+                 Option<ref<CommandEnvironment>>   overrides = None()) -> Result<CommandOutput> {
     if (arguments.is_empty()) {
         return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+    }
+    auto program = PathBuf::from(arguments[usize {}].as_str());
+    if (! program.as_path().is_absolute()) {
+        return Err(Error::make(ErrorKind::InvalidRequest,
+                               rstd::format("command program '{}' is not an absolute path",
+                                            arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -89,15 +111,7 @@ auto run_command(const Vec<String>&              arguments,
     if (working_directory.is_some()) {
         command.current_dir(*working_directory);
     }
-    if (environment.is_some()) {
-        if ((*environment)->clear) command.env_clear();
-        for (const auto& entry : (*environment)->entries) {
-            if (entry.value.is_some())
-                command.env(entry.key.as_str(), entry.value->as_str());
-            else
-                command.env_remove(entry.key.as_str());
-        }
-    }
+    apply_command_environment(command, environment, overrides);
 
     auto started = rstd::time::Instant::now();
     auto output  = command.output();
@@ -112,12 +126,20 @@ auto run_command(const Vec<String>&              arguments,
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
 
-auto run_command_with_input(const Vec<String>&            arguments,
-                            ref<str>                      standard_input,
-                            Option<ref<rstd::path::Path>> working_directory = None())
+auto run_command_with_input(const Vec<String>&                arguments,
+                            ref<str>                          standard_input,
+                            const ResolvedProcessEnvironment& environment,
+                            Option<ref<rstd::path::Path>>     working_directory = None(),
+                            Option<ref<CommandEnvironment>>   overrides         = None())
     -> Result<CommandOutput> {
     if (arguments.is_empty()) {
         return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+    }
+    auto program = PathBuf::from(arguments[usize {}].as_str());
+    if (! program.as_path().is_absolute()) {
+        return Err(Error::make(ErrorKind::InvalidRequest,
+                               rstd::format("command program '{}' is not an absolute path",
+                                            arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -125,6 +147,7 @@ auto run_command_with_input(const Vec<String>&            arguments,
         command.arg(arguments[index].as_str());
     }
     if (working_directory.is_some()) command.current_dir(*working_directory);
+    apply_command_environment(command, environment, overrides);
     command.set_stdin(rstd::process::Stdio::piped());
     command.set_stdout(rstd::process::Stdio::piped());
     command.set_stderr(rstd::process::Stdio::piped());

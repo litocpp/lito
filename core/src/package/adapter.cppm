@@ -7,6 +7,7 @@ import rstd;
 import lito.model;
 import lito.build_profile;
 import lito.dependency;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -49,14 +50,16 @@ auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidat
 export namespace lito
 {
 
-auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
-                                  const Vec<String>&             selected_package_names,
-                                  const Vec<String>&             selected_root_names,
-                                  const BuildConfiguration&      configuration,
-                                  const PkgConfigProviderConfig& pkg_config,
-                                  const CMakeProviderConfig&     cmake,
-                                  const TargetInfo&              target_info,
-                                  const CppArgumentParser&       argument_parser)
+auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
+                                  const Vec<String>&                selected_package_names,
+                                  const Vec<String>&                selected_root_names,
+                                  const BuildConfiguration&         configuration,
+                                  const PkgConfigProviderConfig&    pkg_config,
+                                  const CMakeProviderConfig&        cmake,
+                                  const TargetInfo&                 target_info,
+                                  const CppArgumentParser&          argument_parser,
+                                  ToolResolver&                     tool_resolver,
+                                  const ResolvedProcessEnvironment& environment)
     -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() ||
@@ -90,7 +93,9 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
             profile,
             target_info,
             effective_target,
-            argument_parser);
+            argument_parser,
+            tool_resolver,
+            environment);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         external_by_package[index] = rstd::move(resolved).unwrap();
     }
@@ -287,6 +292,30 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
         .profiles = rstd::move(profiles),
         .targets  = rstd::move(targets),
     });
+}
+
+auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
+                                  const Vec<String>&             selected_package_names,
+                                  const Vec<String>&             selected_root_names,
+                                  const BuildConfiguration&      configuration,
+                                  const PkgConfigProviderConfig& pkg_config,
+                                  const CMakeProviderConfig&     cmake,
+                                  const TargetInfo&              target_info,
+                                  const CppArgumentParser&       argument_parser)
+    -> Result<PackageMetadata> {
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto resolver = ToolResolver(*environment);
+    return adapt_package_graph_metadata(rstd::move(graph),
+                                        selected_package_names,
+                                        selected_root_names,
+                                        configuration,
+                                        pkg_config,
+                                        cmake,
+                                        target_info,
+                                        argument_parser,
+                                        resolver,
+                                        *environment);
 }
 
 auto finalize_package(PackageMetadata metadata, Vec<ResolvedPackageSources> source_sets)

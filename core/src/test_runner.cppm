@@ -3,6 +3,8 @@ export module lito.test_runner;
 import rstd;
 import lito.model;
 import lito.builder;
+import lito.environment;
+import lito.process;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -82,7 +84,9 @@ struct TestSummary {
 
 auto test(TestRequest request) -> Result<TestSummary> {
     request.build.purpose = PackageSelectionPurpose::Test;
-    auto built            = build(request.build);
+    auto environment      = ResolvedProcessEnvironment::resolve(request.build.environment);
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto built = build_with_environment(request.build, *environment);
     if (built.is_err()) return Err(rstd::move(built).unwrap_err());
     auto summary = rstd::move(built).unwrap();
 
@@ -104,6 +108,7 @@ auto test(TestRequest request) -> Result<TestSummary> {
             auto command = rstd::process::Command::make(artifact->path.as_path().as_os_str());
             for (const auto& argument : request.arguments) command.arg(argument.as_str());
             command.current_dir(artifact->package_root.as_path());
+            apply_command_environment(command, *environment);
 
             auto started = rstd::time::Instant::now();
             auto status  = command.status();

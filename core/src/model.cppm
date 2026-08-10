@@ -237,6 +237,16 @@ struct ToolchainSpec {
     }
 };
 
+struct ProcessEnvironmentSpec {
+    Vec<PathBuf> append_path;
+
+    auto clone() const -> ProcessEnvironmentSpec {
+        return ProcessEnvironmentSpec {
+            .append_path = as<rstd::clone::Clone>(append_path).clone(),
+        };
+    }
+};
+
 struct GitSourcePatch {
     String  git;
     PathBuf path;
@@ -292,6 +302,7 @@ struct CMakeProviderConfig {
 
 struct ProjectConfig {
     PathBuf                 root;
+    ProcessEnvironmentSpec  environment;
     ToolchainSpec           toolchain;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
@@ -930,6 +941,7 @@ struct BuildRequest {
     PackageSelection        selection;
     Vec<String>             targets;
     PathBuf                 output;
+    ProcessEnvironmentSpec  environment;
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
@@ -982,6 +994,7 @@ struct ScanRequest {
     PackageSelection        selection;
     Vec<String>             targets;
     PathBuf                 source;
+    ProcessEnvironmentSpec  environment;
     BuildConfiguration      configuration;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
@@ -996,14 +1009,16 @@ struct ScanReport {
 };
 
 struct FormatRequest {
-    PackageSelection    selection;
-    ToolchainSpec       toolchain;
-    PackageSourceConfig sources;
+    PackageSelection       selection;
+    ProcessEnvironmentSpec environment;
+    ToolchainSpec          toolchain;
+    PackageSourceConfig    sources;
 };
 
 struct UpdateRequest {
-    PathBuf             root;
-    PackageSourceConfig sources;
+    PathBuf                root;
+    ProcessEnvironmentSpec environment;
+    PackageSourceConfig    sources;
 };
 
 struct FormatSummary {

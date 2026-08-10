@@ -6,6 +6,7 @@ import lito.source_discovery;
 import lito.workspace_resolver;
 import lito.lock_store;
 import lito.toolchain;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -34,13 +35,20 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
                                              "clang-format path is required"_str);
     }
 
-    auto lock = load_lock_session(request.selection.root.as_path(), false);
+    auto environment = ResolvedProcessEnvironment::resolve(request.environment);
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto tool_resolver = ToolResolver(*environment);
+    auto lock          = load_lock_session(request.selection.root.as_path(), false);
     if (lock.is_err()) return Err(rstd::move(lock).unwrap_err());
     auto lock_session  = rstd::move(lock).unwrap();
     auto resolution    = lock_session.take_resolution_options();
     resolution.sources = request.sources.clone();
-    auto resolved      = resolve_package_selection(
-        request.selection, PackageSelectionPurpose::All, rstd::move(resolution));
+    auto resolved      = resolve_package_selection_with_environment(request.selection,
+                                                                    PackageSelectionPurpose::All,
+                                                                    rstd::move(resolution),
+                                                                    nullptr,
+                                                                    tool_resolver,
+                                                                    *environment);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto selection = rstd::move(resolved).unwrap();
 
@@ -49,7 +57,8 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
         selected_roots.insert(name.clone(), empty {});
     }
 
-    auto created = toolchain::ClangFormat::create(request.toolchain.formatter.as_path());
+    auto created = toolchain::ClangFormat::create(
+        request.toolchain.formatter.as_path(), tool_resolver, *environment);
     if (created.is_err()) return Err(rstd::move(created).unwrap_err());
     auto formatter = rstd::move(created).unwrap();
 

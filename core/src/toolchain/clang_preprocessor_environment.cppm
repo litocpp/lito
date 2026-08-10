@@ -4,6 +4,7 @@ import rstd;
 import lito.cpp;
 import lito.model;
 import lito.process;
+import lito.environment;
 import lito.frontend;
 import :clang_options;
 import :command;
@@ -49,8 +50,7 @@ struct ClangBuiltinEnvironmentSnapshot {
     usize                                    capability_output_bytes {};
 };
 
-using SharedClangBuiltinEnvironmentSnapshot =
-    rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>;
+using SharedClangBuiltinEnvironmentSnapshot = rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>;
 
 struct PreprocessorEnvironmentKey {
     String  context_id;
@@ -665,9 +665,10 @@ auto parse_capability_value(ref<str> raw) -> Result<i64> {
     return Ok(negative ? -result : result);
 }
 
-auto query_clang_capabilities(const Vec<String>&            base_command,
-                              const BuiltinSemanticContext& semantic_context,
-                              ref<rstd::path::Path>         working_directory)
+auto query_clang_capabilities(const Vec<String>&                base_command,
+                              const BuiltinSemanticContext&     semantic_context,
+                              ref<rstd::path::Path>             working_directory,
+                              const ResolvedProcessEnvironment& environment)
     -> Result<QueriedCapabilities> {
     auto catalog      = standard_library_capabilities();
     auto pending      = Vec<preprocessor::BuiltinQueryKey>::make();
@@ -707,7 +708,8 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
     command::push_option(command_line, clang_options::LANGUAGE);
     command::push_option(command_line, clang_options::CXX_SOURCE);
     command::push_option(command_line, clang_options::STANDARD_INPUT);
-    auto output = run_command_with_input(command_line, source.as_str(), Some(working_directory));
+    auto output =
+        run_command_with_input(command_line, source.as_str(), environment, Some(working_directory));
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     if (output->exit_code != i32 {}) {
         return environment_failure<QueriedCapabilities>(
@@ -776,10 +778,11 @@ auto query_clang_capabilities(const Vec<String>&            base_command,
 export namespace lito::toolchain
 {
 
-auto query_clang_builtin_environment_snapshot(const Vec<String>&            base_command,
-                                              ref<str>                      key,
-                                              const BuiltinSemanticContext& semantic_context,
-                                              ref<rstd::path::Path>         working_directory)
+auto query_clang_builtin_environment_snapshot(const Vec<String>&                base_command,
+                                              ref<str>                          key,
+                                              const BuiltinSemanticContext&     semantic_context,
+                                              ref<rstd::path::Path>             working_directory,
+                                              const ResolvedProcessEnvironment& environment)
     -> Result<SharedClangBuiltinEnvironmentSnapshot> {
     auto macro_command = clone_command(base_command);
     command::push_option(macro_command, clang_options::DUMP_MACROS);
@@ -787,7 +790,8 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&            base
     command::push_option(macro_command, clang_options::LANGUAGE);
     command::push_option(macro_command, clang_options::CXX_SOURCE);
     command::push_option(macro_command, clang_options::STANDARD_INPUT);
-    auto macro_output = run_command_with_input(macro_command, ""_str, Some(working_directory));
+    auto macro_output =
+        run_command_with_input(macro_command, ""_str, environment, Some(working_directory));
     if (macro_output.is_err()) return Err(rstd::move(macro_output).unwrap_err());
     if (macro_output->exit_code != i32 {}) {
         return environment_failure<SharedClangBuiltinEnvironmentSnapshot>(
@@ -800,13 +804,14 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&            base
     auto clang_macros = clang_owned_macro_seeds(*macros);
     auto parsed       = parse_macro_seeds(clang_macros, "<built-in>"_str);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    auto capabilities = query_clang_capabilities(base_command, semantic_context, working_directory);
+    auto capabilities =
+        query_clang_capabilities(base_command, semantic_context, working_directory, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto values            = rstd::move(parsed).unwrap();
     auto capability_values = rstd::move(capabilities).unwrap();
     auto identity          = builtin_snapshot_identity(clang_macros, key);
-    return Ok(rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(
-        ClangBuiltinEnvironmentSnapshot {
+    return Ok(
+        rstd::sync::Arc<ClangBuiltinEnvironmentSnapshot>::make(ClangBuiltinEnvironmentSnapshot {
             .key                     = String::make(key),
             .identity                = rstd::move(identity),
             .source                  = rstd::move(values.source),
@@ -827,7 +832,9 @@ struct TextBuiltinValues {
     String time;
 };
 
-auto query_text_builtins(const Vec<String>& base_command, ref<rstd::path::Path> working_directory)
+auto query_text_builtins(const Vec<String>&                base_command,
+                         ref<rstd::path::Path>             working_directory,
+                         const ResolvedProcessEnvironment& environment)
     -> Result<TextBuiltinValues> {
     auto command_line = clone_command(base_command);
     command::push_option(command_line, clang_options::PREPROCESS);
@@ -838,6 +845,7 @@ auto query_text_builtins(const Vec<String>& base_command, ref<rstd::path::Path> 
     auto output =
         run_command_with_input(command_line,
                                "LITO_BUILTIN_DATE __DATE__\nLITO_BUILTIN_TIME __TIME__\n"_str,
+                               environment,
                                Some(working_directory));
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     if (output->exit_code != i32 {}) {
@@ -891,7 +899,8 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
                                     PreprocessorEnvironmentKey            key,
                                     SharedClangBuiltinEnvironmentSnapshot builtin_environment,
                                     BuiltinSemanticContext                semantic_context,
-                                    const Vec<CppMacroDirective>&         macros)
+                                    const Vec<CppMacroDirective>&         macros,
+                                    const ResolvedProcessEnvironment&     environment)
     -> Result<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
     auto native_macros =
@@ -908,7 +917,8 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     command::push_option(include_command, clang_options::LANGUAGE);
     command::push_option(include_command, clang_options::CXX_SOURCE);
     command::push_option(include_command, clang_options::STANDARD_INPUT);
-    auto include_output = run_command_with_input(include_command, ""_str, Some(working_directory));
+    auto include_output =
+        run_command_with_input(include_command, ""_str, environment, Some(working_directory));
     if (include_output.is_err()) return Err(rstd::move(include_output).unwrap_err());
     if (include_output->exit_code != i32 {}) {
         return environment_failure<PreprocessorEnvironment>(
@@ -918,7 +928,7 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     }
     auto includes = parse_include_search(include_output->standard_error.as_str());
     if (includes.is_err()) return Err(rstd::move(includes).unwrap_err());
-    auto text_builtins = query_text_builtins(base_command, working_directory);
+    auto text_builtins = query_text_builtins(base_command, working_directory, environment);
     if (text_builtins.is_err()) return Err(rstd::move(text_builtins).unwrap_err());
     auto identity = environment_identity(
         builtin_environment->identity.as_str(), *includes, key.context_id.as_str());

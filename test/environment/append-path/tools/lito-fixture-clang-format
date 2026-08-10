@@ -1,0 +1,2 @@
+#!/bin/sh
+exec /nix/opt/llvm/22/bin/clang-format "$@"

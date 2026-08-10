@@ -2,6 +2,7 @@ export module lito.toolchain:clang_format;
 
 import rstd;
 import lito.model;
+import lito.environment;
 import :clang_format_options;
 import :command;
 
@@ -23,16 +24,19 @@ export namespace lito::toolchain
 
 class ClangFormat {
 public:
-    static auto create(ref<rstd::path::Path> formatter_path) -> Result<ClangFormat> {
-        auto canonical = command::resolve_tool(formatter_path, "clang-format"_str);
-        if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
-        auto path = rstd::move(canonical).unwrap();
+    static auto create(ref<rstd::path::Path>             formatter_path,
+                       ToolResolver&                     resolver,
+                       const ResolvedProcessEnvironment& environment) -> Result<ClangFormat> {
+        auto resolved = resolver.resolve(formatter_path, "clang-format"_str);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        auto path = rstd::move(resolved).unwrap().executable;
 
         auto arguments = Vec<String>::make();
         auto pushed    = command::push_path(arguments, path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command::push_option(arguments, clang_format_options::VERSION);
-        auto version = command::tool_output(rstd::move(arguments), "clang-format --version"_str);
+        auto version =
+            command::tool_output(rstd::move(arguments), "clang-format --version"_str, environment);
         if (version.is_err()) return Err(rstd::move(version).unwrap_err());
         if (! version->as_str().contains("clang-format version"_str)) {
             return clang_format_failure<ClangFormat>(
@@ -42,6 +46,7 @@ public:
         return Ok(ClangFormat {
             rstd::move(path),
             rstd::move(version).unwrap(),
+            rstd::addressof(environment),
         });
     }
 
@@ -55,17 +60,19 @@ public:
         command::push_option(arguments, clang_format_options::IN_PLACE);
         pushed = command::push_path(arguments, source);
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        auto output = command::tool_output(rstd::move(arguments), "clang-format"_str);
+        auto output =
+            command::tool_output(rstd::move(arguments), "clang-format"_str, *environment_);
         if (output.is_err()) return Err(rstd::move(output).unwrap_err());
         return Ok(empty {});
     }
 
 private:
-    ClangFormat(PathBuf path, String version)
-        : path_(rstd::move(path)), version_(rstd::move(version)) {}
+    ClangFormat(PathBuf path, String version, const ResolvedProcessEnvironment* environment)
+        : path_(rstd::move(path)), version_(rstd::move(version)), environment_(environment) {}
 
-    PathBuf path_;
-    String  version_;
+    PathBuf                           path_;
+    String                            version_;
+    const ResolvedProcessEnvironment* environment_ {};
 };
 
 } // namespace lito::toolchain

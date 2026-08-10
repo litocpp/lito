@@ -12,6 +12,7 @@ import lito.build_layout;
 import lito.frontend;
 import lito.frontend_analysis;
 import lito.frontend_observer;
+import lito.environment;
 import lito.compile_test;
 import lito.compile_executor;
 import lito.profiling;
@@ -75,11 +76,15 @@ auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<Resolve
 export namespace lito
 {
 
-auto build(const BuildRequest& request) -> Result<BuildSummary> {
+auto build_with_environment(const BuildRequest&               request,
+                            const ResolvedProcessEnvironment& process_environment)
+    -> Result<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
-    auto created_toolchain = ClangToolchain::create(request.configuration.toolchain);
+    auto tool_resolver = ToolResolver(process_environment);
+    auto created_toolchain =
+        ClangToolchain::create(request.configuration.toolchain, tool_resolver, process_environment);
     if (created_toolchain.is_err()) {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
@@ -90,6 +95,8 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
                                               request.pkg_config,
                                               request.cmake,
                                               toolchain,
+                                              tool_resolver,
+                                              process_environment,
                                               request.locked,
                                               request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
@@ -480,6 +487,12 @@ auto build(const BuildRequest& request) -> Result<BuildSummary> {
         .build_timing      = rstd::move(build_timing),
         .compile_tests     = rstd::move(compile_tests),
     });
+}
+
+auto build(const BuildRequest& request) -> Result<BuildSummary> {
+    auto environment = ResolvedProcessEnvironment::resolve(request.environment);
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    return build_with_environment(request, *environment);
 }
 
 } // namespace lito

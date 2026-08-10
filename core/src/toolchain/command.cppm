@@ -3,6 +3,7 @@ export module lito.toolchain:command;
 import rstd;
 import lito.model;
 import lito.process;
+import lito.environment;
 
 using namespace rstd::prelude;
 
@@ -25,8 +26,7 @@ auto is_searchable_tool_name(ref<rstd::path::Path> path) -> bool {
     return first.is_some() && first->is_normal() && components.next().is_none();
 }
 
-auto resolve_tool(ref<rstd::path::Path> path, ref<str> name) -> Result<PathBuf> {
-    if (is_searchable_tool_name(path)) return Ok(PathBuf::from(path));
+auto resolve_path(ref<rstd::path::Path> path, ref<str> name) -> Result<PathBuf> {
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
         return failure<PathBuf>(rstd::format(
@@ -58,8 +58,10 @@ auto push_option(Vec<String>& arguments, ref<str> option) -> void {
     arguments.push(String::make(option));
 }
 
-auto tool_output(Vec<String> arguments, ref<str> description) -> Result<String> {
-    auto output = run_command(arguments);
+auto tool_output(Vec<String>                       arguments,
+                 ref<str>                          description,
+                 const ResolvedProcessEnvironment& environment) -> Result<String> {
+    auto output = run_command(arguments, environment);
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {

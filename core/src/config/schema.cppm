@@ -39,8 +39,12 @@ auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
 }
 
 auto root_config_key(ref<str> key) -> bool {
-    return key == "toolchain"_str || key == "pkg-config"_str || key == "cmake"_str ||
-           key == "patch"_str;
+    return key == "environment"_str || key == "toolchain"_str || key == "pkg-config"_str ||
+           key == "cmake"_str || key == "patch"_str;
+}
+
+auto environment_config_key(ref<str> key) -> bool {
+    return key == "append-path"_str;
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
@@ -174,6 +178,22 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
     result.target_configured = config_member(**value, "executable"_str).is_some() ||
                                ! result.library_paths.is_empty() || result.sysroot.is_some();
     return Ok(rstd::move(result));
+}
+
+auto configured_environment(const Toml& document, ref<rstd::path::Path> project_root)
+    -> Result<ProcessEnvironmentSpec> {
+    auto value = config_member(document, "environment"_str);
+    if (value.is_none()) return Ok(ProcessEnvironmentSpec {});
+    auto table = config_table(**value, "config.environment"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.environment"_str, environment_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto append_path =
+        configured_directories(**value, "append-path"_str, "config.environment"_str, project_root);
+    if (append_path.is_err()) return Err(rstd::move(append_path).unwrap_err());
+    return Ok(ProcessEnvironmentSpec {
+        .append_path = rstd::move(append_path).unwrap(),
+    });
 }
 
 auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
@@ -325,8 +345,9 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
     }
     if (! *exists) {
         return Ok(ProjectConfig {
-            .root      = rstd::move(root),
-            .toolchain = default_toolchain(),
+            .root        = rstd::move(root),
+            .environment = ProcessEnvironmentSpec {},
+            .toolchain   = default_toolchain(),
             .pkg_config =
                 PkgConfigProviderConfig {
                     .executable = PathBuf::from("pkg-config"_str),
@@ -380,6 +401,8 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         };
     }
 
+    auto environment = configured_environment(document, root.as_path());
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
     auto sources = configured_sources(document, root.as_path());
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
@@ -388,11 +411,12 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
 
     return Ok(ProjectConfig {
-        .root       = rstd::move(root),
-        .toolchain  = rstd::move(toolchain),
-        .sources    = rstd::move(sources).unwrap(),
-        .pkg_config = rstd::move(pkg_config).unwrap(),
-        .cmake      = rstd::move(cmake).unwrap(),
+        .root        = rstd::move(root),
+        .environment = rstd::move(environment).unwrap(),
+        .toolchain   = rstd::move(toolchain),
+        .sources     = rstd::move(sources).unwrap(),
+        .pkg_config  = rstd::move(pkg_config).unwrap(),
+        .cmake       = rstd::move(cmake).unwrap(),
     });
 }
 

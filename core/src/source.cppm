@@ -8,6 +8,7 @@ import lito.model;
 import lito.storage;
 import lito.manifest;
 import lito.process;
+import lito.environment;
 import lito.workspace;
 
 using namespace rstd::prelude;
@@ -97,8 +98,10 @@ auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Result<emp
     return Ok(empty {});
 }
 
-auto git_output(Vec<String> arguments, ref<str> operation) -> Result<String> {
-    auto output = run_command(arguments);
+auto git_output(Vec<String>                       arguments,
+                ref<str>                          operation,
+                const ResolvedProcessEnvironment& environment) -> Result<String> {
+    auto output = run_command(arguments, environment);
     if (output.is_err()) {
         auto error = rstd::move(output).unwrap_err();
         return source_failure<String>(rstd::format("{}: {}", operation, error.message.as_str()));
@@ -113,8 +116,10 @@ auto git_output(Vec<String> arguments, ref<str> operation) -> Result<String> {
     return Ok(trim_ascii(rstd::move(value.standard_output)));
 }
 
-auto git_status(Vec<String> arguments, ref<str> operation) -> Result<empty> {
-    auto output = git_output(rstd::move(arguments), operation);
+auto git_status(Vec<String>                       arguments,
+                ref<str>                          operation,
+                const ResolvedProcessEnvironment& environment) -> Result<empty> {
+    auto output = git_output(rstd::move(arguments), operation, environment);
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     return Ok(empty {});
 }
@@ -167,11 +172,30 @@ struct AcquiredSource {
 };
 
 class SourceManager {
-    PathBuf                  graph_root_;
-    PackageResolutionOptions options_;
-    Vec<SourceEntry>         entries_;
-    IndexMap                 roots_ { IndexMap::make() };
-    IndexMap                 source_identities_ { IndexMap::make() };
+    PathBuf                           graph_root_;
+    PackageResolutionOptions          options_;
+    Vec<SourceEntry>                  entries_;
+    IndexMap                          roots_ { IndexMap::make() };
+    IndexMap                          source_identities_ { IndexMap::make() };
+    ToolResolver*                     resolver_ {};
+    const ResolvedProcessEnvironment* environment_ {};
+    Option<PathBuf>                   git_;
+
+    auto git_command() -> Result<Vec<String>> {
+        if (git_.is_none()) {
+            auto resolved =
+                resolver_->resolve(PathBuf::from("git"_str).as_path(), "Git executable"_str);
+            if (resolved.is_err()) {
+                auto error = rstd::move(resolved).unwrap_err();
+                return source_failure<Vec<String>>(rstd::move(error.message));
+            }
+            git_ = Some(rstd::move(resolved).unwrap().executable);
+        }
+        auto arguments = Vec<String>::make();
+        auto pushed    = push_path(arguments, git_->as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        return Ok(rstd::move(arguments));
+    }
 
     auto patched_path(ref<str> url) -> Result<Option<ref<rstd::path::Path>>> {
         auto matched = Option<ref<rstd::path::Path>> {};
@@ -212,25 +236,24 @@ class SourceManager {
                              rstd::move(exists).unwrap_err()));
         }
         if (! *exists) {
-            auto init = Vec<String>::make();
-            init.push(String::make("git"_str));
+            auto init = rstd_try(git_command());
             init.push(String::make("init"_str));
             init.push(String::make("--bare"_str));
             auto path = push_path(init, repository.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            auto initialized = git_status(rstd::move(init), "Git cache initialization"_str);
+            auto initialized =
+                git_status(rstd::move(init), "Git cache initialization"_str, *environment_);
             if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
         }
 
-        auto remote = Vec<String>::make();
-        remote.push(String::make("git"_str));
+        auto remote = rstd_try(git_command());
         remote.push(String::make("--git-dir"_str));
         auto path = push_path(remote, repository.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         remote.push(String::make("config"_str));
         remote.push(String::make("--get"_str));
         remote.push(String::make("remote.origin.url"_str));
-        auto inspected = run_command(remote);
+        auto inspected = run_command(remote, *environment_);
         if (inspected.is_err()) {
             auto error = rstd::move(inspected).unwrap_err();
             return source_failure<PathBuf>(
@@ -241,8 +264,7 @@ class SourceManager {
         if (inspection.exit_code == i32 {}) {
             configured = trim_ascii(rstd::move(inspection.standard_output));
         } else {
-            auto add = Vec<String>::make();
-            add.push(String::make("git"_str));
+            auto add = rstd_try(git_command());
             add.push(String::make("--git-dir"_str));
             path = push_path(add, repository.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -250,7 +272,8 @@ class SourceManager {
             add.push(String::make("add"_str));
             add.push(String::make("origin"_str));
             add.push(String::make(url));
-            auto added = git_status(rstd::move(add), "Git cache remote configuration"_str);
+            auto added =
+                git_status(rstd::move(add), "Git cache remote configuration"_str, *environment_);
             if (added.is_err()) return Err(rstd::move(added).unwrap_err());
             configured = String::make(url);
         }
@@ -262,15 +285,14 @@ class SourceManager {
     }
 
     auto object_exists(ref<rstd::path::Path> repository, ref<str> commit) -> Result<bool> {
-        auto arguments = Vec<String>::make();
-        arguments.push(String::make("git"_str));
+        auto arguments = rstd_try(git_command());
         arguments.push(String::make("--git-dir"_str));
         auto path = push_path(arguments, repository);
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         arguments.push(String::make("cat-file"_str));
         arguments.push(String::make("-e"_str));
         arguments.push(rstd::format("{}^{{commit}}", commit));
-        auto output = run_command(arguments);
+        auto output = run_command(arguments, *environment_);
         if (output.is_err()) {
             auto error = rstd::move(output).unwrap_err();
             return source_failure<bool>(
@@ -280,8 +302,7 @@ class SourceManager {
     }
 
     auto fetch(ref<rstd::path::Path> repository, ref<str> revision) -> Result<empty> {
-        auto arguments = Vec<String>::make();
-        arguments.push(String::make("git"_str));
+        auto arguments = rstd_try(git_command());
         arguments.push(String::make("--git-dir"_str));
         auto path = push_path(arguments, repository);
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -290,19 +311,19 @@ class SourceManager {
         arguments.push(String::make("--no-tags"_str));
         arguments.push(String::make("origin"_str));
         arguments.push(String::make(revision));
-        return git_status(rstd::move(arguments), "Git source fetch"_str);
+        return git_status(rstd::move(arguments), "Git source fetch"_str, *environment_);
     }
 
     auto rev_parse(ref<rstd::path::Path> repository, ref<str> revision) -> Result<String> {
-        auto arguments = Vec<String>::make();
-        arguments.push(String::make("git"_str));
+        auto arguments = rstd_try(git_command());
         arguments.push(String::make("--git-dir"_str));
         auto path = push_path(arguments, repository);
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         arguments.push(String::make("rev-parse"_str));
         arguments.push(String::make("--verify"_str));
         arguments.push(rstd::format("{}^{{commit}}", revision));
-        auto commit = git_output(rstd::move(arguments), "Git source revision resolution"_str);
+        auto commit =
+            git_output(rstd::move(arguments), "Git source revision resolution"_str, *environment_);
         if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
         if (commit->len() != usize(40)) {
             return source_failure<String>(rstd::format(
@@ -355,15 +376,15 @@ class SourceManager {
                                                         rstd::move(exists).unwrap_err()));
         }
         if (*exists) {
-            auto arguments = Vec<String>::make();
-            arguments.push(String::make("git"_str));
+            auto arguments = rstd_try(git_command());
             arguments.push(String::make("-C"_str));
             auto path = push_path(arguments, checkout.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
             arguments.push(String::make("rev-parse"_str));
             arguments.push(String::make("--verify"_str));
             arguments.push(String::make("HEAD"_str));
-            auto current = git_output(rstd::move(arguments), "Git checkout inspection"_str);
+            auto current =
+                git_output(rstd::move(arguments), "Git checkout inspection"_str, *environment_);
             if (current.is_ok() && current->as_str() == commit) {
                 return Ok(rstd::move(checkout));
             }
@@ -375,8 +396,7 @@ class SourceManager {
             }
         }
 
-        auto clone = Vec<String>::make();
-        clone.push(String::make("git"_str));
+        auto clone = rstd_try(git_command());
         clone.push(String::make("clone"_str));
         clone.push(String::make("--no-checkout"_str));
         clone.push(String::make("--shared"_str));
@@ -384,18 +404,18 @@ class SourceManager {
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         path = push_path(clone, checkout.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        auto cloned = git_status(rstd::move(clone), "Git source checkout creation"_str);
+        auto cloned =
+            git_status(rstd::move(clone), "Git source checkout creation"_str, *environment_);
         if (cloned.is_err()) return Err(rstd::move(cloned).unwrap_err());
 
-        auto detach = Vec<String>::make();
-        detach.push(String::make("git"_str));
+        auto detach = rstd_try(git_command());
         detach.push(String::make("-C"_str));
         path = push_path(detach, checkout.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         detach.push(String::make("checkout"_str));
         detach.push(String::make("--detach"_str));
         detach.push(String::make(commit));
-        auto checked_out = git_status(rstd::move(detach), "Git source checkout"_str);
+        auto checked_out = git_status(rstd::move(detach), "Git source checkout"_str, *environment_);
         if (checked_out.is_err()) return Err(rstd::move(checked_out).unwrap_err());
         return Ok(rstd::move(checkout));
     }
@@ -594,8 +614,14 @@ class SourceManager {
     }
 
 public:
-    explicit SourceManager(ref<rstd::path::Path> graph_root, PackageResolutionOptions options)
-        : graph_root_(PathBuf::from(graph_root)), options_(rstd::move(options)) {}
+    explicit SourceManager(ref<rstd::path::Path>             graph_root,
+                           PackageResolutionOptions          options,
+                           ToolResolver&                     resolver,
+                           const ResolvedProcessEnvironment& environment)
+        : graph_root_(PathBuf::from(graph_root)),
+          options_(rstd::move(options)),
+          resolver_(rstd::addressof(resolver)),
+          environment_(rstd::addressof(environment)) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<usize> {
         return acquire_path(root, true);

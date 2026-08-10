@@ -4,6 +4,7 @@ import rstd;
 import lito.model;
 import lito.manifest;
 import lito.package;
+import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -80,12 +81,15 @@ auto selected_closure(const ResolvedPackageGraph& graph,
 export namespace lito
 {
 
-auto resolve_package_selection(const PackageSelection&  selection,
-                               PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
-                               PackageResolutionOptions options = {},
-                               const TargetInfo*        target  = nullptr)
+auto resolve_package_selection_with_environment(const PackageSelection&           selection,
+                                                PackageSelectionPurpose           purpose,
+                                                PackageResolutionOptions          options,
+                                                const TargetInfo*                 target,
+                                                ToolResolver&                     tool_resolver,
+                                                const ResolvedProcessEnvironment& environment)
     -> Result<ResolvedPackageSelection> {
-    auto resolved = resolve_package_graph(selection.root.as_path(), rstd::move(options));
+    auto resolved = resolve_package_graph_with_environment(
+        selection.root.as_path(), rstd::move(options), tool_resolver, environment);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph = rstd::move(resolved).unwrap();
     if (! graph.root_is_workspace && ! selection.packages.is_empty()) {
@@ -172,6 +176,18 @@ auto resolve_package_selection(const PackageSelection&  selection,
         .selected_root_names    = rstd::move(selected_roots),
         .selected_package_names = rstd::move(selected_packages).unwrap(),
     });
+}
+
+auto resolve_package_selection(const PackageSelection&  selection,
+                               PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
+                               PackageResolutionOptions options = {},
+                               const TargetInfo*        target  = nullptr)
+    -> Result<ResolvedPackageSelection> {
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto resolver = ToolResolver(*environment);
+    return resolve_package_selection_with_environment(
+        selection, purpose, rstd::move(options), target, resolver, *environment);
 }
 
 } // namespace lito

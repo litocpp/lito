@@ -4,6 +4,7 @@ export import lito.cpp;
 export import lito.compiler.arguments;
 export import lito.bmi;
 export import lito.model;
+export import lito.environment;
 export import lito.dependency;
 export import lito.build_profile;
 export import lito.profiling;

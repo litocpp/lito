@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.model;
 import lito.process;
+import lito.environment;
 import lito.storage;
 
 using namespace rstd::prelude;
@@ -177,10 +178,11 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     });
 }
 
-auto run_cmake(Vec<String>                   arguments,
-               ref<str>                      operation,
-               Option<ref<rstd::path::Path>> working_directory = None()) -> Result<empty> {
-    auto output = run_command(arguments, working_directory);
+auto run_cmake(Vec<String>                       arguments,
+               ref<str>                          operation,
+               const ResolvedProcessEnvironment& environment,
+               Option<ref<rstd::path::Path>>     working_directory = None()) -> Result<empty> {
+    auto output = run_command(arguments, environment, working_directory);
     if (output.is_err()) {
         return cmake_failure<empty>(rstd::format("{} could not execute: {}",
                                                  operation,
@@ -245,7 +247,8 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
                            const CMakeProviderConfig&                provider,
                            const BuildConfiguration&                 configuration,
                            const ProfileSpec&                        profile,
-                           const CMakeWorkArea&                      area) -> Result<empty> {
+                           const CMakeWorkArea&                      area,
+                           const ResolvedProcessEnvironment&         environment) -> Result<empty> {
     if (requirement.integration == CMakeIntegration::BuildTree ||
         requirement.source.is_Installed()) {
         return Ok(empty {});
@@ -292,7 +295,8 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     }
     rstd_try(run_cmake(
         rstd::move(arguments),
-        rstd::format("CMake dependency '{}' configure", requirement.package.as_str()).as_str()));
+        rstd::format("CMake dependency '{}' configure", requirement.package.as_str()).as_str(),
+        environment));
 
     arguments  = Vec<String>::make();
     executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -306,7 +310,8 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     arguments.push(String::make(build_type));
     rstd_try(run_cmake(
         rstd::move(arguments),
-        rstd::format("CMake dependency '{}' build", requirement.package.as_str()).as_str()));
+        rstd::format("CMake dependency '{}' build", requirement.package.as_str()).as_str(),
+        environment));
 
     arguments  = Vec<String>::make();
     executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -320,7 +325,8 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     arguments.push(String::make(build_type));
     rstd_try(run_cmake(
         rstd::move(arguments),
-        rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str()));
+        rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str(),
+        environment));
     auto marked = rstd::fs::write_atomic(marker.as_path(), ("installed\n"_str).as_bytes());
     if (marked.is_err()) {
         return cmake_failure<empty>(rstd::format("cannot write CMake install marker '{}': {}",
@@ -472,7 +478,8 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                      const CMakeProviderConfig&                provider,
                      const BuildConfiguration&                 configuration,
                      const ProfileSpec&                        profile,
-                     const CMakeWorkArea&                      area) -> Result<empty> {
+                     const CMakeWorkArea&                      area,
+                     const ResolvedProcessEnvironment&         environment) -> Result<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -519,14 +526,16 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
     }
     return run_cmake(
         rstd::move(arguments),
-        rstd::format("CMake package '{}' query", requirement.package.as_str()).as_str());
+        rstd::format("CMake package '{}' query", requirement.package.as_str()).as_str(),
+        environment);
 }
 
 auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
                  const CMakeProviderConfig&                provider,
                  const BuildConfiguration&                 configuration,
                  const ProfileSpec&,
-                 const CMakeWorkArea& area) -> Result<empty> {
+                 const CMakeWorkArea&              area,
+                 const ResolvedProcessEnvironment& environment) -> Result<empty> {
     if (requirement.integration != CMakeIntegration::BuildTree) return Ok(empty {});
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -543,8 +552,8 @@ auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
         String::make(configuration.profile == BuildProfile::Debug ? "Debug"_str : "Release"_str));
     return run_cmake(
         rstd::move(arguments),
-        rstd::format("CMake build-tree dependency '{}' build", requirement.alias.as_str())
-            .as_str());
+        rstd::format("CMake build-tree dependency '{}' build", requirement.alias.as_str()).as_str(),
+        environment);
 }
 
 auto read_json(ref<rstd::path::Path> path, ref<str> context) -> Result<Json> {
@@ -925,7 +934,8 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
                               const ProfileSpec&                        profile,
                               const TargetInfo&                         default_target,
                               ref<str>                                  effective_target,
-                              const CppArgumentParser&                  parser)
+                              const CppArgumentParser&                  parser,
+                              const ResolvedProcessEnvironment&         environment)
     -> Result<ResolvedExternalDependency> {
     if (effective_target != default_target.triple.as_str()) {
         return cmake_failure<ResolvedExternalDependency>(rstd::format(
@@ -959,9 +969,10 @@ auto resolve_cmake_dependency(const ResolvedCMakeDependencyRequirement& requirem
                          rstd::move(locked).unwrap_err()));
     }
     rstd_try(write_probe_files(requirement, *area));
-    rstd_try(configure_and_install(requirement, provider, configuration, profile, *area));
-    rstd_try(configure_probe(requirement, provider, configuration, profile, *area));
-    rstd_try(build_probe(requirement, provider, configuration, profile, *area));
+    rstd_try(
+        configure_and_install(requirement, provider, configuration, profile, *area, environment));
+    rstd_try(configure_probe(requirement, provider, configuration, profile, *area, environment));
+    rstd_try(build_probe(requirement, provider, configuration, profile, *area, environment));
     auto snapshots = rstd_try(read_probe_snapshots(*area, requirement));
     auto version_path =
         area->query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());
