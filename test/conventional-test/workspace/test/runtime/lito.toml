@@ -1,6 +1,5 @@
 [package]
 name = "fixture-conventional-workspace-test"
-version.workspace = true
 
 [test]
 name = "fixture-conventional-workspace-test"

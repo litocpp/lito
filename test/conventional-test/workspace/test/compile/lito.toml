@@ -1,6 +1,5 @@
 [package]
 name = "fixture-conventional-workspace-compile-test"
-version.workspace = true
 
 [compile-test]
 

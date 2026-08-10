@@ -21,6 +21,7 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/git/url-fragment"_str,
     "manifest/package-name-dot"_str,
     "manifest/package-name-empty"_str,
+    "manifest/package-version-missing"_str,
     "manifest/profile/nested"_str,
     "manifest/profile/type"_str,
     "manifest/source-root-descendant"_str,
@@ -1241,6 +1242,7 @@ TEST(Contracts, ProjectNameComesFromRootManifest) {
 
 TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
     auto directory = root("conventional-test/package"_str);
+    EXPECT_TRUE(locked_graph_is_current("conventional-test/package"_str));
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(2));
@@ -1250,6 +1252,11 @@ TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
     ASSERT_TRUE(test.is_some());
     EXPECT_EQ(*primary, lito::ProjectRootRole::PrimaryPackage);
     EXPECT_EQ(*test, lito::ProjectRootRole::AssociatedTest);
+    for (const auto& package : graph->packages) {
+        if (package.manifest.name.as_str() != "fixture-conventional-test"_str) continue;
+        EXPECT_EQ(package.manifest.version.source, lito::PackageVersionSource::Unspecified);
+        EXPECT_TRUE(package.manifest.version.value.is_none());
+    }
 
     auto production = lito::resolve_package_selection(
         lito::PackageSelection { .root = directory.clone() },
@@ -1298,6 +1305,7 @@ TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
 
 TEST(Contracts, WorkspaceDiscoversAssociatedTestWorkspace) {
     auto directory = root("conventional-test/workspace"_str);
+    EXPECT_TRUE(locked_graph_is_current("conventional-test/workspace"_str));
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(3));

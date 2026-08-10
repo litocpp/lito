@@ -230,7 +230,7 @@ auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
         }
         if (! tests.workspace_ && manifest.version.source == PackageVersionSource::Workspace) {
             return catalog_failure<empty>(rstd::format(
-                "associated test package '{}' at '{}' must declare an explicit version",
+                "associated test package '{}' at '{}' cannot inherit a workspace version",
                 manifest.name.as_str(),
                 manifest.manifest_path.as_path()));
         }

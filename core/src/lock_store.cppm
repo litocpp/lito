@@ -92,8 +92,10 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
         item.insert(String::make("manifest"_str), string_json(manifest->as_str()));
         item.insert(String::make("name"_str), string_json(package.manifest.name.as_str()));
         item.insert(String::make("source"_str), string_json(package.source_identity.as_str()));
-        item.insert(String::make("version"_str),
-                    string_json(package.manifest.version.value->as_str()));
+        if (package.manifest.version.value.is_some()) {
+            item.insert(String::make("version"_str),
+                        string_json(package.manifest.version.value->as_str()));
+        }
         packages.push(Json::Object(rstd::move(item)));
     }
 
@@ -286,15 +288,11 @@ auto validate_lock(const Json& document) -> Result<empty> {
     for (const auto& package : **packages) {
         auto package_known = reject_unknown(package, "lock package"_str, package_key);
         if (package_known.is_err()) return package_known;
-        auto name            = required_string(package, "name"_str, "lock package"_str);
-        auto package_version = required_string(package, "version"_str, "lock package"_str);
-        auto source          = required_string(package, "source"_str, "lock package"_str);
-        auto manifest        = required_string(package, "manifest"_str, "lock package"_str);
-        auto dependencies    = required_member(package, "dependencies"_str, "lock package"_str);
+        auto name         = required_string(package, "name"_str, "lock package"_str);
+        auto source       = required_string(package, "source"_str, "lock package"_str);
+        auto manifest     = required_string(package, "manifest"_str, "lock package"_str);
+        auto dependencies = required_member(package, "dependencies"_str, "lock package"_str);
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
-        if (package_version.is_err()) {
-            return Err(rstd::move(package_version).unwrap_err());
-        }
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
         if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
         if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
@@ -304,9 +302,17 @@ auto validate_lock(const Json& document) -> Result<empty> {
         if (names.contains_key(*name)) {
             return failure<empty>(rstd::format("lock repeats package name '{}'", *name));
         }
-        if (package_version->is_empty()) {
-            return failure<empty>(
-                rstd::format("lock package '{}' version must not be empty", *name));
+        auto package_version = package.get("version"_str);
+        if (package_version.is_some()) {
+            auto value = (**package_version).as_str();
+            if (value.is_none()) {
+                return failure<empty>(
+                    rstd::format("lock package '{}' version must be a string", *name));
+            }
+            if (value->is_empty()) {
+                return failure<empty>(
+                    rstd::format("lock package '{}' version must not be empty", *name));
+            }
         }
         if (! source_identities.contains_key(*source)) {
             return failure<empty>(

@@ -18,7 +18,7 @@ auto failure(String message) -> Result<T> {
 }
 
 struct PackageCoordinate {
-    String  version;
+    Option<String> version;
     String  source_identity;
     PathBuf manifest;
 };
@@ -26,12 +26,19 @@ struct PackageCoordinate {
 using CoordinateMap = rstd::collections::BTreeMap<String, PackageCoordinate>;
 
 auto package_coordinate(const SelectedSourcePackage& selected) -> Result<PackageCoordinate> {
-    if (selected.package.version.value.is_none()) {
+    if (selected.package.version.source == PackageVersionSource::Workspace &&
+        selected.package.version.value.is_none()) {
         return failure<PackageCoordinate>(rstd::format(
             "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
     }
+    if (selected.package.version.value.is_none() &&
+        selected.package.artifact_kind != ArtifactKind::TestExecutable &&
+        selected.package.artifact_kind != ArtifactKind::CompileTest) {
+        return failure<PackageCoordinate>(rstd::format(
+            "package '{}' has no version", selected.package.name.as_str()));
+    }
     return Ok(PackageCoordinate {
-        .version         = selected.package.version.value->clone(),
+        .version         = selected.package.version.value.clone(),
         .source_identity = selected.source_identity.clone(),
         .manifest        = selected.manifest.clone(),
     });
@@ -40,15 +47,19 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
 auto package_conflict(ref<str>                 name,
                       const PackageCoordinate& existing,
                       const PackageCoordinate& candidate) -> Error {
+    auto existing_version =
+        existing.version.is_some() ? existing.version->as_str() : "<none>"_str;
+    auto candidate_version =
+        candidate.version.is_some() ? candidate.version->as_str() : "<none>"_str;
     return Error::make(
         ErrorKind::Dependency,
         rstd::format("package conflict for '{}': version '{}' at '{}' from source '{}' conflicts "
                      "with version '{}' at '{}' from source '{}'",
                      name,
-                     existing.version.as_str(),
+                     existing_version,
                      existing.manifest.as_path(),
                      existing.source_identity.as_str(),
-                     candidate.version.as_str(),
+                     candidate_version,
                      candidate.manifest.as_path(),
                      candidate.source_identity.as_str()));
 }

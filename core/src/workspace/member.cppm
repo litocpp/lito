@@ -48,7 +48,7 @@ auto workspace_member_directory(const WorkspaceManifest& workspace,
 
 auto resolve_workspace_member_version(PackageManifest& manifest, const WorkspaceManifest& workspace)
     -> Result<empty> {
-    if (manifest.version.value.is_some()) {
+    if (manifest.version.source != PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
     if (workspace.package.version.is_none()) {
@@ -210,7 +210,7 @@ auto resolve_workspace_member(PackageManifest& manifest, const WorkspaceManifest
 }
 
 auto resolve_containing_workspace_version(PackageManifest& manifest) -> Result<empty> {
-    if (manifest.version.value.is_some()) {
+    if (manifest.version.source != PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
 

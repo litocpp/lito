@@ -257,9 +257,14 @@ auto workspace_package_key(ref<str> key) -> bool {
     return key == "version"_str;
 }
 
-auto parse_package_version(const Toml& package) -> Result<PackageVersion> {
+auto parse_package_version(const Toml& package, ArtifactKind artifact_kind)
+    -> Result<PackageVersion> {
     auto declared = member(package, "version"_str);
     if (declared.is_none()) {
+        if (artifact_kind == ArtifactKind::TestExecutable ||
+            artifact_kind == ArtifactKind::CompileTest) {
+            return Ok(PackageVersion {});
+        }
         return failure<PackageVersion>("package is missing 'version'"_str);
     }
 
@@ -1707,7 +1712,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
 
     const auto& package_value = **member(document, "package"_str);
     auto        name          = required_string(package_value, "name"_str, "package"_str);
-    auto        version       = parse_package_version(package_value);
+    auto        version       = parse_package_version(package_value, artifact_kind);
     auto        root_module   = optional_string(package_value, "module"_str, "package"_str);
     if (name.is_err()) return Err(rstd::move(name).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());

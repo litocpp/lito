@@ -221,12 +221,13 @@ enum class ProjectRootRole
 
 enum class PackageVersionSource
 {
+    Unspecified,
     Explicit,
     Workspace,
 };
 
 struct PackageVersion {
-    PackageVersionSource source { PackageVersionSource::Explicit };
+    PackageVersionSource source { PackageVersionSource::Unspecified };
     Option<String>       value;
 };
 

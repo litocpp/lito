@@ -1,6 +1,5 @@
 [package]
 name = "lito-test"
-version.workspace = true
 module = "lito.test"
 
 [test]
