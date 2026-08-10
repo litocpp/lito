@@ -294,6 +294,7 @@ struct PackageVersion {
 
 struct ToolchainSpec {
     PathBuf compiler;
+    PathBuf linker { PathBuf::from("ld.lld"_str) };
     PathBuf archiver;
     PathBuf formatter;
     PathBuf stripper;
@@ -301,6 +302,7 @@ struct ToolchainSpec {
     auto clone() const -> ToolchainSpec {
         return ToolchainSpec {
             .compiler  = compiler.clone(),
+            .linker    = linker.clone(),
             .archiver  = archiver.clone(),
             .formatter = formatter.clone(),
             .stripper  = stripper.clone(),

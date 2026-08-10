@@ -467,6 +467,16 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));
 }
 
+TEST(ClangContract, RejectsNonLldLinkers) {
+    auto created = ClangToolchain::create(ToolchainSpec {
+        .compiler = PathBuf::from("clang++"_str),
+        .linker   = PathBuf::from("ld"_str),
+        .archiver = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_err());
+    EXPECT_TRUE(created.unwrap_err().message.as_str().contains("not LLD"_str));
+}
+
 TEST(ClangContract, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     auto created = ClangToolchain::create(ToolchainSpec {
         .compiler = PathBuf::from("clang++"_str),

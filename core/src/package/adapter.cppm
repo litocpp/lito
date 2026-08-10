@@ -62,7 +62,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                                   const ResolvedProcessEnvironment& environment)
     -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
-        configuration.toolchain.compiler.is_empty() ||
+        configuration.toolchain.compiler.is_empty() || configuration.toolchain.linker.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
@@ -286,6 +286,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
         .toolchain =
             ToolchainSpec {
                 .compiler  = configuration.toolchain.compiler.clone(),
+                .linker    = configuration.toolchain.linker.clone(),
                 .archiver  = configuration.toolchain.archiver.clone(),
                 .formatter = configuration.toolchain.formatter.clone(),
                 .stripper  = configuration.toolchain.stripper.clone(),

@@ -117,10 +117,13 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
     auto archiver = path_text(build.toolchain.archiver.as_path(), "archiver"_str);
     if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
+    auto linker = path_text(build.toolchain.linker.as_path(), "LLD linker"_str);
+    if (linker.is_err()) return Err(rstd::move(linker).unwrap_err());
     append_identity(recipe, executable->as_str());
     append_identity(recipe, provider.generator.as_str());
     rstd_try(append_search_path_identity(recipe, provider));
     append_identity(recipe, compiler->as_str());
+    append_identity(recipe, linker->as_str());
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
     append_identity(recipe, cmake_build_type(profile));
@@ -221,6 +224,26 @@ auto push_path_argument(Vec<String>&          arguments,
     return Ok(empty {});
 }
 
+auto push_cmake_toolchain(Vec<String>& arguments, const BuildConfiguration& configuration)
+    -> Result<empty> {
+    rstd_try(push_path_argument(arguments,
+                                "-DCMAKE_CXX_COMPILER="_str,
+                                configuration.toolchain.compiler.as_path(),
+                                "C++ compiler"_str));
+    rstd_try(push_path_argument(arguments,
+                                "-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld="_str,
+                                configuration.toolchain.linker.as_path(),
+                                "LLD linker"_str));
+    rstd_try(push_path_argument(arguments,
+                                "-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld="_str,
+                                configuration.toolchain.linker.as_path(),
+                                "LLD linker"_str));
+    arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_lld"_str));
+    rstd_try(push_path_argument(
+        arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
+    return Ok(empty {});
+}
+
 auto push_cmake_search_path(Vec<String>& arguments, const CMakeProviderConfig& provider)
     -> Result<empty> {
     if (provider.search_paths.is_empty()) return Ok(empty {});
@@ -291,12 +314,7 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
     rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_CXX_COMPILER="_str,
-                                configuration.toolchain.compiler.as_path(),
-                                "C++ compiler"_str));
-    rstd_try(push_path_argument(
-        arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
+    rstd_try(push_cmake_toolchain(arguments, configuration));
     auto build_type = cmake_build_type(profile);
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
@@ -351,7 +369,7 @@ auto configure_and_install(const ResolvedCMakeDependencyRequirement& requirement
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
     -> Result<String> {
-    auto result = String::make("cmake_minimum_required(VERSION 3.28)\n"
+    auto result = String::make("cmake_minimum_required(VERSION 3.29)\n"
                                "project(lito_cmake_probe LANGUAGES CXX)\n"
                                "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"_str);
     if (requirement.integration == CMakeIntegration::BuildTree) {
@@ -508,12 +526,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_CXX_COMPILER="_str,
-                                configuration.toolchain.compiler.as_path(),
-                                "C++ compiler"_str));
-    rstd_try(push_path_argument(
-        arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
+    rstd_try(push_cmake_toolchain(arguments, configuration));
     auto build_type = cmake_build_type(profile);
     arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",

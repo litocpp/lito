@@ -228,6 +228,7 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
 auto default_toolchain() -> ToolchainSpec {
     return ToolchainSpec {
         .compiler  = PathBuf::from("clang++"_str),
+        .linker    = PathBuf::from("ld.lld"_str),
         .archiver  = PathBuf::from("llvm-ar"_str),
         .formatter = PathBuf::from("clang-format"_str),
         .stripper  = PathBuf::from("llvm-strip"_str),
@@ -401,6 +402,7 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         if (stripper.is_err()) return Err(rstd::move(stripper).unwrap_err());
         toolchain = ToolchainSpec {
             .compiler  = rstd::move(compiler).unwrap(),
+            .linker    = PathBuf::from("ld.lld"_str),
             .archiver  = rstd::move(archiver).unwrap(),
             .formatter = rstd::move(formatter).unwrap(),
             .stripper  = rstd::move(stripper).unwrap(),

@@ -41,12 +41,23 @@ auto build_profile(ref<str> name) -> lito::BuildProfileName {
 }
 
 auto configuration(lito::BuildProfileName profile = {}) -> lito::BuildConfiguration {
+    auto environment =
+        lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {}).unwrap();
+    auto resolver = lito::ToolResolver(environment);
+    auto compiler =
+        resolver.resolve(PathBuf::from("clang++"_str).as_path(), "clang++"_str).unwrap().executable;
+    auto linker = resolver.resolve(PathBuf::from("ld.lld"_str).as_path(), "LLD linker"_str)
+                      .unwrap()
+                      .executable;
+    auto archiver =
+        resolver.resolve(PathBuf::from("llvm-ar"_str).as_path(), "llvm-ar"_str).unwrap().executable;
     return lito::BuildConfiguration {
         .profile = rstd::move(profile),
         .toolchain =
             lito::ToolchainSpec {
-                .compiler  = PathBuf::from("clang++"_str),
-                .archiver  = PathBuf::from("llvm-ar"_str),
+                .compiler  = rstd::move(compiler),
+                .linker    = rstd::move(linker),
+                .archiver  = rstd::move(archiver),
                 .formatter = PathBuf::from("clang-format"_str),
                 .stripper  = PathBuf::from("llvm-strip"_str),
             },
