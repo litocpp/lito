@@ -29,7 +29,8 @@ auto event_name(lito::BuildEventKind kind) -> ref<str> {
 
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
-    if (! context.verbose && event.kind != lito::BuildEventKind::Compile &&
+    if (! context.verbose && event.kind != lito::BuildEventKind::Scan &&
+        event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link) {
         return;
     }
