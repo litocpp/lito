@@ -394,11 +394,16 @@ public:
         }
         auto configured_compiler =
             resolver.resolve(specification.compiler.as_path(), "clang++"_str);
+        auto configured_c_compiler =
+            resolver.resolve(specification.c_compiler.as_path(), "clang"_str);
         auto configured_linker = resolver.resolve(specification.linker.as_path(), "LLD linker"_str);
         auto configured_archiver =
             resolver.resolve(specification.archiver.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::move(configured_compiler).unwrap_err());
+        }
+        if (configured_c_compiler.is_err()) {
+            return Err(rstd::move(configured_c_compiler).unwrap_err());
         }
         if (configured_linker.is_err()) {
             return Err(rstd::move(configured_linker).unwrap_err());
@@ -406,18 +411,23 @@ public:
         if (configured_archiver.is_err()) {
             return Err(rstd::move(configured_archiver).unwrap_err());
         }
-        auto compiler_path = rstd::move(configured_compiler).unwrap().executable;
-        auto linker_path   = rstd::move(configured_linker).unwrap().executable;
-        auto archiver_path = rstd::move(configured_archiver).unwrap().executable;
+        auto compiler_path   = rstd::move(configured_compiler).unwrap().executable;
+        auto c_compiler_path = rstd::move(configured_c_compiler).unwrap().executable;
+        auto linker_path     = rstd::move(configured_linker).unwrap().executable;
+        auto archiver_path   = rstd::move(configured_archiver).unwrap().executable;
 
-        auto compiler_command = Vec<String>::make();
-        auto linker_command   = Vec<String>::make();
-        auto target_command   = Vec<String>::make();
-        auto resource_command = Vec<String>::make();
-        auto help_command     = Vec<String>::make();
+        auto compiler_command   = Vec<String>::make();
+        auto c_compiler_command = Vec<String>::make();
+        auto linker_command     = Vec<String>::make();
+        auto target_command     = Vec<String>::make();
+        auto resource_command   = Vec<String>::make();
+        auto help_command       = Vec<String>::make();
         auto pushed = toolchain::command::push_path(compiler_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(compiler_command, toolchain::clang_options::VERSION);
+        pushed = toolchain::command::push_path(c_compiler_command, c_compiler_path.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(c_compiler_command, toolchain::clang_options::VERSION);
         pushed = toolchain::command::push_path(linker_command, linker_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(linker_command, toolchain::clang_options::VERSION);
@@ -435,6 +445,8 @@ public:
 
         auto compiler_version = toolchain::command::tool_output(
             rstd::move(compiler_command), "clang++ --version"_str, environment);
+        auto c_compiler_version = toolchain::command::tool_output(
+            rstd::move(c_compiler_command), "clang --version"_str, environment);
         auto linker_version = toolchain::command::tool_output(
             rstd::move(linker_command), "LLD --version"_str, environment);
         auto target = toolchain::command::tool_output(
@@ -444,12 +456,18 @@ public:
         auto help = toolchain::command::tool_output(
             rstd::move(help_command), "clang++ help query"_str, environment);
         if (compiler_version.is_err()) return Err(rstd::move(compiler_version).unwrap_err());
+        if (c_compiler_version.is_err()) {
+            return Err(rstd::move(c_compiler_version).unwrap_err());
+        }
         if (linker_version.is_err()) return Err(rstd::move(linker_version).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
         if (! compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured compiler is not clang++"_str);
+        }
+        if (! c_compiler_version->as_str().contains("clang version"_str)) {
+            return failure<ClangToolchain>("configured C compiler is not clang"_str);
         }
         if (! linker_version->as_str().contains("LLD"_str)) {
             return failure<ClangToolchain>("configured linker is not LLD"_str);
@@ -526,6 +544,7 @@ public:
         };
 
         return Ok(ClangToolchain { rstd::move(compiler_path),
+                                   rstd::move(c_compiler_path),
                                    rstd::move(linker_path),
                                    rstd::move(archiver_path),
                                    rstd::move(resolved_resource),
@@ -539,6 +558,7 @@ public:
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
     auto compiler_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
+    auto c_compiler_path() const -> ref<rstd::path::Path> { return c_compiler_.as_path(); }
     auto linker_path() const -> ref<rstd::path::Path> { return linker_.as_path(); }
     auto archiver_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
@@ -949,6 +969,7 @@ public:
 
 private:
     ClangToolchain(PathBuf                    compiler,
+                   PathBuf                    c_compiler,
                    PathBuf                    linker,
                    PathBuf                    archiver,
                    PathBuf                    resource_dir,
@@ -959,6 +980,7 @@ private:
                    CppArgumentParser          argument_parser,
                    ResolvedProcessEnvironment environment)
         : compiler_(rstd::move(compiler)),
+          c_compiler_(rstd::move(c_compiler)),
           linker_(rstd::move(linker)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
@@ -1120,6 +1142,7 @@ private:
     }
 
     PathBuf                                                       compiler_;
+    PathBuf                                                       c_compiler_;
     PathBuf                                                       linker_;
     PathBuf                                                       archiver_;
     PathBuf                                                       resource_dir_;

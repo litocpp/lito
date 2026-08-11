@@ -109,12 +109,14 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const BuildConfiguration&                 build,
                const ProfileSpec&                        profile,
                ref<str> effective_target) -> Result<CMakeWorkArea> {
-    auto recipe = String::make("lito-cmake-install-v2\n"_str);
+    auto recipe = String::make("lito-cmake-install-v3\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto compiler = path_text(build.toolchain.compiler.as_path(), "C++ compiler"_str);
     if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
+    auto c_compiler = path_text(build.toolchain.c_compiler.as_path(), "C compiler"_str);
+    if (c_compiler.is_err()) return Err(rstd::move(c_compiler).unwrap_err());
     auto archiver = path_text(build.toolchain.archiver.as_path(), "archiver"_str);
     if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
     auto linker = path_text(build.toolchain.linker.as_path(), "LLD linker"_str);
@@ -123,6 +125,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe, provider.generator.as_str());
     rstd_try(append_search_path_identity(recipe, provider));
     append_identity(recipe, compiler->as_str());
+    append_identity(recipe, c_compiler->as_str());
     append_identity(recipe, linker->as_str());
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
@@ -226,6 +229,10 @@ auto push_path_argument(Vec<String>&          arguments,
 
 auto push_cmake_toolchain(Vec<String>& arguments, const BuildConfiguration& configuration)
     -> Result<empty> {
+    rstd_try(push_path_argument(arguments,
+                                "-DCMAKE_C_COMPILER="_str,
+                                configuration.toolchain.c_compiler.as_path(),
+                                "C compiler"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_CXX_COMPILER="_str,
                                 configuration.toolchain.compiler.as_path(),

@@ -48,8 +48,8 @@ auto environment_config_key(ref<str> key) -> bool {
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
-    return key == "compiler"_str || key == "archiver"_str || key == "formatter"_str ||
-           key == "stripper"_str;
+    return key == "compiler"_str || key == "c-compiler"_str || key == "archiver"_str ||
+           key == "formatter"_str || key == "stripper"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool {
@@ -227,11 +227,12 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
 
 auto default_toolchain() -> ToolchainSpec {
     return ToolchainSpec {
-        .compiler  = PathBuf::from("clang++"_str),
-        .linker    = PathBuf::from("ld.lld"_str),
-        .archiver  = PathBuf::from("llvm-ar"_str),
-        .formatter = PathBuf::from("clang-format"_str),
-        .stripper  = PathBuf::from("llvm-strip"_str),
+        .compiler   = PathBuf::from("clang++"_str),
+        .c_compiler = PathBuf::from("clang"_str),
+        .linker     = PathBuf::from("ld.lld"_str),
+        .archiver   = PathBuf::from("llvm-ar"_str),
+        .formatter  = PathBuf::from("clang-format"_str),
+        .stripper   = PathBuf::from("llvm-strip"_str),
     };
 }
 
@@ -390,6 +391,8 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         auto compiler = configured_tool(
             **toolchain_value, "compiler"_str, "clang++"_str, "config.toolchain"_str);
+        auto c_compiler = configured_tool(
+            **toolchain_value, "c-compiler"_str, "clang"_str, "config.toolchain"_str);
         auto archiver = configured_tool(
             **toolchain_value, "archiver"_str, "llvm-ar"_str, "config.toolchain"_str);
         auto formatter = configured_tool(
@@ -397,15 +400,17 @@ auto load_project_config(ref<rstd::path::Path> requested_root) -> Result<Project
         auto stripper = configured_tool(
             **toolchain_value, "stripper"_str, "llvm-strip"_str, "config.toolchain"_str);
         if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
+        if (c_compiler.is_err()) return Err(rstd::move(c_compiler).unwrap_err());
         if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
         if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
         if (stripper.is_err()) return Err(rstd::move(stripper).unwrap_err());
         toolchain = ToolchainSpec {
-            .compiler  = rstd::move(compiler).unwrap(),
-            .linker    = PathBuf::from("ld.lld"_str),
-            .archiver  = rstd::move(archiver).unwrap(),
-            .formatter = rstd::move(formatter).unwrap(),
-            .stripper  = rstd::move(stripper).unwrap(),
+            .compiler   = rstd::move(compiler).unwrap(),
+            .c_compiler = rstd::move(c_compiler).unwrap(),
+            .linker     = PathBuf::from("ld.lld"_str),
+            .archiver   = rstd::move(archiver).unwrap(),
+            .formatter  = rstd::move(formatter).unwrap(),
+            .stripper   = rstd::move(stripper).unwrap(),
         };
     }
 

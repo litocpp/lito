@@ -341,6 +341,7 @@ struct PackageVersion {
 
 struct ToolchainSpec {
     PathBuf compiler;
+    PathBuf c_compiler { PathBuf::from("clang"_str) };
     PathBuf linker { PathBuf::from("ld.lld"_str) };
     PathBuf archiver;
     PathBuf formatter;
@@ -348,11 +349,12 @@ struct ToolchainSpec {
 
     auto clone() const -> ToolchainSpec {
         return ToolchainSpec {
-            .compiler  = compiler.clone(),
-            .linker    = linker.clone(),
-            .archiver  = archiver.clone(),
-            .formatter = formatter.clone(),
-            .stripper  = stripper.clone(),
+            .compiler   = compiler.clone(),
+            .c_compiler = c_compiler.clone(),
+            .linker     = linker.clone(),
+            .archiver   = archiver.clone(),
+            .formatter  = formatter.clone(),
+            .stripper   = stripper.clone(),
         };
     }
 };

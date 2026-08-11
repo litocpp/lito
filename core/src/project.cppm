@@ -73,9 +73,10 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                                            environment));
     auto project                = rstd::move(resolved.selection);
     auto resolved_configuration = configuration.clone();
-    resolved_configuration.toolchain.compiler = PathBuf::from(toolchain.compiler_path());
-    resolved_configuration.toolchain.linker   = PathBuf::from(toolchain.linker_path());
-    resolved_configuration.toolchain.archiver = PathBuf::from(toolchain.archiver_path());
+    resolved_configuration.toolchain.compiler   = PathBuf::from(toolchain.compiler_path());
+    resolved_configuration.toolchain.c_compiler = PathBuf::from(toolchain.c_compiler_path());
+    resolved_configuration.toolchain.linker     = PathBuf::from(toolchain.linker_path());
+    resolved_configuration.toolchain.archiver   = PathBuf::from(toolchain.archiver_path());
     return adapt_package_graph_metadata(rstd::move(project.graph),
                                         project.selected_package_names,
                                         project.selected_targets,
