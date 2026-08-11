@@ -30,6 +30,7 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/profile/type"_str,
     "manifest/public-usage-without-lib"_str,
     "manifest/source-root-descendant"_str,
+    "manifest/target-link-stdlib-type"_str,
     "manifest/test-attach-unknown-key"_str,
     "manifest/toml-explicit/dependency"_str,
     "manifest/toml-explicit/version-workspace-false"_str,
@@ -363,6 +364,7 @@ TEST(Contracts, PackageManifestOwnsTypedTargetCollection) {
     auto binaries   = usize {};
     auto tests      = usize {};
     auto benchmarks = usize {};
+    auto no_stdlib  = usize {};
     for (const auto& target : loaded->targets) {
         switch (lito::package_target_kind(target)) {
         case lito::PackageTargetKind::Library: ++libraries; break;
@@ -372,11 +374,13 @@ TEST(Contracts, PackageManifestOwnsTypedTargetCollection) {
         case lito::PackageTargetKind::TestAttachment:
         case lito::PackageTargetKind::CompileTest: break;
         }
+        if (! lito::package_target_links_stdlib(target)) ++no_stdlib;
     }
     EXPECT_EQ(libraries, usize(1));
     EXPECT_EQ(binaries, usize(2));
     EXPECT_EQ(tests, usize(2));
     EXPECT_EQ(benchmarks, usize(2));
+    EXPECT_EQ(no_stdlib, usize(3));
 }
 
 TEST(Contracts, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
@@ -501,7 +505,7 @@ TEST(Contracts, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentities) {
               lito::cpp_scan_identity(aliases->cpp).as_str());
 }
 
-TEST(Contracts, RawCompilerAndLinkerOptionsCannotOverrideCodegenProfiles) {
+TEST(Contracts, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
 
@@ -518,6 +522,13 @@ TEST(Contracts, RawCompilerAndLinkerOptionsCannotOverrideCodegenProfiles) {
         linker_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
     ASSERT_TRUE(linker.is_err());
     EXPECT_TRUE(linker.unwrap_err().message.as_str().contains("selected profile"_str));
+
+    auto stdlib_configuration = configuration();
+    stdlib_configuration.linker_options.push(String::make("-nostdlib++"_str));
+    auto stdlib = lito::make_profile_spec(
+        stdlib_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(stdlib.is_err());
+    EXPECT_TRUE(stdlib.unwrap_err().message.as_str().contains("Lito-owned setting"_str));
 }
 
 TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {

@@ -1,0 +1,9 @@
+[package]
+name = "fixture-target-link-stdlib-type"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-target-link-stdlib-type"
+discovery = "explicit"
+sources = ["main.cpp"]
+link-stdlib = "disabled"

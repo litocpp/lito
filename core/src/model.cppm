@@ -600,11 +600,11 @@ struct TargetSourceManifest {
 class PackageTargetManifest {
     RSTD_ENUM(PackageTargetManifest,
               (Library, (String name; String archive; TargetSourceManifest source;)),
-              (Binary, (String name; TargetSourceManifest source;)),
+              (Binary, (String name; TargetSourceManifest source; bool link_stdlib;)),
               (Test,
-               (String name; TargetSourceManifest source;
-                Vec<TestAttachmentManifest>       attachments;)),
-              (Benchmark, (String name; TargetSourceManifest source;)))
+               (String name; TargetSourceManifest source; bool link_stdlib;
+                Vec<TestAttachmentManifest>                    attachments;)),
+              (Benchmark, (String name; TargetSourceManifest source; bool link_stdlib;)))
 };
 
 auto package_target_kind(const PackageTargetManifest& target) noexcept -> PackageTargetKind {
@@ -639,6 +639,13 @@ auto package_target_source(PackageTargetManifest& target) noexcept -> TargetSour
 auto package_target_artifact_name(const PackageTargetManifest& target) noexcept -> ref<str> {
     if (target.is_Library()) return target.as_Library().archive.as_str();
     return package_target_name(target);
+}
+
+auto package_target_links_stdlib(const PackageTargetManifest& target) noexcept -> bool {
+    if (target.is_Binary()) return target.as_Binary().link_stdlib;
+    if (target.is_Test()) return target.as_Test().link_stdlib;
+    if (target.is_Benchmark()) return target.as_Benchmark().link_stdlib;
+    return true;
 }
 
 auto package_target_attachments(const PackageTargetManifest& target) noexcept
@@ -910,6 +917,7 @@ struct ResolvedTarget {
     PackageTargetId                 id;
     ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
     String                          artifact_name;
+    bool                            link_stdlib { true };
     TargetSourceManifest            source;
     PathBuf                         root;
     PathBuf                         source_root;
@@ -936,6 +944,7 @@ struct TargetSpec {
     PackageTargetId                 id;
     ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
     String                          artifact_name;
+    bool                            link_stdlib { true };
     String                          archive_stem;
     Option<String>                  module_affiliation;
     PathBuf                         root;

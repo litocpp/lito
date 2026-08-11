@@ -18,6 +18,7 @@ sources = ["src/main.cpp"]
 name = "tool"
 discovery = "explicit"
 sources = ["src/main.cpp"]
+link-stdlib = false
 
 [[test]]
 name = "shared"
@@ -28,6 +29,7 @@ sources = ["src/main.cpp"]
 name = "unit"
 discovery = "explicit"
 sources = ["src/main.cpp"]
+link-stdlib = false
 
 [[bench]]
 name = "shared"
@@ -38,3 +40,4 @@ sources = ["src/main.cpp"]
 name = "speed"
 discovery = "explicit"
 sources = ["src/main.cpp"]
+link-stdlib = false

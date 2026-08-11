@@ -456,6 +456,7 @@ auto build_with_environment(const BuildRequest&               request,
                                                 objects,
                                                 link_inputs,
                                                 package_plan.profile->cpp.abi.standard_library,
+                                                target_spec.link_stdlib,
                                                 package_plan.profile->cpp.codegen.lto,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());

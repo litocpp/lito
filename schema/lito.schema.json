@@ -306,6 +306,10 @@
         },
         "source-groups": {
           "$ref": "#/definitions/sourceGroups"
+        },
+        "link-stdlib": {
+          "type": "boolean",
+          "default": true
         }
       },
       "oneOf": [
@@ -409,6 +413,10 @@
         },
         "source-groups": {
           "$ref": "#/definitions/sourceGroups"
+        },
+        "link-stdlib": {
+          "type": "boolean",
+          "default": true
         },
         "attach": {
           "type": "array",

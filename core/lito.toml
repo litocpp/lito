@@ -8,11 +8,6 @@ module = "lito"
 archive = "lito"
 discovery = "module"
 
-[usage]
-private-options = [
-  "-fsized-deallocation",
-]
-
 [dependencies.lito-frontend]
 workspace = true
 visibility = "public"

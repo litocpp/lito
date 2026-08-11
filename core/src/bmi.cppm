@@ -64,6 +64,7 @@ enum class BmiCompatibilityField
     StandardLibrary,
     Exceptions,
     Rtti,
+    SizedDeallocation,
     LanguageModes,
     AbiModes,
     Target,
@@ -144,6 +145,7 @@ auto bmi_compatibility_field_name(BmiCompatibilityField value) noexcept -> ref<s
     case BmiCompatibilityField::StandardLibrary: return "standard library"_str;
     case BmiCompatibilityField::Exceptions: return "exceptions"_str;
     case BmiCompatibilityField::Rtti: return "RTTI"_str;
+    case BmiCompatibilityField::SizedDeallocation: return "sized deallocation"_str;
     case BmiCompatibilityField::LanguageModes: return "C++ language modes"_str;
     case BmiCompatibilityField::AbiModes: return "C++ ABI modes"_str;
     case BmiCompatibilityField::Target: return "target"_str;
@@ -321,6 +323,10 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
                    BmiCompatibilityField::Rtti,
                    bool_text(provider.language.rtti),
                    bool_text(consumer.language.rtti));
+    add_difference(result,
+                   BmiCompatibilityField::SizedDeallocation,
+                   cpp_sized_deallocation_name(provider.language.sized_deallocation),
+                   cpp_sized_deallocation_name(consumer.language.sized_deallocation));
     auto provider_language = family_identity("language"_str, provider.language.modes);
     auto consumer_language = family_identity("language"_str, consumer.language.modes);
     add_difference(result,

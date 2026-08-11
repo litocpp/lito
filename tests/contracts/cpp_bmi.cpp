@@ -135,6 +135,32 @@ TEST(CppContract, MaterializesTypedDefaultPositionIndependentCode) {
     EXPECT_FALSE(disabled.codegen.position_independent_code);
 }
 
+TEST(CppContract, MaterializesTypedSizedDeallocationPolicy) {
+    auto automatic = cpp_options("c++20"_str, CppOptimization::None, CppDebugInfo::None);
+    EXPECT_EQ(automatic.language.sized_deallocation, CppSizedDeallocation::Auto);
+
+    auto enabled  = cpp_options("c++20"_str,
+                                CppOptimization::None,
+                                CppDebugInfo::None,
+                                strings("-fsized-deallocation"_str));
+    auto disabled = cpp_options("c++20"_str,
+                                CppOptimization::None,
+                                CppDebugInfo::None,
+                                strings("-fno-sized-deallocation"_str));
+    EXPECT_EQ(enabled.language.sized_deallocation, CppSizedDeallocation::Enabled);
+    EXPECT_EQ(disabled.language.sized_deallocation, CppSizedDeallocation::Disabled);
+    EXPECT_NE(cpp_compile_identity(automatic).as_str(), cpp_compile_identity(enabled).as_str());
+    EXPECT_NE(cpp_scan_identity(automatic).as_str(), cpp_scan_identity(enabled).as_str());
+    EXPECT_NE(cpp_bmi_compatibility_identity(automatic).as_str(),
+              cpp_bmi_compatibility_identity(enabled).as_str());
+
+    auto parsed =
+        argument_layer(strings("-fsized-deallocation"_str, "-fno-sized-deallocation"_str));
+    ASSERT_EQ(parsed.occurrences.len(), usize(2));
+    EXPECT_TRUE(parsed.occurrences[usize {}].argument.is_SizedDeallocation());
+    EXPECT_TRUE(parsed.occurrences[usize(1)].argument.is_SizedDeallocation());
+}
+
 TEST(CppContract, NormalizesCommonOptionsBeforeToolchainMapping) {
     auto first  = cpp_options("c++20"_str,
                               CppOptimization::None,
@@ -359,6 +385,11 @@ TEST(BmiContract, ReportsConservativeSemanticDifferencesByField) {
     expect_field(*standard_library, BmiCompatibilityField::StandardLibrary);
     expect_field(*exceptions, BmiCompatibilityField::Exceptions);
     expect_field(*rtti, BmiCompatibilityField::Rtti);
+    expect_field(cpp_options("c++20"_str,
+                             CppOptimization::None,
+                             CppDebugInfo::None,
+                             strings("-fno-sized-deallocation"_str)),
+                 BmiCompatibilityField::SizedDeallocation);
     expect_field(
         cpp_options(
             "c++20"_str, CppOptimization::None, CppDebugInfo::None, strings("-ffreestanding"_str)),
@@ -496,6 +527,8 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     auto invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
     EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
+    EXPECT_FALSE(has_argument(invocation->arguments, "-fsized-deallocation"_str));
+    EXPECT_FALSE(has_argument(invocation->arguments, "-fno-sized-deallocation"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wpedantic"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-gnu-statement-expression"_str));
@@ -504,6 +537,20 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(invocation->arguments,
                              "-fmodule-file=sample.module=/tmp/sample.module.pcm"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));
+
+    context.cpp.language.sized_deallocation = CppSizedDeallocation::Disabled;
+    auto disabled_invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
+    ASSERT_TRUE(disabled_invocation.is_ok());
+    EXPECT_TRUE(has_argument(disabled_invocation->arguments, "-fno-sized-deallocation"_str));
+}
+
+TEST(ClangContract, MapsStandardLibraryLinkPolicy) {
+    EXPECT_EQ(
+        toolchain::clang_options::standard_library_linker_option(StandardLibrary::Libcxx, false),
+        "-nostdlib++"_str);
+    EXPECT_EQ(
+        toolchain::clang_options::standard_library_linker_option(StandardLibrary::Libstdcxx, true),
+        "-stdlib=libstdc++"_str);
 }
 
 TEST(ClangContract, RejectsNonLldLinkers) {

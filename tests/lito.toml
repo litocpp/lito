@@ -19,11 +19,6 @@ sources = [
   "toolchain/clang_builtin_context.cpp",
 ]
 
-[usage]
-private-options = [
-  "-fsized-deallocation",
-]
-
 [dependencies.lito-core]
 workspace = true
 visibility = "private"

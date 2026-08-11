@@ -6,12 +6,7 @@ version.workspace = true
 module = "lito.executable"
 name = "lito"
 discovery = "module"
-
-[usage]
-private-options = [
-  "-fsized-deallocation",
-]
-private-linker-options = ["-nostdlib++"]
+link-stdlib = false
 
 [dependencies.lito-core]
 workspace = true

@@ -55,6 +55,13 @@ enum class CppLto
     Fat,
 };
 
+enum class CppSizedDeallocation
+{
+    Auto,
+    Enabled,
+    Disabled,
+};
+
 enum class CppMacroAction
 {
     Define,
@@ -173,6 +180,7 @@ struct CppLanguageOptions {
     String               standard;
     bool                 exceptions { false };
     bool                 rtti { false };
+    CppSizedDeallocation sized_deallocation { CppSizedDeallocation::Auto };
     Vec<CppFamilyOption> modes;
 };
 
@@ -235,6 +243,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
               (Instrumentation, (String value;)),
               (PositionIndependentCode, (bool enabled;)),
+              (SizedDeallocation, (CppSizedDeallocation value;)),
               (Warning, (CppWarningOption option;)),
               (Diagnostic, (String value;)),
               (Vendor, (CppVendorOption option;)))
@@ -357,6 +366,15 @@ auto cpp_lto_option(CppLto value) noexcept -> ref<str> {
     case CppLto::Fat: return "-flto=full"_str;
     }
     return "-fno-lto"_str;
+}
+
+auto cpp_sized_deallocation_name(CppSizedDeallocation value) noexcept -> ref<str> {
+    switch (value) {
+    case CppSizedDeallocation::Auto: return "auto"_str;
+    case CppSizedDeallocation::Enabled: return "enabled"_str;
+    case CppSizedDeallocation::Disabled: return "disabled"_str;
+    }
+    return "auto"_str;
 }
 
 auto cpp_warning_name(CppWarning value) noexcept -> ref<str> {
@@ -559,6 +577,9 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
     push_identity(output, "standard"_str, options.language.standard.as_str());
     push_identity(output, "exceptions"_str, options.language.exceptions);
     push_identity(output, "rtti"_str, options.language.rtti);
+    push_identity(output,
+                  "sized-deallocation"_str,
+                  cpp_sized_deallocation_name(options.language.sized_deallocation));
     push_identity(output,
                   "stdlib"_str,
                   options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
@@ -838,6 +859,9 @@ auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(PositionIndependentCode, enabled) {
             return CppCompilerArgument::PositionIndependentCode(enabled);
         }
+        RSTD_CASE(SizedDeallocation, value) {
+            return CppCompilerArgument::SizedDeallocation(value);
+        }
         RSTD_CASE(Warning, option) {
             return CppCompilerArgument::Warning(option);
         }
@@ -871,10 +895,11 @@ auto CppCompileOptions::clone() const -> CppCompileOptions {
     auto        result = CppCompileOptions {
         .language =
             CppLanguageOptions {
-                .standard   = input.language.standard.clone(),
-                .exceptions = input.language.exceptions,
-                .rtti       = input.language.rtti,
-                .modes      = as<Clone>(input.language.modes).clone(),
+                .standard           = input.language.standard.clone(),
+                .exceptions         = input.language.exceptions,
+                .rtti               = input.language.rtti,
+                .sized_deallocation = input.language.sized_deallocation,
+                .modes              = as<Clone>(input.language.modes).clone(),
             },
         .abi =
             CppAbiOptions {
@@ -1029,6 +1054,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             }
             RSTD_CASE(PositionIndependentCode, enabled) {
                 input.codegen.position_independent_code = enabled;
+            }
+            RSTD_CASE(SizedDeallocation, value) {
+                input.language.sized_deallocation = value;
             }
             RSTD_CASE(Warning, option) {
                 set_warning(input.diagnostics.warnings, option);

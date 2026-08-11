@@ -259,6 +259,9 @@ auto make_profile_spec(const BuildConfiguration& configuration,
             RSTD_CASE(PositionIndependentCode, enabled) {
                 static_cast<void>(enabled);
             }
+            RSTD_CASE(SizedDeallocation, value) {
+                static_cast<void>(value);
+            }
             RSTD_CASE(Warning, value) {
                 static_cast<void>(value);
             }
@@ -271,6 +274,10 @@ auto make_profile_spec(const BuildConfiguration& configuration,
         }
     }
     for (const auto& option : configuration.linker_options) {
+        if (option.as_str() == "-nostdlib++"_str || option.as_str().starts_with("-stdlib="_str)) {
+            return failure<ProfileSpec>(rstd::format(
+                "build linker option '{}' overrides a Lito-owned setting", option.as_str()));
+        }
         if (is_profile_owned_linker_option(option.as_str())) {
             return failure<ProfileSpec>(rstd::format(
                 "build linker option '{}' overrides the selected profile", option.as_str()));

@@ -178,12 +178,14 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
                 "-fchar8_t"_str,
                 "-fno-char8_t"_str);
 
-    add_toggles(schema,
-                CppCompilerArgumentKind::AbiMode,
-                "sized-deallocation"_str,
-                "sized-deallocation"_str,
-                "-fsized-deallocation"_str,
-                "-fno-sized-deallocation"_str);
+    auto sized_deallocation = definition("sized-deallocation"_str);
+    spelling(sized_deallocation, "-fsized-deallocation"_str);
+    schema.add_typed(CppCompilerArgument::SizedDeallocation(CppSizedDeallocation::Enabled),
+                     rstd::move(sized_deallocation));
+    auto no_sized_deallocation = definition("no-sized-deallocation"_str);
+    spelling(no_sized_deallocation, "-fno-sized-deallocation"_str);
+    schema.add_typed(CppCompilerArgument::SizedDeallocation(CppSizedDeallocation::Disabled),
+                     rstd::move(no_sized_deallocation));
     add_toggles(schema,
                 CppCompilerArgumentKind::AbiMode,
                 "char-signedness"_str,

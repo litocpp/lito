@@ -284,7 +284,7 @@ auto library_key(ref<str> key) -> bool {
 
 auto runnable_key(ref<str> key) -> bool {
     return key == "name"_str || key == "module"_str || key == "discovery"_str ||
-           key == "sources"_str || key == "source-groups"_str;
+           key == "sources"_str || key == "source-groups"_str || key == "link-stdlib"_str;
 }
 
 auto test_key(ref<str> key) -> bool {
@@ -714,7 +714,8 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
             TargetSourceManifest {
                 .discovery        = SourceDiscoveryMode::Explicit,
                 .declared_sources = rstd::move(candidates[index].sources),
-            }));
+            },
+            true));
     }
     return Ok(rstd::move(result));
 }
@@ -1105,16 +1106,28 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
                     rstd::format("manifest.{} repeats target name '{}'", key, name.as_str()));
             }
         }
-        auto source = rstd_try(parse_target_source(item, context.as_str(), false));
+        auto source               = rstd_try(parse_target_source(item, context.as_str(), false));
+        auto link_stdlib          = true;
+        auto declared_link_stdlib = member(item, "link-stdlib"_str);
+        if (declared_link_stdlib.is_some()) {
+            auto parsed = (**declared_link_stdlib).as_bool();
+            if (parsed.is_none()) {
+                return failure<Vec<PackageTargetManifest>>(
+                    rstd::format("{}.link-stdlib must be a bool", context.as_str()));
+            }
+            link_stdlib = *parsed;
+        }
         if (kind == PackageTargetKind::Binary) {
-            result.push(PackageTargetManifest::Binary(rstd::move(name), rstd::move(source)));
+            result.push(
+                PackageTargetManifest::Binary(rstd::move(name), rstd::move(source), link_stdlib));
         } else if (kind == PackageTargetKind::Benchmark) {
-            result.push(PackageTargetManifest::Benchmark(rstd::move(name), rstd::move(source)));
+            result.push(PackageTargetManifest::Benchmark(
+                rstd::move(name), rstd::move(source), link_stdlib));
         } else {
             auto attachments =
                 rstd_try(parse_test_attachments(member(item, "attach"_str), context.as_str()));
             result.push(PackageTargetManifest::Test(
-                rstd::move(name), rstd::move(source), rstd::move(attachments)));
+                rstd::move(name), rstd::move(source), link_stdlib, rstd::move(attachments)));
         }
     }
     return Ok(rstd::move(result));
@@ -1250,7 +1263,7 @@ auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> R
 
 auto validate_linker_options(const Vec<String>& options, ref<str> context) -> Result<empty> {
     for (const auto& option : options) {
-        if (option.as_str().starts_with("-stdlib="_str) ||
+        if (option.as_str().starts_with("-stdlib="_str) || option.as_str() == "-nostdlib++"_str ||
             is_profile_owned_linker_option(option.as_str())) {
             return failure<empty>(rstd::format(
                 "{} option '{}' overrides a Lito-owned setting", context, option.as_str()));
