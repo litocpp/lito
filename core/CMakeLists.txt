@@ -52,6 +52,7 @@ target_sources(
          src/toolchain/clang.cppm
          src/toolchain/mod.cppm
          src/build_layout.cppm
+         src/build_script.cppm
          src/cache/hash.cppm
          src/cache/mod.cppm
          src/frontend_analysis.cppm
@@ -70,4 +71,4 @@ target_sources(
 target_link_libraries(
   lito.lib
   PUBLIC lito.frontend rstd.std
-  PRIVATE rstd.json rstd.toml rstd.bench)
+  PRIVATE luato::luato rstd.json rstd.toml rstd.bench)

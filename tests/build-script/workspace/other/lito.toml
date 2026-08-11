@@ -1,0 +1,8 @@
+[package]
+name = "fixture-configure-workspace-other"
+version = { workspace = true }
+
+[[bin]]
+name = "configure-other"
+discovery = "explicit"
+sources = ["src/main.cpp"]

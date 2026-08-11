@@ -1,0 +1,13 @@
+[package]
+name = "fixture-configure-workspace-app"
+version = { workspace = true }
+
+[[bin]]
+name = "configure-workspace"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[usage]
+private-include-directories = [
+  { path = "include", root = "generated" },
+]

@@ -230,9 +230,10 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
     return Ok(rstd::move(context));
 }
 
-auto resolve_source_discovery(const PackageMetadata& package,
+auto resolve_source_selection(const PackageMetadata& package,
                               ref<str>               requested_profile,
-                              const Vec<String>& requested_targets) -> Result<SourceDiscoveryPlan> {
+                              const Vec<String>&     requested_targets)
+    -> Result<SourceTargetSelection> {
     auto profile_name =
         requested_profile.size() == usize {} ? package.default_profile.as_str() : requested_profile;
     auto profile = Option<usize> {};
@@ -243,7 +244,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         }
     }
     if (profile.is_none()) {
-        return plan_failure<SourceDiscoveryPlan>(
+        return plan_failure<SourceTargetSelection>(
             rstd::format("unknown profile '{}'", profile_name));
     }
 
@@ -270,12 +271,12 @@ auto resolve_source_discovery(const PackageMetadata& package,
                 else if (kind_text == "bench"_str)
                     kind = Some(PackageTargetKind::Benchmark);
                 else
-                    return plan_failure<SourceDiscoveryPlan>(
+                    return plan_failure<SourceTargetSelection>(
                         rstd::format("target selector '{}' has unknown kind '{}'",
                                      requested.as_str(),
                                      kind_text));
                 if (name.is_empty()) {
-                    return plan_failure<SourceDiscoveryPlan>(
+                    return plan_failure<SourceTargetSelection>(
                         rstd::format("target selector '{}' is missing a name", requested.as_str()));
                 }
             }
@@ -287,7 +288,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
                 }
                 auto prior = matched_packages.get(candidate.package.as_str());
                 if (prior.is_some()) {
-                    return plan_failure<SourceDiscoveryPlan>(rstd::format(
+                    return plan_failure<SourceTargetSelection>(rstd::format(
                         "target selector '{}' is ambiguous in package '{}'; use '{}:{}'",
                         requested.as_str(),
                         candidate.package.as_str(),
@@ -299,7 +300,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
                 ++matches;
             }
             if (matches == usize {}) {
-                return plan_failure<SourceDiscoveryPlan>(
+                return plan_failure<SourceTargetSelection>(
                     rstd::format("unknown target selector '{}'", requested.as_str()));
             }
         }
@@ -310,12 +311,59 @@ auto resolve_source_discovery(const PackageMetadata& package,
     for (const auto& target_identity : selected_identities) {
         auto found = target_index(package, target_identity);
         if (found.is_none()) {
-            return plan_failure<SourceDiscoveryPlan>(
+            return plan_failure<SourceTargetSelection>(
                 rstd::format("unknown target '{}'", target_text(target_identity).as_str()));
         }
         auto visited = visit_target(package, *found, colors, target_order);
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
     }
+
+    auto selected_targets = Vec<TargetId>::with_capacity(selected_identities.len());
+    for (const auto& identity : selected_identities) {
+        selected_targets.emplace_back(*target_index(package, identity));
+    }
+    return Ok(SourceTargetSelection {
+        .profile          = *profile,
+        .selected_targets = rstd::move(selected_targets),
+        .target_order     = rstd::move(target_order),
+    });
+}
+
+auto resolve_build_script_packages(const PackageMetadata&       package,
+                                   const SourceTargetSelection& selection) -> Result<Vec<String>> {
+    auto result = Vec<String>::make();
+    for (auto target : selection.selected_targets) {
+        if (target >= package.targets.len()) {
+            return plan_failure<Vec<String>>("source target selection does not match package"_str);
+        }
+        auto name    = package.targets[target].id.package.as_str();
+        auto allowed = false;
+        for (const auto& candidate : package.build_script_packages) {
+            if (candidate == name) {
+                allowed = true;
+                break;
+            }
+        }
+        if (! allowed) continue;
+        append_unique(result, name);
+    }
+    return Ok(rstd::move(result));
+}
+
+auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelection selection)
+    -> Result<SourceDiscoveryPlan> {
+    if (selection.profile >= package.profiles.len()) {
+        return plan_failure<SourceDiscoveryPlan>(
+            "source target selection does not match package profile"_str);
+    }
+    for (auto target : selection.target_order) {
+        if (target >= package.targets.len()) {
+            return plan_failure<SourceDiscoveryPlan>(
+                "source target selection does not match package targets"_str);
+        }
+    }
+    auto profile      = selection.profile;
+    auto target_order = rstd::move(selection.target_order);
 
     auto public_usage    = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
     auto public_visible  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
@@ -366,7 +414,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
 
     for (auto target : target_order) {
         const auto& spec             = package.targets[target];
-        const auto& selected_profile = package.profiles[*profile];
+        const auto& selected_profile = package.profiles[profile];
         auto        context          = CompileContext {
             .bmi = selected_profile.bmi,
         };
@@ -492,7 +540,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         target_identities.push(target.id.clone());
     }
     return Ok(SourceDiscoveryPlan {
-        .profile           = *profile,
+        .profile           = profile,
         .target_identities = rstd::move(target_identities),
         .target_order      = rstd::move(target_order),
         .contexts          = rstd::move(contexts),
@@ -500,6 +548,14 @@ auto resolve_source_discovery(const PackageMetadata& package,
         .link_inputs       = rstd::move(link_inputs),
         .linker_options    = rstd::move(linker_options),
     });
+}
+
+auto resolve_source_discovery(const PackageMetadata& package,
+                              ref<str>               requested_profile,
+                              const Vec<String>& requested_targets) -> Result<SourceDiscoveryPlan> {
+    auto selection = resolve_source_selection(package, requested_profile, requested_targets);
+    if (selection.is_err()) return Err(rstd::move(selection).unwrap_err());
+    return resolve_source_discovery(package, rstd::move(selection).unwrap());
 }
 
 auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan discovery)

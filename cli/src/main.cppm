@@ -24,6 +24,8 @@ auto event_name(lito::BuildEventKind kind) -> ref<str> {
     case lito::BuildEventKind::Archive: return "archive"_str;
     case lito::BuildEventKind::Link: return "link"_str;
     case lito::BuildEventKind::Strip: return "strip"_str;
+    case lito::BuildEventKind::Configure: return "configure"_str;
+    case lito::BuildEventKind::ConfigureReuse: return "configure-reuse"_str;
     }
     return "unknown"_str;
 }
@@ -32,6 +34,7 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose && event.kind != lito::BuildEventKind::Scan &&
         event.kind != lito::BuildEventKind::Compile &&
+        event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link &&
         event.kind != lito::BuildEventKind::Strip) {
         return;

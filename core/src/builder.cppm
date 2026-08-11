@@ -9,6 +9,7 @@ import lito.toolchain;
 import lito.modules;
 import lito.cache;
 import lito.build_layout;
+import lito.build_script;
 import lito.frontend;
 import lito.frontend_analysis;
 import lito.frontend_observer;
@@ -118,11 +119,30 @@ auto build_with_environment(const BuildRequest&               request,
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
-    auto scan_span         = profiler.span(ScanProbe::Total);
+
+    auto selected =
+        resolve_source_selection(metadata, metadata.default_profile.as_str(), request.targets);
+    if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+    auto script_packages = resolve_build_script_packages(metadata, *selected);
+    if (script_packages.is_err()) return Err(rstd::move(script_packages).unwrap_err());
+
+    auto selected_layout = BuildLayout::create(
+        metadata.root.as_path(), request.output.as_path(), metadata.default_profile.as_str());
+    if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
+    auto layout          = rstd::move(selected_layout).unwrap();
+    auto executed_script = execute_build_script(metadata,
+                                                layout,
+                                                metadata.default_profile.as_str(),
+                                                *script_packages,
+                                                *selected,
+                                                request.observer);
+    if (executed_script.is_err()) return Err(rstd::move(executed_script).unwrap_err());
+    auto script_report = rstd::move(executed_script).unwrap();
+
+    auto scan_span = profiler.span(ScanProbe::Total);
 
     auto resolved = profiler.measure(ScanProbe::Plan, [&] {
-        return resolve_source_discovery(
-            metadata, metadata.default_profile.as_str(), request.targets);
+        return resolve_source_discovery(metadata, rstd::move(selected).unwrap());
     });
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto discovery_plan = rstd::move(resolved).unwrap();
@@ -139,13 +159,6 @@ auto build_with_environment(const BuildRequest&               request,
     if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
     auto compile_execution = resolve_compile_execution(request.execution.compile);
     if (compile_execution.is_err()) return Err(rstd::move(compile_execution).unwrap_err());
-
-    auto selected_layout =
-        BuildLayout::create(metadata.root.as_path(),
-                            request.output.as_path(),
-                            metadata.profiles[discovery_plan.profile].name.as_str());
-    if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
-    auto layout = rstd::move(selected_layout).unwrap();
 
     auto created_environment =
         CacheEnvironment::create(layout,
@@ -500,6 +513,7 @@ auto build_with_environment(const BuildRequest&               request,
         .compile_execution = compile_statistics,
         .build_timing      = rstd::move(build_timing),
         .compile_tests     = rstd::move(compile_tests),
+        .script            = rstd::move(script_report),
     });
 }
 

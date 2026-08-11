@@ -320,6 +320,10 @@ auto usage_key(ref<str> key) -> bool {
            key == "private-linker-options"_str;
 }
 
+auto include_directory_key(ref<str> key) -> bool {
+    return key == "path"_str || key == "root"_str;
+}
+
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
@@ -1133,33 +1137,92 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
     return Ok(rstd::move(result));
 }
 
-auto resolve_directories(Option<ref<Toml>> value, ref<rstd::path::Path> root, ref<str> context)
-    -> Result<Vec<PathBuf>> {
-    auto declared = declared_paths(value, context, false);
-    if (declared.is_err()) return Err(rstd::move(declared).unwrap_err());
-    auto result = Vec<PathBuf>::make();
-    auto paths  = rstd::move(declared).unwrap();
-    for (const auto& path : paths) {
-        auto requested = PathBuf::from(root).join(path.as_path());
-        auto canonical =
-            canonical_existing(requested.as_path(), "cannot resolve include directory"_str);
-        if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
-        auto resolved = rstd::move(canonical).unwrap();
-        if (resolved.as_path().strip_prefix(root).is_none()) {
-            return failure<Vec<PathBuf>>(
-                rstd::format("{} entry '{}' is outside package root", context, path.as_path()));
+struct ResolvedIncludeDirectories {
+    Vec<PathBuf>                     physical;
+    Vec<IncludeDirectoryRequirement> deferred;
+};
+
+auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root, ref<str> context)
+    -> Result<PathBuf> {
+    auto requested = PathBuf::from(root).join(path.as_path());
+    auto canonical =
+        canonical_existing(requested.as_path(), "cannot resolve include directory"_str);
+    if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
+    auto resolved = rstd::move(canonical).unwrap();
+    if (resolved.as_path().strip_prefix(root).is_none()) {
+        return failure<PathBuf>(
+            rstd::format("{} entry '{}' is outside package root", context, path.as_path()));
+    }
+    auto metadata = rstd::fs::metadata(resolved.as_path());
+    if (metadata.is_err()) {
+        return failure<PathBuf>(rstd::format("cannot inspect include directory '{}': {}",
+                                             resolved.as_path(),
+                                             rstd::move(metadata).unwrap_err()));
+    }
+    if (! metadata->is_dir()) {
+        return failure<PathBuf>(
+            rstd::format("{} entry '{}' is not a directory", context, path.as_path()));
+    }
+    return Ok(rstd::move(resolved));
+}
+
+auto resolve_include_directories(Option<ref<Toml>>     value,
+                                 ref<rstd::path::Path> root,
+                                 ref<str>              context,
+                                 bool allow_generated) -> Result<ResolvedIncludeDirectories> {
+    auto result = ResolvedIncludeDirectories {};
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none()) {
+        return failure<ResolvedIncludeDirectories>(rstd::format("{} must be an array", context));
+    }
+
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto  item_context = rstd::format("{}[{}]", context, index);
+        const auto& item         = (**entries)[index];
+        auto        text         = item.as_str();
+        if (text.is_some()) {
+            auto relative = relative_path(String::make(*text), item_context.as_str());
+            if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
+            auto resolved = resolve_package_include_directory(
+                rstd::move(relative).unwrap(), root, item_context.as_str());
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            result.physical.push(rstd::move(resolved).unwrap());
+            continue;
         }
-        auto metadata = rstd::fs::metadata(resolved.as_path());
-        if (metadata.is_err()) {
-            return failure<Vec<PathBuf>>(rstd::format("cannot inspect include directory '{}': {}",
-                                                      resolved.as_path(),
-                                                      rstd::move(metadata).unwrap_err()));
+
+        auto table = table_value(item, item_context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, item_context.as_str(), include_directory_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto declared_path = required_string(item, "path"_str, item_context.as_str());
+        auto declared_root = optional_string(item, "root"_str, item_context.as_str());
+        if (declared_path.is_err()) return Err(rstd::move(declared_path).unwrap_err());
+        if (declared_root.is_err()) return Err(rstd::move(declared_root).unwrap_err());
+        auto relative = relative_path(rstd::move(declared_path).unwrap(),
+                                      rstd::format("{}.path", item_context.as_str()).as_str());
+        if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
+        auto root_value = rstd::move(declared_root).unwrap();
+        auto root_kind  = root_value.is_some() ? root_value->as_str() : "package"_str;
+        if (root_kind == "package"_str) {
+            auto resolved = resolve_package_include_directory(
+                rstd::move(relative).unwrap(), root, item_context.as_str());
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            result.physical.push(rstd::move(resolved).unwrap());
+            continue;
         }
-        if (! metadata->is_dir()) {
-            return failure<Vec<PathBuf>>(
-                rstd::format("{} entry '{}' is not a directory", context, path.as_path()));
+        if (root_kind != "generated"_str) {
+            return failure<ResolvedIncludeDirectories>(
+                rstd::format("{}.root must be package or generated", item_context.as_str()));
         }
-        result.push(rstd::move(resolved));
+        if (! allow_generated) {
+            return failure<ResolvedIncludeDirectories>(rstd::format(
+                "{} does not support generated public include directories", item_context.as_str()));
+        }
+        result.deferred.push(IncludeDirectoryRequirement {
+            .root = IncludeDirectoryRoot::Generated,
+            .path = rstd::move(relative).unwrap(),
+        });
     }
     return Ok(rstd::move(result));
 }
@@ -1279,12 +1342,16 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<
     auto known = reject_unknown(**table, "manifest.usage"_str, usage_key);
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
 
-    auto public_includes  = resolve_directories(member(**value, "public-include-directories"_str),
-                                                root,
-                                                "usage.public-include-directories"_str);
-    auto private_includes = resolve_directories(member(**value, "private-include-directories"_str),
-                                                root,
-                                                "usage.private-include-directories"_str);
+    auto public_includes =
+        resolve_include_directories(member(**value, "public-include-directories"_str),
+                                    root,
+                                    "usage.public-include-directories"_str,
+                                    false);
+    auto private_includes =
+        resolve_include_directories(member(**value, "private-include-directories"_str),
+                                    root,
+                                    "usage.private-include-directories"_str,
+                                    true);
     auto public_definitions =
         string_array(member(**value, "public-definitions"_str), "usage.public-definitions"_str);
     auto private_definitions =
@@ -1304,6 +1371,8 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<
     if (private_linker_options.is_err()) {
         return Err(rstd::move(private_linker_options).unwrap_err());
     }
+    auto public_include_values        = rstd::move(public_includes).unwrap();
+    auto private_include_values       = rstd::move(private_includes).unwrap();
     auto public_definition_values     = rstd::move(public_definitions).unwrap();
     auto private_definition_values    = rstd::move(private_definitions).unwrap();
     auto public_option_values         = rstd::move(public_options).unwrap();
@@ -1325,13 +1394,14 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<
         return Err(rstd::move(private_linker_valid).unwrap_err());
     }
     return Ok(UsageRequirements {
-        .public_include_directories  = rstd::move(public_includes).unwrap(),
-        .private_include_directories = rstd::move(private_includes).unwrap(),
-        .public_definitions          = rstd::move(public_definition_values),
-        .private_definitions         = rstd::move(private_definition_values),
-        .public_options              = rstd::move(public_option_values),
-        .private_options             = rstd::move(private_option_values),
-        .private_linker_options      = rstd::move(private_linker_option_values),
+        .public_include_directories             = rstd::move(public_include_values.physical),
+        .private_include_directories            = rstd::move(private_include_values.physical),
+        .public_definitions                     = rstd::move(public_definition_values),
+        .private_definitions                    = rstd::move(private_definition_values),
+        .public_options                         = rstd::move(public_option_values),
+        .private_options                        = rstd::move(private_option_values),
+        .private_linker_options                 = rstd::move(private_linker_option_values),
+        .private_include_directory_requirements = rstd::move(private_include_values.deferred),
     });
 }
 

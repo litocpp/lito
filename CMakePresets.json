@@ -6,6 +6,7 @@
       "hidden": true,
       "generator": "Ninja",
       "cacheVariables": {
+        "CMAKE_C_COMPILER": "/nix/opt/llvm/22/bin/clang",
         "CMAKE_CXX_COMPILER": "/nix/opt/llvm/22/bin/clang++"
       }
     },
@@ -14,7 +15,9 @@
       "inherits": "clang-base",
       "binaryDir": "${sourceDir}/build/cmake-debug",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
+        "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
       }
     },
     {
@@ -22,7 +25,9 @@
       "inherits": "clang-base",
       "binaryDir": "${sourceDir}/build/cmake-release",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "FETCHCONTENT_SOURCE_DIR_LUATO": "${sourceDir}/../luato",
+        "FETCHCONTENT_SOURCE_DIR_RSTD": "${sourceDir}/../rstd"
       }
     }
   ],

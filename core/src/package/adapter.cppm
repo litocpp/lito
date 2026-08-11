@@ -46,6 +46,11 @@ auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidat
 }
 
 auto clone_usage(const UsageRequirements& usage) -> UsageRequirements {
+    auto include_requirements = Vec<IncludeDirectoryRequirement>::with_capacity(
+        usage.private_include_directory_requirements.len());
+    for (const auto& requirement : usage.private_include_directory_requirements) {
+        include_requirements.push(requirement.clone());
+    }
     return UsageRequirements {
         .public_include_directories =
             as<rstd::clone::Clone>(usage.public_include_directories).clone(),
@@ -58,6 +63,7 @@ auto clone_usage(const UsageRequirements& usage) -> UsageRequirements {
         .public_arguments       = as<rstd::clone::Clone>(usage.public_arguments).clone(),
         .private_arguments      = as<rstd::clone::Clone>(usage.private_arguments).clone(),
         .private_linker_options = as<rstd::clone::Clone>(usage.private_linker_options).clone(),
+        .private_include_directory_requirements = rstd::move(include_requirements),
     };
 }
 
@@ -461,15 +467,25 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
         }
         default_targets.push(target.clone());
     }
+    auto build_script_packages = Vec<String>::make();
+    for (const auto& root : graph.roots) {
+        if (root.role == ProjectRootRole::AssociatedTest) continue;
+        for (const auto& target : selected_targets) {
+            if (target.package != root.name.as_str()) continue;
+            build_script_packages.push(root.name.clone());
+            break;
+        }
+    }
     auto profiles        = Vec<ProfileSpec>::make();
     auto default_profile = profile.name.clone();
     profiles.push(rstd::move(profile));
     return Ok(PackageMetadata {
-        .name            = rstd::move(graph.name),
-        .root            = rstd::move(graph.root_directory),
-        .manifest_path   = rstd::move(graph.manifest_path),
-        .default_profile = rstd::move(default_profile),
-        .default_targets = rstd::move(default_targets),
+        .name                  = rstd::move(graph.name),
+        .root                  = rstd::move(graph.root_directory),
+        .manifest_path         = rstd::move(graph.manifest_path),
+        .build_script_packages = rstd::move(build_script_packages),
+        .default_profile       = rstd::move(default_profile),
+        .default_targets       = rstd::move(default_targets),
         .toolchain =
             ToolchainSpec {
                 .compiler   = configuration.toolchain.compiler.clone(),

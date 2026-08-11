@@ -149,6 +149,46 @@ public:
 
     auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
 
+    auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }
+
+    auto generated_package_directory(ref<str> package) const -> Result<PathBuf> {
+        auto component = PathBuf::from(package);
+        auto parts     = component.as_path().components();
+        auto first     = parts.next();
+        if (package.is_empty() || first.is_none() || ! first->is_normal() ||
+            parts.next().is_some()) {
+            return failure<PathBuf>(
+                rstd::format("generated package name '{}' is invalid", package));
+        }
+        auto root = generated_root();
+        return Ok(join(root.as_path(), package));
+    }
+
+    auto create_generated_package_directory(ref<str> package) const -> Result<PathBuf> {
+        auto requested = generated_package_directory(package);
+        if (requested.is_err()) return Err(rstd::move(requested).unwrap_err());
+        auto created = rstd::fs::create_dir_all(requested->as_path());
+        if (created.is_err()) {
+            return failure<PathBuf>(
+                rstd::format("cannot create generated package directory '{}': {}",
+                             requested->as_path(),
+                             rstd::move(created).unwrap_err()));
+        }
+        auto canonical = rstd::fs::canonicalize(requested->as_path());
+        if (canonical.is_err()) {
+            return failure<PathBuf>(
+                rstd::format("cannot resolve generated package directory '{}': {}",
+                             requested->as_path(),
+                             rstd::move(canonical).unwrap_err()));
+        }
+        return Ok(rstd::move(canonical).unwrap());
+    }
+
+    auto configure_receipt() const -> PathBuf {
+        auto directory = join(output_.as_path(), "lito-configure"_str);
+        return join(directory.as_path(), "receipt.json"_str);
+    }
+
     auto object(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
         -> Result<PathBuf> {
         return source_path(

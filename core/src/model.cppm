@@ -35,6 +35,7 @@ enum class ErrorKind
     Dependency,
     Lock,
     Artifact,
+    Script,
 };
 
 struct Error {
@@ -497,6 +498,21 @@ struct ResolvedExternalDependency {
     }
 };
 
+enum class IncludeDirectoryRoot
+{
+    Package,
+    Generated,
+};
+
+struct IncludeDirectoryRequirement {
+    IncludeDirectoryRoot root { IncludeDirectoryRoot::Package };
+    PathBuf              path;
+
+    auto clone() const -> IncludeDirectoryRequirement {
+        return IncludeDirectoryRequirement { .root = root, .path = path.clone() };
+    }
+};
+
 struct UsageRequirements {
     Vec<PathBuf>     public_include_directories;
     Vec<PathBuf>     private_include_directories;
@@ -506,7 +522,8 @@ struct UsageRequirements {
     Vec<String>      private_options;
     CppArgumentLayer public_arguments;
     CppArgumentLayer private_arguments;
-    Vec<String>      private_linker_options;
+    Vec<String>                      private_linker_options;
+    Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
 };
 
 struct DeclaredDependency {
@@ -935,6 +952,7 @@ struct PackageMetadata {
     String               name;
     PathBuf              root;
     PathBuf              manifest_path;
+    Vec<String>          build_script_packages;
     String               default_profile;
     Vec<PackageTargetId> default_targets;
     ToolchainSpec        toolchain;
@@ -1040,6 +1058,12 @@ struct SourceDiscoveryPlan {
     Vec<Vec<String>>           linker_options;
 };
 
+struct SourceTargetSelection {
+    usize         profile {};
+    Vec<TargetId> selected_targets;
+    Vec<TargetId> target_order;
+};
+
 struct PackagePlan {
     const PackageSpec*         package {};
     const ProfileSpec*         profile {};
@@ -1093,6 +1117,8 @@ enum class BuildEventKind
     Archive,
     Link,
     Strip,
+    Configure,
+    ConfigureReuse,
 };
 
 struct BuildEvent {
@@ -1178,6 +1204,21 @@ struct CompileTestExecution {
     auto success() const noexcept -> bool { return mismatch.is_none(); }
 };
 
+struct ConfiguredFile {
+    PathBuf                output;
+    rstd::fs::WriteOutcome write { rstd::fs::WriteOutcome::Unchanged };
+};
+
+struct BuildScriptReport {
+    bool                 executed { false };
+    rstd::time::Duration elapsed;
+    usize                created {};
+    usize                replaced {};
+    usize                unchanged {};
+    usize                stale_removed {};
+    Vec<ConfiguredFile>  files;
+};
+
 struct BuildSummary {
     String                       package;
     String                       profile;
@@ -1192,6 +1233,7 @@ struct BuildSummary {
     CompileExecutionStatistics   compile_execution;
     BuildTimingReport            build_timing;
     Vec<CompileTestExecution>    compile_tests;
+    BuildScriptReport            script;
 };
 
 struct ScanRequest {

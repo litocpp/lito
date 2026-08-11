@@ -4,10 +4,14 @@ project(
   lito
   VERSION 0.1.0
   DESCRIPTION "Module-first C++ builder"
-  LANGUAGES CXX)
+  LANGUAGES C CXX)
 
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   message(FATAL_ERROR "lito only supports clang++")
+endif()
+
+if(NOT CMAKE_C_COMPILER_ID STREQUAL "Clang")
+  message(FATAL_ERROR "lito only supports clang")
 endif()
 
 set(CMAKE_CXX_STANDARD 20)
@@ -36,10 +40,17 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 2e79f369a791d805f71c53ddff9699275d243243)
+  GIT_TAG e7d3492e8f3b76f049b3b21bc9e23e8adbf4bd42)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
+
+set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  luato
+  GIT_REPOSITORY https://github.com/litocpp/luato.git
+  GIT_TAG b2de64996a6c91d307f7b58caec3fdd01ac1f4f9)
+FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)
 add_subdirectory(core)
