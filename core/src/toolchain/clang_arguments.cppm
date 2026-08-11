@@ -56,8 +56,9 @@ auto add_warning(CppArgumentSchema& schema,
                  ref<str>           spelling_value) -> void {
     auto item = definition(name);
     spelling(item, spelling_value);
-    schema.add_warning(CppWarningOption { .warning = warning, .enabled = enabled },
-                       rstd::move(item));
+    schema.add_typed(
+        CppCompilerArgument::Warning(CppWarningOption { .warning = warning, .enabled = enabled }),
+        rstd::move(item));
 }
 
 } // namespace lito
@@ -137,12 +138,12 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
     spelling(lto, "-fno-lto"_str);
     schema.add(CppCompilerArgumentKind::OwnedLto, rstd::move(lto));
 
-    add_toggles(schema,
-                CppCompilerArgumentKind::CodegenMode,
-                "position-independent-code"_str,
-                "pic"_str,
-                "-fPIC"_str,
-                "-fno-PIC"_str);
+    auto pic = definition("position-independent-code"_str);
+    spelling(pic, "-fPIC"_str);
+    schema.add_typed(CppCompilerArgument::PositionIndependentCode(true), rstd::move(pic));
+    auto no_pic = definition("no-position-independent-code"_str);
+    spelling(no_pic, "-fno-PIC"_str);
+    schema.add_typed(CppCompilerArgument::PositionIndependentCode(false), rstd::move(no_pic));
     auto pic_aliases = definition("position-independent-code-aliases"_str);
     spelling(pic_aliases, "-fpic"_str);
     spelling(pic_aliases, "-fPIE"_str);

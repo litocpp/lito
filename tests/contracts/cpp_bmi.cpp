@@ -122,6 +122,19 @@ TEST(CppContract, MaterializesTypedDefaultWarnings) {
     EXPECT_TRUE(parsed.occurrences[usize(1)].argument.is_Warning());
 }
 
+TEST(CppContract, MaterializesTypedDefaultPositionIndependentCode) {
+    auto defaults = cpp_options("c++20"_str, CppOptimization::None, CppDebugInfo::None);
+    EXPECT_TRUE(defaults.codegen.position_independent_code);
+
+    auto parsed = argument_layer(strings("-fno-PIC"_str));
+    ASSERT_EQ(parsed.occurrences.len(), usize(1));
+    EXPECT_TRUE(parsed.occurrences[usize {}].argument.is_PositionIndependentCode());
+
+    auto disabled = cpp_options(
+        "c++20"_str, CppOptimization::None, CppDebugInfo::None, strings("-fno-PIC"_str));
+    EXPECT_FALSE(disabled.codegen.position_independent_code);
+}
+
 TEST(CppContract, NormalizesCommonOptionsBeforeToolchainMapping) {
     auto first  = cpp_options("c++20"_str,
                               CppOptimization::None,
@@ -482,6 +495,7 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     });
     auto invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
+    EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wpedantic"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-gnu-statement-expression"_str));

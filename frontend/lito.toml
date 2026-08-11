@@ -10,7 +10,6 @@ discovery = "module"
 
 [usage]
 private-options = [
-  "-fPIC",
   "-fsized-deallocation",
 ]
 

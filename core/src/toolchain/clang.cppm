@@ -274,6 +274,8 @@ auto append_typed_options(Vec<String>&             command,
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     auto lto = cpp_lto_option(options.codegen.lto);
     if (! semantic_only) toolchain::command::push_option(command, lto);
+    toolchain::command::push_option(
+        command, options.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
     for (const auto& option : options.target.features) command.push(option.value.clone());

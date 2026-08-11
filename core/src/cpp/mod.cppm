@@ -196,6 +196,7 @@ struct CppCodegenOptions {
     CppOptimization      optimization { CppOptimization::Default };
     CppDebugInfo         debug_info { CppDebugInfo::None };
     CppLto               lto { CppLto::Off };
+    bool                 position_independent_code { true };
     Vec<CppFamilyOption> modes;
     Vec<String>          instrumentation;
 };
@@ -233,6 +234,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (OwnedSetting, (CppOwnedSetting setting;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
               (Instrumentation, (String value;)),
+              (PositionIndependentCode, (bool enabled;)),
               (Warning, (CppWarningOption option;)),
               (Diagnostic, (String value;)),
               (Vendor, (CppVendorOption option;)))
@@ -267,9 +269,9 @@ template<typename T>
 using CppOptionResult = Result<T, String>;
 
 struct CppCompilerArgumentBinding {
-    CppCompilerArgumentKind  kind { CppCompilerArgumentKind::VendorLanguage };
-    String                   family;
-    Option<CppWarningOption> warning;
+    CppCompilerArgumentKind     kind { CppCompilerArgumentKind::VendorLanguage };
+    String                      family;
+    Option<CppCompilerArgument> typed;
 };
 
 class CppArgumentParser {
@@ -295,7 +297,7 @@ public:
              CompilerArgumentDefinition definition,
              ref<str>                   family = {}) -> void;
 
-    auto add_warning(CppWarningOption option, CompilerArgumentDefinition definition) -> void;
+    auto add_typed(CppCompilerArgument argument, CompilerArgumentDefinition definition) -> void;
 
     auto build() && -> CppOptionResult<CppArgumentParser>;
 
@@ -645,7 +647,7 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
             .preserve_raw_tokens = true,
         });
     }
-    if (binding->warning.is_some()) return CppCompilerArgument::Warning(*binding->warning);
+    if (binding->typed.is_some()) return as<Clone>(*binding->typed).clone();
     auto kind = binding->kind;
     switch (kind) {
     case CppCompilerArgumentKind::MacroDefine:
@@ -741,12 +743,11 @@ auto CppArgumentSchema::add(CppCompilerArgumentKind    kind,
     });
 }
 
-auto CppArgumentSchema::add_warning(CppWarningOption option, CompilerArgumentDefinition definition)
-    -> void {
+auto CppArgumentSchema::add_typed(CppCompilerArgument        argument,
+                                  CompilerArgumentDefinition definition) -> void {
     schema_.add(rstd::move(definition));
     bindings_.push(CppCompilerArgumentBinding {
-        .kind    = CppCompilerArgumentKind::Diagnostic,
-        .warning = Some(option),
+        .typed = Some(rstd::move(argument)),
     });
 }
 
@@ -834,6 +835,9 @@ auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(Instrumentation, value) {
             return CppCompilerArgument::Instrumentation(value.clone());
         }
+        RSTD_CASE(PositionIndependentCode, enabled) {
+            return CppCompilerArgument::PositionIndependentCode(enabled);
+        }
         RSTD_CASE(Warning, option) {
             return CppCompilerArgument::Warning(option);
         }
@@ -884,11 +888,12 @@ auto CppCompileOptions::clone() const -> CppCompileOptions {
             },
         .codegen =
             CppCodegenOptions {
-                .optimization    = input.codegen.optimization,
-                .debug_info      = input.codegen.debug_info,
-                .lto             = input.codegen.lto,
-                .modes           = as<Clone>(input.codegen.modes).clone(),
-                .instrumentation = as<Clone>(input.codegen.instrumentation).clone(),
+                .optimization              = input.codegen.optimization,
+                .debug_info                = input.codegen.debug_info,
+                .lto                       = input.codegen.lto,
+                .position_independent_code = input.codegen.position_independent_code,
+                .modes                     = as<Clone>(input.codegen.modes).clone(),
+                .instrumentation           = as<Clone>(input.codegen.instrumentation).clone(),
             },
         .diagnostics =
             CppDiagnosticOptions {
@@ -1022,6 +1027,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             RSTD_CASE(Instrumentation, value) {
                 instrumentation.insert(rstd::move(value), empty {});
             }
+            RSTD_CASE(PositionIndependentCode, enabled) {
+                input.codegen.position_independent_code = enabled;
+            }
             RSTD_CASE(Warning, option) {
                 set_warning(input.diagnostics.warnings, option);
             }
@@ -1102,6 +1110,10 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
             .argument = CppCompilerArgument::Instrumentation(value.clone()),
         });
     }
+    layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+        .argument =
+            CppCompilerArgument::PositionIndependentCode(extra.codegen.position_independent_code),
+    });
     for (const auto& value : extra.diagnostics.warnings) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
             .argument = CppCompilerArgument::Warning(value),
@@ -1127,6 +1139,8 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
     push_identity(result, "debug-info"_str, cpp_debug_option(options.codegen.debug_info));
     push_identity(result, "lto"_str, cpp_lto_option(options.codegen.lto));
+    push_identity(
+        result, "position-independent-code"_str, options.codegen.position_independent_code);
     for (const auto& value : options.codegen.modes) {
         push_identity(result,
                       rstd::format("codegen:{}", value.family.as_str()).as_str(),
@@ -1166,6 +1180,8 @@ auto cpp_scan_identity(const CppCompileOptions& options) -> String {
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
+    push_identity(
+        result, "position-independent-code"_str, options.codegen.position_independent_code);
     for (const auto& value : options.codegen.modes) {
         push_identity(result,
                       rstd::format("codegen:{}", value.family.as_str()).as_str(),

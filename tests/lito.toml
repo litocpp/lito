@@ -21,7 +21,6 @@ sources = [
 
 [usage]
 private-options = [
-  "-fPIC",
   "-fsized-deallocation",
 ]
 

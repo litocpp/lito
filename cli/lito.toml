@@ -9,7 +9,6 @@ discovery = "module"
 
 [usage]
 private-options = [
-  "-fPIC",
   "-fsized-deallocation",
 ]
 private-linker-options = ["-nostdlib++"]

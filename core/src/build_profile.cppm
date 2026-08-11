@@ -256,6 +256,9 @@ auto make_profile_spec(const BuildConfiguration& configuration,
             RSTD_CASE(Instrumentation, value) {
                 static_cast<void>(value);
             }
+            RSTD_CASE(PositionIndependentCode, enabled) {
+                static_cast<void>(enabled);
+            }
             RSTD_CASE(Warning, value) {
                 static_cast<void>(value);
             }
