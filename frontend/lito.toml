@@ -19,9 +19,9 @@ private-options = [
 ]
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "public"
 
 [dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "runtime"

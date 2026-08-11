@@ -31,25 +31,25 @@ private-options = [
 ]
 
 [dependencies.lito-core]
-path = "../core"
+workspace = true
 visibility = "private"
 
 [dependencies.lito-frontend]
-path = "../frontend"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-test]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-bench]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "runtime"

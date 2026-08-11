@@ -19,25 +19,25 @@ private-options = [
 ]
 
 [dependencies.lito-frontend]
-path = "../frontend"
+workspace = true
 visibility = "public"
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "public"
 
 [dependencies.rstd-json]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-bench]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-toml]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "runtime"

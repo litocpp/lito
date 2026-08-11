@@ -20,17 +20,17 @@ private-options = [
 private-linker-options = ["-nostdlib++"]
 
 [dependencies.lito-core]
-path = "../core"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-std]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-argparse]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "private"
 
 [dependencies.rstd-nostd]
-git = "https://github.com/litocpp/rstd.git"
+workspace = true
 visibility = "runtime"
