@@ -1,0 +1,8 @@
+[package]
+name = "fixture-workspace-profile-app"
+version = { workspace = true }
+
+[[bin]]
+name = "workspace-profile-app"
+discovery = "explicit"
+sources = ["main.cpp"]

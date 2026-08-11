@@ -1,9 +1,0 @@
-[package]
-name = "fixture-duplicate"
-version = "0.1.0"
-module = "fixture.duplicate"
-
-[library]
-archive = "fixture.duplicate"
-discovery = "explicit"
-sources = ["source.cppm", "source.cppm"]

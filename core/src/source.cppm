@@ -425,7 +425,9 @@ class SourceManager {
         return Ok(rstd::move(checkout));
     }
 
-    auto acquire_path(ref<rstd::path::Path> requested, bool package_source) -> Result<usize> {
+    auto acquire_path(ref<rstd::path::Path>   requested,
+                      bool                    package_source,
+                      const WorkspaceCatalog* associated_primary = nullptr) -> Result<usize> {
         auto canonical = rstd::fs::canonicalize(requested);
         if (canonical.is_err()) {
             return source_failure<usize>(rstd::format("cannot resolve path source '{}': {}",
@@ -445,16 +447,23 @@ class SourceManager {
                 if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
                 loaded_catalog = rstd::move(workspace).unwrap();
             } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-                auto package    = rstd::move(loaded.package).unwrap();
-                auto containing = try_containing_workspace(package);
-                if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
-                if (containing->is_some()) {
-                    auto workspace = load_workspace_catalog(
-                        rstd::move(containing).unwrap().unwrap(), Some(rstd::move(package)));
-                    if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
-                    loaded_catalog = rstd::move(workspace).unwrap();
+                auto package = rstd::move(loaded.package).unwrap();
+                if (associated_primary != nullptr) {
+                    auto associated = WorkspaceCatalog::associated_test_package(
+                        rstd::move(package), *associated_primary);
+                    if (associated.is_err()) return Err(rstd::move(associated).unwrap_err());
+                    loaded_catalog = rstd::move(associated).unwrap();
                 } else {
-                    loaded_catalog = rstd_try(WorkspaceCatalog::single(rstd::move(package)));
+                    auto containing = try_containing_workspace(package);
+                    if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
+                    if (containing->is_some()) {
+                        auto workspace = load_workspace_catalog(
+                            rstd::move(containing).unwrap().unwrap(), Some(rstd::move(package)));
+                        if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
+                        loaded_catalog = rstd::move(workspace).unwrap();
+                    } else {
+                        loaded_catalog = rstd_try(WorkspaceCatalog::single(rstd::move(package)));
+                    }
                 }
             } else {
                 return source_failure<usize>("source manifest has no package or workspace"_str);
@@ -633,7 +642,7 @@ public:
         if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
         const auto primary_source = *primary;
         auto       test_root      = PathBuf::from(entries_[primary_source].catalog->root())
-                                        .join(PathBuf::from("test"_str).as_path());
+                                        .join(PathBuf::from("tests"_str).as_path());
         auto       located        = try_locate_manifest(test_root.as_path());
         if (located.is_err()) return Err(rstd::move(located).unwrap_err());
         if (located->is_none()) {
@@ -651,7 +660,9 @@ public:
             return Ok(AcquiredProjectSources { .primary = primary_source });
         }
 
-        auto tests = acquire_path(test_location.directory.as_path(), true);
+        auto tests = acquire_path(test_location.directory.as_path(),
+                                  true,
+                                  rstd::addressof(*entries_[primary_source].catalog));
         if (tests.is_err()) return Err(rstd::move(tests).unwrap_err());
         auto test_source = *tests;
         auto validated   = validate_associated_test_catalog(*entries_[primary_source].catalog,

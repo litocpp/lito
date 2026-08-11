@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-git-update"
-version = "0.1.0"
-module = "fixture.lock.git.update"
-
-[library]
-archive = "fixture.lock.git.update"
-discovery = "explicit"
-sources = ["source.cppm"]

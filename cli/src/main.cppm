@@ -49,6 +49,18 @@ void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
     }
 }
 
+void observe_bench(void* raw_context, const lito::BenchEvent& event) noexcept {
+    auto& context = *static_cast<EventContext*>(raw_context);
+    if (! context.verbose) return;
+    rstd::io::println("[run] {} {} (cwd {})",
+                      lito::package_target_id_text(event.target),
+                      event.executable,
+                      event.working_directory);
+    for (const auto& argument : event.arguments) {
+        rstd::io::println("  [arg] {}", argument.as_str());
+    }
+}
+
 auto build_configuration(lito::ToolchainSpec toolchain) -> lito::BuildConfiguration {
     return lito::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
@@ -62,6 +74,7 @@ struct ArtifactCounts {
     usize archives {};
     usize executables {};
     usize tests {};
+    usize benchmarks {};
     usize compile_tests {};
 };
 
@@ -73,6 +86,7 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
         case lito::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
         case lito::ArtifactKind::Executable: ++counts.executables; break;
         case lito::ArtifactKind::TestExecutable: ++counts.tests; break;
+        case lito::ArtifactKind::BenchmarkExecutable: ++counts.benchmarks; break;
         case lito::ArtifactKind::CompileTest: ++counts.compile_tests; break;
         }
     }
@@ -172,7 +186,7 @@ extern "C++" int main() {
         request.targets            = rstd::move(options.targets);
         request.source             = rstd::move(options.source);
         request.locked             = options.locked;
-        if (options.profile.is_some()) request.configuration.profile = options.profile->clone();
+        if (options.profile.is_some()) request.profile = Some(options.profile->clone());
 
         auto scanned = lito::scan(request);
         if (scanned.is_err()) {
@@ -203,11 +217,12 @@ extern "C++" int main() {
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
+        request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked;
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) {
-            request.build.configuration.profile = options.profile->clone();
+            request.build.profile = Some(options.profile->clone());
         }
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
@@ -274,29 +289,120 @@ extern "C++" int main() {
         for (const auto& execution : summary.executions) {
             if (execution.success()) {
                 ++passed;
-                rstd::io::println(
-                    "[pass] {} ({} ms)", execution.package.as_str(), execution.elapsed.as_millis());
+                rstd::io::println("[pass] {} ({} ms)",
+                                  lito::package_target_id_text(execution.target),
+                                  execution.elapsed.as_millis());
                 continue;
             }
             ++failed;
             if (execution.error.is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: {}",
-                                   execution.package.as_str(),
+                                   lito::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    execution.error->as_str());
             } else if (execution.status->code().is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: exit code {}",
-                                   execution.package.as_str(),
+                                   lito::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->code());
             } else {
                 rstd::io::eprintln("[fail] {} in {}: signal {}",
-                                   execution.package.as_str(),
+                                   lito::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->signal());
             }
         }
         rstd::io::println("test result: {}. {} passed; {} failed",
+                          failed == usize {} ? "ok"_str : "failed"_str,
+                          passed,
+                          failed);
+        return failed == usize {} ? 0 : 1;
+    }
+
+    if (invocation.command.is_Bench()) {
+        auto options                 = rstd::move(invocation.command).as_Bench().options;
+        auto timing                  = make_timing_output(project.root.as_path(),
+                                                          rstd::move(options.timing_file),
+                                                          options.verbose && ! options.no_timing);
+        auto request                 = lito::BenchRequest {};
+        request.build.selection.root = rstd::move(project.root);
+        request.build.environment    = rstd::move(project.environment);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain));
+        request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
+        request.build.cmake          = rstd::move(project.cmake);
+        request.build.selection.packages = rstd::move(options.packages);
+        request.build.targets            = rstd::move(options.targets);
+        request.build.locked             = options.locked;
+        request.arguments                = rstd::move(options.arguments);
+        request.no_run                   = options.no_run;
+        if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
+        request.build.execution.scan.jobs    = options.jobs;
+        request.build.execution.compile.jobs = options.jobs;
+        if (options.output.is_some()) request.build.output = rstd::move(*options.output);
+        auto event_context     = EventContext { .verbose = options.verbose };
+        request.build.observer = Some(lito::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
+        request.observer       = Some(lito::BenchObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe_bench,
+        });
+
+        auto result = lito::bench(rstd::move(request));
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        auto counts  = artifact_counts(summary.build);
+        auto emitted = lito::timing_output::emit(summary.build, timing);
+        if (emitted.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+            return 1;
+        }
+        if (options.no_run) {
+            rstd::io::println("built {} benchmarks ({}) in {}: {} scanned, {} compiled, {} reused",
+                              counts.benchmarks,
+                              summary.build.profile.as_str(),
+                              summary.build.output.as_path(),
+                              summary.build.scanned,
+                              summary.build.compiled,
+                              summary.build.reused);
+            return 0;
+        }
+
+        auto passed = usize {};
+        auto failed = usize {};
+        for (const auto& execution : summary.executions) {
+            if (execution.success()) {
+                ++passed;
+                rstd::io::println("[pass] {} ({} ms)",
+                                  lito::package_target_id_text(execution.target),
+                                  execution.elapsed.as_millis());
+                continue;
+            }
+            ++failed;
+            if (execution.error.is_some()) {
+                rstd::io::eprintln("[fail] {} in {}: {}",
+                                   lito::package_target_id_text(execution.target),
+                                   execution.working_directory.as_path(),
+                                   execution.error->as_str());
+            } else if (execution.status->code().is_some()) {
+                rstd::io::eprintln("[fail] {} in {}: exit code {}",
+                                   lito::package_target_id_text(execution.target),
+                                   execution.working_directory.as_path(),
+                                   *execution.status->code());
+            } else {
+                rstd::io::eprintln("[fail] {} in {}: signal {}",
+                                   lito::package_target_id_text(execution.target),
+                                   execution.working_directory.as_path(),
+                                   *execution.status->signal());
+            }
+        }
+        rstd::io::println("benchmark result: {}. {} passed; {} failed",
                           failed == usize {} ? "ok"_str : "failed"_str,
                           passed,
                           failed);
@@ -317,7 +423,7 @@ extern "C++" int main() {
     request.selection.packages = rstd::move(options.packages);
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked;
-    if (options.profile.is_some()) request.configuration.profile = options.profile->clone();
+    if (options.profile.is_some()) request.profile = Some(options.profile->clone());
     request.execution.scan.jobs    = options.jobs;
     request.execution.compile.jobs = options.jobs;
     if (options.output.is_some()) request.output = rstd::move(*options.output);

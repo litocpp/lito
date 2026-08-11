@@ -1,0 +1,15 @@
+[package]
+name = "fixture-git-path-and-git"
+version = "0.1.0"
+
+[lib]
+name = "fixture-git-path-and-git"
+module = "fixture.git.path_and_git"
+archive = "fixture.git.path_and_git"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.fixture-dependency]
+path = "../dependency"
+git = "https://example.invalid/dependency.git"
+visibility = "private"

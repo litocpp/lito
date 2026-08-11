@@ -1,0 +1,8 @@
+[package]
+name = "fixture-cache-long-path"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-cache-long-path"
+discovery = "explicit"
+sources = ["src/segment01_abcdefghijklmnopqrstuvwxyz/segment02_abcdefghijklmnopqrstuvwxyz/segment03_abcdefghijklmnopqrstuvwxyz/segment04_abcdefghijklmnopqrstuvwxyz/segment05_abcdefghijklmnopqrstuvwxyz/segment06_abcdefghijklmnopqrstuvwxyz/segment07_abcdefghijklmnopqrstuvwxyz/segment08_abcdefghijklmnopqrstuvwxyz/unit.cpp"]

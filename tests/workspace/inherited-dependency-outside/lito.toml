@@ -1,0 +1,12 @@
+[package]
+name = "fixture-workspace-inherited-outside"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-workspace-inherited-outside"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.missing]
+workspace = true
+visibility = "private"

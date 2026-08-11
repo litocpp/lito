@@ -1,9 +1,0 @@
-[package]
-name = "fixture-workspace-duplicate-name"
-version.workspace = true
-module = "fixture.workspace.duplicate_name.two"
-
-[library]
-archive = "fixture.workspace.duplicate_name.two"
-discovery = "explicit"
-sources = ["source.cppm"]

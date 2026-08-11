@@ -263,14 +263,61 @@ enum class ArtifactKind
     TestAttachmentArchive,
     Executable,
     TestExecutable,
+    BenchmarkExecutable,
     CompileTest,
 };
+
+enum class PackageTargetKind
+{
+    Library,
+    Binary,
+    Test,
+    Benchmark,
+    TestAttachment,
+    CompileTest,
+};
+
+auto package_target_kind_name(PackageTargetKind kind) noexcept -> ref<str> {
+    switch (kind) {
+    case PackageTargetKind::Library: return "lib"_str;
+    case PackageTargetKind::Binary: return "bin"_str;
+    case PackageTargetKind::Test: return "test"_str;
+    case PackageTargetKind::Benchmark: return "bench"_str;
+    case PackageTargetKind::TestAttachment: return "test-attachment"_str;
+    case PackageTargetKind::CompileTest: return "compile-test"_str;
+    }
+    return "unknown"_str;
+}
+
+struct PackageTargetId {
+    String            package;
+    PackageTargetKind kind { PackageTargetKind::Library };
+    String            name;
+
+    auto clone() const -> PackageTargetId {
+        return PackageTargetId {
+            .package = package.clone(),
+            .kind    = kind,
+            .name    = name.clone(),
+        };
+    }
+
+    auto operator==(const PackageTargetId& other) const noexcept -> bool {
+        return package == other.package && kind == other.kind && name == other.name;
+    }
+};
+
+auto package_target_id_text(const PackageTargetId& id) -> String {
+    return rstd::format(
+        "{}::{}::{}", id.package.as_str(), package_target_kind_name(id.kind), id.name.as_str());
+}
 
 enum class PackageSelectionPurpose
 {
     All,
     Production,
     Test,
+    Benchmark,
 };
 
 enum class ProjectRootRole
@@ -392,7 +439,7 @@ struct ProfileSpec {
 };
 
 struct DependencySpec {
-    String               target;
+    PackageTargetId      target;
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
@@ -543,6 +590,64 @@ struct TestAttachmentManifest {
     Vec<ConditionalSourceGroup> conditional_source_groups;
 };
 
+struct TargetSourceManifest {
+    Option<String>              module;
+    SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>                declared_sources;
+    Vec<ConditionalSourceGroup> conditional_source_groups;
+};
+
+class PackageTargetManifest {
+    RSTD_ENUM(PackageTargetManifest,
+              (Library, (String name; String archive; TargetSourceManifest source;)),
+              (Binary, (String name; TargetSourceManifest source;)),
+              (Test,
+               (String name; TargetSourceManifest source;
+                Vec<TestAttachmentManifest>       attachments;)),
+              (Benchmark, (String name; TargetSourceManifest source;)))
+};
+
+auto package_target_kind(const PackageTargetManifest& target) noexcept -> PackageTargetKind {
+    if (target.is_Library()) return PackageTargetKind::Library;
+    if (target.is_Binary()) return PackageTargetKind::Binary;
+    if (target.is_Test()) return PackageTargetKind::Test;
+    return PackageTargetKind::Benchmark;
+}
+
+auto package_target_name(const PackageTargetManifest& target) noexcept -> ref<str> {
+    if (target.is_Library()) return target.as_Library().name.as_str();
+    if (target.is_Binary()) return target.as_Binary().name.as_str();
+    if (target.is_Test()) return target.as_Test().name.as_str();
+    return target.as_Benchmark().name.as_str();
+}
+
+auto package_target_source(const PackageTargetManifest& target) noexcept
+    -> const TargetSourceManifest& {
+    if (target.is_Library()) return target.as_Library().source;
+    if (target.is_Binary()) return target.as_Binary().source;
+    if (target.is_Test()) return target.as_Test().source;
+    return target.as_Benchmark().source;
+}
+
+auto package_target_source(PackageTargetManifest& target) noexcept -> TargetSourceManifest& {
+    if (target.is_Library()) return target.as_Library().source;
+    if (target.is_Binary()) return target.as_Binary().source;
+    if (target.is_Test()) return target.as_Test().source;
+    return target.as_Benchmark().source;
+}
+
+auto package_target_artifact_name(const PackageTargetManifest& target) noexcept -> ref<str> {
+    if (target.is_Library()) return target.as_Library().archive.as_str();
+    return package_target_name(target);
+}
+
+auto package_target_attachments(const PackageTargetManifest& target) noexcept
+    -> Option<ref<Vec<TestAttachmentManifest>>> {
+    if (! target.is_Test()) return None();
+    return Some(ref<Vec<TestAttachmentManifest>>::from_raw_parts(
+        rstd::addressof(target.as_Test().attachments)));
+}
+
 enum class CompileTestOutcome
 {
     Success,
@@ -560,25 +665,19 @@ struct CompileTestCase {
 };
 
 struct PackageManifest {
-    String                            name;
-    PackageVersion                    version;
-    Option<String>                    root_module;
-    PathBuf                           root;
-    PathBuf                           source_root;
-    PathBuf                           manifest_path;
-    Option<ProjectProfile>            profile;
-    ArtifactKind                      artifact_kind { ArtifactKind::StaticLibrary };
-    String                            artifact_name;
-    SourceDiscoveryMode               discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>                      declared_sources;
-    Vec<ConditionalSourceGroup>       conditional_source_groups;
-    Vec<TestAttachmentManifest>       test_attachments;
-    TargetPredicate                   target;
-    Vec<CompileTestCase>              compile_tests;
-    UsageRequirements                 usage;
-    Vec<DeclaredDependency>           dependencies;
-    Vec<WorkspaceDependencyReference> workspace_dependencies;
-    Vec<PkgConfigExternalDependency>  pkg_config_external_dependencies;
+    String                                             name;
+    PackageVersion                                     version;
+    PathBuf                                            root;
+    PathBuf                                            source_root;
+    PathBuf                                            manifest_path;
+    Option<ProjectProfile>                             profile;
+    Vec<PackageTargetManifest>                         targets;
+    TargetPredicate                                    target;
+    Vec<CompileTestCase>                               compile_tests;
+    UsageRequirements                                  usage;
+    Vec<DeclaredDependency>                            dependencies;
+    Vec<WorkspaceDependencyReference>                  workspace_dependencies;
+    Vec<PkgConfigExternalDependency>                   pkg_config_external_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
     Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
@@ -756,10 +855,11 @@ struct ResolvedPackageSelection {
     ResolvedPackageGraph graph;
     Vec<String>          selected_root_names;
     Vec<String>          selected_package_names;
+    Vec<PackageTargetId> selected_targets;
 };
 
-struct ResolvedPackageSources {
-    String            package_name;
+struct ResolvedTargetSources {
+    PackageTargetId   target;
     ResolvedSourceSet sources;
 };
 
@@ -770,7 +870,6 @@ enum class LockStatus
 };
 
 struct BuildConfiguration {
-    BuildProfileName         profile;
     ToolchainSpec            toolchain;
     StandardLibrary          standard_library { StandardLibrary::Libstdcxx };
     BmiMode                  bmi_mode { BmiMode::Reduced };
@@ -781,7 +880,6 @@ struct BuildConfiguration {
 
     auto clone() const -> BuildConfiguration {
         return BuildConfiguration {
-            .profile              = profile.clone(),
             .toolchain            = toolchain.clone(),
             .standard_library     = standard_library,
             .bmi_mode             = bmi_mode,
@@ -801,35 +899,44 @@ struct TargetSource {
 };
 
 struct TestAttachmentTarget {
-    String test_target;
-    String library_target;
+    PackageTargetId test_target;
+    PackageTargetId library_target;
 };
 
-struct TargetMetadata {
-    PackageManifest                 manifest;
+struct ResolvedTarget {
+    PackageTargetId                 id;
+    ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
+    String                          artifact_name;
+    TargetSourceManifest            source;
+    PathBuf                         root;
+    PathBuf                         source_root;
+    UsageRequirements               usage;
+    Vec<CompileTestCase>            compile_tests;
+    Vec<TestAttachmentManifest>     attachments;
     Vec<DependencySpec>             dependencies;
     Vec<ResolvedExternalDependency> external_dependencies;
     Option<TestAttachmentTarget>    test_attachment;
 };
 
 struct PackageMetadata {
-    String              name;
-    PathBuf             root;
-    PathBuf             manifest_path;
-    String              default_profile;
-    Vec<String>         default_targets;
-    ToolchainSpec       toolchain;
-    Vec<ProfileSpec>    profiles;
-    Vec<TargetMetadata> targets;
+    String               name;
+    PathBuf              root;
+    PathBuf              manifest_path;
+    String               default_profile;
+    Vec<PackageTargetId> default_targets;
+    ToolchainSpec        toolchain;
+    Vec<ProfileSpec>     profiles;
+    Vec<ResolvedTarget>  targets;
 };
 
 struct TargetSpec {
-    String                          name;
+    PackageTargetId                 id;
     ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
     String                          artifact_name;
     String                          archive_stem;
     Option<String>                  module_affiliation;
     PathBuf                         root;
+    PathBuf                         source_root;
     Vec<TargetSource>               sources;
     Vec<DependencySpec>             dependencies;
     Vec<ResolvedExternalDependency> external_dependencies;
@@ -839,14 +946,14 @@ struct TargetSpec {
 };
 
 struct PackageSpec {
-    String           name;
-    PathBuf          root;
-    PathBuf          manifest_path;
-    String           default_profile;
-    Vec<String>      default_targets;
-    ToolchainSpec    toolchain;
-    Vec<ProfileSpec> profiles;
-    Vec<TargetSpec>  targets;
+    String               name;
+    PathBuf              root;
+    PathBuf              manifest_path;
+    String               default_profile;
+    Vec<PackageTargetId> default_targets;
+    ToolchainSpec        toolchain;
+    Vec<ProfileSpec>     profiles;
+    Vec<TargetSpec>      targets;
 };
 
 struct CompileContext {
@@ -911,7 +1018,7 @@ class ResolvedLinkInput {
 
 struct SourceDiscoveryPlan {
     usize                      profile {};
-    Vec<String>                target_names;
+    Vec<PackageTargetId>       target_identities;
     Vec<TargetId>              target_order;
     Vec<CompileContext>        contexts;
     Vec<Vec<TargetId>>         visible_targets;
@@ -1021,26 +1128,26 @@ struct ToolchainStatistics {
 };
 
 struct BuildRequest {
-    PackageSelection        selection;
-    Vec<String>             targets;
-    PathBuf                 output;
-    ProcessEnvironmentSpec  environment;
-    BuildConfiguration      configuration;
-    PackageSourceConfig     sources;
-    PkgConfigProviderConfig pkg_config;
-    CMakeProviderConfig     cmake;
-    PackageSelectionPurpose purpose { PackageSelectionPurpose::Production };
-    bool                    locked { false };
-    BuildExecutionPolicy    execution;
-    Option<BuildObserver>   observer;
+    PackageSelection         selection;
+    Vec<String>              targets;
+    PathBuf                  output;
+    ProcessEnvironmentSpec   environment;
+    BuildConfiguration       configuration;
+    Option<BuildProfileName> profile;
+    PackageSourceConfig      sources;
+    PkgConfigProviderConfig  pkg_config;
+    CMakeProviderConfig      cmake;
+    PackageSelectionPurpose  purpose { PackageSelectionPurpose::Production };
+    bool                     locked { false };
+    BuildExecutionPolicy     execution;
+    Option<BuildObserver>    observer;
 };
 
 struct BuiltArtifact {
-    String       package;
-    String       target;
-    ArtifactKind kind { ArtifactKind::StaticLibrary };
-    PathBuf      path;
-    PathBuf      package_root;
+    PackageTargetId target;
+    ArtifactKind    kind { ArtifactKind::StaticLibrary };
+    PathBuf         path;
+    PathBuf         package_root;
 };
 
 struct CompileTestExecution {
@@ -1074,15 +1181,16 @@ struct BuildSummary {
 };
 
 struct ScanRequest {
-    PackageSelection        selection;
-    Vec<String>             targets;
-    PathBuf                 source;
-    ProcessEnvironmentSpec  environment;
-    BuildConfiguration      configuration;
-    PackageSourceConfig     sources;
-    PkgConfigProviderConfig pkg_config;
-    CMakeProviderConfig     cmake;
-    bool                    locked { false };
+    PackageSelection         selection;
+    Vec<String>              targets;
+    PathBuf                  source;
+    ProcessEnvironmentSpec   environment;
+    BuildConfiguration       configuration;
+    Option<BuildProfileName> profile;
+    PackageSourceConfig      sources;
+    PkgConfigProviderConfig  pkg_config;
+    CMakeProviderConfig      cmake;
+    bool                     locked { false };
 };
 
 struct ScanReport {

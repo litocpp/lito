@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-stale"
-version = "0.1.0"
-module = "fixture.lock.stale"
-
-[library]
-archive = "fixture.lock.stale"
-discovery = "explicit"
-sources = ["source.cppm"]

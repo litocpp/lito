@@ -1,9 +1,10 @@
 [package]
 name = "demo-app"
 version = "0.1.0"
-module = "demo.app"
 
-[library]
+[lib]
+name = "demo-app"
+module = "demo.app"
 archive = "demo.app"
 discovery = "explicit"
 sources = [

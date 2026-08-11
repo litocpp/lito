@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-duplicate-source"
-version = "0.1.0"
-module = "fixture.lock.duplicate_source"
-
-[library]
-archive = "fixture.lock.duplicate_source"
-discovery = "explicit"
-sources = ["source.cppm"]

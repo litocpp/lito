@@ -1,0 +1,12 @@
+[package]
+name = "fixture-test-pass"
+version = { workspace = true }
+
+[[test]]
+name = "fixture-test-pass"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-test-lib]
+path = "../test-lib"
+visibility = "private"

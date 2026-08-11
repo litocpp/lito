@@ -1,0 +1,16 @@
+[package]
+name = "cmake-duplicate-target"
+version = "0.1.0"
+
+[lib]
+name = "cmake-duplicate-target"
+module = "cmake_duplicate_target"
+archive = "cmake_duplicate_target"
+discovery = "module"
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+targets = [
+  { name = "LitoFixture::fixture", visibility = "private" },
+  { name = "LitoFixture::fixture", visibility = "public" },
+]

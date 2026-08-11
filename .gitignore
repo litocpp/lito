@@ -4,7 +4,7 @@
 /lito.lock
 /tenon.lock
 demo/**/build/
-test/**/build/
+tests/**/build/
 **/lito.lock.tmp.*
 **/tenon.lock.tmp.*
 doc/frontend/node_modules/

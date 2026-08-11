@@ -1,8 +1,0 @@
-[package]
-name = "fixture-workspace-profile-app"
-version = { workspace = true }
-
-[executable]
-name = "workspace-profile-app"
-discovery = "explicit"
-sources = ["main.cpp"]

@@ -1,0 +1,14 @@
+[package]
+name = "fixture-workspace-dependency-reference-mixed"
+version = "0.1.0"
+
+[lib]
+name = "fixture-workspace-dependency-reference-mixed"
+module = "fixture.workspace_dependency_reference_mixed"
+archive = "fixture-workspace-dependency-reference-mixed"
+discovery = "module"
+
+[dependencies.mixed]
+workspace = true
+path = "../mixed"
+visibility = "private"

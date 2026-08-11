@@ -1,0 +1,12 @@
+[package]
+name = "fixture-multi-consumer"
+version = { workspace = true }
+
+[[bin]]
+name = "fixture-multi-consumer"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-multi-target]
+path = "../multi-target"
+visibility = "private"

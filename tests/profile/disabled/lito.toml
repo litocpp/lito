@@ -1,0 +1,12 @@
+[package]
+name = "fixture-profile-disabled"
+version = "0.1.0"
+
+[[bin]]
+name = "profile-disabled"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[profile]
+exceptions = false
+rtti = false

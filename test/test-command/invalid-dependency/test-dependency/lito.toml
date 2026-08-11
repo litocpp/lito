@@ -1,8 +1,0 @@
-[package]
-name = "fixture-test-dependency"
-version = { workspace = true }
-
-[test]
-name = "fixture-test-dependency"
-discovery = "explicit"
-sources = ["main.cpp"]

@@ -1,0 +1,10 @@
+[package]
+name = "fixture-unsupported"
+version = "0.1.0"
+
+[lib]
+name = "fixture-unsupported"
+module = "fixture.unsupported"
+archive = "fixture.unsupported"
+discovery = "explicit"
+sources = ["source.hpp"]

@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-id-field"
-version = "0.1.0"
-module = "fixture.lock.id_field"
-
-[library]
-archive = "fixture.lock.id_field"
-discovery = "explicit"
-sources = ["source.cppm"]

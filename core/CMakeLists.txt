@@ -59,7 +59,9 @@ target_sources(
          src/compile_test.cppm
          src/compile_executor.cppm
          src/builder.cppm
+         src/artifact_runner.cppm
          src/test_runner.cppm
+         src/bench_runner.cppm
          src/scanner.cppm
          src/formatter.cppm
          src/reporting.cppm

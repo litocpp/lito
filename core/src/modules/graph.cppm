@@ -158,8 +158,8 @@ auto resolve_modules(const PackagePlan&       package,
                 return graph_failure<ModulePlan>(
                     rstd::format("module '{}' from target '{}' is not visible to target '{}'",
                                  required.as_str(),
-                                 package.package->targets[provider_target].name.as_str(),
-                                 package.package->targets[importer_target].name.as_str()));
+                                 package.package->targets[provider_target].id.name.as_str(),
+                                 package.package->targets[importer_target].id.name.as_str()));
             }
             auto compatibility =
                 check_bmi_compatibility(format,

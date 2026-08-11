@@ -1,0 +1,9 @@
+[package]
+name = "fixture-convention-missing"
+version = "0.1.0"
+
+[lib]
+name = "fixture-convention-missing"
+module = "fixture.convention.missing"
+archive = "fixture.convention.missing"
+discovery = "module"

@@ -1,0 +1,40 @@
+[package]
+name = "fixture-multi-target"
+version = { workspace = true }
+
+[lib]
+name = "shared"
+module = "fixture.multi"
+archive = "fixture_multi"
+discovery = "explicit"
+sources = ["src/lib.cppm"]
+
+[[bin]]
+name = "shared"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[[bin]]
+name = "tool"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[[test]]
+name = "shared"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[[test]]
+name = "unit"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[[bench]]
+name = "shared"
+discovery = "explicit"
+sources = ["src/main.cpp"]
+
+[[bench]]
+name = "speed"
+discovery = "explicit"
+sources = ["src/main.cpp"]

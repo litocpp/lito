@@ -1,0 +1,10 @@
+[package]
+name = "fixture-conventional-workspace-library"
+version.workspace = true
+
+[lib]
+name = "fixture-conventional-workspace-library"
+module = "fixture.conventional.workspace"
+archive = "fixture-conventional-workspace"
+discovery = "explicit"
+sources = ["src/lib.cppm"]

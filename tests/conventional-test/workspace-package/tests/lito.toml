@@ -1,0 +1,12 @@
+[package]
+name = "fixture-associated-workspace-test"
+version.workspace = true
+
+[[test]]
+name = "fixture-associated-workspace-test"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-associated-workspace-library]
+workspace = true
+visibility = "private"

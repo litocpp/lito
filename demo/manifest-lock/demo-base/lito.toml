@@ -1,9 +1,10 @@
 [package]
 name = "demo-base"
 version = "0.1.0"
-module = "demo.base"
 
-[library]
+[lib]
+name = "demo-base"
+module = "demo.base"
 archive = "demo.base"
 discovery = "explicit"
 sources = [

@@ -53,6 +53,7 @@ export namespace lito
 
 auto resolve_project_metadata(const PackageSelection&           selection,
                               const BuildConfiguration&         configuration,
+                              const BuildProfileName&           profile,
                               const PackageSourceConfig&        sources,
                               const PkgConfigProviderConfig&    pkg_config,
                               const CMakeProviderConfig&        cmake,
@@ -77,8 +78,9 @@ auto resolve_project_metadata(const PackageSelection&           selection,
     resolved_configuration.toolchain.archiver = PathBuf::from(toolchain.archiver_path());
     return adapt_package_graph_metadata(rstd::move(project.graph),
                                         project.selected_package_names,
-                                        project.selected_root_names,
+                                        project.selected_targets,
                                         resolved_configuration,
+                                        profile,
                                         pkg_config,
                                         cmake,
                                         toolchain.target_info(),

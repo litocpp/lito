@@ -30,15 +30,55 @@ auto copy_strings(const Vec<String>& values) -> Vec<String> {
     return result;
 }
 
-auto selected_by_purpose(ProjectRootRole        role,
-                         ArtifactKind           kind,
+auto selected_by_purpose(ProjectRootRole         role,
+                         PackageTargetKind       kind,
                          PackageSelectionPurpose purpose) -> bool {
     if (purpose == PackageSelectionPurpose::All) return true;
     if (purpose == PackageSelectionPurpose::Test) {
-        return kind == ArtifactKind::TestExecutable || kind == ArtifactKind::CompileTest;
+        return kind == PackageTargetKind::Test || kind == PackageTargetKind::CompileTest;
     }
-    return role != ProjectRootRole::AssociatedTest && kind != ArtifactKind::TestExecutable &&
-           kind != ArtifactKind::CompileTest;
+    if (role == ProjectRootRole::AssociatedTest) return false;
+    if (purpose == PackageSelectionPurpose::Benchmark) {
+        return kind == PackageTargetKind::Benchmark;
+    }
+    return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
+}
+
+auto purpose_name(PackageSelectionPurpose purpose) noexcept -> ref<str> {
+    switch (purpose) {
+    case PackageSelectionPurpose::All: return "all"_str;
+    case PackageSelectionPurpose::Production: return "production"_str;
+    case PackageSelectionPurpose::Test: return "test"_str;
+    case PackageSelectionPurpose::Benchmark: return "benchmark"_str;
+    }
+    return "unknown"_str;
+}
+
+auto append_selected_targets(Vec<PackageTargetId>&   output,
+                             const PackageManifest&  package,
+                             ProjectRootRole         role,
+                             PackageSelectionPurpose purpose) -> bool {
+    auto selected = false;
+    for (const auto& target : package.targets) {
+        const auto kind = package_target_kind(target);
+        if (! selected_by_purpose(role, kind, purpose)) continue;
+        output.push(PackageTargetId {
+            .package = package.name.clone(),
+            .kind    = kind,
+            .name    = String::make(package_target_name(target)),
+        });
+        selected = true;
+    }
+    if (! package.compile_tests.is_empty() &&
+        selected_by_purpose(role, PackageTargetKind::CompileTest, purpose)) {
+        output.push(PackageTargetId {
+            .package = package.name.clone(),
+            .kind    = PackageTargetKind::CompileTest,
+            .name    = package.name.clone(),
+        });
+        selected = true;
+    }
+    return selected;
 }
 
 auto selected_closure(const ResolvedPackageGraph& graph,
@@ -94,31 +134,34 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     auto resolved = resolve_package_graph_with_environment(
         selection.root.as_path(), rstd::move(options), tool_resolver, environment);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-    auto graph = rstd::move(resolved).unwrap();
+    auto graph      = rstd::move(resolved).unwrap();
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
     for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
-    auto root_kinds = rstd::collections::BTreeMap<String, ArtifactKind>::make();
-    for (const auto& package : graph.packages) {
-        if (root_roles.contains_key(package.manifest.name.as_str())) {
-            root_kinds.insert(package.manifest.name.clone(), package.manifest.artifact_kind);
-        }
-    }
-
-    auto selected_roots = Vec<String>::make();
+    auto selected_roots   = Vec<String>::make();
+    auto selected_targets = Vec<PackageTargetId>::make();
     if (selection.packages.is_empty()) {
         for (const auto& root : graph.roots) {
-            const auto& name = root.name;
-            auto kind      = root_kinds.get(name.as_str());
-            auto supported = true;
+            const auto&            name      = root.name;
+            auto                   supported = true;
+            const PackageManifest* manifest  = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str()) {
                         supported = package.manifest.target.matches(*target);
+                        manifest  = rstd::addressof(package.manifest);
+                        break;
+                    }
+                }
+            } else {
+                for (const auto& package : graph.packages) {
+                    if (package.manifest.name.as_str() == name.as_str()) {
+                        manifest = rstd::addressof(package.manifest);
                         break;
                     }
                 }
             }
-            if (kind.is_some() && selected_by_purpose(root.role, **kind, purpose) && supported) {
+            if (manifest != nullptr && supported &&
+                append_selected_targets(selected_targets, *manifest, root.role, purpose)) {
                 selected_roots.push(name.clone());
             }
         }
@@ -140,32 +183,39 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                 return failure<ResolvedPackageSelection>(
                     rstd::format("project has no root package named '{}'", name.as_str()));
             }
-            auto kind = root_kinds.get(name.as_str());
-            if (kind.is_none() || ! selected_by_purpose(**role, **kind, purpose)) {
-                auto expected = purpose == PackageSelectionPurpose::Test ? "test"_str
-                                                                         : "production"_str;
-                return failure<ResolvedPackageSelection>(rstd::format(
-                    "project package '{}' is not a {} package", name.as_str(), expected));
-            }
+            const PackageManifest* manifest = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
-                    if (package.manifest.name.as_str() == name.as_str() &&
-                        ! package.manifest.target.matches(*target)) {
+                    if (package.manifest.name.as_str() != name.as_str()) continue;
+                    manifest = rstd::addressof(package.manifest);
+                    if (! package.manifest.target.matches(*target)) {
                         return failure<ResolvedPackageSelection>(
                             rstd::format("package '{}' does not support target '{}'",
                                          name.as_str(),
                                          target->triple.as_str()));
                     }
+                    break;
                 }
+            } else {
+                for (const auto& package : graph.packages) {
+                    if (package.manifest.name.as_str() == name.as_str()) {
+                        manifest = rstd::addressof(package.manifest);
+                        break;
+                    }
+                }
+            }
+            if (manifest == nullptr ||
+                ! append_selected_targets(selected_targets, *manifest, **role, purpose)) {
+                return failure<ResolvedPackageSelection>(rstd::format(
+                    "project package '{}' has no {} target", name.as_str(), purpose_name(purpose)));
             }
             selected_names.insert(name.clone(), empty {});
             selected_roots.push(name.clone());
         }
     }
     if (selected_roots.is_empty()) {
-        if (purpose == PackageSelectionPurpose::Test)
-            return failure<ResolvedPackageSelection>("project has no selected test package"_str);
-        return failure<ResolvedPackageSelection>("project has no selected package"_str);
+        return failure<ResolvedPackageSelection>(
+            rstd::format("project has no selected {} package", purpose_name(purpose)));
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
@@ -177,6 +227,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
         .graph                  = rstd::move(graph),
         .selected_root_names    = rstd::move(selected_roots),
         .selected_package_names = rstd::move(selected_packages).unwrap(),
+        .selected_targets       = rstd::move(selected_targets),
     });
 }
 

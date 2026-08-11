@@ -1,9 +1,10 @@
 [package]
 name = "lito-core"
 version.workspace = true
-module = "lito"
 
-[library]
+[lib]
+name = "lito-core"
+module = "lito"
 archive = "lito"
 discovery = "module"
 

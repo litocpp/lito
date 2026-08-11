@@ -1,0 +1,10 @@
+[workspace]
+name = "fixture-associated-workspace"
+members = ["library"]
+default-members = ["library"]
+
+[workspace.package]
+version = "0.1.0"
+
+[workspace.dependencies.fixture-associated-workspace-library]
+path = "library"

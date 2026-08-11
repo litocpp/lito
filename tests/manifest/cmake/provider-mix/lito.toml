@@ -1,0 +1,12 @@
+[package]
+name = "cmake-provider-mix"
+version = "0.1.0"
+
+[lib]
+name = "cmake-provider-mix"
+module = "cmake_provider_mix"
+archive = "cmake_provider_mix"
+discovery = "module"
+
+[external-dependencies.fixture]
+module = "lito-fixture"

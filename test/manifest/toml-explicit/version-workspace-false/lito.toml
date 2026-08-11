@@ -1,9 +1,0 @@
-[package]
-name = "fixture-version_workspace_false"
-version.workspace = false
-module = "fixture.version_workspace_false"
-
-[library]
-archive = "fixture.version_workspace_false"
-discovery = "explicit"
-sources = ["source.cppm"]

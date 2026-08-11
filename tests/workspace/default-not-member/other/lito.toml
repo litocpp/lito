@@ -1,0 +1,10 @@
+[package]
+name = "fixture-workspace-other"
+version = "0.1.0"
+
+[lib]
+name = "fixture-workspace-other"
+module = "fixture.workspace.other"
+archive = "fixture.workspace.other"
+discovery = "explicit"
+sources = ["source.cppm"]

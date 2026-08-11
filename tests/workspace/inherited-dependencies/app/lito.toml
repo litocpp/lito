@@ -1,0 +1,20 @@
+[package]
+name = "fixture-workspace-inherited-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-workspace-inherited-app"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-workspace-inherited-library]
+workspace = true
+visibility = "private"
+
+[external-dependencies.pkg-config.curl]
+workspace = true
+visibility = "public"
+
+[external-dependencies.cmake.fixture]
+workspace = true
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]

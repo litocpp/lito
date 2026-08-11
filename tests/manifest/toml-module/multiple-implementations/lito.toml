@@ -1,0 +1,9 @@
+[package]
+name = "fixture-convention-implementations"
+version = "0.1.0"
+
+[lib]
+name = "fixture-convention-implementations"
+module = "fixture.convention.implementations"
+archive = "fixture.convention.implementations"
+discovery = "module"

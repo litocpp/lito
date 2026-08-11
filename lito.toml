@@ -1,7 +1,7 @@
 [workspace]
 name = "lito"
-members = ["frontend", "core", "cli", "test"]
-default-members = ["cli", "test"]
+members = ["frontend", "core", "cli"]
+default-members = ["cli"]
 
 [workspace.package]
 version = "0.1.0"

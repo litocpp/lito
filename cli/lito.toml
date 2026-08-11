@@ -1,9 +1,9 @@
 [package]
 name = "lito"
 version.workspace = true
-module = "lito.executable"
 
-[executable]
+[[bin]]
+module = "lito.executable"
 name = "lito"
 discovery = "module"
 

@@ -1,0 +1,14 @@
+[package]
+name = "fixture-resolver-missing"
+version = "0.1.0"
+
+[lib]
+name = "fixture-resolver-missing"
+module = "fixture.resolver.missing"
+archive = "fixture.resolver.missing"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.missing]
+path = "../does-not-exist"
+visibility = "private"

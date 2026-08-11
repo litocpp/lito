@@ -1,0 +1,14 @@
+[package]
+name = "fixture-compile-lib"
+version = { workspace = true }
+
+[lib]
+name = "fixture-compile-lib"
+module = "fixture.compile.lib"
+archive = "fixture_compile_lib"
+discovery = "explicit"
+sources = ["src/lib.cppm"]
+source-groups = [
+  { sources = ["src/unix.cpp"], target = { family = "unix", not-os = "windows" } },
+  { sources = ["src/windows.cpp"], target = { family = "windows" } },
+]

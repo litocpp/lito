@@ -2,7 +2,7 @@
 name = "demo-workspace-app_two"
 version.workspace = true
 
-[executable]
+[[bin]]
 name = "demo-app"
 discovery = "explicit"
 sources = ["main.cpp"]

@@ -1,0 +1,13 @@
+[package]
+name = "cmake-unsafe-target"
+version = "0.1.0"
+
+[lib]
+name = "cmake-unsafe-target"
+module = "cmake_unsafe_target"
+archive = "cmake_unsafe_target"
+discovery = "module"
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+targets = [{ name = "LitoFixture::fixture)", visibility = "private" }]

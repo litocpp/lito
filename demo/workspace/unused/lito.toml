@@ -1,9 +1,10 @@
 [package]
 name = "demo-workspace-unused"
 version.workspace = true
-module = "demo.workspace.unused"
 
-[library]
+[lib]
+name = "demo-workspace-unused"
+module = "demo.workspace.unused"
 archive = "common"
 discovery = "explicit"
 sources = ["unused.cppm"]

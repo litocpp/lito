@@ -1,0 +1,10 @@
+[package]
+name = "fixture-workspace-inherited_version_missing"
+version.workspace = true
+
+[lib]
+name = "fixture-workspace-inherited_version_missing"
+module = "fixture.workspace.inherited_version_missing"
+archive = "fixture.workspace.inherited_version_missing"
+discovery = "explicit"
+sources = ["source.cppm"]

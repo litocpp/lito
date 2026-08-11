@@ -104,8 +104,8 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) 
 }
 
 auto package_root_key(ref<str> key) -> bool {
-    return key == "package"_str || key == "library"_str || key == "executable"_str ||
-           key == "test"_str || key == "compile-test"_str || key == "usage"_str ||
+    return key == "package"_str || key == "lib"_str || key == "bin"_str || key == "test"_str ||
+           key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
            key == "dependencies"_str || key == "external-dependencies"_str || key == "profile"_str;
 }
 
@@ -271,22 +271,22 @@ auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProf
 }
 
 auto package_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "version"_str || key == "module"_str ||
-           key == "source-root"_str || key == "target"_str;
+    return key == "name"_str || key == "version"_str || key == "source-root"_str ||
+           key == "target"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
-    return key == "archive"_str || key == "discovery"_str || key == "sources"_str ||
-           key == "source-groups"_str;
+    return key == "name"_str || key == "archive"_str || key == "module"_str ||
+           key == "discovery"_str || key == "sources"_str || key == "source-groups"_str;
 }
 
-auto executable_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "discovery"_str || key == "sources"_str ||
-           key == "source-groups"_str;
+auto runnable_key(ref<str> key) -> bool {
+    return key == "name"_str || key == "module"_str || key == "discovery"_str ||
+           key == "sources"_str || key == "source-groups"_str;
 }
 
 auto test_key(ref<str> key) -> bool {
-    return executable_key(key) || key == "attach"_str;
+    return runnable_key(key) || key == "attach"_str;
 }
 
 auto compile_test_key(ref<str> key) -> bool {
@@ -383,14 +383,10 @@ auto workspace_package_key(ref<str> key) -> bool {
     return key == "version"_str;
 }
 
-auto parse_package_version(const Toml& package, ArtifactKind artifact_kind)
-    -> Result<PackageVersion> {
+auto parse_package_version(const Toml& package, bool optional) -> Result<PackageVersion> {
     auto declared = member(package, "version"_str);
     if (declared.is_none()) {
-        if (artifact_kind == ArtifactKind::TestExecutable ||
-            artifact_kind == ArtifactKind::CompileTest) {
-            return Ok(PackageVersion {});
-        }
+        if (optional) return Ok(PackageVersion {});
         return failure<PackageVersion>("package is missing 'version'"_str);
     }
 
@@ -694,15 +690,17 @@ auto append_attachment_group(TestAttachmentManifest& attachment,
     return Ok(empty {});
 }
 
-auto parse_test_attachments(Option<ref<Toml>> value) -> Result<Vec<TestAttachmentManifest>> {
+auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
+    -> Result<Vec<TestAttachmentManifest>> {
     auto result = Vec<TestAttachmentManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
     if (entries.is_none()) {
-        return failure<Vec<TestAttachmentManifest>>("test.attach must be an array"_str);
+        return failure<Vec<TestAttachmentManifest>>(
+            rstd::format("{}.attach must be an array", owner_context));
     }
     for (usize index {}; index < (**entries).len(); ++index) {
-        const auto context = rstd::format("test.attach[{}]", index);
+        const auto context = rstd::format("{}.attach[{}]", owner_context, index);
         auto       table   = table_value((**entries)[index], context.as_str());
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, context.as_str(), test_attachment_key);
@@ -750,7 +748,103 @@ auto parse_test_attachments(Option<ref<Toml>> value) -> Result<Vec<TestAttachmen
         }
     }
     if (result.is_empty()) {
-        return failure<Vec<TestAttachmentManifest>>("test.attach must not be empty"_str);
+        return failure<Vec<TestAttachmentManifest>>(
+            rstd::format("{}.attach must not be empty", owner_context));
+    }
+    return Ok(rstd::move(result));
+}
+
+auto parse_target_source(const Toml& value, ref<str> context, bool module_required)
+    -> Result<TargetSourceManifest> {
+    auto module = rstd_try(optional_string(value, "module"_str, context));
+    if (module.is_some() && ! valid_module_name(module->as_str())) {
+        return failure<TargetSourceManifest>(
+            rstd::format("{}.module must be a valid module name", context));
+    }
+    auto       discovery          = rstd_try(required_string(value, "discovery"_str, context));
+    const auto explicit_discovery = discovery.as_str() == "explicit"_str;
+    const auto module_discovery   = discovery.as_str() == "module"_str;
+    if (! explicit_discovery && ! module_discovery) {
+        return failure<TargetSourceManifest>(
+            rstd::format("{}.discovery must be explicit or module", context));
+    }
+    if ((module_required || module_discovery) && module.is_none()) {
+        return failure<TargetSourceManifest>(rstd::format("{}.module is required", context));
+    }
+    auto groups = rstd_try(parse_source_groups(member(value, "source-groups"_str),
+                                               rstd::format("{}.source-groups", context).as_str()));
+    auto sources = rstd_try(declared_paths(member(value, "sources"_str),
+                                           rstd::format("{}.sources", context).as_str(),
+                                           explicit_discovery && groups.is_empty()));
+    return Ok(TargetSourceManifest {
+        .module = rstd::move(module),
+        .discovery =
+            explicit_discovery ? SourceDiscoveryMode::Explicit : SourceDiscoveryMode::Module,
+        .declared_sources          = rstd::move(sources),
+        .conditional_source_groups = rstd::move(groups),
+    });
+}
+
+auto parse_library_target(Option<ref<Toml>> value) -> Result<Option<PackageTargetManifest>> {
+    if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
+    auto table = rstd_try(table_value(**value, "manifest.lib"_str));
+    rstd_try(reject_unknown(*table, "manifest.lib"_str, library_key));
+    auto name    = rstd_try(required_string(**value, "name"_str, "manifest.lib"_str));
+    auto archive = rstd_try(required_string(**value, "archive"_str, "manifest.lib"_str));
+    if (! package_name_is_valid(name.as_str())) {
+        return failure<Option<PackageTargetManifest>>(
+            "manifest.lib.name must be a valid target name"_str);
+    }
+    if (! valid_artifact_name(archive.as_str())) {
+        return failure<Option<PackageTargetManifest>>(
+            "manifest.lib.archive must be a safe artifact basename"_str);
+    }
+    auto source = rstd_try(parse_target_source(**value, "manifest.lib"_str, true));
+    return Ok(Some(
+        PackageTargetManifest::Library(rstd::move(name), rstd::move(archive), rstd::move(source))));
+}
+
+auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref<str> key)
+    -> Result<Vec<PackageTargetManifest>> {
+    auto result = Vec<PackageTargetManifest>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("manifest.{} must be an array of tables", key));
+    }
+    if ((**entries).is_empty()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("manifest.{} must not be empty", key));
+    }
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto  context = rstd::format("manifest.{}[{}]", key, index);
+        const auto& item    = (**entries)[index];
+        auto        table   = rstd_try(table_value(item, context.as_str()));
+        rstd_try(reject_unknown(
+            *table, context.as_str(), kind == PackageTargetKind::Test ? test_key : runnable_key));
+        auto name = rstd_try(required_string(item, "name"_str, context.as_str()));
+        if (! package_name_is_valid(name.as_str())) {
+            return failure<Vec<PackageTargetManifest>>(
+                rstd::format("{}.name must be a valid target name", context.as_str()));
+        }
+        for (const auto& existing : result) {
+            if (package_target_name(existing) == name.as_str()) {
+                return failure<Vec<PackageTargetManifest>>(
+                    rstd::format("manifest.{} repeats target name '{}'", key, name.as_str()));
+            }
+        }
+        auto source = rstd_try(parse_target_source(item, context.as_str(), false));
+        if (kind == PackageTargetKind::Binary) {
+            result.push(PackageTargetManifest::Binary(rstd::move(name), rstd::move(source)));
+        } else if (kind == PackageTargetKind::Benchmark) {
+            result.push(PackageTargetManifest::Benchmark(rstd::move(name), rstd::move(source)));
+        } else {
+            auto attachments =
+                rstd_try(parse_test_attachments(member(item, "attach"_str), context.as_str()));
+            result.push(PackageTargetManifest::Test(
+                rstd::move(name), rstd::move(source), rstd::move(attachments)));
+        }
     }
     return Ok(rstd::move(result));
 }
@@ -788,7 +882,9 @@ auto resolve_directories(Option<ref<Toml>> value, ref<rstd::path::Path> root, re
 
 auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>> {
     auto result = Vec<CompileTestCase>::make();
-    if (value.is_none()) return Ok(rstd::move(result));
+    if (value.is_none()) {
+        return failure<Vec<CompileTestCase>>("compile-test.cases is required"_str);
+    }
     auto cases = (**value).as_array();
     if (cases.is_none()) {
         return failure<Vec<CompileTestCase>>("compile-test.cases must be an array"_str);
@@ -1799,118 +1895,46 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
     if (package_known.is_err()) return Err(rstd::move(package_known).unwrap_err());
 
-    auto library_value_option      = member(document, "library"_str);
-    auto executable_value_option   = member(document, "executable"_str);
-    auto test_value_option         = member(document, "test"_str);
-    auto compile_test_value_option = member(document, "compile-test"_str);
-    auto artifact_count            = usize {};
-    if (library_value_option.is_some()) ++artifact_count;
-    if (executable_value_option.is_some()) ++artifact_count;
-    if (test_value_option.is_some()) ++artifact_count;
-    if (compile_test_value_option.is_some()) ++artifact_count;
-    if (artifact_count != usize(1)) {
-        return failure<ManifestDocument>(
-            "manifest must contain exactly one of 'library', 'executable', 'test', or "
-            "'compile-test'"_str);
-    }
-    auto artifact_kind = ArtifactKind::TestExecutable;
-    if (library_value_option.is_some()) artifact_kind = ArtifactKind::StaticLibrary;
-    if (executable_value_option.is_some()) artifact_kind = ArtifactKind::Executable;
-    if (compile_test_value_option.is_some()) artifact_kind = ArtifactKind::CompileTest;
-    const auto& artifact_value = library_value_option.is_some()      ? **library_value_option
-                                 : executable_value_option.is_some() ? **executable_value_option
-                                 : test_value_option.is_some()       ? **test_value_option
-                                                                     : **compile_test_value_option;
-    const auto  artifact_context =
-        artifact_kind == ArtifactKind::StaticLibrary    ? "manifest.library"_str
-        : artifact_kind == ArtifactKind::Executable     ? "manifest.executable"_str
-        : artifact_kind == ArtifactKind::TestExecutable ? "manifest.test"_str
-                                                        : "manifest.compile-test"_str;
-    auto artifact_table = table_value(artifact_value, artifact_context);
-    if (artifact_table.is_err()) return Err(rstd::move(artifact_table).unwrap_err());
-    auto artifact_known =
-        reject_unknown(**artifact_table,
-                       artifact_context,
-                       artifact_kind == ArtifactKind::StaticLibrary    ? library_key
-                       : artifact_kind == ArtifactKind::CompileTest    ? compile_test_key
-                       : artifact_kind == ArtifactKind::TestExecutable ? test_key
-                                                                       : executable_key);
-    if (artifact_known.is_err()) return Err(rstd::move(artifact_known).unwrap_err());
-
     const auto& package_value = **member(document, "package"_str);
     auto        name          = required_string(package_value, "name"_str, "package"_str);
-    auto        version       = parse_package_version(package_value, artifact_kind);
-    auto        root_module   = optional_string(package_value, "module"_str, "package"_str);
     if (name.is_err()) return Err(rstd::move(name).unwrap_err());
-    if (version.is_err()) return Err(rstd::move(version).unwrap_err());
-    if (root_module.is_err()) return Err(rstd::move(root_module).unwrap_err());
     if (! package_name_is_valid(name->as_str())) {
         return failure<ManifestDocument>(
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
     }
-    if (root_module->is_some() && ! valid_module_name((**root_module).as_str())) {
-        return failure<ManifestDocument>("package.module must be a valid module name"_str);
+    auto library = rstd_try(parse_library_target(member(document, "lib"_str)));
+    auto bins    = rstd_try(
+        parse_runnable_targets(member(document, "bin"_str), PackageTargetKind::Binary, "bin"_str));
+    auto tests = rstd_try(
+        parse_runnable_targets(member(document, "test"_str), PackageTargetKind::Test, "test"_str));
+    auto benches = rstd_try(parse_runnable_targets(
+        member(document, "bench"_str), PackageTargetKind::Benchmark, "bench"_str));
+
+    auto compile_tests      = Vec<CompileTestCase>::make();
+    auto compile_test_value = member(document, "compile-test"_str);
+    if (compile_test_value.is_some()) {
+        auto table = rstd_try(table_value(**compile_test_value, "manifest.compile-test"_str));
+        rstd_try(reject_unknown(*table, "manifest.compile-test"_str, compile_test_key));
+        compile_tests = rstd_try(parse_compile_tests(member(**compile_test_value, "cases"_str)));
     }
-    if (artifact_kind == ArtifactKind::StaticLibrary && root_module->is_none()) {
-        return failure<ManifestDocument>("package.module is required for a library"_str);
-    }
-    Result<String> artifact_name = Ok(name->clone());
-    if (artifact_kind != ArtifactKind::CompileTest) {
-        artifact_name = required_string(artifact_value,
-                                        artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str
-                                                                                     : "name"_str,
-                                        artifact_context);
-    }
-    if (artifact_name.is_err()) return Err(rstd::move(artifact_name).unwrap_err());
-    if (! valid_artifact_name(artifact_name->as_str())) {
-        return failure<ManifestDocument>(rstd::format(
-            "{}.{} must be a safe artifact basename",
-            artifact_context,
-            artifact_kind == ArtifactKind::StaticLibrary ? "archive"_str : "name"_str));
-    }
-    Result<String> discovery_text = Ok(String::make("explicit"_str));
-    if (artifact_kind != ArtifactKind::CompileTest) {
-        discovery_text = required_string(artifact_value, "discovery"_str, artifact_context);
-    }
-    if (discovery_text.is_err()) return Err(rstd::move(discovery_text).unwrap_err());
-    const auto explicit_discovery = discovery_text->as_str() == "explicit"_str;
-    const auto module_discovery   = discovery_text->as_str() == "module"_str;
-    if (! explicit_discovery && ! module_discovery) {
+
+    const auto has_library = library.is_some();
+    const auto has_bins    = ! bins.is_empty();
+    const auto has_benches = ! benches.is_empty();
+    auto       targets     = Vec<PackageTargetManifest>::with_capacity(
+        (has_library ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len());
+    if (library.is_some()) targets.push(rstd::move(library).unwrap());
+    for (auto& target : bins) targets.push(rstd::move(target));
+    for (auto& target : tests) targets.push(rstd::move(target));
+    for (auto& target : benches) targets.push(rstd::move(target));
+    if (targets.is_empty() && compile_tests.is_empty()) {
         return failure<ManifestDocument>(
-            rstd::format("{}.discovery must be explicit or module", artifact_context));
+            "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
+            "'compile-test'"_str);
     }
-    Result<Vec<ConditionalSourceGroup>> source_groups = Ok(Vec<ConditionalSourceGroup>::make());
-    if (artifact_kind != ArtifactKind::CompileTest) {
-        source_groups =
-            parse_source_groups(member(artifact_value, "source-groups"_str),
-                                rstd::format("{}.source-groups", artifact_context).as_str());
-    }
-    if (source_groups.is_err()) return Err(rstd::move(source_groups).unwrap_err());
-    Result<Vec<TestAttachmentManifest>> test_attachments = Ok(Vec<TestAttachmentManifest>::make());
-    if (artifact_kind == ArtifactKind::TestExecutable) {
-        test_attachments = parse_test_attachments(member(artifact_value, "attach"_str));
-    }
-    if (test_attachments.is_err()) {
-        return Err(rstd::move(test_attachments).unwrap_err());
-    }
-    Result<Vec<CompileTestCase>> compile_tests = Ok(Vec<CompileTestCase>::make());
-    if (artifact_kind == ArtifactKind::CompileTest) {
-        compile_tests = parse_compile_tests(member(artifact_value, "cases"_str));
-    }
-    if (compile_tests.is_err()) return Err(rstd::move(compile_tests).unwrap_err());
-    auto sources = Vec<PathBuf>::make();
-    if (artifact_kind == ArtifactKind::CompileTest) {
-        for (const auto& item : *compile_tests) sources.push(item.source.clone());
-    } else {
-        auto parsed_sources =
-            declared_paths(member(artifact_value, "sources"_str),
-                           artifact_kind == ArtifactKind::StaticLibrary ? "library.sources"_str
-                           : artifact_kind == ArtifactKind::Executable  ? "executable.sources"_str
-                                                                        : "test.sources"_str,
-                           explicit_discovery && source_groups->is_empty());
-        if (parsed_sources.is_err()) return Err(rstd::move(parsed_sources).unwrap_err());
-        sources = rstd::move(parsed_sources).unwrap();
-    }
+    const auto version_optional = ! has_library && ! has_bins && ! has_benches;
+    auto       version          = parse_package_version(package_value, version_optional);
+    if (version.is_err()) return Err(rstd::move(version).unwrap_err());
 
     auto source_root = resolve_package_source_root(package_value, root.as_path());
     if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
@@ -1922,6 +1946,12 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
     if (external.is_err()) return Err(rstd::move(external).unwrap_err());
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
+    auto parsed_usage = rstd::move(usage).unwrap();
+    if (! has_library && (! parsed_usage.public_include_directories.is_empty() ||
+                          ! parsed_usage.public_definitions.is_empty() ||
+                          ! parsed_usage.public_options.is_empty())) {
+        return failure<ManifestDocument>("usage.public-* requires a library target"_str);
+    }
     auto parsed_dependencies   = rstd::move(dependencies).unwrap();
     auto external_dependencies = rstd::move(external).unwrap();
     auto profile               = rstd_try(parse_project_profile(member(document, "profile"_str)));
@@ -1929,25 +1959,18 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     return Ok(ManifestDocument {
         .kind    = ManifestKind::Package,
         .package = Some(PackageManifest {
-            .name          = rstd::move(name).unwrap(),
-            .version       = rstd::move(version).unwrap(),
-            .root_module   = rstd::move(root_module).unwrap(),
-            .root          = root.clone(),
-            .source_root   = rstd::move(source_root).unwrap(),
-            .manifest_path = rstd::move(path),
-            .profile       = rstd::move(profile),
-            .artifact_kind = artifact_kind,
-            .artifact_name = rstd::move(artifact_name).unwrap(),
-            .discovery =
-                explicit_discovery ? SourceDiscoveryMode::Explicit : SourceDiscoveryMode::Module,
-            .declared_sources          = rstd::move(sources),
-            .conditional_source_groups = rstd::move(source_groups).unwrap(),
-            .test_attachments          = rstd::move(test_attachments).unwrap(),
-            .target                    = rstd::move(target).unwrap(),
-            .compile_tests             = rstd::move(compile_tests).unwrap(),
-            .usage                     = rstd::move(usage).unwrap(),
-            .dependencies              = rstd::move(parsed_dependencies.explicit_dependencies),
-            .workspace_dependencies    = rstd::move(parsed_dependencies.workspace_dependencies),
+            .name                   = rstd::move(name).unwrap(),
+            .version                = rstd::move(version).unwrap(),
+            .root                   = root.clone(),
+            .source_root            = rstd::move(source_root).unwrap(),
+            .manifest_path          = rstd::move(path),
+            .profile                = rstd::move(profile),
+            .targets                = rstd::move(targets),
+            .target                 = rstd::move(target).unwrap(),
+            .compile_tests          = rstd::move(compile_tests),
+            .usage                  = rstd::move(parsed_usage),
+            .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
+            .workspace_dependencies = rstd::move(parsed_dependencies.workspace_dependencies),
             .pkg_config_external_dependencies = rstd::move(external_dependencies.pkg_config),
             .workspace_pkg_config_external_dependencies =
                 rstd::move(external_dependencies.workspace_pkg_config),

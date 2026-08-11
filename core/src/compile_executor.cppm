@@ -110,11 +110,12 @@ auto emit_compile_events(const Option<BuildObserver>&   observer,
     if (observer.is_none() || observer->notify == nullptr) return;
     for (auto unit = UnitId {}; unit < runtime.len(); ++unit) {
         if (runtime[unit].event.is_none()) continue;
-        const auto target = units[unit].unit.target;
+        const auto target      = units[unit].unit.target;
+        auto       target_name = package_target_id_text(package.targets[target].id);
         observer->notify(observer->context,
                          BuildEvent {
                              .kind   = *runtime[unit].event,
-                             .target = package.targets[target].name.as_str(),
+                             .target = target_name.as_str(),
                              .path   = units[unit].unit.source.as_path(),
                          });
     }
@@ -386,12 +387,13 @@ auto materialize_compile_plan(const PackageSpec&     package,
                 return compile_failure<CompilePlan>(ErrorKind::Artifact,
                                                     "BMI provider path is not valid UTF-8"_str);
             }
-            const auto target            = units[unit].unit.target;
-            auto       provider_identity = rstd::format("{}:{}:{}",
-                                                        package.targets[target].name.as_str(),
-                                                        *relative_identity,
-                                                        units[unit].unit.context->id.as_str());
-            auto       key               = make_bmi_artifact_key(BmiRecipe {
+            const auto target = units[unit].unit.target;
+            auto       provider_identity =
+                rstd::format("{}:{}:{}",
+                             package_target_id_text(package.targets[target].id).as_str(),
+                             *relative_identity,
+                             units[unit].unit.context->id.as_str());
+            auto key      = make_bmi_artifact_key(BmiRecipe {
                 .request                 = units[unit].unit.context->bmi,
                 .logical_name            = scans[unit].provided->logical_name.clone(),
                 .provider_identity       = provider_identity.clone(),
@@ -403,10 +405,10 @@ auto materialize_compile_plan(const PackageSpec&     package,
                 .format_identity     = format_identity.clone(),
                 .direct_dependencies = rstd::move(recipe_dependencies),
             });
-            auto       bmi_path          = layout.bmi(format_key.as_str(),
-                                                      key.value.as_str(),
-                                                      scans[unit].provided->logical_name.as_str());
-            auto       direct = Vec<BmiRecipeDependency>::with_capacity(direct_artifacts.len());
+            auto bmi_path = layout.bmi(format_key.as_str(),
+                                       key.value.as_str(),
+                                       scans[unit].provided->logical_name.as_str());
+            auto direct   = Vec<BmiRecipeDependency>::with_capacity(direct_artifacts.len());
             for (const auto& dependency : direct_artifacts) {
                 direct.push(BmiRecipeDependency {
                     .logical_name = dependency.logical_name.clone(),
@@ -523,7 +525,8 @@ auto execute_compile_plan(const PackageSpec&           package,
             auto&      node                = plan.nodes[unit];
             const auto target              = units[unit].unit.target;
             auto       coordinator_started = rstd::time::Instant::now();
-            auto       decision = cache.evaluate(package.targets[target].name.as_str(),
+            auto       target_identity     = package_target_id_text(package.targets[target].id);
+            auto       decision = cache.evaluate(target_identity.as_str(),
                                                  units[unit],
                                                  units[unit].frontend_analysis->receipt.as_str(),
                                                  *node.invocation,
@@ -560,7 +563,7 @@ auto execute_compile_plan(const PackageSpec&           package,
             }
             if (cache_decision.current() && test != nullptr &&
                 test->outcome == CompileTestOutcome::Success) {
-                auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
+                auto execution = evaluate_compile_test(package.targets[target].id.package.as_str(),
                                                        *test,
                                                        units[unit].unit.source.as_path(),
                                                        CompileCommandResult {});
@@ -679,7 +682,7 @@ auto execute_compile_plan(const PackageSpec&           package,
         const auto  target = units[unit].unit.target;
         const auto* test   = units[unit].unit.compile_test;
         if (test != nullptr) {
-            auto execution = evaluate_compile_test(package.targets[target].name.as_str(),
+            auto execution = evaluate_compile_test(package.targets[target].id.package.as_str(),
                                                    *test,
                                                    units[unit].unit.source.as_path(),
                                                    rstd::move(output));

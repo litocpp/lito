@@ -1,0 +1,10 @@
+[package]
+name = "fixture-workspace-duplicate"
+version = "0.1.0"
+
+[lib]
+name = "fixture-workspace-duplicate"
+module = "fixture.workspace.duplicate"
+archive = "fixture.workspace.duplicate"
+discovery = "explicit"
+sources = ["source.cppm"]

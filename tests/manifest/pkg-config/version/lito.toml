@@ -1,0 +1,14 @@
+[package]
+name = "pkg-config-version"
+version = "0.1.0"
+
+[lib]
+name = "pkg-config-version"
+module = "pkg_config_version"
+archive = "pkg_config_version"
+discovery = "module"
+
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
+version = ">> 7.86.0"
+visibility = "private"

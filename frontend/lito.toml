@@ -1,9 +1,10 @@
 [package]
 name = "lito-frontend"
 version.workspace = true
-module = "lito.frontend"
 
-[library]
+[lib]
+name = "lito-frontend"
+module = "lito.frontend"
 archive = "lito.frontend"
 discovery = "module"
 

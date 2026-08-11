@@ -1,0 +1,24 @@
+[package]
+name = "fixture-conventional-library"
+version = "0.1.0"
+
+[lib]
+name = "fixture-conventional-library"
+module = "fixture.conventional"
+archive = "fixture-conventional"
+discovery = "explicit"
+sources = ["src/lib.cppm"]
+
+[profile.thin]
+inherits = "release"
+opt-level = 2
+debug = "none"
+strip = "none"
+lto = "thin"
+
+[profile.fat]
+inherits = "release"
+opt-level = 2
+debug = "none"
+strip = "none"
+lto = "fat"

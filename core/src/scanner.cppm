@@ -109,8 +109,10 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
+    auto profile   = request.profile.is_some() ? request.profile->clone() : BuildProfileName {};
     auto loaded    = resolve_project_metadata(request.selection,
                                               request.configuration,
+                                              profile,
                                               request.sources,
                                               request.pkg_config,
                                               request.cmake,
@@ -129,24 +131,19 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
     auto source_target = *selected;
 
-    const auto& target = metadata.targets[source_target];
-    auto relative_source = source.as_path().strip_prefix(target.manifest.source_root.as_path());
+    const auto& target          = metadata.targets[source_target];
+    auto        relative_source = source.as_path().strip_prefix(target.source_root.as_path());
     if (relative_source.is_none() || relative_source->is_empty()) {
         return scan_failure<ScanReport>(
             rstd::format("source '{}' has no build-relative path in target '{}'",
                          source.as_path(),
-                         target.manifest.name.as_str()));
+                         package_target_id_text(target.id).as_str()));
     }
     auto requested_output = PathBuf::make();
-    auto layout = BuildLayout::resolve(metadata.root.as_path(),
-                                       requested_output.as_path(),
-                                       metadata.profiles[discovery.profile].name.as_str());
-    auto primary_output =
-        target.test_attachment.is_some()
-            ? layout.test_attachment_object(target.test_attachment->test_target.as_str(),
-                                            target.test_attachment->library_target.as_str(),
-                                            *relative_source)
-            : layout.object(target.manifest.name.as_str(), *relative_source);
+    auto layout         = BuildLayout::resolve(metadata.root.as_path(),
+                                               requested_output.as_path(),
+                                               metadata.profiles[discovery.profile].name.as_str());
+    auto primary_output = layout.object(target.id, *relative_source);
     if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
 
     auto created_profiler = ScanProfiler::create();
@@ -157,16 +154,15 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
-    auto facts =
-        toolchain.preprocess(source.as_path(),
-                             discovery.contexts[source_target],
-                             metadata.targets[source_target].manifest.source_root.as_path(),
-                             frontend_service,
-                             profiler);
+    auto facts = toolchain.preprocess(source.as_path(),
+                                      discovery.contexts[source_target],
+                                      metadata.targets[source_target].source_root.as_path(),
+                                      frontend_service,
+                                      profiler);
     if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
 
     return Ok(ScanReport {
-        .target         = target.manifest.name.clone(),
+        .target         = package_target_id_text(target.id),
         .profile        = metadata.profiles[discovery.profile].name.clone(),
         .primary_output = rstd::move(primary_output).unwrap(),
         .result         = rstd::move(facts).unwrap().result,
@@ -289,8 +285,8 @@ auto p1689_scan_report_json(const ScanReport& report) -> Result<String> {
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
 }
 
-auto scan_report_json(const ScanReport& report,
-                      ScanOutputFormat format = ScanOutputFormat::Lito) -> Result<String> {
+auto scan_report_json(const ScanReport& report, ScanOutputFormat format = ScanOutputFormat::Lito)
+    -> Result<String> {
     switch (format) {
     case ScanOutputFormat::Lito: return lito_scan_report_json(report);
     case ScanOutputFormat::P1689: return p1689_scan_report_json(report);

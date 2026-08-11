@@ -171,8 +171,7 @@
     "package": {
       "type": "object",
       "required": [
-        "name",
-        "version"
+        "name"
       ],
       "properties": {
         "name": {
@@ -180,9 +179,6 @@
         },
         "version": {
           "$ref": "#/definitions/packageVersion"
-        },
-        "module": {
-          "$ref": "#/definitions/moduleName"
         },
         "source-root": {
           "description": "Source and usage path base, relative to the package manifest directory. It must contain the package directory.",
@@ -193,18 +189,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "libraryPackage": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/package"
-        },
-        {
-          "required": [
-            "module"
-          ]
-        }
-      ]
     },
     "explicitSources": {
       "anyOf": [
@@ -237,15 +221,23 @@
         }
       ]
     },
-    "library": {
+    "libraryTarget": {
       "type": "object",
       "required": [
+        "name",
         "archive",
+        "module",
         "discovery"
       ],
       "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
         "archive": {
           "$ref": "#/definitions/artifactName"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
         },
         "discovery": {
           "enum": [
@@ -276,6 +268,9 @@
           ]
         },
         {
+          "required": [
+            "module"
+          ],
           "properties": {
             "discovery": {
               "enum": [
@@ -287,7 +282,7 @@
       ],
       "additionalProperties": false
     },
-    "executable": {
+    "runnableTarget": {
       "type": "object",
       "required": [
         "name",
@@ -295,7 +290,10 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/artifactName"
+          "$ref": "#/definitions/packageName"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
         },
         "discovery": {
           "enum": [
@@ -326,6 +324,9 @@
           ]
         },
         {
+          "required": [
+            "module"
+          ],
           "properties": {
             "discovery": {
               "enum": [
@@ -392,7 +393,10 @@
       ],
       "properties": {
         "name": {
-          "$ref": "#/definitions/artifactName"
+          "$ref": "#/definitions/packageName"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
         },
         "discovery": {
           "enum": [
@@ -430,6 +434,9 @@
           ]
         },
         {
+          "required": [
+            "module"
+          ],
           "properties": {
             "discovery": {
               "enum": [
@@ -515,6 +522,9 @@
     },
     "compileTest": {
       "type": "object",
+      "required": [
+        "cases"
+      ],
       "properties": {
         "cases": {
           "type": "array",
@@ -1467,14 +1477,29 @@
         "package": {
           "$ref": "#/definitions/package"
         },
-        "library": {
-          "$ref": "#/definitions/library"
+        "lib": {
+          "$ref": "#/definitions/libraryTarget"
         },
-        "executable": {
-          "$ref": "#/definitions/executable"
+        "bin": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/runnableTarget"
+          }
         },
         "test": {
-          "$ref": "#/definitions/test"
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/test"
+          }
+        },
+        "bench": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/runnableTarget"
+          }
         },
         "compile-test": {
           "$ref": "#/definitions/compileTest"
@@ -1492,107 +1517,51 @@
           "$ref": "#/definitions/projectProfile"
         }
       },
-      "oneOf": [
+      "allOf": [
         {
-          "required": [
-            "library"
-          ],
-          "properties": {
-            "package": {
-              "$ref": "#/definitions/libraryPackage"
+          "anyOf": [
+            { "required": ["lib"] },
+            { "required": ["bin"] },
+            { "required": ["test"] },
+            { "required": ["bench"] },
+            { "required": ["compile-test"] }
+          ]
+        },
+        {
+          "anyOf": [
+            {
+              "properties": {
+                "package": { "required": ["version"] }
+              }
+            },
+            {
+              "not": {
+                "anyOf": [
+                  { "required": ["lib"] },
+                  { "required": ["bin"] },
+                  { "required": ["bench"] }
+                ]
+              }
             }
-          },
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "executable"
-                ]
-              },
-              {
-                "required": [
-                  "test"
-                ]
-              },
-              {
-                "required": [
-                  "compile-test"
-                ]
-              }
-            ]
-          }
+          ]
         },
         {
-          "required": [
-            "executable"
-          ],
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "library"
-                ]
-              },
-              {
-                "required": [
-                  "test"
-                ]
-              },
-              {
-                "required": [
-                  "compile-test"
-                ]
+          "anyOf": [
+            {
+              "required": ["lib"]
+            },
+            {
+              "properties": {
+                "usage": {
+                  "properties": {
+                    "public-include-directories": { "maxItems": 0 },
+                    "public-definitions": { "maxItems": 0 },
+                    "public-options": { "maxItems": 0 }
+                  }
+                }
               }
-            ]
-          }
-        },
-        {
-          "required": [
-            "test"
-          ],
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "library"
-                ]
-              },
-              {
-                "required": [
-                  "executable"
-                ]
-              },
-              {
-                "required": [
-                  "compile-test"
-                ]
-              }
-            ]
-          }
-        },
-        {
-          "required": [
-            "compile-test"
-          ],
-          "not": {
-            "anyOf": [
-              {
-                "required": [
-                  "library"
-                ]
-              },
-              {
-                "required": [
-                  "executable"
-                ]
-              },
-              {
-                "required": [
-                  "test"
-                ]
-              }
-            ]
-          }
+            }
+          ]
         }
       ],
       "additionalProperties": false

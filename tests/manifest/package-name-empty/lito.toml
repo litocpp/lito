@@ -1,0 +1,10 @@
+[package]
+name = ""
+version = "0.1.0"
+
+[lib]
+name = ""
+module = "fixture.package.empty"
+archive = "fixture.package.empty"
+discovery = "explicit"
+sources = ["source.cppm"]

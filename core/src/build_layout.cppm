@@ -61,21 +61,39 @@ class BuildLayout {
     BuildLayout(PathBuf output, PathBuf scan_cache)
         : output_(rstd::move(output)), scan_cache_(rstd::move(scan_cache)) {}
 
-    auto source_path(ref<rstd::path::Path> root,
-                     ref<str>              target,
-                     ref<rstd::path::Path> relative_source,
-                     ref<str>              suffix) const -> Result<PathBuf> {
+    auto relative_source_path(ref<rstd::path::Path> directory,
+                              ref<rstd::path::Path> relative_source,
+                              ref<str>              suffix) const -> Result<PathBuf> {
         auto relative = validated_relative_text(relative_source);
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         relative->push_str(suffix);
-        auto directory = target.is_empty() ? PathBuf::from(root) : join(root, target);
-        return Ok(directory.join(PathBuf::from(rstd::move(relative).unwrap()).as_path()));
+        return Ok(
+            PathBuf::from(directory).join(PathBuf::from(rstd::move(relative).unwrap()).as_path()));
     }
 
-    auto test_attachment_directory(ref<str> test_target, ref<str> library_target) const -> PathBuf {
-        auto test_directory = join(join(output_.as_path(), "test"_str).as_path(), test_target);
-        auto attach         = join(test_directory.as_path(), "attach"_str);
-        return join(attach.as_path(), library_target);
+    auto source_path(ref<rstd::path::Path>  root,
+                     const PackageTargetId& target,
+                     ref<rstd::path::Path>  relative_source,
+                     ref<str>               suffix) const -> Result<PathBuf> {
+        auto directory = target_directory(root, target);
+        return relative_source_path(directory.as_path(), relative_source, suffix);
+    }
+
+    auto target_directory(ref<rstd::path::Path> root, const PackageTargetId& target) const
+        -> PathBuf {
+        auto package_directory = join(root, target.package.as_str());
+        auto kind_directory =
+            join(package_directory.as_path(), package_target_kind_name(target.kind));
+        return join(kind_directory.as_path(), target.name.as_str());
+    }
+
+    auto test_attachment_directory(const TestAttachmentTarget& attachment) const -> PathBuf {
+        auto test_root      = join(output_.as_path(), "test-attachments"_str);
+        auto test_package   = join(test_root.as_path(), attachment.test_target.package.as_str());
+        auto test_directory = join(test_package.as_path(), attachment.test_target.name.as_str());
+        auto library_package =
+            join(test_directory.as_path(), attachment.library_target.package.as_str());
+        return join(library_package.as_path(), attachment.library_target.name.as_str());
     }
 
 public:
@@ -131,7 +149,8 @@ public:
 
     auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
 
-    auto object(ref<str> target, ref<rstd::path::Path> relative_source) const -> Result<PathBuf> {
+    auto object(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
+        -> Result<PathBuf> {
         return source_path(
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
@@ -147,26 +166,26 @@ public:
         return directory.join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
-    auto cache_target_directory(ref<str> target) const -> PathBuf {
-        auto units = join(compile_cache_directory().as_path(), "units"_str);
-        return join(units.as_path(), target);
+    auto cache_target_directory(const PackageTargetId& target) const -> PathBuf {
+        auto targets = join(compile_cache_directory().as_path(), "targets"_str);
+        return target_directory(targets.as_path(), target);
     }
 
-    auto cache_scan(ref<str> target, ref<rstd::path::Path> relative_source) const
+    auto cache_scan(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
         -> Result<PathBuf> {
         return source_path(scan_cache_.as_path(), target, relative_source, ".json"_str);
     }
 
-    auto cache_unit(ref<str> target, ref<rstd::path::Path> relative_source) const
+    auto cache_unit(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
         -> Result<PathBuf> {
-        return source_path(
-            cache_target_directory(target).as_path(), ""_str, relative_source, ".json"_str);
+        auto directory = cache_target_directory(target);
+        return relative_source_path(directory.as_path(), relative_source, ".json"_str);
     }
 
-    auto cache_compile_test(ref<str> target, ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
-        return source_path(
-            cache_target_directory(target).as_path(), ""_str, relative_source, ".test.json"_str);
+    auto cache_compile_test(const PackageTargetId& target,
+                            ref<rstd::path::Path>  relative_source) const -> Result<PathBuf> {
+        auto directory = cache_target_directory(target);
+        return relative_source_path(directory.as_path(), relative_source, ".test.json"_str);
     }
 
     auto bmi_directory() const -> PathBuf { return join(output_.as_path(), "bmi"_str); }
@@ -177,49 +196,36 @@ public:
         return artifact_directory.join(PathBuf::from(module_filename(logical_name)).as_path());
     }
 
-    auto test_attachment_object(ref<str>              test_target,
-                                ref<str>              library_target,
-                                ref<rstd::path::Path> relative_source) const -> Result<PathBuf> {
-        auto directory =
-            join(test_attachment_directory(test_target, library_target).as_path(), "obj"_str);
-        return source_path(directory.as_path(), ""_str, relative_source, ".o"_str);
-    }
-
-    auto test_attachment_cache_unit(ref<str>              test_target,
-                                    ref<str>              library_target,
-                                    ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
-        auto directory = test_attachment_cache_directory(test_target, library_target);
-        return source_path(directory.as_path(), ""_str, relative_source, ".json"_str);
-    }
-
-    auto test_attachment_cache_directory(ref<str> test_target, ref<str> library_target) const
-        -> PathBuf {
-        return join(test_attachment_directory(test_target, library_target).as_path(), "cache"_str);
-    }
-
-    auto test_attachment_archive(ref<str> test_target,
-                                 ref<str> library_target,
-                                 ref<str> archive_stem) const -> PathBuf {
+    auto test_attachment_archive(const TestAttachmentTarget& attachment,
+                                 ref<str>                    archive_stem) const -> PathBuf {
         auto filename = String::make("lib"_str);
         filename.push_str(archive_stem);
         filename.push_str(".test.a"_str);
-        return test_attachment_directory(test_target, library_target)
+        return test_attachment_directory(attachment)
             .join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
-    auto archive(ref<str> target, ref<str> artifact_name) const -> PathBuf {
-        auto directory = join(join(output_.as_path(), "lib"_str).as_path(), target);
+    auto archive(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "lib"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto executable(ref<str> target, ref<str> artifact_name) const -> PathBuf {
-        auto directory = join(join(output_.as_path(), "bin"_str).as_path(), target);
+    auto executable(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "bin"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto test(ref<str> target, ref<str> artifact_name) const -> PathBuf {
-        auto directory = join(join(output_.as_path(), "test"_str).as_path(), target);
+    auto test(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "test"_str).as_path(), target.package.as_str());
+        return directory.join(PathBuf::from(artifact_name).as_path());
+    }
+
+    auto benchmark(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "bench"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 };

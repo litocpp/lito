@@ -1,9 +1,0 @@
-[package]
-name = "fixture-conventional-invalid-test-library"
-version.workspace = true
-module = "fixture.conventional.invalid_test_library"
-
-[library]
-archive = "fixture-conventional-invalid-test-library"
-discovery = "explicit"
-sources = ["lib.cppm"]

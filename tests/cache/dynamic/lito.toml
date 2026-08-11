@@ -1,0 +1,9 @@
+[package]
+name = "fixture-scan-cache-dynamic"
+version = "0.1.0"
+
+[lib]
+name = "fixture-scan-cache-dynamic"
+module = "fixture.scan.cache.dynamic"
+archive = "fixture.scan.cache.dynamic"
+discovery = "module"

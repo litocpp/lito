@@ -216,8 +216,9 @@ auto is_profile_owned_linker_option(ref<str> option) -> bool {
 
 auto make_profile_spec(const BuildConfiguration& configuration,
                        const ProjectProfile&     project_profile,
+                       const BuildProfileName&   selected_profile,
                        const CppArgumentParser&  parser) -> Result<ProfileSpec> {
-    auto selected = rstd_try(resolve_build_profile(project_profile, configuration.profile));
+    auto selected = rstd_try(resolve_build_profile(project_profile, selected_profile));
     auto arguments =
         rstd_try(parser.parse(configuration.options, "build.options"_str), [](String error) {
             return Error::make(ErrorKind::InvalidRequest, rstd::move(error));

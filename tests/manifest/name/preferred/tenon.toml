@@ -1,0 +1,9 @@
+[package]
+name = "shadowed-legacy-manifest"
+version = "0.1.0"
+
+[lib]
+name = "shadowed-legacy-manifest"
+module = "fixture.manifest.shadowed"
+archive = "fixture.manifest.shadowed"
+discovery = "module"

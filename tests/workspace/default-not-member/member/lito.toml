@@ -1,0 +1,10 @@
+[package]
+name = "fixture-workspace-member"
+version = "0.1.0"
+
+[lib]
+name = "fixture-workspace-member"
+module = "fixture.workspace.member"
+archive = "fixture.workspace.member"
+discovery = "explicit"
+sources = ["source.cppm"]

@@ -1,0 +1,8 @@
+[package]
+name = "fixture-conventional-invalid-workspace-root"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-conventional-invalid-workspace-root"
+discovery = "explicit"
+sources = ["main.cpp"]

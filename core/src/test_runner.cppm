@@ -4,7 +4,7 @@ import rstd;
 import lito.model;
 import lito.builder;
 import lito.environment;
-import lito.process;
+import lito.artifact_runner;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -42,7 +42,7 @@ auto emit_run(const TestRequest& request, const BuiltArtifact& artifact) noexcep
     if (observer.notify == nullptr) return;
     observer.notify(observer.context,
                     TestEvent {
-                        .package           = artifact.package.as_str(),
+                        .package           = artifact.target.package.as_str(),
                         .executable        = artifact.path.as_path(),
                         .working_directory = artifact.package_root.as_path(),
                         .arguments         = request.arguments.as_slice(),
@@ -54,18 +54,7 @@ auto emit_run(const TestRequest& request, const BuiltArtifact& artifact) noexcep
 export namespace lito
 {
 
-struct TestExecution {
-    String                            package;
-    PathBuf                           executable;
-    PathBuf                           working_directory;
-    Option<rstd::process::ExitStatus> status;
-    Option<String>                    error;
-    rstd::time::Duration              elapsed;
-
-    auto success() const noexcept -> bool {
-        return error.is_none() && status.is_some() && status->success();
-    }
-};
+using TestExecution = ArtifactExecution;
 
 struct TestSummary {
     BuildSummary       build;
@@ -90,47 +79,14 @@ auto test(TestRequest request) -> Result<TestSummary> {
     if (built.is_err()) return Err(rstd::move(built).unwrap_err());
     auto summary = rstd::move(built).unwrap();
 
-    auto selected = Vec<const BuiltArtifact*>::make();
-    for (const auto& artifact : summary.artifacts) {
-        if (artifact.kind == ArtifactKind::TestExecutable) {
-            selected.push(rstd::addressof(artifact));
-        }
-    }
-    rstd::slice_::sort_unstable_by(selected.as_mut_slice().as_mut_ref(),
-                                   [](const BuiltArtifact* left, const BuiltArtifact* right) {
-                                       return left->package < right->package;
-                                   });
+    auto selected = selected_artifacts(summary, ArtifactKind::TestExecutable);
 
     auto executions = Vec<TestExecution>::with_capacity(selected.len());
     if (! request.no_run) {
         for (const auto* artifact : selected) {
             emit_run(request, *artifact);
-            auto command = rstd::process::Command::make(artifact->path.as_path().as_os_str());
-            for (const auto& argument : request.arguments) command.arg(argument.as_str());
-            command.current_dir(artifact->package_root.as_path());
-            apply_command_environment(command, *environment);
-
-            auto started = rstd::time::Instant::now();
-            auto status  = command.status();
-            auto elapsed = started.elapsed();
-            if (status.is_err()) {
-                executions.push(TestExecution {
-                    .package           = artifact->package.clone(),
-                    .executable        = artifact->path.clone(),
-                    .working_directory = artifact->package_root.clone(),
-                    .error             = Some(rstd::format("failed to execute test: {}",
-                                                           rstd::move(status).unwrap_err())),
-                    .elapsed           = elapsed,
-                });
-                continue;
-            }
-            executions.push(TestExecution {
-                .package           = artifact->package.clone(),
-                .executable        = artifact->path.clone(),
-                .working_directory = artifact->package_root.clone(),
-                .status            = Some(rstd::move(status).unwrap()),
-                .elapsed           = elapsed,
-            });
+            executions.push(
+                execute_artifact(*artifact, request.arguments, *environment, "test"_str));
         }
     }
     return Ok(TestSummary {

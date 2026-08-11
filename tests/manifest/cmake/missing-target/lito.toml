@@ -1,0 +1,12 @@
+[package]
+name = "cmake-missing-target"
+version = "0.1.0"
+
+[lib]
+name = "cmake-missing-target"
+module = "cmake_missing_target"
+archive = "cmake_missing_target"
+discovery = "module"
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"

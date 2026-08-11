@@ -1,0 +1,10 @@
+[package]
+name = "fixture-workspace-inherited-library"
+version.workspace = true
+
+[lib]
+name = "fixture-workspace-inherited-library"
+module = "fixture.workspace_inherited"
+archive = "fixture-workspace-inherited-library"
+discovery = "explicit"
+sources = ["library.cppm"]

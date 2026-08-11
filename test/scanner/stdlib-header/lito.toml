@@ -1,8 +1,0 @@
-[package]
-name = "fixture-scanner-stdlib-header"
-version = "0.1.0"
-
-[executable]
-name = "fixture-scanner-stdlib-header"
-discovery = "explicit"
-sources = ["main.cpp"]

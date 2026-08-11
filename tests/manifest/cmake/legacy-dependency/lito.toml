@@ -1,0 +1,13 @@
+[package]
+name = "cmake-legacy-dependency"
+version = "0.1.0"
+
+[lib]
+name = "cmake-legacy-dependency"
+module = "cmake_legacy_dependency"
+archive = "cmake_legacy_dependency"
+discovery = "module"
+
+[dependencies.fixture]
+cmake = "LitoFixture"
+target = "LitoFixture::fixture"

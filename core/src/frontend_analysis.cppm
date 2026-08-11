@@ -92,24 +92,25 @@ public:
         };
     }
 
-    auto prepare(ref<str>              target,
-                 ref<rstd::path::Path> relative_source,
-                 ref<rstd::path::Path> source,
-                 const CompileContext& context,
-                 ref<rstd::path::Path> working_directory,
-                 ScanSourceOrigin      origin) -> Result<FrontendAnalysisTask> {
+    auto prepare(const PackageTargetId& target,
+                 ref<rstd::path::Path>  relative_source,
+                 ref<rstd::path::Path>  source,
+                 const CompileContext&  context,
+                 ref<rstd::path::Path>  working_directory,
+                 ScanSourceOrigin       origin) -> Result<FrontendAnalysisTask> {
         auto record = layout_.cache_scan(target, relative_source);
         if (record.is_err()) return Err(rstd::move(record).unwrap_err());
         auto environment = toolchain_.prepare_scan_environment(context, working_directory);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-        auto profile = profiler_.task(target, source, origin);
+        auto target_identity = package_target_id_text(target);
+        auto profile         = profiler_.task(target_identity.as_str(), source, origin);
         if (profile.is_err()) {
             return Err(
                 Error::make(ErrorKind::Artifact, rstd::move(profile).unwrap_err_unchecked()));
         }
         auto input = ScanCacheInput {
             .record                   = rstd::move(record).unwrap(),
-            .target                   = String::make(target),
+            .target                   = target_identity.clone(),
             .relative_source          = PathBuf::from(relative_source),
             .source                   = PathBuf::from(source),
             .context_identity         = context.scan_id.clone(),
@@ -134,11 +135,11 @@ public:
         return rstd::move(outcome.analysis);
     }
 
-    auto analyze(ref<str>              target,
-                 ref<rstd::path::Path> relative_source,
-                 ref<rstd::path::Path> source,
-                 const CompileContext& context,
-                 ref<rstd::path::Path> working_directory) -> Result<frontend::FrontendAnalysis> {
+    auto analyze(const PackageTargetId& target,
+                 ref<rstd::path::Path>  relative_source,
+                 ref<rstd::path::Path>  source,
+                 const CompileContext&  context,
+                 ref<rstd::path::Path>  working_directory) -> Result<frontend::FrontendAnalysis> {
         auto task = prepare(target,
                             relative_source,
                             source,

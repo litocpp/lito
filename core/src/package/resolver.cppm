@@ -31,9 +31,16 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
         return failure<PackageCoordinate>(rstd::format(
             "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
     }
-    if (selected.package.version.value.is_none() &&
-        selected.package.artifact_kind != ArtifactKind::TestExecutable &&
-        selected.package.artifact_kind != ArtifactKind::CompileTest) {
+    auto requires_version = false;
+    for (const auto& target : selected.package.targets) {
+        const auto kind = package_target_kind(target);
+        if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
+            kind == PackageTargetKind::Benchmark) {
+            requires_version = true;
+            break;
+        }
+    }
+    if (selected.package.version.value.is_none() && requires_version) {
         return failure<PackageCoordinate>(
             rstd::format("package '{}' has no version", selected.package.name.as_str()));
     }

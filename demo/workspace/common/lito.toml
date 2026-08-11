@@ -1,9 +1,10 @@
 [package]
 name = "demo-workspace-common"
 version.workspace = true
-module = "demo.workspace.common"
 
-[library]
+[lib]
+name = "demo-workspace-common"
+module = "demo.workspace.common"
 archive = "common"
 discovery = "explicit"
 sources = ["common.cppm"]

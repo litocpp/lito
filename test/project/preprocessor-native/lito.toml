@@ -1,8 +1,0 @@
-[package]
-name = "fixture-preprocessor-native"
-version = "0.1.0"
-module = "fixture.preprocessor.native"
-
-[library]
-archive = "fixture.preprocessor.native"
-discovery = "module"

@@ -1,0 +1,12 @@
+[package]
+name = "fixture-scan-cache"
+version = "0.1.0"
+
+[lib]
+name = "fixture-scan-cache"
+module = "fixture.scan.cache"
+archive = "fixture.scan.cache"
+discovery = "module"
+
+[usage]
+private-include-directories = ["high", "mid", "low"]

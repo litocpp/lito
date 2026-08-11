@@ -27,5 +27,6 @@ export import lito.builder;
 export import lito.compile_test;
 export import lito.compile_executor;
 export import lito.test_runner;
+export import lito.bench_runner;
 export import lito.scanner;
 export import lito.formatter;

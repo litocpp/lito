@@ -9,8 +9,9 @@ using namespace rstd::literals;
 namespace lito
 {
 
-auto executable_artifact(ArtifactKind kind) -> bool {
-    return kind == ArtifactKind::Executable || kind == ArtifactKind::TestExecutable;
+auto runnable_target(PackageTargetKind kind) -> bool {
+    return kind == PackageTargetKind::Binary || kind == PackageTargetKind::Test ||
+           kind == PackageTargetKind::Benchmark;
 }
 
 template<typename T>
@@ -39,8 +40,8 @@ auto valid_segment(ref<str> value) -> bool {
     return true;
 }
 
-auto canonical_source_root(const PackageManifest& manifest) -> Result<PathBuf> {
-    auto requested = manifest.source_root.join(PathBuf::from("src"_str).as_path());
+auto canonical_source_root(ref<rstd::path::Path> package_source_root) -> Result<PathBuf> {
+    auto requested = PathBuf::from(package_source_root).join(PathBuf::from("src"_str).as_path());
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return convention_failure<PathBuf>(
@@ -57,10 +58,10 @@ auto canonical_source_root(const PackageManifest& manifest) -> Result<PathBuf> {
     return Ok(rstd::move(root));
 }
 
-auto canonical_candidate(const PackageManifest& manifest,
-                         ref<rstd::path::Path>  source_root,
-                         ref<rstd::path::Path>  requested,
-                         Option<String>         expected) -> Result<ResolvedSource> {
+auto canonical_candidate(ref<rstd::path::Path> package_source_root,
+                         ref<rstd::path::Path> source_root,
+                         ref<rstd::path::Path> requested,
+                         Option<String>        expected) -> Result<ResolvedSource> {
     auto canonical = rstd::fs::canonicalize(requested);
     if (canonical.is_err()) {
         return convention_failure<ResolvedSource>(
@@ -70,7 +71,7 @@ auto canonical_candidate(const PackageManifest& manifest,
     }
     auto resolved         = rstd::move(canonical).unwrap();
     auto source_relative  = resolved.as_path().strip_prefix(source_root);
-    auto package_relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
+    auto package_relative = resolved.as_path().strip_prefix(package_source_root);
     if (source_relative.is_none() || package_relative.is_none() || (*source_relative).is_empty()) {
         return convention_failure<ResolvedSource>(rstd::format(
             "module convention source '{}' resolves outside package source root", requested));
@@ -113,17 +114,19 @@ auto file_exists(ref<rstd::path::Path> path) -> Result<bool> {
     return Ok(metadata->is_file());
 }
 
-auto root_module_source(const PackageManifest& manifest) -> Result<ResolvedSource> {
-    if (manifest.root_module.is_none()) {
-        return convention_failure<ResolvedSource>("module discovery requires package.module"_str);
+auto root_module_source(const ResolvedTarget& target) -> Result<ResolvedSource> {
+    if (target.source.module.is_none()) {
+        return convention_failure<ResolvedSource>("module discovery requires target.module"_str);
     }
-    auto source_root_result = canonical_source_root(manifest);
+    auto source_root_result = canonical_source_root(target.source_root.as_path());
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    auto relative  = executable_artifact(manifest.artifact_kind) ? "mod.cppm"_str : "lib.cppm"_str;
-    auto requested = source_root.join(PathBuf::from(relative).as_path());
-    return canonical_candidate(
-        manifest, source_root.as_path(), requested.as_path(), Some(manifest.root_module->clone()));
+    auto relative    = runnable_target(target.id.kind) ? "mod.cppm"_str : "lib.cppm"_str;
+    auto requested   = source_root.join(PathBuf::from(relative).as_path());
+    return canonical_candidate(target.source_root.as_path(),
+                               source_root.as_path(),
+                               requested.as_path(),
+                               Some(target.source.module->clone()));
 }
 
 } // namespace lito
@@ -139,33 +142,36 @@ auto module_name_belongs(ref<str> root_module, ref<str> logical_name) -> bool {
     return boundary == u8('.') || boundary == u8(':');
 }
 
-auto module_entry_source(const PackageManifest& manifest) -> Result<ResolvedSource> {
-    if (executable_artifact(manifest.artifact_kind)) {
-        auto source_root_result = canonical_source_root(manifest);
+auto module_entry_source(const ResolvedTarget& target) -> Result<ResolvedSource> {
+    if (runnable_target(target.id.kind)) {
+        auto source_root_result = canonical_source_root(target.source_root.as_path());
         if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
         auto source_root = rstd::move(source_root_result).unwrap();
         auto requested   = source_root.join(PathBuf::from("main.cppm"_str).as_path());
-        return canonical_candidate(manifest, source_root.as_path(), requested.as_path(), None());
+        return canonical_candidate(
+            target.source_root.as_path(), source_root.as_path(), requested.as_path(), None());
     }
-    return root_module_source(manifest);
+    return root_module_source(target);
 }
 
-auto module_source(const PackageManifest& manifest, ref<str> logical_name)
-    -> Result<ResolvedSource> {
-    if (manifest.root_module.is_none() ||
-        ! module_name_belongs(manifest.root_module->as_str(), logical_name)) {
-        return convention_failure<ResolvedSource>(rstd::format(
-            "module '{}' does not belong to package '{}'", logical_name, manifest.name.as_str()));
+auto module_source(const ResolvedTarget& target, ref<str> logical_name) -> Result<ResolvedSource> {
+    if (target.source.module.is_none() ||
+        ! module_name_belongs(target.source.module->as_str(), logical_name)) {
+        return convention_failure<ResolvedSource>(
+            rstd::format("module '{}' does not belong to target '{}::{}'",
+                         logical_name,
+                         target.id.package.as_str(),
+                         target.id.name.as_str()));
     }
-    if (logical_name == manifest.root_module->as_str()) return root_module_source(manifest);
+    if (logical_name == target.source.module->as_str()) return root_module_source(target);
 
-    auto source_root_result = canonical_source_root(manifest);
+    auto source_root_result = canonical_source_root(target.source_root.as_path());
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
     auto relative    = String::make();
     auto segment     = String::make();
-    bool partition   = logical_name[manifest.root_module->size()] == u8(':');
-    for (auto index = manifest.root_module->size() + usize(1); index < logical_name.size();
+    bool partition   = logical_name[target.source.module->size()] == u8(':');
+    for (auto index = target.source.module->size() + usize(1); index < logical_name.size();
          ++index) {
         const auto value = logical_name[index];
         if (value == u8('.') || value == u8(':')) {
@@ -197,17 +203,21 @@ auto module_source(const PackageManifest& manifest, ref<str> logical_name)
     auto has_direct = file_exists(direct.as_path());
     if (has_direct.is_err()) return Err(rstd::move(has_direct).unwrap_err());
     if (*has_direct) {
-        return canonical_candidate(
-            manifest, source_root.as_path(), direct.as_path(), Some(String::make(logical_name)));
+        return canonical_candidate(target.source_root.as_path(),
+                                   source_root.as_path(),
+                                   direct.as_path(),
+                                   Some(String::make(logical_name)));
     }
 
     relative.push_str("/mod.cppm"_str);
     auto requested = source_root.join(PathBuf::from(relative.as_str()).as_path());
-    return canonical_candidate(
-        manifest, source_root.as_path(), requested.as_path(), Some(String::make(logical_name)));
+    return canonical_candidate(target.source_root.as_path(),
+                               source_root.as_path(),
+                               requested.as_path(),
+                               Some(String::make(logical_name)));
 }
 
-auto module_companion_source(const PackageManifest& manifest, const ResolvedSource& source)
+auto module_companion_source(const ResolvedTarget& target, const ResolvedSource& source)
     -> Result<Option<ResolvedSource>> {
     auto relative = source.relative_path.as_path().to_str();
     if (relative.is_none()) {
@@ -218,16 +228,16 @@ auto module_companion_source(const PackageManifest& manifest, const ResolvedSour
 
     auto companion = String::make(*relative);
     companion.truncate(companion.len() - usize(1));
-    auto requested = manifest.source_root.join(PathBuf::from(companion.as_str()).as_path());
+    auto requested = target.source_root.join(PathBuf::from(companion.as_str()).as_path());
     auto exists    = file_exists(requested.as_path());
     if (exists.is_err()) return Err(rstd::move(exists).unwrap_err());
     if (! *exists) return Ok(None());
 
-    auto source_root_result = canonical_source_root(manifest);
+    auto source_root_result = canonical_source_root(target.source_root.as_path());
     if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
     auto source_root = rstd::move(source_root_result).unwrap();
-    auto resolved =
-        canonical_candidate(manifest, source_root.as_path(), requested.as_path(), None());
+    auto resolved    = canonical_candidate(
+        target.source_root.as_path(), source_root.as_path(), requested.as_path(), None());
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     return Ok(Some(rstd::move(resolved).unwrap()));
 }

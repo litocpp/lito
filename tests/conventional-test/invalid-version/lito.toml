@@ -1,0 +1,8 @@
+[package]
+name = "fixture-conventional-invalid-version-root"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-conventional-invalid-version-root"
+discovery = "explicit"
+sources = ["main.cpp"]

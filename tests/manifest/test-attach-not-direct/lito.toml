@@ -1,0 +1,12 @@
+[package]
+name = "fixture-test-attach-not-direct"
+version = "0.1.0"
+
+[[test]]
+name = "fixture-test-attach-not-direct"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[[test.attach]]
+package = "missing-library"
+sources = ["attached.cppm"]

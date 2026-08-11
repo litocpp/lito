@@ -41,21 +41,30 @@ auto workspace_contains(const WorkspaceManifest& workspace, ref<rstd::path::Path
     return Ok(false);
 }
 
+auto test_only_package(const PackageManifest& package) -> bool {
+    if (package.targets.is_empty()) return ! package.compile_tests.is_empty();
+    for (const auto& target : package.targets) {
+        if (package_target_kind(target) != PackageTargetKind::Test) return false;
+    }
+    return true;
+}
+
 } // namespace lito
 
 export namespace lito
 {
 
 class WorkspaceCatalog {
-    String         name_;
-    PathBuf        root_;
-    PathBuf        manifest_path_;
-    ProjectProfile profile_;
-    Vec<String>    names_;
-    PackageMap     packages_ { PackageMap::make() };
-    StringSet      member_roots_ { StringSet::make() };
-    bool           workspace_ { false };
-    bool           profile_declared_ { false };
+    String                    name_;
+    PathBuf                   root_;
+    PathBuf                   manifest_path_;
+    ProjectProfile            profile_;
+    Vec<String>               names_;
+    PackageMap                packages_ { PackageMap::make() };
+    StringSet                 member_roots_ { StringSet::make() };
+    Option<WorkspaceManifest> workspace_manifest_;
+    bool                      workspace_ { false };
+    bool                      profile_declared_ { false };
 
 public:
     WorkspaceCatalog() = default;
@@ -85,6 +94,9 @@ public:
         catalog.packages_.insert(manifest.name.clone(), rstd::move(manifest));
         return Ok(rstd::move(catalog));
     }
+
+    static auto associated_test_package(PackageManifest manifest, const WorkspaceCatalog& primary)
+        -> Result<WorkspaceCatalog>;
 
     auto name() const noexcept -> ref<str> { return name_.as_str(); }
 
@@ -118,7 +130,7 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     -> Result<WorkspaceCatalog> {
     auto catalog           = WorkspaceCatalog {};
     catalog.workspace_     = true;
-    catalog.name_          = rstd::move(workspace.name);
+    catalog.name_          = workspace.name.clone();
     catalog.root_          = workspace.root.clone();
     catalog.manifest_path_ = workspace.manifest_path.clone();
     if (workspace.profile.is_some()) {
@@ -191,7 +203,17 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
         defaults.insert(rstd::move(key).unwrap(), empty {});
     }
     rstd::slice_::sort_unstable(catalog.names_.as_mut_slice().as_mut_ref());
+    catalog.workspace_manifest_ = Some(rstd::move(workspace));
     return Ok(rstd::move(catalog));
+}
+
+auto WorkspaceCatalog::associated_test_package(PackageManifest         manifest,
+                                               const WorkspaceCatalog& primary)
+    -> Result<WorkspaceCatalog> {
+    if (primary.workspace_manifest_.is_some()) {
+        rstd_try(resolve_workspace_member(manifest, *primary.workspace_manifest_));
+    }
+    return WorkspaceCatalog::single(rstd::move(manifest));
 }
 
 auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
@@ -205,8 +227,7 @@ auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
 
     if (! primary.workspace_ && primary.names_.len() == usize(1)) {
         const auto root = primary.packages_.get(primary.names_[usize {}].as_str());
-        if (root.is_some() && ((**root).artifact_kind == ArtifactKind::TestExecutable ||
-                               (**root).artifact_kind == ArtifactKind::CompileTest)) {
+        if (root.is_some() && test_only_package(**root)) {
             return catalog_failure<empty>(rstd::format(
                 "primary package '{}' is already a test artifact and cannot attach '{}'",
                 (**root).name.as_str(),
@@ -221,14 +242,14 @@ auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
                 rstd::format("associated test catalog is missing package '{}'", name.as_str()));
         }
         const auto& manifest = **package;
-        if (manifest.artifact_kind != ArtifactKind::TestExecutable &&
-            manifest.artifact_kind != ArtifactKind::CompileTest) {
+        if (! test_only_package(manifest)) {
             return catalog_failure<empty>(rstd::format(
-                "associated test package '{}' at '{}' must declare [test] or [compile-test]",
+                "associated test package '{}' at '{}' may only declare [[test]] or [compile-test]",
                 manifest.name.as_str(),
                 manifest.manifest_path.as_path()));
         }
-        if (! tests.workspace_ && manifest.version.source == PackageVersionSource::Workspace) {
+        if (! tests.workspace_ && manifest.version.source == PackageVersionSource::Workspace &&
+            manifest.version.value.is_none()) {
             return catalog_failure<empty>(rstd::format(
                 "associated test package '{}' at '{}' cannot inherit a workspace version",
                 manifest.name.as_str(),

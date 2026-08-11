@@ -43,9 +43,9 @@ struct SourceEntry {
     ResolvedSource source;
 };
 
-auto resolve_declared_source(const PackageManifest& manifest, ref<rstd::path::Path> declared)
+auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path> declared)
     -> Result<ResolvedSource> {
-    auto requested = manifest.source_root.join(declared);
+    auto requested = PathBuf::from(source_root).join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return discovery_failure<ResolvedSource>(
@@ -54,12 +54,12 @@ auto resolve_declared_source(const PackageManifest& manifest, ref<rstd::path::Pa
                          rstd::move(canonical).unwrap_err()));
     }
     auto resolved = rstd::move(canonical).unwrap();
-    auto relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
+    auto relative = resolved.as_path().strip_prefix(source_root);
     if (relative.is_none() || (*relative).is_empty()) {
         return discovery_failure<ResolvedSource>(
             rstd::format("declared source '{}' resolves outside package source root '{}'",
                          declared,
-                         manifest.source_root.as_path()));
+                         source_root));
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
@@ -83,9 +83,9 @@ auto resolve_declared_source(const PackageManifest& manifest, ref<rstd::path::Pa
     });
 }
 
-auto collect_format_directory(const PackageManifest& manifest,
-                              ref<rstd::path::Path>  directory,
-                              Vec<SourceEntry>&      entries) -> Result<empty> {
+auto collect_format_directory(ref<rstd::path::Path> source_root,
+                              ref<rstd::path::Path> directory,
+                              Vec<SourceEntry>&     entries) -> Result<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
         return discovery_failure<empty>(rstd::format("cannot enumerate source directory '{}': {}",
@@ -110,7 +110,7 @@ auto collect_format_directory(const PackageManifest& manifest,
         }
         auto path = entry.path();
         if (type->is_dir()) {
-            auto nested = collect_format_directory(manifest, path.as_path(), entries);
+            auto nested = collect_format_directory(source_root, path.as_path(), entries);
             if (nested.is_err()) return nested;
             continue;
         }
@@ -122,7 +122,7 @@ auto collect_format_directory(const PackageManifest& manifest,
                                                          rstd::move(canonical).unwrap_err()));
         }
         auto resolved = rstd::move(canonical).unwrap();
-        auto relative = resolved.as_path().strip_prefix(manifest.source_root.as_path());
+        auto relative = resolved.as_path().strip_prefix(source_root);
         if (relative.is_none() || (*relative).is_empty()) {
             return discovery_failure<empty>(rstd::format(
                 "source candidate '{}' resolves outside package root", path.as_path()));
@@ -226,7 +226,7 @@ auto import_owner(const PackageMetadata&     package,
     auto owner        = Option<TargetId> {};
     auto owner_length = usize {};
     for (auto visible : plan.visible_targets[importer]) {
-        const auto& module = package.targets[visible].manifest.root_module;
+        const auto& module = package.targets[visible].source.module;
         if (module.is_none() || ! module_name_belongs(module->as_str(), logical_name)) continue;
         if (owner.is_none() || module->size() > owner_length) {
             owner        = Some(visible);
@@ -237,8 +237,8 @@ auto import_owner(const PackageMetadata&     package,
             return discovery_failure<Option<TargetId>>(
                 rstd::format("module import '{}' is owned by both '{}' and '{}'",
                              logical_name,
-                             package.targets[*owner].manifest.name.as_str(),
-                             package.targets[visible].manifest.name.as_str()));
+                             package_target_id_text(package.targets[*owner].id).as_str(),
+                             package_target_id_text(package.targets[visible].id).as_str()));
         }
     }
     return Ok(owner);
@@ -249,13 +249,13 @@ auto import_owner(const PackageMetadata&     package,
 namespace lito
 {
 
-static auto discover_explicit_sources_impl(const PackageManifest& manifest,
-                                           bool                   include_test_attachments)
+static auto discover_explicit_sources_impl(ref<rstd::path::Path>       source_root,
+                                           const TargetSourceManifest& source_manifest)
     -> Result<ResolvedSourceSet> {
     auto       seen    = StringSet::make();
     auto       entries = Vec<SourceEntry>::make();
     const auto append  = [&](const PathBuf& declared) -> Result<empty> {
-        auto resolved = resolve_declared_source(manifest, declared.as_path());
+        auto resolved = resolve_declared_source(source_root, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
         auto key    = path_text(source.relative_path.as_path());
@@ -269,28 +269,14 @@ static auto discover_explicit_sources_impl(const PackageManifest& manifest,
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
     };
-    for (const auto& declared : manifest.declared_sources) {
+    for (const auto& declared : source_manifest.declared_sources) {
         auto appended = append(declared);
         if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
     }
-    for (const auto& group : manifest.conditional_source_groups) {
+    for (const auto& group : source_manifest.conditional_source_groups) {
         for (const auto& declared : group.sources) {
             auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-        }
-    }
-    if (include_test_attachments) {
-        for (const auto& attachment : manifest.test_attachments) {
-            for (const auto& declared : attachment.sources) {
-                auto appended = append(declared);
-                if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-            }
-            for (const auto& group : attachment.conditional_source_groups) {
-                for (const auto& declared : group.sources) {
-                    auto appended = append(declared);
-                    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-                }
-            }
         }
     }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
@@ -307,22 +293,29 @@ static auto discover_explicit_sources_impl(const PackageManifest& manifest,
 export namespace lito
 {
 
-auto discover_explicit_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
-    return discover_explicit_sources_impl(manifest, false);
+auto discover_explicit_sources(const ResolvedTarget& target) -> Result<ResolvedSourceSet> {
+    return discover_explicit_sources_impl(target.source_root.as_path(), target.source);
 }
 
 auto discover_format_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
-    if (manifest.discovery == SourceDiscoveryMode::Explicit) {
-        return discover_explicit_sources_impl(manifest, true);
+    auto entries          = Vec<SourceEntry>::make();
+    auto module_discovery = false;
+    for (const auto& target : manifest.targets) {
+        if (package_target_source(target).discovery == SourceDiscoveryMode::Module) {
+            module_discovery = true;
+            break;
+        }
     }
-    auto source_root = manifest.source_root.join(PathBuf::from("src"_str).as_path());
-    auto entries     = Vec<SourceEntry>::make();
-    auto collected   = collect_format_directory(manifest, source_root.as_path(), entries);
-    if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
+    if (module_discovery) {
+        auto source_directory = manifest.source_root.join(PathBuf::from("src"_str).as_path());
+        auto collected        = collect_format_directory(
+            manifest.source_root.as_path(), source_directory.as_path(), entries);
+        if (collected.is_err()) return Err(rstd::move(collected).unwrap_err());
+    }
     auto seen = StringSet::make();
     for (const auto& entry : entries) seen.insert(entry.key.clone(), empty {});
-    const auto append_attachment = [&](const PathBuf& declared) -> Result<empty> {
-        auto resolved = resolve_declared_source(manifest, declared.as_path());
+    const auto append = [&](const PathBuf& declared) -> Result<empty> {
+        auto resolved = resolve_declared_source(manifest.source_root.as_path(), declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
         auto key    = path_text(source.relative_path.as_path());
@@ -333,17 +326,36 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
     };
-    for (const auto& attachment : manifest.test_attachments) {
-        for (const auto& declared : attachment.sources) {
-            auto appended = append_attachment(declared);
+    for (const auto& target : manifest.targets) {
+        const auto& source = package_target_source(target);
+        for (const auto& declared : source.declared_sources) {
+            auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
-        for (const auto& group : attachment.conditional_source_groups) {
+        for (const auto& group : source.conditional_source_groups) {
             for (const auto& declared : group.sources) {
-                auto appended = append_attachment(declared);
+                auto appended = append(declared);
                 if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
             }
         }
+        auto attachments = package_target_attachments(target);
+        if (attachments.is_none()) continue;
+        for (const auto& attachment : **attachments) {
+            for (const auto& declared : attachment.sources) {
+                auto appended = append(declared);
+                if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+            }
+            for (const auto& group : attachment.conditional_source_groups) {
+                for (const auto& declared : group.sources) {
+                    auto appended = append(declared);
+                    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+                }
+            }
+        }
+    }
+    for (const auto& test : manifest.compile_tests) {
+        auto appended = append(test.source);
+        if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
     }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
@@ -359,9 +371,9 @@ auto resolve_source_target(const PackageMetadata&     package,
                            ref<rstd::path::Path>      source) -> Result<TargetId> {
     auto exact = Option<TargetId> {};
     for (auto target : discovery.target_order) {
-        const auto& manifest = package.targets[target].manifest;
-        if (manifest.discovery != SourceDiscoveryMode::Explicit) continue;
-        auto discovered = discover_explicit_sources(manifest);
+        const auto& resolved_target = package.targets[target];
+        if (resolved_target.source.discovery != SourceDiscoveryMode::Explicit) continue;
+        auto discovered = discover_explicit_sources(resolved_target);
         if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
         for (const auto& candidate : discovered->sources) {
             if (candidate.canonical_path.as_path() != source) continue;
@@ -378,7 +390,7 @@ auto resolve_source_target(const PackageMetadata&     package,
     auto selected_root_length = usize {};
     for (auto target : discovery.target_order) {
         if (package.targets[target].test_attachment.is_some()) continue;
-        const auto root = package.targets[target].manifest.source_root.as_path();
+        const auto root = package.targets[target].source_root.as_path();
         if (source.strip_prefix(root).is_none()) continue;
         auto root_length = root.as_os_str().as_encoded_bytes().len();
         if (selected.is_some() && root_length == selected_root_length) {
@@ -394,12 +406,12 @@ auto resolve_source_target(const PackageMetadata&     package,
         return discovery_failure<TargetId>(
             rstd::format("source '{}' is outside the selected package targets", source));
     }
-    auto relative = source.strip_prefix(package.targets[*selected].manifest.source_root.as_path());
+    auto relative = source.strip_prefix(package.targets[*selected].source_root.as_path());
     if (relative.is_none() || relative->is_empty()) {
         return discovery_failure<TargetId>(
             rstd::format("source '{}' does not name a file inside target '{}'",
                          source,
-                         package.targets[*selected].manifest.name.as_str()));
+                         package_target_id_text(package.targets[*selected].id).as_str()));
     }
     return Ok(*selected);
 }
@@ -414,7 +426,7 @@ auto discover_sources(const PackageMetadata&       package,
                       FrontendAnalysisService&     analysis_service,
                       const Option<BuildObserver>& observer,
                       usize                        jobs,
-                      usize max_in_flight) -> Result<Vec<ResolvedPackageSources>> {
+                      usize max_in_flight) -> Result<Vec<ResolvedTargetSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -425,9 +437,9 @@ auto discover_sources(const PackageMetadata&       package,
     auto queued     = StringSet::make();
 
     for (auto target : plan.target_order) {
-        const auto& manifest = package.targets[target].manifest;
-        if (manifest.discovery == SourceDiscoveryMode::Explicit) {
-            auto explicit_sources = discover_explicit_sources(manifest);
+        const auto& resolved_target = package.targets[target];
+        if (resolved_target.source.discovery == SourceDiscoveryMode::Explicit) {
+            auto explicit_sources = discover_explicit_sources(resolved_target);
             if (explicit_sources.is_err()) return Err(rstd::move(explicit_sources).unwrap_err());
             auto sources = rstd::move(explicit_sources).unwrap().sources;
             for (auto& source : sources) {
@@ -437,13 +449,14 @@ auto discover_sources(const PackageMetadata&       package,
             }
             continue;
         }
-        auto entry = module_entry_source(manifest);
+        auto entry = module_entry_source(resolved_target);
         if (entry.is_err()) return Err(rstd::move(entry).unwrap_err());
         auto enqueued = enqueue_candidate(
             target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
         if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
-        for (const auto& declared : manifest.declared_sources) {
-            auto resolved = resolve_declared_source(manifest, declared.as_path());
+        for (const auto& declared : resolved_target.source.declared_sources) {
+            auto resolved =
+                resolve_declared_source(resolved_target.source_root.as_path(), declared.as_path());
             if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
             enqueued = enqueue_candidate(
                 target, rstd::move(resolved).unwrap(), true, path_names, name_paths, queued, queue);
@@ -473,18 +486,18 @@ auto discover_sources(const PackageMetadata&       package,
             auto        context = static_cast<const CompileContext*>(
                 rstd::addressof(plan.contexts[candidate.target]));
             auto compile_test_context_value = Option<CompileContext> {};
-            if (target.manifest.artifact_kind == ArtifactKind::CompileTest) {
+            if (target.artifact_kind == ArtifactKind::CompileTest) {
                 const auto* selected = static_cast<const CompileTestCase*>(nullptr);
-                for (const auto& test : target.manifest.compile_tests) {
+                for (const auto& test : target.compile_tests) {
                     if (test.source.as_path() == candidate.source.relative_path.as_path()) {
                         selected = rstd::addressof(test);
                         break;
                     }
                 }
                 if (selected == nullptr) {
-                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                    return discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("compile-test package '{}' has no case for source '{}'",
-                                     target.manifest.name.as_str(),
+                                     target.id.package.as_str(),
                                      candidate.source.relative_path.as_path()));
                 }
                 auto resolved_context = compile_test_context(*context, *selected);
@@ -494,11 +507,11 @@ auto discover_sources(const PackageMetadata&       package,
                 compile_test_context_value = Some(rstd::move(resolved_context).unwrap());
                 context                    = rstd::addressof(*compile_test_context_value);
             }
-            auto task = analysis_service.prepare(target.manifest.name.as_str(),
+            auto task = analysis_service.prepare(target.id,
                                                  candidate.source.relative_path.as_path(),
                                                  candidate.source.canonical_path.as_path(),
                                                  *context,
-                                                 target.manifest.source_root.as_path(),
+                                                 target.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
             prepared.push(Some(rstd::move(task).unwrap()));
@@ -543,6 +556,7 @@ auto discover_sources(const PackageMetadata&       package,
             auto facts = analysis_service.commit(rstd::move(task_outcome).unwrap());
             if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
             auto frontend_analysis = rstd::move(facts).unwrap();
+            auto target_identity   = package_target_id_text(target.id);
             if (observer.is_some() && observer->notify != nullptr) {
                 auto kind =
                     frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache
@@ -550,7 +564,7 @@ auto discover_sources(const PackageMetadata&       package,
                         : BuildEventKind::Scan;
                 observer->notify(observer->context,
                                  BuildEvent { kind,
-                                              target.manifest.name.as_str(),
+                                              target_identity.as_str(),
                                               candidate.source.canonical_path.as_path() });
             }
             const auto& frontend_result = frontend_analysis.result;
@@ -561,17 +575,16 @@ auto discover_sources(const PackageMetadata&       package,
                     auto actual = frontend_result.provided.is_some()
                                       ? frontend_result.provided->logical_name.as_str()
                                       : "<none>"_str;
-                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                    return discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("module convention expected '{}' to provide '{}', but "
                                      "native preprocessing reported '{}'",
                                      candidate.source.canonical_path.as_path(),
                                      candidate.source.expected_module->as_str(),
                                      actual));
                 }
-                if (candidate.source.expected_module->as_str() ==
-                        target.manifest.root_module->as_str() &&
+                if (candidate.source.expected_module->as_str() == target.source.module->as_str() &&
                     ! frontend_result.provided->is_interface) {
-                    return discovery_failure<Vec<ResolvedPackageSources>>(
+                    return discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("primary module source '{}' is not an interface",
                                      candidate.source.canonical_path.as_path()));
                 }
@@ -583,12 +596,12 @@ auto discover_sources(const PackageMetadata&       package,
                         package, plan, candidate.target, imported.logical_name.as_str());
                     if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
                     if (owner->is_none()) continue;
-                    if (package.targets[**owner].manifest.discovery ==
+                    if (package.targets[**owner].source.discovery ==
                         SourceDiscoveryMode::Explicit) {
                         continue;
                     }
-                    auto nested = module_source(package.targets[**owner].manifest,
-                                                imported.logical_name.as_str());
+                    auto nested =
+                        module_source(package.targets[**owner], imported.logical_name.as_str());
                     if (nested.is_err()) return Err(rstd::move(nested).unwrap_err());
                     auto enqueued = enqueue_candidate(**owner,
                                                       rstd::move(nested).unwrap(),
@@ -599,7 +612,7 @@ auto discover_sources(const PackageMetadata&       package,
                                                       next);
                     if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
                 }
-                auto companion = module_companion_source(target.manifest, candidate.source);
+                auto companion = module_companion_source(target, candidate.source);
                 if (companion.is_err()) return Err(rstd::move(companion).unwrap_err());
                 if (companion->is_some()) {
                     auto enqueued = enqueue_candidate(candidate.target,
@@ -620,13 +633,13 @@ auto discover_sources(const PackageMetadata&       package,
     scan_executor.finish();
     analysis_service.profiler().record_execution(scan_executor.statistics());
 
-    auto result = Vec<ResolvedPackageSources>::with_capacity(plan.target_order.len());
+    auto result = Vec<ResolvedTargetSources>::with_capacity(plan.target_order.len());
     for (auto target : plan.target_order) {
         auto sorted = sort_sources(rstd::move(discovered[target]));
         if (sorted.is_err()) return Err(rstd::move(sorted).unwrap_err());
-        result.push(ResolvedPackageSources {
-            .package_name = package.targets[target].manifest.name.clone(),
-            .sources      = ResolvedSourceSet { .sources = rstd::move(sorted).unwrap() },
+        result.push(ResolvedTargetSources {
+            .target  = package.targets[target].id.clone(),
+            .sources = ResolvedSourceSet { .sources = rstd::move(sorted).unwrap() },
         });
     }
     return Ok(rstd::move(result));
@@ -642,7 +655,7 @@ auto discover_package_sources(const PackageMetadata&       package,
                               FrontendAnalysisService&     analysis_service,
                               const Option<BuildObserver>& observer,
                               usize                        jobs,
-                              usize max_in_flight) -> Result<Vec<ResolvedPackageSources>> {
+                              usize max_in_flight) -> Result<Vec<ResolvedTargetSources>> {
     return discover_sources(package, plan, analysis_service, observer, jobs, max_in_flight);
 }
 

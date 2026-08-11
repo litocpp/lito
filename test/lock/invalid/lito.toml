@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-invalid"
-version = "0.1.0"
-module = "fixture.lock.invalid"
-
-[library]
-archive = "fixture.lock.invalid"
-discovery = "explicit"
-sources = ["source.cppm"]

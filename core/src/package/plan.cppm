@@ -5,7 +5,6 @@ import lito.model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using TargetMap = rstd::collections::BTreeMap<String, lito::TargetId>;
 
 namespace lito
 {
@@ -88,6 +87,25 @@ auto append_unique(Vec<TargetId>& output, const Vec<TargetId>& input) -> void {
     for (auto value : input) append_unique(output, value);
 }
 
+auto target_text(const PackageTargetId& id) -> String {
+    return rstd::format(
+        "{}::{}::{}", id.package.as_str(), package_target_kind_name(id.kind), id.name.as_str());
+}
+
+auto target_index(const PackageMetadata& package, const PackageTargetId& id) -> Option<TargetId> {
+    for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
+        if (package.targets[candidate].id == id) return Some(candidate);
+    }
+    return None();
+}
+
+auto target_index(const PackageSpec& package, const PackageTargetId& id) -> Option<TargetId> {
+    for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
+        if (package.targets[candidate].id == id) return Some(candidate);
+    }
+    return None();
+}
+
 struct PublicUsage {
     Vec<PathBuf>     include_directories;
     Vec<String>      definitions;
@@ -96,7 +114,6 @@ struct PublicUsage {
 };
 
 auto visit_target(const PackageMetadata& package,
-                  const TargetMap&       target_ids,
                   TargetId               target,
                   Vec<uint8_t>&          colors,
                   Vec<TargetId>&         target_order) -> Result<empty> {
@@ -104,7 +121,7 @@ auto visit_target(const PackageMetadata& package,
     if (color == 2) return Ok(empty {});
     if (color == 1) {
         return plan_failure<empty>(rstd::format("target dependency cycle at '{}'",
-                                                package.targets[target].manifest.name.as_str()));
+                                                target_text(package.targets[target].id).as_str()));
     }
 
     color = 1;
@@ -112,14 +129,14 @@ auto visit_target(const PackageMetadata& package,
         const auto runtime = pass == usize {};
         for (const auto& dependency : package.targets[target].dependencies) {
             if ((dependency.visibility == DependencyVisibility::Runtime) != runtime) continue;
-            auto found = target_ids.get(dependency.target.as_str());
+            auto found = target_index(package, dependency.target);
             if (found.is_none()) {
                 return plan_failure<empty>(
                     rstd::format("target '{}' depends on unknown target '{}'",
-                                 package.targets[target].manifest.name.as_str(),
-                                 dependency.target.as_str()));
+                                 target_text(package.targets[target].id).as_str(),
+                                 target_text(dependency.target).as_str()));
             }
-            auto nested = visit_target(package, target_ids, **found, colors, target_order);
+            auto nested = visit_target(package, *found, colors, target_order);
             if (nested.is_err()) return nested;
         }
     }
@@ -181,8 +198,8 @@ auto attachment_context(const CompileContext&       library,
         rstd::move(result.public_requirements), test.public_requirements);
     append_unique(result.external_identities, test.external_identities);
     result.id      = rstd::format("lito-test-attachment-context-v1\ntest:{}\nlibrary:{}\n{}",
-                                  attachment.test_target.as_str(),
-                                  attachment.library_target.as_str(),
+                                  target_text(attachment.test_target).as_str(),
+                                  target_text(attachment.library_target).as_str(),
                                   context_id(result).as_str());
     result.scan_id = scan_context_id(result);
     return Ok(rstd::move(result));
@@ -216,11 +233,6 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
 auto resolve_source_discovery(const PackageMetadata& package,
                               ref<str>               requested_profile,
                               const Vec<String>& requested_targets) -> Result<SourceDiscoveryPlan> {
-    auto target_ids = TargetMap::make();
-    for (auto id = TargetId {}; id < package.targets.len(); ++id) {
-        target_ids.insert(package.targets[id].manifest.name.clone(), id);
-    }
-
     auto profile_name =
         requested_profile.size() == usize {} ? package.default_profile.as_str() : requested_profile;
     auto profile = Option<usize> {};
@@ -235,18 +247,73 @@ auto resolve_source_discovery(const PackageMetadata& package,
             rstd::format("unknown profile '{}'", profile_name));
     }
 
-    const auto& targets =
-        requested_targets.is_empty() ? package.default_targets : requested_targets;
+    auto selected_identities = Vec<PackageTargetId>::make();
+    if (requested_targets.is_empty()) {
+        selected_identities = Vec<PackageTargetId>::with_capacity(package.default_targets.len());
+        for (const auto& target : package.default_targets) {
+            selected_identities.push(target.clone());
+        }
+    } else {
+        for (const auto& requested : requested_targets) {
+            auto separated = requested.as_str().split_once(":"_str);
+            auto kind      = Option<PackageTargetKind> {};
+            auto name      = requested.as_str();
+            if (separated.is_some()) {
+                auto kind_text = separated->get<0>();
+                name           = separated->get<1>();
+                if (kind_text == "lib"_str)
+                    kind = Some(PackageTargetKind::Library);
+                else if (kind_text == "bin"_str)
+                    kind = Some(PackageTargetKind::Binary);
+                else if (kind_text == "test"_str)
+                    kind = Some(PackageTargetKind::Test);
+                else if (kind_text == "bench"_str)
+                    kind = Some(PackageTargetKind::Benchmark);
+                else
+                    return plan_failure<SourceDiscoveryPlan>(
+                        rstd::format("target selector '{}' has unknown kind '{}'",
+                                     requested.as_str(),
+                                     kind_text));
+                if (name.is_empty()) {
+                    return plan_failure<SourceDiscoveryPlan>(
+                        rstd::format("target selector '{}' is missing a name", requested.as_str()));
+                }
+            }
+            auto matched_packages = rstd::collections::BTreeMap<String, PackageTargetKind>::make();
+            auto matches          = usize {};
+            for (const auto& candidate : package.default_targets) {
+                if (candidate.name != name || (kind.is_some() && candidate.kind != *kind)) {
+                    continue;
+                }
+                auto prior = matched_packages.get(candidate.package.as_str());
+                if (prior.is_some()) {
+                    return plan_failure<SourceDiscoveryPlan>(rstd::format(
+                        "target selector '{}' is ambiguous in package '{}'; use '{}:{}'",
+                        requested.as_str(),
+                        candidate.package.as_str(),
+                        package_target_kind_name(candidate.kind),
+                        candidate.name.as_str()));
+                }
+                matched_packages.insert(candidate.package.clone(), candidate.kind);
+                selected_identities.push(candidate.clone());
+                ++matches;
+            }
+            if (matches == usize {}) {
+                return plan_failure<SourceDiscoveryPlan>(
+                    rstd::format("unknown target selector '{}'", requested.as_str()));
+            }
+        }
+    }
     auto colors       = Vec<uint8_t>::with_capacity(package.targets.len());
     auto target_order = Vec<TargetId>::make();
     for (auto id = TargetId {}; id < package.targets.len(); ++id) colors.emplace_back(0);
-    for (const auto& target_name : targets) {
-        auto found = target_ids.get(target_name.as_str());
+    for (const auto& target_identity : selected_identities) {
+        auto found = target_index(package, target_identity);
         if (found.is_none()) {
             return plan_failure<SourceDiscoveryPlan>(
-                rstd::format("unknown target '{}'", target_name.as_str()));
+                rstd::format("unknown target '{}'", target_text(target_identity).as_str()));
         }
-        auto visited = visit_target(package, target_ids, **found, colors, target_order);
+        auto visited = visit_target(package, *found, colors, target_order);
         if (visited.is_err()) return Err(rstd::move(visited).unwrap_err());
     }
 
@@ -268,14 +335,16 @@ auto resolve_source_discovery(const PackageMetadata& package,
     for (auto target : target_order) {
         const auto& spec  = package.targets[target];
         auto        usage = PublicUsage {};
-        append_unique(usage.include_directories, spec.manifest.usage.public_include_directories);
-        append_unique(usage.definitions, spec.manifest.usage.public_definitions);
-        append_unique(usage.arguments, spec.manifest.usage.public_arguments);
-        for (const auto& dependency : spec.external_dependencies) {
-            for (const auto& target : dependency.targets) {
-                if (target.visibility != DependencyVisibility::Public) continue;
-                append_unique(usage.arguments, target.compile_arguments);
-                append_unique(usage.external_identities, target.identity.as_str());
+        if (spec.id.kind == PackageTargetKind::Library) {
+            append_unique(usage.include_directories, spec.usage.public_include_directories);
+            append_unique(usage.definitions, spec.usage.public_definitions);
+            append_unique(usage.arguments, spec.usage.public_arguments);
+            for (const auto& dependency : spec.external_dependencies) {
+                for (const auto& target : dependency.targets) {
+                    if (target.visibility != DependencyVisibility::Public) continue;
+                    append_unique(usage.arguments, target.compile_arguments);
+                    append_unique(usage.external_identities, target.identity.as_str());
+                }
             }
         }
 
@@ -283,7 +352,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(exported_targets, target);
         for (const auto& dependency : spec.dependencies) {
             if (dependency.visibility != DependencyVisibility::Public) continue;
-            auto  dependency_id = **target_ids.get(dependency.target.as_str());
+            auto  dependency_id = *target_index(package, dependency.target);
             auto& nested_usage  = *public_usage[dependency_id];
             append_unique(usage.include_directories, nested_usage.include_directories);
             append_unique(usage.definitions, nested_usage.definitions);
@@ -316,15 +385,20 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(context.external_identities, exported_usage.external_identities);
 
         auto private_layer = CppOptionLayer {};
-        append_unique(private_layer.include_directories,
-                      spec.manifest.usage.private_include_directories);
-        append_unique(private_layer.definitions, spec.manifest.usage.private_definitions);
-        append_unique(private_layer.arguments, spec.manifest.usage.private_arguments);
+        append_unique(private_layer.include_directories, spec.usage.private_include_directories);
+        append_unique(private_layer.definitions, spec.usage.private_definitions);
+        append_unique(private_layer.arguments, spec.usage.private_arguments);
         for (const auto& dependency : spec.external_dependencies) {
-            for (const auto& target : dependency.targets) {
-                if (target.visibility != DependencyVisibility::Private) continue;
-                append_unique(private_layer.arguments, target.compile_arguments);
-                append_unique(context.external_identities, target.identity.as_str());
+            for (const auto& external_target : dependency.targets) {
+                const auto consumed_publicly =
+                    spec.id.kind != PackageTargetKind::Library &&
+                    external_target.visibility == DependencyVisibility::Public;
+                if (external_target.visibility != DependencyVisibility::Private &&
+                    ! consumed_publicly) {
+                    continue;
+                }
+                append_unique(private_layer.arguments, external_target.compile_arguments);
+                append_unique(context.external_identities, external_target.identity.as_str());
             }
         }
 
@@ -332,7 +406,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         append_unique(visible, target);
         for (const auto& dependency : spec.dependencies) {
             if (dependency.visibility == DependencyVisibility::Runtime) continue;
-            auto dependency_id = **target_ids.get(dependency.target.as_str());
+            auto dependency_id = *target_index(package, dependency.target);
             append_unique(visible, public_visible[dependency_id]);
             if (dependency.visibility == DependencyVisibility::Public) continue;
             const auto& usage = *public_usage[dependency_id];
@@ -351,14 +425,14 @@ auto resolve_source_discovery(const PackageMetadata& package,
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);
-        append_unique(linker_options[target], spec.manifest.usage.private_linker_options);
+        append_unique(linker_options[target], spec.usage.private_linker_options);
     }
 
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         const auto& attachment = package.targets[target].test_attachment;
         if (attachment.is_none()) continue;
-        auto test_id    = target_ids.get(attachment->test_target.as_str());
-        auto library_id = target_ids.get(attachment->library_target.as_str());
+        auto test_id    = target_index(package, attachment->test_target);
+        auto library_id = target_index(package, attachment->library_target);
         if (test_id.is_none() || library_id.is_none()) {
             return plan_failure<SourceDiscoveryPlan>(
                 "test attachment references an unknown target"_str);
@@ -367,10 +441,9 @@ auto resolve_source_discovery(const PackageMetadata& package,
             return plan_failure<SourceDiscoveryPlan>(
                 "test attachment target is repeated in the build graph"_str);
         }
-        append_unique(visible_targets[target], visible_targets[**library_id]);
-        append_unique(visible_targets[target], visible_targets[**test_id]);
-        auto attached =
-            attachment_context(contexts[**library_id], contexts[**test_id], *attachment);
+        append_unique(visible_targets[target], visible_targets[*library_id]);
+        append_unique(visible_targets[target], visible_targets[*test_id]);
+        auto attached = attachment_context(contexts[*library_id], contexts[*test_id], *attachment);
         if (attached.is_err()) return Err(rstd::move(attached).unwrap_err());
         contexts[target] = rstd::move(attached).unwrap();
     }
@@ -380,8 +453,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
         for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
             const auto& attachment = package.targets[candidate].test_attachment;
             if (attachment.is_some() &&
-                attachment->test_target ==
-                    package.targets[selected_target].manifest.name.as_str()) {
+                attachment->test_target == package.targets[selected_target].id) {
                 expanded_target_order.emplace_back(candidate);
             }
         }
@@ -395,7 +467,7 @@ auto resolve_source_discovery(const PackageMetadata& package,
             colors.emplace_back(uint8_t {});
         }
         auto dependency_order = Vec<TargetId>::make();
-        auto ordered          = visit_target(package, target_ids, target, colors, dependency_order);
+        auto ordered          = visit_target(package, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs = link_inputs[target];
         for (auto index = dependency_order.len(); index > usize {}; --index) {
@@ -415,30 +487,30 @@ auto resolve_source_discovery(const PackageMetadata& package,
         }
     }
 
-    auto target_names = Vec<String>::with_capacity(package.targets.len());
+    auto target_identities = Vec<PackageTargetId>::with_capacity(package.targets.len());
     for (const auto& target : package.targets) {
-        target_names.push(target.manifest.name.clone());
+        target_identities.push(target.id.clone());
     }
     return Ok(SourceDiscoveryPlan {
-        .profile         = *profile,
-        .target_names    = rstd::move(target_names),
-        .target_order    = rstd::move(target_order),
-        .contexts        = rstd::move(contexts),
-        .visible_targets = rstd::move(visible_targets),
-        .link_inputs     = rstd::move(link_inputs),
-        .linker_options  = rstd::move(linker_options),
+        .profile           = *profile,
+        .target_identities = rstd::move(target_identities),
+        .target_order      = rstd::move(target_order),
+        .contexts          = rstd::move(contexts),
+        .visible_targets   = rstd::move(visible_targets),
+        .link_inputs       = rstd::move(link_inputs),
+        .linker_options    = rstd::move(linker_options),
     });
 }
 
 auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan discovery)
     -> Result<PackagePlan> {
     if (discovery.profile >= package.profiles.len() ||
-        discovery.target_names.len() != package.targets.len()) {
+        discovery.target_identities.len() != package.targets.len()) {
         return plan_failure<PackagePlan>(
             "source discovery plan does not match the finalized package"_str);
     }
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
-        if (discovery.target_names[target].as_str() != package.targets[target].name.as_str()) {
+        if (! (discovery.target_identities[target] == package.targets[target].id)) {
             return plan_failure<PackagePlan>(
                 "source discovery target order changed during finalization"_str);
         }

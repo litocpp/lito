@@ -1,0 +1,14 @@
+[package]
+name = "fixture-same-wrapper-one"
+version = "0.1.0"
+
+[lib]
+name = "fixture-same-wrapper-one"
+module = "fixture.same.wrapper.one"
+archive = "fixture.same.wrapper.one"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.fixture-same-dependency]
+path = "../one"
+visibility = "private"

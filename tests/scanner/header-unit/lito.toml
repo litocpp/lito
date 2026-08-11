@@ -1,0 +1,10 @@
+[package]
+name = "fixture-scanner-header-unit"
+version = "0.1.0"
+
+[lib]
+name = "fixture-scanner-header-unit"
+module = "fixture.scanner.header_unit"
+archive = "fixture.scanner.header_unit"
+discovery = "explicit"
+sources = ["src/lib.cppm"]

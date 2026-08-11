@@ -1,8 +1,0 @@
-[package]
-name = "fixture-profile-enabled"
-version = "0.1.0"
-
-[executable]
-name = "profile-enabled"
-discovery = "explicit"
-sources = ["main.cpp"]

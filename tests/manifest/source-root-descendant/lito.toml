@@ -1,0 +1,9 @@
+[package]
+name = "fixture-source-root-descendant"
+version = "0.1.0"
+source-root = "src"
+
+[[bin]]
+name = "fixture-source-root-descendant"
+discovery = "explicit"
+sources = ["main.cpp"]

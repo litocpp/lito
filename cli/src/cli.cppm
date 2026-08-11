@@ -57,6 +57,7 @@ struct CliSchema {
     ArgKey<usize>            build_jobs;
     ArgKey<String>           test_package;
     ArgKey<BuildProfileName> test_profile;
+    ArgKey<String>           test_target;
     ArgKey<String>           test_output;
     ArgKey<bool>             test_locked;
     ArgKey<bool>             test_no_run;
@@ -65,6 +66,17 @@ struct CliSchema {
     ArgKey<bool>             test_no_timing;
     ArgKey<usize>            test_jobs;
     ArgKey<String>           test_arguments;
+    ArgKey<String>           bench_package;
+    ArgKey<BuildProfileName> bench_profile;
+    ArgKey<String>           bench_target;
+    ArgKey<String>           bench_output;
+    ArgKey<bool>             bench_locked;
+    ArgKey<bool>             bench_no_run;
+    ArgKey<bool>             bench_verbose;
+    ArgKey<String>           bench_timing_file;
+    ArgKey<bool>             bench_no_timing;
+    ArgKey<usize>            bench_jobs;
+    ArgKey<String>           bench_arguments;
     ArgKey<String>           scan_source;
     ArgKey<String>           scan_package;
     ArgKey<BuildProfileName> scan_profile;
@@ -147,6 +159,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     test.about("Build and run test packages"_str);
     auto test_package = test.add_arg(package_arg());
     auto test_profile = test.add_arg(profile_arg());
+    auto test_target  = test.add_arg(target_arg());
     auto test_output  = test.add_arg(Arg<String>::value("out"_str, string_parser())
                                          .long_name("out"_str)
                                          .value_name("DIRECTORY"_str)
@@ -164,6 +177,29 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                              .value_name("ARGS"_str)
                                              .num_args(NumArgs::any())
                                              .allow_hyphen_values());
+
+    auto bench = Command::make("bench"_str);
+    bench.about("Build and run benchmarks"_str);
+    auto bench_package = bench.add_arg(package_arg());
+    auto bench_profile = bench.add_arg(profile_arg());
+    auto bench_target  = bench.add_arg(target_arg());
+    auto bench_output  = bench.add_arg(Arg<String>::value("out"_str, string_parser())
+                                           .long_name("out"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Override the build output directory"_str));
+    auto bench_locked  = bench.add_arg(locked_arg());
+    auto bench_no_run  = bench.add_arg(Arg<bool>::flag("no-run"_str)
+                                           .long_name("no-run"_str)
+                                           .help("Build benchmarks without running"_str));
+    auto bench_verbose = bench.add_arg(
+        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto bench_timing_file = bench.add_arg(timing_file_arg());
+    auto bench_no_timing   = bench.add_arg(no_timing_arg());
+    auto bench_jobs        = bench.add_arg(jobs_arg());
+    auto bench_arguments   = bench.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                               .value_name("ARGS"_str)
+                                               .num_args(NumArgs::any())
+                                               .allow_hyphen_values());
 
     auto scan = Command::make("scan"_str);
     scan.about("Scan one source file"_str);
@@ -198,6 +234,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .default_value("."_str));
     root.add_subcommand(rstd::move(build));
     root.add_subcommand(rstd::move(test));
+    root.add_subcommand(rstd::move(bench));
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
     root.add_subcommand(rstd::move(update));
@@ -216,6 +253,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_jobs        = build_jobs,
         .test_package      = test_package,
         .test_profile      = test_profile,
+        .test_target       = test_target,
         .test_output       = test_output,
         .test_locked       = test_locked,
         .test_no_run       = test_no_run,
@@ -224,6 +262,17 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .test_no_timing    = test_no_timing,
         .test_jobs         = test_jobs,
         .test_arguments    = test_arguments,
+        .bench_package     = bench_package,
+        .bench_profile     = bench_profile,
+        .bench_target      = bench_target,
+        .bench_output      = bench_output,
+        .bench_locked      = bench_locked,
+        .bench_no_run      = bench_no_run,
+        .bench_verbose     = bench_verbose,
+        .bench_timing_file = bench_timing_file,
+        .bench_no_timing   = bench_no_timing,
+        .bench_jobs        = bench_jobs,
+        .bench_arguments   = bench_arguments,
         .scan_source       = scan_source,
         .scan_package      = scan_package,
         .scan_profile      = scan_profile,
@@ -285,6 +334,21 @@ struct ScanOptions {
 struct TestOptions {
     Vec<String>              packages;
     Option<BuildProfileName> profile;
+    Vec<String>              targets;
+    Option<PathBuf>          output;
+    Vec<String>              arguments;
+    bool                     locked {};
+    bool                     no_run {};
+    bool                     verbose {};
+    Option<PathBuf>          timing_file;
+    bool                     no_timing {};
+    Option<usize>            jobs;
+};
+
+struct BenchOptions {
+    Vec<String>              packages;
+    Option<BuildProfileName> profile;
+    Vec<String>              targets;
     Option<PathBuf>          output;
     Vec<String>              arguments;
     bool                     locked {};
@@ -303,6 +367,7 @@ class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
               (Test, (TestOptions options;)),
+              (Bench, (BenchOptions options;)),
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update))
@@ -391,6 +456,7 @@ auto parse() -> CliOutcome {
             CliCommand::Test(TestOptions {
                 .packages = string_values(*child, schema.test_package),
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
+                .targets = string_values(*child, schema.test_target),
                 .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
                 .arguments = string_values(*child, schema.test_arguments),
                 .locked    = flag_value(*child, schema.test_locked),
@@ -399,6 +465,29 @@ auto parse() -> CliOutcome {
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
+                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
+            }));
+    }
+    if (subcommand->get<0>() == "bench"_str) {
+        auto child       = subcommand->get<1>();
+        auto profile     = optional_value(*child, schema.bench_profile);
+        auto output      = optional_value(*child, schema.bench_output);
+        auto timing_file = optional_value(*child, schema.bench_timing_file);
+        auto jobs        = optional_value(*child, schema.bench_jobs);
+        return CliOutcome::Parsed(
+            rstd::move(working_directory),
+            CliCommand::Bench(BenchOptions {
+                .packages = string_values(*child, schema.bench_package),
+                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
+                .targets = string_values(*child, schema.bench_target),
+                .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
+                .arguments = string_values(*child, schema.bench_arguments),
+                .locked    = flag_value(*child, schema.bench_locked),
+                .no_run    = flag_value(*child, schema.bench_no_run),
+                .verbose   = flag_value(*child, schema.bench_verbose),
+                .timing_file =
+                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
+                .no_timing = flag_value(*child, schema.bench_no_timing),
                 .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
             }));
     }

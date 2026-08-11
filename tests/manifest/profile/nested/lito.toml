@@ -1,0 +1,11 @@
+[package]
+name = "fixture-profile-nested"
+version = "0.1.0"
+
+[[bin]]
+name = "profile-nested"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[profile.debug]
+exceptions = false

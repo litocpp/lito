@@ -1,0 +1,14 @@
+[package]
+name = "fixture-cycle-b"
+version = "0.1.0"
+
+[lib]
+name = "fixture-cycle-b"
+module = "fixture.cycle.b"
+archive = "fixture.cycle.b"
+discovery = "explicit"
+sources = ["source.cppm"]
+
+[dependencies.fixture-cycle-a]
+path = "../a"
+visibility = "private"

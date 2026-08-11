@@ -1,0 +1,11 @@
+[package]
+name = "fixture-profile-owned_option"
+version = "0.1.0"
+
+[[bin]]
+name = "profile-owned-option"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[usage]
+private-options = ["-O2"]

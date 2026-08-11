@@ -1,8 +1,0 @@
-[package]
-name = "fixture-conventional-name"
-version = "0.1.0"
-
-[test]
-name = "fixture-conventional-name-test"
-discovery = "explicit"
-sources = ["main.cpp"]

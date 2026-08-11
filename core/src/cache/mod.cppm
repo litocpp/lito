@@ -1452,9 +1452,9 @@ public:
         return write_json(decision.record_.as_path(), complete);
     }
 
-    auto finish_target(const BuildLayout&  layout,
-                       ref<str>            target,
-                       const Vec<PathBuf>& current_records) -> Result<empty> {
+    auto finish_target(const BuildLayout&     layout,
+                       const PackageTargetId& target,
+                       const Vec<PathBuf>&    current_records) -> Result<empty> {
         auto directory = layout.cache_target_directory(target);
         return finish_directory(directory.as_path(), current_records);
     }

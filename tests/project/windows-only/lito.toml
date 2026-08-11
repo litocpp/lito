@@ -1,0 +1,11 @@
+[package]
+name = "fixture-windows-only"
+version = { workspace = true }
+target = { family = "windows" }
+
+[lib]
+name = "fixture-windows-only"
+module = "fixture.windows.only"
+archive = "fixture_windows_only"
+discovery = "explicit"
+sources = ["src/lib.cppm"]

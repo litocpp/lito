@@ -1,0 +1,9 @@
+[package]
+name = "fixture-package-version-missing"
+
+[lib]
+name = "fixture-package-version-missing"
+module = "fixture.package_version_missing"
+archive = "fixture-package-version-missing"
+discovery = "explicit"
+sources = ["lib.cppm"]

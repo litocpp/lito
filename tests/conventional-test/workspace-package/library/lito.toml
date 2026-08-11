@@ -1,0 +1,10 @@
+[package]
+name = "fixture-associated-workspace-library"
+version.workspace = true
+
+[lib]
+name = "fixture-associated-workspace-library"
+module = "fixture.associated.workspace"
+archive = "fixture.associated.workspace"
+discovery = "module"
+sources = ["lib.cppm"]

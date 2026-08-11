@@ -1,0 +1,8 @@
+[package]
+name = "fixture-test-signal"
+version = { workspace = true }
+
+[[test]]
+name = "fixture-test-signal"
+discovery = "explicit"
+sources = ["src/main.cpp"]

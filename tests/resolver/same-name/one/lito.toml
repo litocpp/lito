@@ -1,0 +1,10 @@
+[package]
+name = "fixture-same-dependency"
+version = "0.1.0"
+
+[lib]
+name = "fixture-same-dependency"
+module = "fixture.same.dependency"
+archive = "fixture.same.one"
+discovery = "explicit"
+sources = ["source.cppm"]

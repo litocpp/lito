@@ -89,16 +89,25 @@ auto build_with_environment(const BuildRequest&               request,
         return Err(rstd::move(created_toolchain).unwrap_err());
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
-    auto loaded    = resolve_project_metadata(request.selection,
-                                              request.configuration,
-                                              request.sources,
-                                              request.pkg_config,
-                                              request.cmake,
-                                              toolchain,
-                                              tool_resolver,
-                                              process_environment,
-                                              request.locked,
-                                              request.purpose);
+    auto profile =
+        request.profile.is_some()
+            ? request.profile->clone()
+            : BuildProfileName {
+                  .value = String::make(request.purpose == PackageSelectionPurpose::Benchmark
+                                            ? "release"_str
+                                            : "debug"_str),
+              };
+    auto loaded = resolve_project_metadata(request.selection,
+                                           request.configuration,
+                                           profile,
+                                           request.sources,
+                                           request.pkg_config,
+                                           request.cmake,
+                                           toolchain,
+                                           tool_resolver,
+                                           process_environment,
+                                           request.locked,
+                                           request.purpose);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata         = rstd::move(loaded).unwrap();
     auto created_profiler = ScanProfiler::create();
@@ -187,7 +196,7 @@ auto build_with_environment(const BuildRequest&               request,
                     return failure<BuildSummary>(
                         ErrorKind::Manifest,
                         rstd::format("compile-test package '{}' has no case for source '{}'",
-                                     target_spec.name.as_str(),
+                                     target_spec.id.package.as_str(),
                                      source.relative_path.as_path()));
                 }
                 compile_test = *selected;
@@ -200,26 +209,14 @@ auto build_with_environment(const BuildRequest&               request,
                     Box<CompileContext>::make(rstd::move(selected_context).unwrap()));
                 context = compile_contexts[compile_contexts.len() - usize(1)].get();
             }
-            auto object =
-                target_spec.test_attachment.is_some()
-                    ? layout.test_attachment_object(
-                          target_spec.test_attachment->test_target.as_str(),
-                          target_spec.test_attachment->library_target.as_str(),
-                          source.relative_path.as_path())
-                    : layout.object(target_spec.name.as_str(), source.relative_path.as_path());
-            auto cache_record =
-                target_spec.test_attachment.is_some()
-                    ? layout.test_attachment_cache_unit(
-                          target_spec.test_attachment->test_target.as_str(),
-                          target_spec.test_attachment->library_target.as_str(),
-                          source.relative_path.as_path())
-                    : layout.cache_unit(target_spec.name.as_str(), source.relative_path.as_path());
+            auto object       = layout.object(target_spec.id, source.relative_path.as_path());
+            auto cache_record = layout.cache_unit(target_spec.id, source.relative_path.as_path());
             if (object.is_err()) return Err(rstd::move(object).unwrap_err());
             if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
             auto compile_test_record = Option<PathBuf> {};
             if (compile_test != nullptr) {
-                auto record = layout.cache_compile_test(target_spec.name.as_str(),
-                                                        source.relative_path.as_path());
+                auto record =
+                    layout.cache_compile_test(target_spec.id, source.relative_path.as_path());
                 if (record.is_err()) return Err(rstd::move(record).unwrap_err());
                 compile_test_record = Some(rstd::move(record).unwrap());
             }
@@ -237,7 +234,7 @@ auto build_with_environment(const BuildRequest&               request,
                     .context             = context,
                     .compile_test        = compile_test,
                 },
-                target_spec.root.as_path());
+                target_spec.source_root.as_path());
             if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
             auto unit = rstd::move(prepared).unwrap();
             if (source.frontend_analysis.is_some() &&
@@ -355,17 +352,8 @@ auto build_with_environment(const BuildRequest&               request,
                 records.push((*units[unit].unit.compile_test_record).clone());
             }
         }
-        const auto& attachment = package.targets[target].test_attachment;
-        if (attachment.is_some()) {
-            auto directory = layout.test_attachment_cache_directory(
-                attachment->test_target.as_str(), attachment->library_target.as_str());
-            auto finished = cache.finish_directory(directory.as_path(), records);
-            if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
-        } else {
-            auto finished =
-                cache.finish_target(layout, package.targets[target].name.as_str(), records);
-            if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
-        }
+        auto finished = cache.finish_target(layout, package.targets[target].id, records);
+        if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
     }
 
     auto artifacts     = Vec<BuiltArtifact>::make();
@@ -381,26 +369,20 @@ auto build_with_environment(const BuildRequest&               request,
         }
         auto archive_path =
             target_spec.test_attachment.is_some()
-                ? layout.test_attachment_archive(
-                      target_spec.test_attachment->test_target.as_str(),
-                      target_spec.test_attachment->library_target.as_str(),
-                      target_spec.archive_stem.as_str())
-                : layout.archive(target_spec.name.as_str(), target_spec.artifact_name.as_str());
+                ? layout.test_attachment_archive(*target_spec.test_attachment,
+                                                 target_spec.archive_stem.as_str())
+                : layout.archive(target_spec.id, target_spec.artifact_name.as_str());
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
-        emit(request, BuildEventKind::Archive, target_spec.name.as_str(), archive_path.as_path());
+        auto target_identity = package_target_id_text(target_spec.id);
+        emit(request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
         auto archived =
             toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
         if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
         build_timing.record(BuildOperation::Archive, *archived);
         archive_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
-            .package      = target_spec.test_attachment.is_some()
-                                ? target_spec.test_attachment->test_target.clone()
-                                : target_spec.name.clone(),
-            .target       = target_spec.test_attachment.is_some()
-                                ? target_spec.test_attachment->library_target.clone()
-                                : target_spec.name.clone(),
+            .target       = target_spec.id.clone(),
             .kind         = target_spec.artifact_kind,
             .path         = rstd::move(archive_path),
             .package_root = target_spec.root.clone(),
@@ -421,15 +403,17 @@ auto build_with_environment(const BuildRequest&               request,
             for (auto candidate : package_plan.target_order) {
                 const auto& candidate_spec = package.targets[candidate];
                 if (candidate_spec.test_attachment.is_none() ||
-                    candidate_spec.test_attachment->test_target != target_spec.name.as_str()) {
+                    ! (candidate_spec.test_attachment->test_target == target_spec.id)) {
                     continue;
                 }
                 if (archive_paths[candidate].is_none()) {
                     return failure<BuildSummary>(
                         ErrorKind::Artifact,
-                        rstd::format("test target '{}' has no attachment archive for '{}'",
-                                     target_spec.name.as_str(),
-                                     candidate_spec.test_attachment->library_target.as_str()));
+                        rstd::format(
+                            "test target '{}' has no attachment archive for '{}'",
+                            package_target_id_text(target_spec.id).as_str(),
+                            package_target_id_text(candidate_spec.test_attachment->library_target)
+                                .as_str()));
                 }
                 link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                     .path = (*archive_paths[candidate]).clone(),
@@ -451,8 +435,8 @@ auto build_with_environment(const BuildRequest&               request,
                     ErrorKind::Artifact,
                     rstd::format("executable target '{}' depends on unavailable "
                                  "library target '{}'",
-                                 target_spec.name.as_str(),
-                                 dependency_spec.name.as_str()));
+                                 package_target_id_text(target_spec.id).as_str(),
+                                 package_target_id_text(dependency_spec.id).as_str()));
             }
             link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                 .path = (*archive_paths[dependency]).clone(),
@@ -460,10 +444,14 @@ auto build_with_environment(const BuildRequest&               request,
             }));
         }
         auto executable_path =
-            target_spec.artifact_kind == ArtifactKind::TestExecutable
-                ? layout.test(target_spec.name.as_str(), target_spec.artifact_name.as_str())
-                : layout.executable(target_spec.name.as_str(), target_spec.artifact_name.as_str());
-        emit(request, BuildEventKind::Link, target_spec.name.as_str(), executable_path.as_path());
+            layout.executable(target_spec.id, target_spec.artifact_name.as_str());
+        if (target_spec.artifact_kind == ArtifactKind::TestExecutable) {
+            executable_path = layout.test(target_spec.id, target_spec.artifact_name.as_str());
+        } else if (target_spec.artifact_kind == ArtifactKind::BenchmarkExecutable) {
+            executable_path = layout.benchmark(target_spec.id, target_spec.artifact_name.as_str());
+        }
+        auto target_identity = package_target_id_text(target_spec.id);
+        emit(request, BuildEventKind::Link, target_identity.as_str(), executable_path.as_path());
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
                                                 link_inputs,
@@ -480,7 +468,7 @@ auto build_with_environment(const BuildRequest&               request,
             }
             emit(request,
                  BuildEventKind::Strip,
-                 target_spec.name.as_str(),
+                 target_identity.as_str(),
                  executable_path.as_path());
             auto stripped = toolchain.strip_artifact(executable_path.as_path(),
                                                      stripper->as_path(),
@@ -490,8 +478,7 @@ auto build_with_environment(const BuildRequest&               request,
             build_timing.record(BuildOperation::Strip, *stripped);
         }
         artifacts.push(BuiltArtifact {
-            .package      = target_spec.name.clone(),
-            .target       = target_spec.name.clone(),
+            .target       = target_spec.id.clone(),
             .kind         = target_spec.artifact_kind,
             .path         = rstd::move(executable_path),
             .package_root = target_spec.root.clone(),

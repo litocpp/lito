@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-update"
-version = "0.1.0"
-module = "fixture.lock.update"
-
-[library]
-archive = "fixture.lock.update"
-discovery = "explicit"
-sources = ["source.cppm"]

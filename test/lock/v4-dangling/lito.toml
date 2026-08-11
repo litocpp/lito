@@ -1,9 +1,0 @@
-[package]
-name = "fixture-lock-dangling"
-version = "0.1.0"
-module = "fixture.lock.dangling"
-
-[library]
-archive = "fixture.lock.dangling"
-discovery = "explicit"
-sources = ["source.cppm"]

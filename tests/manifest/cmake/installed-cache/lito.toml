@@ -1,0 +1,14 @@
+[package]
+name = "cmake-installed-cache"
+version = "0.1.0"
+
+[lib]
+name = "cmake-installed-cache"
+module = "cmake_installed_cache"
+archive = "cmake_installed_cache"
+discovery = "module"
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+cache = { LITO_FIXTURE_OPTION = true }
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
