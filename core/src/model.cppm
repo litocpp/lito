@@ -325,6 +325,7 @@ enum class ProjectRootRole
     PrimaryPackage,
     WorkspaceMember,
     AssociatedTest,
+    AssociatedBenchmark,
 };
 
 enum class PackageVersionSource

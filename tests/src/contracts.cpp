@@ -1414,6 +1414,59 @@ TEST(Contracts, WorkspaceDiscoversAssociatedTestPackageWithInheritance) {
     }
 }
 
+TEST(Contracts, WorkspaceDiscoversAssociatedBenchmarkPackageWithInheritance) {
+    auto directory = root("conventional-test/workspace-package"_str);
+    auto graph     = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+
+    auto associated = false;
+    for (const auto& project_root : graph->roots) {
+        if (project_root.name.as_str() != "fixture-associated-workspace-benchmark"_str) continue;
+        associated = true;
+        EXPECT_EQ(project_root.role, lito::ProjectRootRole::AssociatedBenchmark);
+        EXPECT_EQ(project_root.source_identity.as_str(), "path+benches"_str);
+    }
+    EXPECT_TRUE(associated);
+
+    for (const auto& package : graph->packages) {
+        if (package.manifest.name.as_str() != "fixture-associated-workspace-benchmark"_str) {
+            continue;
+        }
+        EXPECT_TRUE(package.manifest.workspace_dependencies.is_empty());
+        EXPECT_EQ(package.manifest.version.source, lito::PackageVersionSource::Workspace);
+        ASSERT_TRUE(package.manifest.version.value.is_some());
+        EXPECT_EQ(package.manifest.version.value->as_str(), "0.1.0"_str);
+        EXPECT_EQ(package.dependencies.len(), usize(1));
+    }
+
+    auto production =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(production.is_ok());
+    EXPECT_TRUE(
+        contains_name(production->selected_root_names, "fixture-associated-workspace-library"_str));
+    EXPECT_FALSE(contains_name(production->selected_root_names,
+                               "fixture-associated-workspace-benchmark"_str));
+
+    auto tests = lito::resolve_package_selection(
+        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
+    ASSERT_TRUE(tests.is_ok());
+    EXPECT_TRUE(contains_name(tests->selected_root_names, "fixture-associated-workspace-test"_str));
+    EXPECT_FALSE(
+        contains_name(tests->selected_root_names, "fixture-associated-workspace-benchmark"_str));
+
+    auto benchmark =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Benchmark);
+    ASSERT_TRUE(benchmark.is_ok());
+    EXPECT_TRUE(contains_name(benchmark->selected_root_names,
+                              "fixture-associated-workspace-benchmark"_str));
+    EXPECT_FALSE(
+        contains_name(benchmark->selected_root_names, "fixture-associated-workspace-test"_str));
+    EXPECT_TRUE(contains_name(benchmark->selected_package_names,
+                              "fixture-associated-workspace-library"_str));
+}
+
 TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
     auto directory = root("conventional-test/package"_str);
     EXPECT_TRUE(locked_graph_is_current("conventional-test/package"_str));

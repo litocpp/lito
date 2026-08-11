@@ -49,6 +49,32 @@ auto test_only_package(const PackageManifest& package) -> bool {
     return true;
 }
 
+auto benchmark_only_package(const PackageManifest& package) -> bool {
+    if (package.targets.is_empty() || ! package.compile_tests.is_empty()) return false;
+    for (const auto& target : package.targets) {
+        if (package_target_kind(target) != PackageTargetKind::Benchmark) return false;
+    }
+    return true;
+}
+
+auto associated_package_matches(const PackageManifest& package, ProjectRootRole role) -> bool {
+    if (role == ProjectRootRole::AssociatedTest) return test_only_package(package);
+    if (role == ProjectRootRole::AssociatedBenchmark) return benchmark_only_package(package);
+    return false;
+}
+
+auto associated_kind_name(ProjectRootRole role) noexcept -> ref<str> {
+    if (role == ProjectRootRole::AssociatedTest) return "test"_str;
+    if (role == ProjectRootRole::AssociatedBenchmark) return "benchmark"_str;
+    return "unknown"_str;
+}
+
+auto associated_declarations(ProjectRootRole role) noexcept -> ref<str> {
+    if (role == ProjectRootRole::AssociatedTest) return "[[test]] or [compile-test]"_str;
+    if (role == ProjectRootRole::AssociatedBenchmark) return "[[bench]]"_str;
+    return "associated targets"_str;
+}
+
 } // namespace lito
 
 export namespace lito
@@ -95,7 +121,7 @@ public:
         return Ok(rstd::move(catalog));
     }
 
-    static auto associated_test_package(PackageManifest manifest, const WorkspaceCatalog& primary)
+    static auto associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
         -> Result<WorkspaceCatalog>;
 
     auto name() const noexcept -> ref<str> { return name_.as_str(); }
@@ -122,8 +148,9 @@ public:
     friend auto load_workspace_catalog(WorkspaceManifest       workspace,
                                        Option<PackageManifest> preloaded)
         -> Result<WorkspaceCatalog>;
-    friend auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
-                                                 const WorkspaceCatalog& tests) -> Result<empty>;
+    friend auto validate_associated_catalog(const WorkspaceCatalog& primary,
+                                            const WorkspaceCatalog& associated,
+                                            ProjectRootRole         role) -> Result<empty>;
 };
 
 auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest> preloaded = None())
@@ -207,8 +234,7 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     return Ok(rstd::move(catalog));
 }
 
-auto WorkspaceCatalog::associated_test_package(PackageManifest         manifest,
-                                               const WorkspaceCatalog& primary)
+auto WorkspaceCatalog::associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
     -> Result<WorkspaceCatalog> {
     if (primary.workspace_manifest_.is_some()) {
         rstd_try(resolve_workspace_member(manifest, *primary.workspace_manifest_));
@@ -216,59 +242,71 @@ auto WorkspaceCatalog::associated_test_package(PackageManifest         manifest,
     return WorkspaceCatalog::single(rstd::move(manifest));
 }
 
-auto validate_associated_test_catalog(const WorkspaceCatalog& primary,
-                                      const WorkspaceCatalog& tests) -> Result<empty> {
-    if (tests.profile_declared_) {
+auto validate_associated_catalog(const WorkspaceCatalog& primary,
+                                 const WorkspaceCatalog& associated,
+                                 ProjectRootRole         role) -> Result<empty> {
+    if (role != ProjectRootRole::AssociatedTest && role != ProjectRootRole::AssociatedBenchmark) {
+        return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
+    }
+    const auto kind = associated_kind_name(role);
+    if (associated.profile_declared_) {
         return catalog_failure<empty>(rstd::format(
-            "associated test manifest '{}' declares [profile]; project profile belongs to '{}'",
-            tests.manifest_path_.as_path(),
+            "associated {} manifest '{}' declares [profile]; project profile belongs to '{}'",
+            kind,
+            associated.manifest_path_.as_path(),
             primary.manifest_path_.as_path()));
     }
 
     if (! primary.workspace_ && primary.names_.len() == usize(1)) {
         const auto root = primary.packages_.get(primary.names_[usize {}].as_str());
-        if (root.is_some() && test_only_package(**root)) {
-            return catalog_failure<empty>(rstd::format(
-                "primary package '{}' is already a test artifact and cannot attach '{}'",
-                (**root).name.as_str(),
-                tests.manifest_path_.as_path()));
+        if (root.is_some() && associated_package_matches(**root, role)) {
+            return catalog_failure<empty>(
+                rstd::format("primary package '{}' is already a {} artifact and cannot attach '{}'",
+                             (**root).name.as_str(),
+                             kind,
+                             associated.manifest_path_.as_path()));
         }
     }
 
-    for (const auto& name : tests.names_) {
-        const auto package = tests.packages_.get(name.as_str());
+    for (const auto& name : associated.names_) {
+        const auto package = associated.packages_.get(name.as_str());
         if (package.is_none()) {
             return catalog_failure<empty>(
-                rstd::format("associated test catalog is missing package '{}'", name.as_str()));
+                rstd::format("associated {} catalog is missing package '{}'", kind, name.as_str()));
         }
         const auto& manifest = **package;
-        if (! test_only_package(manifest)) {
-            return catalog_failure<empty>(rstd::format(
-                "associated test package '{}' at '{}' may only declare [[test]] or [compile-test]",
-                manifest.name.as_str(),
-                manifest.manifest_path.as_path()));
+        if (! associated_package_matches(manifest, role)) {
+            return catalog_failure<empty>(
+                rstd::format("associated {} package '{}' at '{}' may only declare {}",
+                             kind,
+                             manifest.name.as_str(),
+                             manifest.manifest_path.as_path(),
+                             associated_declarations(role)));
         }
-        if (! tests.workspace_ && manifest.version.source == PackageVersionSource::Workspace &&
+        if (! associated.workspace_ && manifest.version.source == PackageVersionSource::Workspace &&
             manifest.version.value.is_none()) {
             return catalog_failure<empty>(rstd::format(
-                "associated test package '{}' at '{}' cannot inherit a workspace version",
+                "associated {} package '{}' at '{}' cannot inherit a workspace version",
+                kind,
                 manifest.name.as_str(),
                 manifest.manifest_path.as_path()));
         }
         if (primary.packages_.contains_key(name.as_str())) {
             return catalog_failure<empty>(rstd::format(
-                "associated test package '{}' at '{}' conflicts with primary project manifest '{}'",
+                "associated {} package '{}' at '{}' conflicts with primary project manifest '{}'",
+                kind,
                 name.as_str(),
                 manifest.manifest_path.as_path(),
                 primary.manifest_path_.as_path()));
         }
         if (primary.contains_package_root(manifest.root.as_path())) {
-            return catalog_failure<empty>(
-                rstd::format("associated test package '{}' at '{}' is already owned by primary "
-                             "project manifest '{}'",
-                             name.as_str(),
-                             manifest.manifest_path.as_path(),
-                             primary.manifest_path_.as_path()));
+            return catalog_failure<empty>(rstd::format(
+                "associated {} package '{}' at '{}' is already owned by primary project "
+                "manifest '{}'",
+                kind,
+                name.as_str(),
+                manifest.manifest_path.as_path(),
+                primary.manifest_path_.as_path()));
         }
     }
     return Ok(empty {});

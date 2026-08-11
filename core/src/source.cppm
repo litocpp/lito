@@ -174,6 +174,7 @@ struct AcquiredSource {
 struct AcquiredProjectSources {
     usize         primary;
     Option<usize> tests;
+    Option<usize> benchmarks;
 };
 
 class SourceManager {
@@ -449,8 +450,8 @@ class SourceManager {
             } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
                 auto package = rstd::move(loaded.package).unwrap();
                 if (associated_primary != nullptr) {
-                    auto associated = WorkspaceCatalog::associated_test_package(
-                        rstd::move(package), *associated_primary);
+                    auto associated = WorkspaceCatalog::associated_package(rstd::move(package),
+                                                                           *associated_primary);
                     if (associated.is_err()) return Err(rstd::move(associated).unwrap_err());
                     loaded_catalog = rstd::move(associated).unwrap();
                 } else {
@@ -511,6 +512,34 @@ class SourceManager {
         roots_.insert(rstd::move(root_key), index);
         source_identities_.insert(entries_[index].source.identity.clone(), index);
         return Ok(index);
+    }
+
+    auto acquire_associated_catalog(usize primary_source, ref<str> directory, ProjectRootRole role)
+        -> Result<Option<usize>> {
+        auto root    = PathBuf::from(entries_[primary_source].catalog->root())
+                           .join(PathBuf::from(directory).as_path());
+        auto located = try_locate_manifest(root.as_path());
+        if (located.is_err()) return Err(rstd::move(located).unwrap_err());
+        if (located->is_none()) return Ok(None());
+        const auto& location = **located;
+        if (! (location.directory.as_path() == root.as_path())) {
+            return source_failure<Option<usize>>(rstd::format(
+                "associated manifest directory '{}' must be the exact project directory '{}'",
+                location.directory.as_path(),
+                root.as_path()));
+        }
+        if (entries_[primary_source].catalog->contains_package_root(location.directory.as_path())) {
+            return Ok(None());
+        }
+
+        auto source = acquire_path(
+            location.directory.as_path(), true, rstd::addressof(*entries_[primary_source].catalog));
+        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+        auto source_index = *source;
+        auto validated    = validate_associated_catalog(
+            *entries_[primary_source].catalog, *entries_[source_index].catalog, role);
+        if (validated.is_err()) return Err(rstd::move(validated).unwrap_err());
+        return Ok(Some(source_index));
     }
 
     auto acquire_git(ref<str> url, const GitReference& reference, bool package_source)
@@ -641,36 +670,14 @@ public:
         auto primary = acquire_path(root, true);
         if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
         const auto primary_source = *primary;
-        auto       test_root      = PathBuf::from(entries_[primary_source].catalog->root())
-                                        .join(PathBuf::from("tests"_str).as_path());
-        auto       located        = try_locate_manifest(test_root.as_path());
-        if (located.is_err()) return Err(rstd::move(located).unwrap_err());
-        if (located->is_none()) {
-            return Ok(AcquiredProjectSources { .primary = primary_source });
-        }
-        const auto& test_location = **located;
-        if (! (test_location.directory.as_path() == test_root.as_path())) {
-            return source_failure<AcquiredProjectSources>(rstd::format(
-                "associated test manifest directory '{}' must be the exact project directory '{}'",
-                test_location.directory.as_path(),
-                test_root.as_path()));
-        }
-        if (entries_[primary_source].catalog->contains_package_root(
-                test_location.directory.as_path())) {
-            return Ok(AcquiredProjectSources { .primary = primary_source });
-        }
-
-        auto tests = acquire_path(test_location.directory.as_path(),
-                                  true,
-                                  rstd::addressof(*entries_[primary_source].catalog));
-        if (tests.is_err()) return Err(rstd::move(tests).unwrap_err());
-        auto test_source = *tests;
-        auto validated   = validate_associated_test_catalog(*entries_[primary_source].catalog,
-                                                            *entries_[test_source].catalog);
-        if (validated.is_err()) return Err(rstd::move(validated).unwrap_err());
+        auto       tests          = rstd_try(acquire_associated_catalog(
+            primary_source, "tests"_str, ProjectRootRole::AssociatedTest));
+        auto       benchmarks     = rstd_try(acquire_associated_catalog(
+            primary_source, "benches"_str, ProjectRootRole::AssociatedBenchmark));
         return Ok(AcquiredProjectSources {
-            .primary = primary_source,
-            .tests   = Some(test_source),
+            .primary    = primary_source,
+            .tests      = rstd::move(tests),
+            .benchmarks = rstd::move(benchmarks),
         });
     }
 

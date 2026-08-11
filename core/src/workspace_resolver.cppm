@@ -34,10 +34,17 @@ auto selected_by_purpose(ProjectRootRole         role,
                          PackageTargetKind       kind,
                          PackageSelectionPurpose purpose) -> bool {
     if (purpose == PackageSelectionPurpose::All) return true;
+    if (role == ProjectRootRole::AssociatedTest) {
+        return purpose == PackageSelectionPurpose::Test &&
+               (kind == PackageTargetKind::Test || kind == PackageTargetKind::CompileTest);
+    }
+    if (role == ProjectRootRole::AssociatedBenchmark) {
+        return purpose == PackageSelectionPurpose::Benchmark &&
+               kind == PackageTargetKind::Benchmark;
+    }
     if (purpose == PackageSelectionPurpose::Test) {
         return kind == PackageTargetKind::Test || kind == PackageTargetKind::CompileTest;
     }
-    if (role == ProjectRootRole::AssociatedTest) return false;
     if (purpose == PackageSelectionPurpose::Benchmark) {
         return kind == PackageTargetKind::Benchmark;
     }

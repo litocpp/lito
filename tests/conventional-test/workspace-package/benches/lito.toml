@@ -1,0 +1,12 @@
+[package]
+name = "fixture-associated-workspace-benchmark"
+version.workspace = true
+
+[[bench]]
+name = "fixture-associated-workspace-benchmark"
+discovery = "explicit"
+sources = ["main.cpp"]
+
+[dependencies.fixture-associated-workspace-library]
+workspace = true
+visibility = "private"

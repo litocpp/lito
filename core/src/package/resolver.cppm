@@ -261,6 +261,13 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
             resolve_roots(*project_sources.tests, ProjectRootRole::AssociatedTest);
         if (resolved_tests.is_err()) return Err(rstd::move(resolved_tests).unwrap_err());
     }
+    if (project_sources.benchmarks.is_some()) {
+        auto resolved_benchmarks =
+            resolve_roots(*project_sources.benchmarks, ProjectRootRole::AssociatedBenchmark);
+        if (resolved_benchmarks.is_err()) {
+            return Err(rstd::move(resolved_benchmarks).unwrap_err());
+        }
+    }
     return Ok(resolver.finish(rstd::move(project_name),
                               rstd::move(roots),
                               rstd::move(manifest_path),
