@@ -806,6 +806,44 @@
         }
       ]
     },
+    "explicitDevDependency": {
+      "allOf": [
+        {
+          "$ref": "#/definitions/dependencySource"
+        },
+        {
+          "not": {
+            "required": [
+              "visibility"
+            ]
+          }
+        }
+      ]
+    },
+    "workspaceDevDependencyReference": {
+      "type": "object",
+      "required": [
+        "workspace"
+      ],
+      "properties": {
+        "workspace": {
+          "enum": [
+            true
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "devDependency": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitDevDependency"
+        },
+        {
+          "$ref": "#/definitions/workspaceDevDependencyReference"
+        }
+      ]
+    },
     "workspaceDependency": {
       "allOf": [
         {
@@ -825,6 +863,15 @@
       "patternProperties": {
         "^[A-Za-z0-9_-]+$": {
           "$ref": "#/definitions/dependency"
+        }
+      },
+      "additionalProperties": false
+    },
+    "devDependencies": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/devDependency"
         }
       },
       "additionalProperties": false
@@ -1510,6 +1557,9 @@
         "dependencies": {
           "$ref": "#/definitions/dependencies"
         },
+        "dev-dependencies": {
+          "$ref": "#/definitions/devDependencies"
+        },
         "external-dependencies": {
           "$ref": "#/definitions/externalDependencies"
         },
@@ -1520,28 +1570,29 @@
       "allOf": [
         {
           "anyOf": [
-            { "required": ["lib"] },
-            { "required": ["bin"] },
-            { "required": ["test"] },
-            { "required": ["bench"] },
-            { "required": ["compile-test"] }
-          ]
-        },
-        {
-          "anyOf": [
             {
               "properties": {
                 "package": { "required": ["version"] }
               }
             },
             {
-              "not": {
-                "anyOf": [
-                  { "required": ["lib"] },
-                  { "required": ["bin"] },
-                  { "required": ["bench"] }
-                ]
-              }
+              "allOf": [
+                {
+                  "not": {
+                    "anyOf": [
+                      { "required": ["lib"] },
+                      { "required": ["bin"] },
+                      { "required": ["bench"] }
+                    ]
+                  }
+                },
+                {
+                  "anyOf": [
+                    { "required": ["test"] },
+                    { "required": ["compile-test"] }
+                  ]
+                }
+              ]
             }
           ]
         },

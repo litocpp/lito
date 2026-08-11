@@ -1,0 +1,14 @@
+[package]
+name = "fixture-dev-dependency-visibility"
+version = "0.1.0"
+
+[lib]
+name = "fixture-dev-dependency-visibility"
+module = "fixture.dev_dependency_visibility"
+archive = "fixture.dev-dependency-visibility"
+discovery = "explicit"
+sources = ["lib.cppm"]
+
+[dev-dependencies.helper]
+path = "helper"
+visibility = "private"

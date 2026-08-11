@@ -325,7 +325,6 @@ enum class ProjectRootRole
     PrimaryPackage,
     WorkspaceMember,
     AssociatedTest,
-    AssociatedBenchmark,
 };
 
 enum class PackageVersionSource
@@ -677,7 +676,9 @@ struct PackageManifest {
     Vec<CompileTestCase>                               compile_tests;
     UsageRequirements                                  usage;
     Vec<DeclaredDependency>                            dependencies;
+    Vec<DeclaredDependency>                            dev_dependencies;
     Vec<WorkspaceDependencyReference>                  workspace_dependencies;
+    Vec<WorkspaceDependencyReference>                  workspace_dev_dependencies;
     Vec<PkgConfigExternalDependency>                   pkg_config_external_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
     Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
@@ -827,6 +828,7 @@ struct ResolvedPackage {
     PathBuf                                 source_manifest;
     PackageManifest                         manifest;
     Vec<ResolvedDependency>                 dependencies;
+    Vec<ResolvedDependency>                 dev_dependencies;
     Vec<ResolvedCMakeDependencyRequirement> cmake_external_dependencies;
 };
 

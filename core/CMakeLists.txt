@@ -13,6 +13,7 @@ target_sources(
          src/cpp/token.cppm
          src/cpp/scanner.cppm
          src/cpp/mod.cppm
+         src/cpp_source.cppm
          src/bmi.cppm
          src/model.cppm
          src/environment.cppm

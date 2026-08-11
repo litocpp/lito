@@ -1,0 +1,17 @@
+[package]
+name = "fixture-dev-dependency-duplicate"
+version = "0.1.0"
+
+[lib]
+name = "fixture-dev-dependency-duplicate"
+module = "fixture.dev_dependency_duplicate"
+archive = "fixture.dev-dependency-duplicate"
+discovery = "explicit"
+sources = ["lib.cppm"]
+
+[dependencies.helper]
+path = "helper"
+visibility = "private"
+
+[dev-dependencies.helper]
+path = "helper"

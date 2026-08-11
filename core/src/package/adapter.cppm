@@ -91,6 +91,11 @@ auto target_artifact_kind(PackageTargetKind kind) -> ArtifactKind {
     return ArtifactKind::Executable;
 }
 
+auto development_target(PackageTargetKind kind) noexcept -> bool {
+    return kind == PackageTargetKind::Test || kind == PackageTargetKind::Benchmark ||
+           kind == PackageTargetKind::CompileTest;
+}
+
 auto library_targets(const ResolvedPackageGraph& graph)
     -> rstd::collections::BTreeMap<String, PackageTargetId> {
     auto result = rstd::collections::BTreeMap<String, PackageTargetId>::make();
@@ -180,6 +185,15 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                                  dependency.name.as_str()));
             }
         }
+        for (const auto& dependency : package.dev_dependencies) {
+            if (! libraries.contains_key(dependency.name.as_str())) {
+                return adapter_failure<PackageMetadata>(
+                    rstd::format("package '{}' has development dependency '{}' which does not "
+                                 "expose a library target",
+                                 package.manifest.name.as_str(),
+                                 dependency.name.as_str()));
+            }
+        }
     }
 
     auto targets = Vec<ResolvedTarget>::make();
@@ -223,6 +237,34 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                 .visibility = dependency.visibility,
             });
         }
+        auto development_selected = false;
+        for (const auto& selected_target : selected_targets) {
+            if (selected_target.package == package.manifest.name.as_str() &&
+                development_target(selected_target.kind)) {
+                development_selected = true;
+                break;
+            }
+        }
+        auto dev_dependencies = Vec<DependencySpec>::with_capacity(package.dev_dependencies.len());
+        if (development_selected) {
+            for (const auto& dependency : package.dev_dependencies) {
+                if (! selected.contains_key(dependency.name.as_str())) {
+                    return adapter_failure<PackageMetadata>(
+                        rstd::format("resolved development dependency '{}' is missing",
+                                     dependency.name.as_str()));
+                }
+                auto library = libraries.get(dependency.name.as_str());
+                if (library.is_none()) {
+                    return adapter_failure<PackageMetadata>(
+                        rstd::format("resolved development dependency '{}' has no library target",
+                                     dependency.name.as_str()));
+                }
+                dev_dependencies.push(DependencySpec {
+                    .target     = (**library).clone(),
+                    .visibility = DependencyVisibility::Private,
+                });
+            }
+        }
         auto own_library = libraries.get(package.manifest.name.as_str());
         for (auto& manifest_target : package.manifest.targets) {
             const auto kind = package_target_kind(manifest_target);
@@ -251,6 +293,14 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                 }
             }
             auto target_dependencies = clone_dependencies(dependencies);
+            if (development_target(kind)) {
+                for (const auto& dependency : dev_dependencies) {
+                    target_dependencies.push(DependencySpec {
+                        .target     = dependency.target.clone(),
+                        .visibility = DependencyVisibility::Private,
+                    });
+                }
+            }
             if (kind != PackageTargetKind::Library && own_library.is_some()) {
                 target_dependencies.push(DependencySpec {
                     .target     = (**own_library).clone(),
@@ -276,6 +326,12 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
             for (const auto& test : package.manifest.compile_tests)
                 sources.push(test.source.clone());
             auto compile_dependencies = clone_dependencies(dependencies);
+            for (const auto& dependency : dev_dependencies) {
+                compile_dependencies.push(DependencySpec {
+                    .target     = dependency.target.clone(),
+                    .visibility = DependencyVisibility::Private,
+                });
+            }
             if (own_library.is_some()) {
                 compile_dependencies.push(DependencySpec {
                     .target     = (**own_library).clone(),

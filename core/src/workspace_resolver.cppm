@@ -38,10 +38,6 @@ auto selected_by_purpose(ProjectRootRole         role,
         return purpose == PackageSelectionPurpose::Test &&
                (kind == PackageTargetKind::Test || kind == PackageTargetKind::CompileTest);
     }
-    if (role == ProjectRootRole::AssociatedBenchmark) {
-        return purpose == PackageSelectionPurpose::Benchmark &&
-               kind == PackageTargetKind::Benchmark;
-    }
     if (purpose == PackageSelectionPurpose::Test) {
         return kind == PackageTargetKind::Test || kind == PackageTargetKind::CompileTest;
     }
@@ -90,10 +86,20 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
 
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>&          selected_roots,
+                      const Vec<PackageTargetId>& selected_targets,
                       const TargetInfo*           target) -> Result<Vec<String>> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
+    }
+
+    auto development = StringSet::make();
+    for (const auto& selected_target : selected_targets) {
+        if (selected_target.kind == PackageTargetKind::Test ||
+            selected_target.kind == PackageTargetKind::Benchmark ||
+            selected_target.kind == PackageTargetKind::CompileTest) {
+            development.insert(selected_target.package.clone(), empty {});
+        }
     }
 
     auto pending  = copy_strings(selected_roots);
@@ -114,6 +120,11 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
             pending.push(dependency.name.clone());
+        }
+        if (development.contains_key(current.as_str())) {
+            for (const auto& dependency : graph.packages[**index].dev_dependencies) {
+                pending.push(dependency.name.clone());
+            }
         }
     }
 
@@ -226,7 +237,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
-    auto selected_packages = selected_closure(graph, selected_roots, target);
+    auto selected_packages = selected_closure(graph, selected_roots, selected_targets, target);
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }

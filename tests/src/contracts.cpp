@@ -1414,30 +1414,35 @@ TEST(Contracts, WorkspaceDiscoversAssociatedTestPackageWithInheritance) {
     }
 }
 
-TEST(Contracts, WorkspaceDiscoversAssociatedBenchmarkPackageWithInheritance) {
+TEST(Contracts, WorkspaceBenchmarkTargetsUseDevelopmentDependencies) {
     auto directory = root("conventional-test/workspace-package"_str);
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
 
-    auto associated = false;
+    auto library_found = false;
     for (const auto& project_root : graph->roots) {
-        if (project_root.name.as_str() != "fixture-associated-workspace-benchmark"_str) continue;
-        associated = true;
-        EXPECT_EQ(project_root.role, lito::ProjectRootRole::AssociatedBenchmark);
-        EXPECT_EQ(project_root.source_identity.as_str(), "path+benches"_str);
+        EXPECT_NE(project_root.name.as_str(), "fixture-associated-workspace-benchmark"_str);
     }
-    EXPECT_TRUE(associated);
-
     for (const auto& package : graph->packages) {
-        if (package.manifest.name.as_str() != "fixture-associated-workspace-benchmark"_str) {
-            continue;
+        EXPECT_NE(package.manifest.name.as_str(), "fixture-associated-workspace-benchmark"_str);
+        if (package.manifest.name.as_str() == "fixture-associated-workspace-library"_str) {
+            library_found = true;
+            EXPECT_TRUE(package.manifest.workspace_dev_dependencies.is_empty());
+            ASSERT_EQ(package.manifest.dev_dependencies.len(), usize(1));
+            ASSERT_EQ(package.dev_dependencies.len(), usize(1));
+            EXPECT_EQ(package.dev_dependencies[usize {}].name.as_str(),
+                      "fixture-associated-workspace-bench-helper"_str);
+            auto benchmark_found = false;
+            for (const auto& target : package.manifest.targets) {
+                if (target.is_Benchmark() && target.as_Benchmark().name.as_str() == "speed"_str) {
+                    benchmark_found = true;
+                    ASSERT_EQ(target.as_Benchmark().source.declared_sources.len(), usize(1));
+                }
+            }
+            EXPECT_TRUE(benchmark_found);
         }
-        EXPECT_TRUE(package.manifest.workspace_dependencies.is_empty());
-        EXPECT_EQ(package.manifest.version.source, lito::PackageVersionSource::Workspace);
-        ASSERT_TRUE(package.manifest.version.value.is_some());
-        EXPECT_EQ(package.manifest.version.value->as_str(), "0.1.0"_str);
-        EXPECT_EQ(package.dependencies.len(), usize(1));
     }
+    EXPECT_TRUE(library_found);
 
     auto production =
         lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
@@ -1445,26 +1450,53 @@ TEST(Contracts, WorkspaceDiscoversAssociatedBenchmarkPackageWithInheritance) {
     ASSERT_TRUE(production.is_ok());
     EXPECT_TRUE(
         contains_name(production->selected_root_names, "fixture-associated-workspace-library"_str));
-    EXPECT_FALSE(contains_name(production->selected_root_names,
-                               "fixture-associated-workspace-benchmark"_str));
+    EXPECT_FALSE(contains_name(production->selected_package_names,
+                               "fixture-associated-workspace-bench-helper"_str));
 
     auto tests = lito::resolve_package_selection(
         lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     EXPECT_TRUE(contains_name(tests->selected_root_names, "fixture-associated-workspace-test"_str));
-    EXPECT_FALSE(
-        contains_name(tests->selected_root_names, "fixture-associated-workspace-benchmark"_str));
+    EXPECT_FALSE(contains_name(tests->selected_package_names,
+                               "fixture-associated-workspace-bench-helper"_str));
 
     auto benchmark =
         lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
                                         lito::PackageSelectionPurpose::Benchmark);
     ASSERT_TRUE(benchmark.is_ok());
-    EXPECT_TRUE(contains_name(benchmark->selected_root_names,
-                              "fixture-associated-workspace-benchmark"_str));
-    EXPECT_FALSE(
-        contains_name(benchmark->selected_root_names, "fixture-associated-workspace-test"_str));
+    EXPECT_TRUE(
+        contains_name(benchmark->selected_root_names, "fixture-associated-workspace-library"_str));
     EXPECT_TRUE(contains_name(benchmark->selected_package_names,
-                              "fixture-associated-workspace-library"_str));
+                              "fixture-associated-workspace-bench-helper"_str));
+
+    auto standalone = lito::resolve_package_graph(
+        root("conventional-test/workspace-package/benches"_str).as_path());
+    ASSERT_TRUE(standalone.is_ok());
+    ASSERT_EQ(standalone->roots.len(), usize(1));
+    EXPECT_EQ(standalone->roots[usize {}].name.as_str(),
+              "fixture-associated-workspace-benchmark"_str);
+    EXPECT_EQ(standalone->roots[usize {}].role, lito::ProjectRootRole::PrimaryPackage);
+}
+
+TEST(Contracts, PackageOnlyManifestDiscoversConventionalBenchmark) {
+    auto directory = root("conventional-benchmark/package-only"_str);
+    auto package   = lito::load_package_manifest(directory.as_path());
+    ASSERT_TRUE(package.is_ok());
+    ASSERT_EQ(package->targets.len(), usize(1));
+    ASSERT_TRUE(package->targets[usize {}].is_Benchmark());
+    EXPECT_EQ(package->targets[usize {}].as_Benchmark().name.as_str(), "only"_str);
+
+    auto benchmark =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Benchmark);
+    ASSERT_TRUE(benchmark.is_ok());
+    ASSERT_EQ(benchmark->selected_targets.len(), usize(1));
+    EXPECT_EQ(benchmark->selected_targets[usize {}].name.as_str(), "only"_str);
+
+    auto production =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Production);
+    EXPECT_TRUE(production.is_err());
 }
 
 TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
@@ -1492,6 +1524,27 @@ TEST(Contracts, SinglePackageDiscoversAssociatedTestPackage) {
     ASSERT_EQ(production->selected_root_names.len(), usize(1));
     EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
               "fixture-conventional-library"_str);
+    EXPECT_FALSE(
+        contains_name(production->selected_package_names, "fixture-conventional-bench-helper"_str));
+
+    auto benchmarks =
+        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                        lito::PackageSelectionPurpose::Benchmark);
+    ASSERT_TRUE(benchmarks.is_ok());
+    EXPECT_TRUE(contains_name(benchmarks->selected_root_names, "fixture-conventional-library"_str));
+    EXPECT_TRUE(
+        contains_name(benchmarks->selected_package_names, "fixture-conventional-bench-helper"_str));
+    ASSERT_EQ(benchmarks->selected_targets.len(), usize(2));
+    auto multi_source_count = usize {};
+    for (const auto& package : benchmarks->graph.packages) {
+        if (package.manifest.name.as_str() != "fixture-conventional-library"_str) continue;
+        for (const auto& target : package.manifest.targets) {
+            if (target.is_Benchmark() && target.as_Benchmark().name.as_str() == "multi"_str) {
+                multi_source_count = target.as_Benchmark().source.declared_sources.len();
+            }
+        }
+    }
+    EXPECT_EQ(multi_source_count, usize(2));
 
     auto tests = lito::resolve_package_selection(
         lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
@@ -1587,6 +1640,19 @@ TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
     ASSERT_TRUE(valid.is_ok());
     ASSERT_TRUE(valid->workspace.is_some());
     EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
+}
+
+TEST(Contracts, DevelopmentDependenciesHavePrivateDistinctScope) {
+    auto visibility =
+        lito::load_package_manifest(root("workspace/dev-dependency-visibility"_str).as_path());
+    ASSERT_TRUE(visibility.is_err());
+    EXPECT_TRUE(visibility.unwrap_err().message.as_str().contains("visibility"_str));
+
+    auto duplicate =
+        lito::load_package_manifest(root("workspace/dev-dependency-duplicate"_str).as_path());
+    ASSERT_TRUE(duplicate.is_err());
+    EXPECT_TRUE(duplicate.unwrap_err().message.as_str().contains(
+        "both dependencies and dev-dependencies"_str));
 }
 
 TEST(Contracts, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {

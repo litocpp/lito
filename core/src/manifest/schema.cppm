@@ -8,6 +8,7 @@ import rstd.toml;
 import lito.model;
 import :locator;
 import lito.build_profile;
+import lito.cpp_source;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -106,7 +107,8 @@ auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) 
 auto package_root_key(ref<str> key) -> bool {
     return key == "package"_str || key == "lib"_str || key == "bin"_str || key == "test"_str ||
            key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
-           key == "dependencies"_str || key == "external-dependencies"_str || key == "profile"_str;
+           key == "dependencies"_str || key == "dev-dependencies"_str ||
+           key == "external-dependencies"_str || key == "profile"_str;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {
@@ -324,6 +326,10 @@ auto dependency_key(ref<str> key) -> bool {
            key == "workspace"_str;
 }
 
+auto dev_dependency_key(ref<str> key) -> bool {
+    return dependency_key(key) && key != "visibility"_str;
+}
+
 auto workspace_dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str;
@@ -331,6 +337,10 @@ auto workspace_dependency_key(ref<str> key) -> bool {
 
 auto workspace_dependency_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "visibility"_str;
+}
+
+auto workspace_dev_dependency_reference_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
 }
 
 auto external_dependencies_key(ref<str> key) -> bool {
@@ -446,6 +456,267 @@ auto package_name_is_valid(ref<str> value) -> bool {
         if (! alpha && ! digit && byte != u8('-') && byte != u8('_')) return false;
     }
     return true;
+}
+
+struct ConventionalSource {
+    String  key;
+    PathBuf path;
+};
+
+struct ConventionalBenchmark {
+    String       name;
+    Vec<PathBuf> sources;
+};
+
+auto conventional_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path> path)
+    -> Result<ConventionalSource> {
+    auto relative = path.strip_prefix(source_root);
+    if (relative.is_none() || relative->is_empty()) {
+        return failure<ConventionalSource>(
+            rstd::format("conventional benchmark source '{}' is outside package source root '{}'",
+                         path,
+                         source_root));
+    }
+    auto text = relative->to_str();
+    if (text.is_none()) {
+        return failure<ConventionalSource>(
+            rstd::format("conventional benchmark source '{}' is not valid UTF-8", path));
+    }
+    return Ok(ConventionalSource {
+        .key  = String::make(*text),
+        .path = PathBuf::from(*relative),
+    });
+}
+
+auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
+                                  ref<rstd::path::Path>    directory,
+                                  Vec<ConventionalSource>& sources) -> Result<empty> {
+    auto opened = rstd::fs::read_dir(directory);
+    if (opened.is_err()) {
+        return failure<empty>(rstd::format("cannot enumerate benchmark directory '{}': {}",
+                                           directory,
+                                           rstd::move(opened).unwrap_err()));
+    }
+    auto stream = rstd::move(opened).unwrap();
+    for (auto next = stream.next(); next.is_some(); next = stream.next()) {
+        auto item = rstd::move(next).unwrap();
+        if (item.is_err()) {
+            return failure<empty>(rstd::format("cannot enumerate benchmark directory '{}': {}",
+                                               directory,
+                                               rstd::move(item).unwrap_err()));
+        }
+        auto entry = rstd::move(item).unwrap();
+        auto type  = entry.file_type();
+        if (type.is_err()) {
+            return failure<empty>(rstd::format("cannot inspect benchmark entry '{}': {}",
+                                               entry.path().as_path(),
+                                               rstd::move(type).unwrap_err()));
+        }
+        auto path = entry.path();
+        if (type->is_dir()) {
+            auto nested_manifest = try_locate_manifest(path.as_path());
+            if (nested_manifest.is_err()) {
+                return Err(rstd::move(nested_manifest).unwrap_err());
+            }
+            if (nested_manifest->is_some()) continue;
+            rstd_try(collect_conventional_sources(source_root, path.as_path(), sources));
+            continue;
+        }
+        if (! type->is_file() || ! supported_cpp_source(path.as_path())) continue;
+        sources.push(rstd_try(conventional_source(source_root, path.as_path())));
+    }
+    return Ok(empty {});
+}
+
+auto path_name(ref<rstd::path::Path> path, ref<str> context) -> Result<String> {
+    auto name = path.file_name();
+    if (name.is_none()) return failure<String>(rstd::format("{} '{}' has no name", context, path));
+    auto text = name->to_str();
+    if (text.is_none()) {
+        return failure<String>(rstd::format("{} '{}' is not valid UTF-8", context, path));
+    }
+    return Ok(String::make(*text));
+}
+
+auto file_stem(ref<rstd::path::Path> path) -> Result<String> {
+    auto name      = rstd_try(path_name(path, "benchmark source"_str));
+    auto extension = path.extension();
+    if (extension.is_none()) {
+        return failure<String>(rstd::format("benchmark source '{}' has no extension", path));
+    }
+    auto extension_text = extension->to_str();
+    if (extension_text.is_none() || name.len() <= extension_text->len() + usize(1)) {
+        return failure<String>(rstd::format("benchmark source '{}' has no target name", path));
+    }
+    name.truncate(name.len() - extension_text->len() - usize(1));
+    return Ok(rstd::move(name));
+}
+
+auto explicit_benchmark_name(const Vec<PackageTargetManifest>& targets, ref<str> name) -> bool {
+    for (const auto& target : targets) {
+        if (target.is_Benchmark() && target.as_Benchmark().name.as_str() == name) return true;
+    }
+    return false;
+}
+
+auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_root,
+                                      ref<rstd::path::Path>             source_root,
+                                      const Vec<PackageTargetManifest>& explicit_targets)
+    -> Result<Vec<PackageTargetManifest>> {
+    auto result    = Vec<PackageTargetManifest>::make();
+    auto directory = PathBuf::from(package_root).join(PathBuf::from("benches"_str).as_path());
+    auto exists    = rstd::fs::exists(directory.as_path());
+    if (exists.is_err()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("cannot inspect benchmark directory '{}': {}",
+                         directory.as_path(),
+                         rstd::move(exists).unwrap_err()));
+    }
+    if (! *exists) return Ok(rstd::move(result));
+
+    auto metadata = rstd::fs::metadata(directory.as_path());
+    if (metadata.is_err()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("cannot inspect benchmark directory '{}': {}",
+                         directory.as_path(),
+                         rstd::move(metadata).unwrap_err()));
+    }
+    if (! metadata->is_dir()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("benchmark path '{}' is not a directory", directory.as_path()));
+    }
+    auto nested_manifest = try_locate_manifest(directory.as_path());
+    if (nested_manifest.is_err()) return Err(rstd::move(nested_manifest).unwrap_err());
+    if (nested_manifest->is_some()) return Ok(rstd::move(result));
+
+    auto candidates = Vec<ConventionalBenchmark>::make();
+    auto opened     = rstd::fs::read_dir(directory.as_path());
+    if (opened.is_err()) {
+        return failure<Vec<PackageTargetManifest>>(
+            rstd::format("cannot enumerate benchmark directory '{}': {}",
+                         directory.as_path(),
+                         rstd::move(opened).unwrap_err()));
+    }
+    auto stream = rstd::move(opened).unwrap();
+    for (auto next = stream.next(); next.is_some(); next = stream.next()) {
+        auto item = rstd::move(next).unwrap();
+        if (item.is_err()) {
+            return failure<Vec<PackageTargetManifest>>(
+                rstd::format("cannot enumerate benchmark directory '{}': {}",
+                             directory.as_path(),
+                             rstd::move(item).unwrap_err()));
+        }
+        auto entry = rstd::move(item).unwrap();
+        auto type  = entry.file_type();
+        if (type.is_err()) {
+            return failure<Vec<PackageTargetManifest>>(
+                rstd::format("cannot inspect benchmark entry '{}': {}",
+                             entry.path().as_path(),
+                             rstd::move(type).unwrap_err()));
+        }
+        auto path = entry.path();
+        if (type->is_file()) {
+            if (! runnable_cpp_source(path.as_path())) continue;
+            auto name = rstd_try(file_stem(path.as_path()));
+            if (! package_name_is_valid(name.as_str())) {
+                return failure<Vec<PackageTargetManifest>>(rstd::format(
+                    "conventional benchmark source '{}' infers invalid target name '{}'",
+                    path.as_path(),
+                    name.as_str()));
+            }
+            auto source  = rstd_try(conventional_source(source_root, path.as_path()));
+            auto sources = Vec<PathBuf>::make();
+            sources.push(rstd::move(source.path));
+            candidates.push(ConventionalBenchmark {
+                .name    = rstd::move(name),
+                .sources = rstd::move(sources),
+            });
+            continue;
+        }
+        if (! type->is_dir()) continue;
+        auto child_manifest = try_locate_manifest(path.as_path());
+        if (child_manifest.is_err()) return Err(rstd::move(child_manifest).unwrap_err());
+        if (child_manifest->is_some()) continue;
+
+        auto name = rstd_try(path_name(path.as_path(), "benchmark directory"_str));
+        if (! package_name_is_valid(name.as_str())) {
+            return failure<Vec<PackageTargetManifest>>(rstd::format(
+                "conventional benchmark directory '{}' infers invalid target name '{}'",
+                path.as_path(),
+                name.as_str()));
+        }
+        auto child = rstd::fs::read_dir(path.as_path());
+        if (child.is_err()) {
+            return failure<Vec<PackageTargetManifest>>(
+                rstd::format("cannot enumerate benchmark directory '{}': {}",
+                             path.as_path(),
+                             rstd::move(child).unwrap_err()));
+        }
+        auto child_stream = rstd::move(child).unwrap();
+        auto main_sources = usize {};
+        for (auto child_next = child_stream.next(); child_next.is_some();
+             child_next      = child_stream.next()) {
+            auto child_item = rstd::move(child_next).unwrap();
+            if (child_item.is_err()) {
+                return failure<Vec<PackageTargetManifest>>(
+                    rstd::format("cannot enumerate benchmark directory '{}': {}",
+                                 path.as_path(),
+                                 rstd::move(child_item).unwrap_err()));
+            }
+            auto child_entry = rstd::move(child_item).unwrap();
+            auto child_type  = child_entry.file_type();
+            if (child_type.is_err()) {
+                return failure<Vec<PackageTargetManifest>>(
+                    rstd::format("cannot inspect benchmark entry '{}': {}",
+                                 child_entry.path().as_path(),
+                                 rstd::move(child_type).unwrap_err()));
+            }
+            if (! child_type->is_file() || ! runnable_cpp_source(child_entry.path().as_path())) {
+                continue;
+            }
+            auto main_name = rstd_try(file_stem(child_entry.path().as_path()));
+            if (main_name.as_str() == "main"_str) ++main_sources;
+        }
+        if (main_sources == usize {}) continue;
+        if (main_sources != usize(1)) {
+            return failure<Vec<PackageTargetManifest>>(rstd::format(
+                "conventional benchmark directory '{}' contains more than one main source",
+                path.as_path()));
+        }
+        auto sources = Vec<ConventionalSource>::make();
+        rstd_try(collect_conventional_sources(source_root, path.as_path(), sources));
+        rstd::slice_::sort_unstable_by(
+            sources.as_mut_slice().as_mut_ref(),
+            [](const ConventionalSource& left, const ConventionalSource& right) {
+                return left.key < right.key;
+            });
+        auto paths = Vec<PathBuf>::with_capacity(sources.len());
+        for (auto& source : sources) paths.push(rstd::move(source.path));
+        candidates.push(ConventionalBenchmark {
+            .name    = rstd::move(name),
+            .sources = rstd::move(paths),
+        });
+    }
+
+    rstd::slice_::sort_unstable_by(
+        candidates.as_mut_slice().as_mut_ref(),
+        [](const ConventionalBenchmark& left, const ConventionalBenchmark& right) {
+            return left.name < right.name;
+        });
+    for (usize index {}; index < candidates.len(); ++index) {
+        if (index != usize {} && candidates[index - usize(1)].name == candidates[index].name) {
+            return failure<Vec<PackageTargetManifest>>(rstd::format(
+                "conventional benches repeat target name '{}'", candidates[index].name.as_str()));
+        }
+        if (explicit_benchmark_name(explicit_targets, candidates[index].name.as_str())) continue;
+        result.push(PackageTargetManifest::Benchmark(
+            rstd::move(candidates[index].name),
+            TargetSourceManifest {
+                .discovery        = SourceDiscoveryMode::Explicit,
+                .declared_sources = rstd::move(candidates[index].sources),
+            }));
+    }
+    return Ok(rstd::move(result));
 }
 
 auto valid_artifact_name(ref<str> value) -> bool {
@@ -1301,15 +1572,19 @@ struct ParsedDependencies {
     Vec<WorkspaceDependencyReference> workspace_dependencies;
 };
 
-auto parse_dependencies(Option<ref<Toml>> value) -> Result<ParsedDependencies> {
+auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
+    -> Result<ParsedDependencies> {
     auto result = ParsedDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
-    auto table = table_value(**value, "manifest.dependencies"_str);
+    const auto table_context =
+        development ? "manifest.dev-dependencies"_str : "manifest.dependencies"_str;
+    auto table = table_value(**value, table_context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& name    = **key;
-        auto        context = rstd::format("dependency '{}'", name.as_str());
+        auto        context = rstd::format(
+            "{} dependency '{}'", development ? "development"_str : "normal"_str, name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return failure<ParsedDependencies>(rstd::format(
                 "dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
@@ -1318,22 +1593,28 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<ParsedDependencies> {
         auto specification = (**table).get(name.as_str());
         auto fields        = table_value(**specification, context.as_str());
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
-        rstd_try(reject_unknown(**fields, context.as_str(), dependency_key));
+        rstd_try(reject_unknown(
+            **fields, context.as_str(), development ? dev_dependency_key : dependency_key));
         auto inherited = workspace_reference_enabled(**specification, context.as_str());
         if (inherited.is_err()) return Err(rstd::move(inherited).unwrap_err());
         if (*inherited) {
-            rstd_try(
-                reject_unknown(**fields, context.as_str(), workspace_dependency_reference_key));
+            rstd_try(reject_unknown(**fields,
+                                    context.as_str(),
+                                    development ? workspace_dev_dependency_reference_key
+                                                : workspace_dependency_reference_key));
         }
-        auto visibility = required_string(**specification, "visibility"_str, context.as_str());
-        if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
-        auto parsed_visibility =
-            parse_visibility(visibility->as_str(), "dependency.visibility"_str);
-        if (parsed_visibility.is_err()) return Err(rstd::move(parsed_visibility).unwrap_err());
+        auto parsed_visibility = DependencyVisibility::Private;
+        if (! development) {
+            auto visibility = required_string(**specification, "visibility"_str, context.as_str());
+            if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
+            auto parsed = parse_visibility(visibility->as_str(), "dependency.visibility"_str);
+            if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+            parsed_visibility = rstd::move(parsed).unwrap();
+        }
         if (*inherited) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
                 .name       = name.clone(),
-                .visibility = rstd::move(parsed_visibility).unwrap(),
+                .visibility = parsed_visibility,
             });
             continue;
         }
@@ -1342,10 +1623,20 @@ auto parse_dependencies(Option<ref<Toml>> value) -> Result<ParsedDependencies> {
         result.explicit_dependencies.push(DeclaredDependency {
             .name       = name.clone(),
             .source     = rstd::move(source).unwrap(),
-            .visibility = rstd::move(parsed_visibility).unwrap(),
+            .visibility = parsed_visibility,
         });
     }
     return Ok(rstd::move(result));
+}
+
+auto contains_dependency(const ParsedDependencies& dependencies, ref<str> name) -> bool {
+    for (const auto& dependency : dependencies.explicit_dependencies) {
+        if (dependency.name.as_str() == name) return true;
+    }
+    for (const auto& dependency : dependencies.workspace_dependencies) {
+        if (dependency.name.as_str() == name) return true;
+    }
+    return false;
 }
 
 auto parse_workspace_dependencies(Option<ref<Toml>> value)
@@ -1918,32 +2209,45 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
         compile_tests = rstd_try(parse_compile_tests(member(**compile_test_value, "cases"_str)));
     }
 
+    auto source_root = resolve_package_source_root(package_value, root.as_path());
+    if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
+
     const auto has_library = library.is_some();
     const auto has_bins    = ! bins.is_empty();
-    const auto has_benches = ! benches.is_empty();
     auto       targets     = Vec<PackageTargetManifest>::with_capacity(
         (has_library ? usize(1) : usize {}) + bins.len() + tests.len() + benches.len());
     if (library.is_some()) targets.push(rstd::move(library).unwrap());
     for (auto& target : bins) targets.push(rstd::move(target));
     for (auto& target : tests) targets.push(rstd::move(target));
     for (auto& target : benches) targets.push(rstd::move(target));
+    auto conventional =
+        discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
+    if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
+    for (auto& target : *conventional) targets.push(rstd::move(target));
     if (targets.is_empty() && compile_tests.is_empty()) {
         return failure<ManifestDocument>(
             "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
             "'compile-test'"_str);
     }
+    auto has_benches = false;
+    for (const auto& target : targets) {
+        if (target.is_Benchmark()) {
+            has_benches = true;
+            break;
+        }
+    }
     const auto version_optional = ! has_library && ! has_bins && ! has_benches;
     auto       version          = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
 
-    auto source_root = resolve_package_source_root(package_value, root.as_path());
-    if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
-    auto usage        = parse_usage(member(document, "usage"_str), source_root->as_path());
-    auto dependencies = parse_dependencies(member(document, "dependencies"_str));
-    auto external     = parse_external_dependencies(member(document, "external-dependencies"_str));
+    auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
+    auto dependencies     = parse_dependencies(member(document, "dependencies"_str));
+    auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);
+    auto external = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
+    if (dev_dependencies.is_err()) return Err(rstd::move(dev_dependencies).unwrap_err());
     if (external.is_err()) return Err(rstd::move(external).unwrap_err());
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_usage = rstd::move(usage).unwrap();
@@ -1952,7 +2256,22 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
                           ! parsed_usage.public_options.is_empty())) {
         return failure<ManifestDocument>("usage.public-* requires a library target"_str);
     }
-    auto parsed_dependencies   = rstd::move(dependencies).unwrap();
+    auto parsed_dependencies     = rstd::move(dependencies).unwrap();
+    auto parsed_dev_dependencies = rstd::move(dev_dependencies).unwrap();
+    for (const auto& dependency : parsed_dev_dependencies.explicit_dependencies) {
+        if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
+            return failure<ManifestDocument>(rstd::format(
+                "dependency '{}' is declared in both dependencies and dev-dependencies",
+                dependency.name.as_str()));
+        }
+    }
+    for (const auto& dependency : parsed_dev_dependencies.workspace_dependencies) {
+        if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
+            return failure<ManifestDocument>(rstd::format(
+                "dependency '{}' is declared in both dependencies and dev-dependencies",
+                dependency.name.as_str()));
+        }
+    }
     auto external_dependencies = rstd::move(external).unwrap();
     auto profile               = rstd_try(parse_project_profile(member(document, "profile"_str)));
 
@@ -1970,7 +2289,10 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
             .compile_tests          = rstd::move(compile_tests),
             .usage                  = rstd::move(parsed_usage),
             .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
+            .dev_dependencies       = rstd::move(parsed_dev_dependencies.explicit_dependencies),
             .workspace_dependencies = rstd::move(parsed_dependencies.workspace_dependencies),
+            .workspace_dev_dependencies =
+                rstd::move(parsed_dev_dependencies.workspace_dependencies),
             .pkg_config_external_dependencies = rstd::move(external_dependencies.pkg_config),
             .workspace_pkg_config_external_dependencies =
                 rstd::move(external_dependencies.workspace_pkg_config),

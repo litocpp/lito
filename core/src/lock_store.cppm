@@ -8,11 +8,11 @@ import lito.package;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using Json         = rstd::json::Value;
-using Map          = rstd::json::Map;
-using Array        = rstd::json::Array;
-using StringSet    = rstd::collections::BTreeMap<String, empty>;
-using KeyPredicate = bool (*)(ref<str>);
+using Json                         = rstd::json::Value;
+using Map                          = rstd::json::Map;
+using Array                        = rstd::json::Array;
+using StringSet                    = rstd::collections::BTreeMap<String, empty>;
+using KeyPredicate                 = bool (*)(ref<str>);
 inline constexpr auto LOCK_VERSION = u64(4);
 
 namespace lito
@@ -80,9 +80,18 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
 
     auto packages = Array::make();
     for (const auto& package : graph.packages) {
-        auto dependencies = Array::make();
+        auto dependency_names =
+            Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
-            dependencies.push(string_json(dependency.name.as_str()));
+            dependency_names.push(dependency.name.clone());
+        }
+        for (const auto& dependency : package.dev_dependencies) {
+            dependency_names.push(dependency.name.clone());
+        }
+        rstd::slice_::sort_unstable(dependency_names.as_mut_slice().as_mut_ref());
+        auto dependencies = Array::make();
+        for (const auto& dependency : dependency_names) {
+            dependencies.push(string_json(dependency.as_str()));
         }
         auto manifest = path_string(package.source_manifest.as_path());
         if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
@@ -389,7 +398,7 @@ auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
             rstd::format("cannot parse lock '{}': {}", path, rstd::move(parsed).unwrap_err()));
     }
     auto document = rstd::move(parsed).unwrap();
-    auto valid = validate_lock(document);
+    auto valid    = validate_lock(document);
     if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
     return Ok(Some(rstd::move(document)));
 }

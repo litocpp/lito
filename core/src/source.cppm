@@ -174,7 +174,6 @@ struct AcquiredSource {
 struct AcquiredProjectSources {
     usize         primary;
     Option<usize> tests;
-    Option<usize> benchmarks;
 };
 
 class SourceManager {
@@ -672,12 +671,9 @@ public:
         const auto primary_source = *primary;
         auto       tests          = rstd_try(acquire_associated_catalog(
             primary_source, "tests"_str, ProjectRootRole::AssociatedTest));
-        auto       benchmarks     = rstd_try(acquire_associated_catalog(
-            primary_source, "benches"_str, ProjectRootRole::AssociatedBenchmark));
         return Ok(AcquiredProjectSources {
-            .primary    = primary_source,
-            .tests      = rstd::move(tests),
-            .benchmarks = rstd::move(benchmarks),
+            .primary = primary_source,
+            .tests   = rstd::move(tests),
         });
     }
 

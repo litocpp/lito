@@ -49,29 +49,18 @@ auto test_only_package(const PackageManifest& package) -> bool {
     return true;
 }
 
-auto benchmark_only_package(const PackageManifest& package) -> bool {
-    if (package.targets.is_empty() || ! package.compile_tests.is_empty()) return false;
-    for (const auto& target : package.targets) {
-        if (package_target_kind(target) != PackageTargetKind::Benchmark) return false;
-    }
-    return true;
-}
-
 auto associated_package_matches(const PackageManifest& package, ProjectRootRole role) -> bool {
     if (role == ProjectRootRole::AssociatedTest) return test_only_package(package);
-    if (role == ProjectRootRole::AssociatedBenchmark) return benchmark_only_package(package);
     return false;
 }
 
 auto associated_kind_name(ProjectRootRole role) noexcept -> ref<str> {
     if (role == ProjectRootRole::AssociatedTest) return "test"_str;
-    if (role == ProjectRootRole::AssociatedBenchmark) return "benchmark"_str;
     return "unknown"_str;
 }
 
 auto associated_declarations(ProjectRootRole role) noexcept -> ref<str> {
     if (role == ProjectRootRole::AssociatedTest) return "[[test]] or [compile-test]"_str;
-    if (role == ProjectRootRole::AssociatedBenchmark) return "[[bench]]"_str;
     return "associated targets"_str;
 }
 
@@ -97,6 +86,7 @@ public:
 
     static auto single(PackageManifest manifest) -> Result<WorkspaceCatalog> {
         if (! manifest.workspace_dependencies.is_empty() ||
+            ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
             ! manifest.workspace_cmake_external_dependencies.is_empty()) {
             return catalog_failure<WorkspaceCatalog>(rstd::format(
@@ -245,7 +235,7 @@ auto WorkspaceCatalog::associated_package(PackageManifest manifest, const Worksp
 auto validate_associated_catalog(const WorkspaceCatalog& primary,
                                  const WorkspaceCatalog& associated,
                                  ProjectRootRole         role) -> Result<empty> {
-    if (role != ProjectRootRole::AssociatedTest && role != ProjectRootRole::AssociatedBenchmark) {
+    if (role != ProjectRootRole::AssociatedTest) {
         return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
     }
     const auto kind = associated_kind_name(role);

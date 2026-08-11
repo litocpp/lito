@@ -9,6 +9,9 @@ archive = "fixture-conventional"
 discovery = "explicit"
 sources = ["src/lib.cppm"]
 
+[dev-dependencies.fixture-conventional-bench-helper]
+path = "bench-helper"
+
 [profile.thin]
 inherits = "release"
 opt-level = 2

@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.package:resolver;
 
 import rstd;
@@ -147,30 +150,36 @@ public:
                             });
         active_.insert(loaded.package.name.clone(), empty {});
 
-        auto dependencies = Vec<ResolvedDependency>::make();
-        for (const auto& dependency : loaded.package.dependencies) {
-            auto declaring_root = loaded.package.root.as_path();
-            if (dependency.declaration_root.is_some()) {
-                declaring_root = dependency.declaration_root->as_path();
+        const auto resolve_dependencies =
+            [&](const Vec<DeclaredDependency>& declarations) -> Result<Vec<ResolvedDependency>> {
+            auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
+            for (const auto& dependency : declarations) {
+                auto declaring_root = loaded.package.root.as_path();
+                if (dependency.declaration_root.is_some()) {
+                    declaring_root = dependency.declaration_root->as_path();
+                }
+                auto dependency_source = sources_.acquire(dependency.source, declaring_root);
+                if (dependency_source.is_err()) {
+                    return Err(rstd::move(dependency_source).unwrap_err());
+                }
+                auto dependency_name = resolve(*dependency_source, dependency.name.as_str());
+                if (dependency_name.is_err()) {
+                    return Err(rstd::move(dependency_name).unwrap_err());
+                }
+                dependencies.push(ResolvedDependency {
+                    .name       = rstd::move(dependency_name).unwrap(),
+                    .visibility = dependency.visibility,
+                });
             }
-            auto dependency_source = sources_.acquire(dependency.source, declaring_root);
-            if (dependency_source.is_err()) {
-                return Err(rstd::move(dependency_source).unwrap_err());
-            }
-            auto dependency_name = resolve(*dependency_source, dependency.name.as_str());
-            if (dependency_name.is_err()) {
-                return Err(rstd::move(dependency_name).unwrap_err());
-            }
-            dependencies.push(ResolvedDependency {
-                .name       = rstd::move(dependency_name).unwrap(),
-                .visibility = dependency.visibility,
-            });
-        }
-        rstd::slice_::sort_unstable_by(
-            dependencies.as_mut_slice().as_mut_ref(),
-            [](const ResolvedDependency& left, const ResolvedDependency& right) {
-                return left.name < right.name;
-            });
+            rstd::slice_::sort_unstable_by(
+                dependencies.as_mut_slice().as_mut_ref(),
+                [](const ResolvedDependency& left, const ResolvedDependency& right) {
+                    return left.name < right.name;
+                });
+            return Ok(rstd::move(dependencies));
+        };
+        auto dependencies     = rstd_try(resolve_dependencies(loaded.package.dependencies));
+        auto dev_dependencies = rstd_try(resolve_dependencies(loaded.package.dev_dependencies));
 
         active_.remove(loaded.package.name.as_str());
         packages_.push(ResolvedPackage {
@@ -178,6 +187,7 @@ public:
             .source_manifest             = rstd::move(loaded.manifest),
             .manifest                    = rstd::move(loaded.package),
             .dependencies                = rstd::move(dependencies),
+            .dev_dependencies            = rstd::move(dev_dependencies),
             .cmake_external_dependencies = {},
         });
         return Ok(String::make(expected_name));
@@ -260,13 +270,6 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
         auto resolved_tests =
             resolve_roots(*project_sources.tests, ProjectRootRole::AssociatedTest);
         if (resolved_tests.is_err()) return Err(rstd::move(resolved_tests).unwrap_err());
-    }
-    if (project_sources.benchmarks.is_some()) {
-        auto resolved_benchmarks =
-            resolve_roots(*project_sources.benchmarks, ProjectRootRole::AssociatedBenchmark);
-        if (resolved_benchmarks.is_err()) {
-            return Err(rstd::move(resolved_benchmarks).unwrap_err());
-        }
     }
     return Ok(resolver.finish(rstd::move(project_name),
                               rstd::move(roots),

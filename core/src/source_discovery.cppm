@@ -8,6 +8,7 @@ import lito.frontend;
 import lito.profiling;
 import lito.scan_executor;
 import lito.package;
+import lito.cpp_source;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -20,14 +21,6 @@ namespace lito
 template<typename T>
 auto discovery_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
-}
-
-auto supported_extension(ref<rstd::path::Path> path) -> bool {
-    auto extension = path.extension();
-    if (extension.is_none()) return false;
-    auto text = (*extension).to_str();
-    if (text.is_none()) return false;
-    return *text == "cppm"_str || *text == "cpp"_str || *text == "cc"_str || *text == "cxx"_str;
 }
 
 auto path_text(ref<rstd::path::Path> path) -> Result<String> {
@@ -72,7 +65,7 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::
         return discovery_failure<ResolvedSource>(
             rstd::format("declared source '{}' is not a file", declared));
     }
-    if (! supported_extension(resolved.as_path())) {
+    if (! supported_cpp_source(resolved.as_path())) {
         return discovery_failure<ResolvedSource>(
             rstd::format("unsupported C++ source extension: {}", declared));
     }
@@ -114,7 +107,7 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
             if (nested.is_err()) return nested;
             continue;
         }
-        if (! type->is_file() || ! supported_extension(path.as_path())) continue;
+        if (! type->is_file() || ! supported_cpp_source(path.as_path())) continue;
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
             return discovery_failure<empty>(rstd::format("cannot resolve source candidate '{}': {}",

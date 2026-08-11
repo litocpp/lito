@@ -106,29 +106,41 @@ auto clone_cmake_source(const CMakeDependencySource& source) -> CMakeDependencyS
 
 auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
                                            const WorkspaceManifest& workspace) -> Result<empty> {
-    for (const auto& reference : manifest.workspace_dependencies) {
-        const WorkspaceDependencyDefinition* definition = nullptr;
-        for (const auto& candidate : workspace.dependencies) {
-            if (candidate.name == reference.name) {
-                definition = rstd::addressof(candidate);
-                break;
+    const auto resolve_package_dependencies =
+        [&](const Vec<WorkspaceDependencyReference>& references,
+            Vec<DeclaredDependency>&                 dependencies,
+            ref<str>                                 kind) -> Result<empty> {
+        for (const auto& reference : references) {
+            const WorkspaceDependencyDefinition* definition = nullptr;
+            for (const auto& candidate : workspace.dependencies) {
+                if (candidate.name == reference.name) {
+                    definition = rstd::addressof(candidate);
+                    break;
+                }
             }
+            if (definition == nullptr) {
+                return workspace_failure<empty>(
+                    rstd::format("workspace member '{}' inherits {} dependency '{}' but "
+                                 "workspace.dependencies has no matching definition",
+                                 manifest.name.as_str(),
+                                 kind,
+                                 reference.name.as_str()));
+            }
+            dependencies.push(DeclaredDependency {
+                .name             = reference.name.clone(),
+                .source           = clone_package_source(definition->source),
+                .visibility       = reference.visibility,
+                .declaration_root = Some(workspace.root.clone()),
+            });
         }
-        if (definition == nullptr) {
-            return workspace_failure<empty>(rstd::format(
-                "workspace member '{}' inherits dependency '{}' but workspace.dependencies has "
-                "no matching definition",
-                manifest.name.as_str(),
-                reference.name.as_str()));
-        }
-        manifest.dependencies.push(DeclaredDependency {
-            .name             = reference.name.clone(),
-            .source           = clone_package_source(definition->source),
-            .visibility       = reference.visibility,
-            .declaration_root = Some(workspace.root.clone()),
-        });
-    }
+        return Ok(empty {});
+    };
+    rstd_try(resolve_package_dependencies(
+        manifest.workspace_dependencies, manifest.dependencies, "normal"_str));
+    rstd_try(resolve_package_dependencies(
+        manifest.workspace_dev_dependencies, manifest.dev_dependencies, "development"_str));
     manifest.workspace_dependencies.clear();
+    manifest.workspace_dev_dependencies.clear();
 
     for (const auto& reference : manifest.workspace_pkg_config_external_dependencies) {
         const WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;

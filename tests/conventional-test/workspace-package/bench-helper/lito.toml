@@ -1,0 +1,10 @@
+[package]
+name = "fixture-associated-workspace-bench-helper"
+version = "0.1.0"
+
+[lib]
+name = "fixture-associated-workspace-bench-helper"
+module = "fixture.associated.workspace.bench_helper"
+archive = "fixture.associated.workspace.bench-helper"
+discovery = "explicit"
+sources = ["lib.cppm"]
