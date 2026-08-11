@@ -243,6 +243,22 @@ auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
     });
 }
 
+auto clang_warning_option(CppWarningOption option) noexcept -> ref<str> {
+    switch (option.warning) {
+    case CppWarning::All: return option.enabled ? "-Wall"_str : "-Wno-all"_str;
+    case CppWarning::Pedantic: return option.enabled ? "-Wpedantic"_str : "-Wno-pedantic"_str;
+    case CppWarning::GnuStatementExpression:
+        return option.enabled ? "-Wgnu-statement-expression"_str
+                              : "-Wno-gnu-statement-expression"_str;
+    case CppWarning::DeprecatedDeclarations:
+        return option.enabled ? "-Wdeprecated-declarations"_str
+                              : "-Wno-deprecated-declarations"_str;
+    case CppWarning::UnknownAttributes:
+        return option.enabled ? "-Wunknown-attributes"_str : "-Wno-unknown-attributes"_str;
+    }
+    return {};
+}
+
 auto append_typed_options(Vec<String>&             command,
                           const CppCompileOptions& options,
                           bool                     semantic_only) -> void {
@@ -282,6 +298,9 @@ auto append_typed_options(Vec<String>&             command,
         }
     }
     if (! semantic_only) {
+        for (const auto& warning : options.diagnostics.warnings) {
+            toolchain::command::push_option(command, clang_warning_option(warning));
+        }
         for (const auto& option : options.diagnostics.options) command.push(option.clone());
     }
 }
@@ -1049,9 +1068,10 @@ private:
                     .rtti              = context.cpp.language.rtti,
                     .exceptions        = context.cpp.language.exceptions,
                 },
-            .key = rstd::move(key),
-            .ignored_options =
-                context.cpp.diagnostics.options.len() + context.cpp.preprocessor.macros.len(),
+            .key             = rstd::move(key),
+            .ignored_options = context.cpp.diagnostics.warnings.len() +
+                               context.cpp.diagnostics.options.len() +
+                               context.cpp.preprocessor.macros.len(),
         });
     }
 

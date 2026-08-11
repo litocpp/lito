@@ -124,6 +124,20 @@ enum class CppCompilerArgumentKind
     VendorPreprocessorUnsupported,
 };
 
+enum class CppWarning
+{
+    All,
+    Pedantic,
+    GnuStatementExpression,
+    DeprecatedDeclarations,
+    UnknownAttributes,
+};
+
+struct CppWarningOption {
+    CppWarning warning { CppWarning::All };
+    bool       enabled { true };
+};
+
 struct CppMacroDirective : DefaultInClass<CppMacroDirective, Clone> {
     CppMacroAction action { CppMacroAction::Define };
     String         value;
@@ -187,7 +201,8 @@ struct CppCodegenOptions {
 };
 
 struct CppDiagnosticOptions {
-    Vec<String> options;
+    Vec<CppWarningOption> warnings;
+    Vec<String>           options;
 };
 
 struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
@@ -218,6 +233,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (OwnedSetting, (CppOwnedSetting setting;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
               (Instrumentation, (String value;)),
+              (Warning, (CppWarningOption option;)),
               (Diagnostic, (String value;)),
               (Vendor, (CppVendorOption option;)))
 
@@ -251,8 +267,9 @@ template<typename T>
 using CppOptionResult = Result<T, String>;
 
 struct CppCompilerArgumentBinding {
-    CppCompilerArgumentKind kind { CppCompilerArgumentKind::VendorLanguage };
-    String                  family;
+    CppCompilerArgumentKind  kind { CppCompilerArgumentKind::VendorLanguage };
+    String                   family;
+    Option<CppWarningOption> warning;
 };
 
 class CppArgumentParser {
@@ -277,6 +294,8 @@ public:
     auto add(CppCompilerArgumentKind    kind,
              CompilerArgumentDefinition definition,
              ref<str>                   family = {}) -> void;
+
+    auto add_warning(CppWarningOption option, CompilerArgumentDefinition definition) -> void;
 
     auto build() && -> CppOptionResult<CppArgumentParser>;
 
@@ -336,6 +355,17 @@ auto cpp_lto_option(CppLto value) noexcept -> ref<str> {
     case CppLto::Fat: return "-flto=full"_str;
     }
     return "-fno-lto"_str;
+}
+
+auto cpp_warning_name(CppWarning value) noexcept -> ref<str> {
+    switch (value) {
+    case CppWarning::All: return "all"_str;
+    case CppWarning::Pedantic: return "pedantic"_str;
+    case CppWarning::GnuStatementExpression: return "gnu-statement-expression"_str;
+    case CppWarning::DeprecatedDeclarations: return "deprecated-declarations"_str;
+    case CppWarning::UnknownAttributes: return "unknown-attributes"_str;
+    }
+    return "unknown"_str;
 }
 
 auto cpp_public_requirements(const CppCompileOptions& input) -> CppPublicRequirements;
@@ -439,6 +469,31 @@ auto append_unique(Vec<CppIncludeDirectory>& output, CppIncludeDirectory value) 
         if (existing.path.as_path() == value.path.as_path() && existing.kind == value.kind) return;
     }
     output.push(rstd::move(value));
+}
+
+auto set_warning(Vec<CppWarningOption>& output, CppWarningOption value) -> void {
+    for (auto& existing : output) {
+        if (existing.warning != value.warning) continue;
+        existing.enabled = value.enabled;
+        return;
+    }
+    output.push(rstd::move(value));
+}
+
+auto default_cpp_warnings() -> Vec<CppWarningOption> {
+    auto result = Vec<CppWarningOption>::make();
+    result.push(CppWarningOption { .warning = CppWarning::All });
+    result.push(CppWarningOption { .warning = CppWarning::Pedantic });
+    result.push(CppWarningOption {
+        .warning = CppWarning::GnuStatementExpression,
+        .enabled = false,
+    });
+    result.push(CppWarningOption {
+        .warning = CppWarning::DeprecatedDeclarations,
+        .enabled = false,
+    });
+    result.push(CppWarningOption { .warning = CppWarning::UnknownAttributes });
+    return result;
 }
 
 auto family_map(const Vec<CppFamilyOption>& values) -> BTreeMap<String, String> {
@@ -590,6 +645,7 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
             .preserve_raw_tokens = true,
         });
     }
+    if (binding->warning.is_some()) return CppCompilerArgument::Warning(*binding->warning);
     auto kind = binding->kind;
     switch (kind) {
     case CppCompilerArgumentKind::MacroDefine:
@@ -685,6 +741,15 @@ auto CppArgumentSchema::add(CppCompilerArgumentKind    kind,
     });
 }
 
+auto CppArgumentSchema::add_warning(CppWarningOption option, CompilerArgumentDefinition definition)
+    -> void {
+    schema_.add(rstd::move(definition));
+    bindings_.push(CppCompilerArgumentBinding {
+        .kind    = CppCompilerArgumentKind::Diagnostic,
+        .warning = Some(option),
+    });
+}
+
 auto CppArgumentSchema::build() && -> CppOptionResult<CppArgumentParser> {
     auto parser = rstd_try(rstd::move(schema_).build(), [](CompilerArgumentError error) {
         return compiler_argument_error_message(error);
@@ -769,6 +834,9 @@ auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(Instrumentation, value) {
             return CppCompilerArgument::Instrumentation(value.clone());
         }
+        RSTD_CASE(Warning, option) {
+            return CppCompilerArgument::Warning(option);
+        }
         RSTD_CASE(Diagnostic, value) {
             return CppCompilerArgument::Diagnostic(value.clone());
         }
@@ -824,7 +892,8 @@ auto CppCompileOptions::clone() const -> CppCompileOptions {
             },
         .diagnostics =
             CppDiagnosticOptions {
-                .options = as<Clone>(input.diagnostics.options).clone(),
+                .warnings = input.diagnostics.warnings.clone(),
+                .options  = as<Clone>(input.diagnostics.options).clone(),
             },
         .vendor = as<Clone>(input.vendor).clone(),
     };
@@ -888,6 +957,10 @@ auto make_cpp_options(ref<str>        language_standard,
                 .optimization = optimization_value,
                 .debug_info   = debug_info,
             },
+        .diagnostics =
+            CppDiagnosticOptions {
+                .warnings = default_cpp_warnings(),
+            },
     };
     return apply_cpp_option_layer(rstd::move(result), rstd::move(layer));
 }
@@ -948,6 +1021,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             }
             RSTD_CASE(Instrumentation, value) {
                 instrumentation.insert(rstd::move(value), empty {});
+            }
+            RSTD_CASE(Warning, option) {
+                set_warning(input.diagnostics.warnings, option);
             }
             RSTD_CASE(Diagnostic, value) {
                 append_unique(input.diagnostics.options, rstd::move(value));
@@ -1026,6 +1102,11 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
             .argument = CppCompilerArgument::Instrumentation(value.clone()),
         });
     }
+    for (const auto& value : extra.diagnostics.warnings) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Warning(value),
+        });
+    }
     for (const auto& value : extra.diagnostics.options) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
             .argument = CppCompilerArgument::Diagnostic(value.clone()),
@@ -1053,6 +1134,11 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
     }
     for (const auto& value : options.codegen.instrumentation) {
         push_identity(result, "instrumentation"_str, value.as_str());
+    }
+    for (const auto& value : options.diagnostics.warnings) {
+        push_identity(result,
+                      rstd::format("warning:{}", cpp_warning_name(value.warning)).as_str(),
+                      value.enabled ? "enabled"_str : "disabled"_str);
     }
     for (const auto& include : options.preprocessor.include_directories) {
         auto text = include.path.as_path().to_str();

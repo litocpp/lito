@@ -32,9 +32,9 @@ auto argument_layer(lito::Vec<String> options) -> CppArgumentLayer {
     return parsed.is_ok() ? rstd::move(parsed).unwrap() : CppArgumentLayer {};
 }
 
-auto cpp_options(ref<str>           standard,
-                 CppOptimization    optimization,
-                 CppDebugInfo       debug_info,
+auto cpp_options(ref<str>          standard,
+                 CppOptimization   optimization,
+                 CppDebugInfo      debug_info,
                  lito::Vec<String> options = {}) -> CppCompileOptions {
     auto result = make_cpp_options(standard,
                                    StandardLibrary::Libcxx,
@@ -101,6 +101,26 @@ auto has_prefix(const lito::Vec<String>& arguments, ref<str> prefix) -> bool {
 }
 
 } // namespace
+
+TEST(CppContract, MaterializesTypedDefaultWarnings) {
+    auto defaults = cpp_options("c++20"_str, CppOptimization::None, CppDebugInfo::None);
+    ASSERT_EQ(defaults.diagnostics.warnings.len(), usize(5));
+    EXPECT_EQ(defaults.diagnostics.warnings[usize {}].warning, CppWarning::All);
+    EXPECT_TRUE(defaults.diagnostics.warnings[usize {}].enabled);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(1)].warning, CppWarning::Pedantic);
+    EXPECT_TRUE(defaults.diagnostics.warnings[usize(1)].enabled);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(2)].warning, CppWarning::GnuStatementExpression);
+    EXPECT_FALSE(defaults.diagnostics.warnings[usize(2)].enabled);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(3)].warning, CppWarning::DeprecatedDeclarations);
+    EXPECT_FALSE(defaults.diagnostics.warnings[usize(3)].enabled);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(4)].warning, CppWarning::UnknownAttributes);
+    EXPECT_TRUE(defaults.diagnostics.warnings[usize(4)].enabled);
+
+    auto parsed = argument_layer(strings("-Wall"_str, "-Wno-deprecated-declarations"_str));
+    ASSERT_EQ(parsed.occurrences.len(), usize(2));
+    EXPECT_TRUE(parsed.occurrences[usize {}].argument.is_Warning());
+    EXPECT_TRUE(parsed.occurrences[usize(1)].argument.is_Warning());
+}
 
 TEST(CppContract, NormalizesCommonOptionsBeforeToolchainMapping) {
     auto first  = cpp_options("c++20"_str,
@@ -462,6 +482,11 @@ TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     });
     auto invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wpedantic"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-gnu-statement-expression"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-deprecated-declarations"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));
     EXPECT_TRUE(has_argument(invocation->arguments,
                              "-fmodule-file=sample.module=/tmp/sample.module.pcm"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));

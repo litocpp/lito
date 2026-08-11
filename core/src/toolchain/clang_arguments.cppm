@@ -49,6 +49,17 @@ auto add_toggles(CppArgumentSchema&      schema,
     schema.add(kind, rstd::move(item), family);
 }
 
+auto add_warning(CppArgumentSchema& schema,
+                 CppWarning         warning,
+                 bool               enabled,
+                 ref<str>           name,
+                 ref<str>           spelling_value) -> void {
+    auto item = definition(name);
+    spelling(item, spelling_value);
+    schema.add_warning(CppWarningOption { .warning = warning, .enabled = enabled },
+                       rstd::move(item));
+}
+
 } // namespace lito
 
 export namespace lito
@@ -268,6 +279,23 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
         "-fno-ptrauth"_str,
         CompilerArgumentValueForm::OptionalJoined);
 
+    add_warning(schema, CppWarning::All, true, "all-warnings"_str, "-Wall"_str);
+    add_warning(schema, CppWarning::Pedantic, true, "pedantic-warnings"_str, "-Wpedantic"_str);
+    add_warning(schema,
+                CppWarning::GnuStatementExpression,
+                false,
+                "gnu-statement-expression-warnings"_str,
+                "-Wno-gnu-statement-expression"_str);
+    add_warning(schema,
+                CppWarning::DeprecatedDeclarations,
+                false,
+                "deprecated-declaration-warnings"_str,
+                "-Wno-deprecated-declarations"_str);
+    add_warning(schema,
+                CppWarning::UnknownAttributes,
+                true,
+                "unknown-attribute-warnings"_str,
+                "-Wunknown-attributes"_str);
     add(schema,
         CppCompilerArgumentKind::Diagnostic,
         "warning"_str,

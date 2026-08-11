@@ -22,11 +22,6 @@ sources = [
 [usage]
 private-options = [
   "-fPIC",
-  "-Wall",
-  "-Wpedantic",
-  "-Wno-gnu-statement-expression",
-  "-Wno-deprecated-declarations",
-  "-Wunknown-attributes",
   "-fsized-deallocation",
 ]
 
