@@ -5,7 +5,11 @@ export module lito.config:schema;
 
 import rstd;
 import rstd.toml;
-import lito.model;
+import lito.error;
+import lito.config.contract;
+import lito.dependency.contract;
+import lito.source.contract;
+import lito.system.environment_contract;
 import lito.toolchain;
 
 using namespace rstd::prelude;

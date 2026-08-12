@@ -8,66 +8,123 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
-         src/profiling.cppm
          src/compiler/arguments.cppm
          src/cpp/token.cppm
          src/cpp/scanner.cppm
+         src/cpp/model.cppm
+         src/cpp/arguments.cppm
+         src/cpp/parser.cppm
+         src/cpp/policy.cppm
+         src/cpp/identity.cppm
          src/cpp/mod.cppm
-         src/cpp_source.cppm
-         src/bmi.cppm
-         src/model.cppm
-         src/platform.cppm
-         src/environment.cppm
-         src/build_profile.cppm
-         src/process.cppm
-         src/storage.cppm
-         src/dependency/cmake.cppm
-         src/dependency.cppm
+         src/cpp/source.cppm
+         src/cpp/bmi.cppm
+         src/error.cppm
+         src/build/profile_contract.cppm
+         src/build/profile.cppm
+         src/build/identity.cppm
+         src/build/configuration.cppm
+         src/build/plan_contract.cppm
+         src/build/contract.cppm
+         src/platform/contract.cppm
+         src/platform/mod.cppm
+         src/system/environment_contract.cppm
+         src/system/environment.cppm
+         src/system/process.cppm
+         src/system/storage.cppm
+         src/dependency/contract.cppm
+         src/dependency/cmake/model.cppm
+         src/dependency/cmake/invocation.cppm
+         src/dependency/cmake/file_api.cppm
+         src/dependency/cmake/snapshot.cppm
+         src/dependency/cmake/executor.cppm
+         src/dependency/cmake/mod.cppm
+         src/dependency/pkg_config_support.cppm
+         src/dependency/external_source.cppm
+         src/dependency/pkg_config.cppm
+         src/dependency/catalog.cppm
+         src/dependency/mod.cppm
          src/manifest/locator.cppm
+         src/manifest/contract.cppm
+         src/manifest/primitives.cppm
+         src/manifest/profile_schema.cppm
+         src/manifest/key_schema.cppm
+         src/manifest/convention.cppm
+         src/manifest/target_schema.cppm
+         src/manifest/dependency_schema.cppm
+         src/manifest/assembly.cppm
          src/manifest/schema.cppm
          src/manifest/mod.cppm
          src/config/schema.cppm
+         src/config/contract.cppm
          src/config/mod.cppm
          src/modules/convention.cppm
          src/modules/graph.cppm
          src/modules/frontend.cppm
          src/modules/mod.cppm
-         src/source_discovery.cppm
+         src/build/discovery.cppm
          src/workspace/member.cppm
+         src/workspace/contract.cppm
          src/workspace/catalog.cppm
          src/workspace/mod.cppm
          src/package/plan.cppm
+         src/package/identity.cppm
+         src/package/graph_contract.cppm
+         src/package/target_contract.cppm
          src/package/adapter.cppm
-         src/source.cppm
+         src/source/contract.cppm
+         src/source/discovery_contract.cppm
+         src/source/support.cppm
+         src/source/acquisition.cppm
+         src/source/manager.cppm
+         src/source/mod.cppm
          src/package/resolver.cppm
          src/package/mod.cppm
-         src/workspace_resolver.cppm
-         src/lock_store.cppm
-         src/project.cppm
+         src/workspace/resolver.cppm
+         src/lock/contract.cppm
+         src/lock/mod.cppm
+         src/project/mod.cppm
          src/toolchain/command.cppm
+         src/toolchain/spec.cppm
+         src/toolchain/contract.cppm
          src/toolchain/clang_arguments.cppm
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
          src/toolchain/clang_format.cppm
+         src/toolchain/clang_preprocessor_model.cppm
+         src/toolchain/clang_preprocessor_probe.cppm
+         src/toolchain/clang_preprocessor_query.cppm
+         src/toolchain/clang_preprocessor_provider.cppm
          src/toolchain/clang_preprocessor_environment.cppm
+         src/toolchain/clang_support.cppm
+         src/toolchain/clang_compile_executor.cppm
+         src/toolchain/clang_toolchain.cppm
          src/toolchain/clang.cppm
          src/toolchain/mod.cppm
-         src/build_layout.cppm
-         src/build_script.cppm
+         src/build/layout.cppm
+         src/build/script.cppm
+         src/build/profiling.cppm
          src/cache/hash.cppm
+         src/cache/common.cppm
+         src/cache/scan.cppm
+         src/cache/compile.cppm
          src/cache/mod.cppm
-         src/frontend_analysis.cppm
-         src/frontend_observer.cppm
-         src/scan_executor.cppm
-         src/compile_test.cppm
-         src/compile_executor.cppm
-         src/builder.cppm
-         src/artifact_runner.cppm
-         src/test_runner.cppm
-         src/bench_runner.cppm
-         src/scanner.cppm
-         src/formatter.cppm
-         src/reporting.cppm
+         src/build/frontend_analysis.cppm
+         src/build/frontend_observer.cppm
+         src/build/scan_executor.cppm
+         src/build/compile_test.cppm
+         src/build/compile_executor.cppm
+         src/build/unit_plan.cppm
+         src/build/mod.cppm
+         src/command/artifact.cppm
+         src/command/test.cppm
+         src/command/bench.cppm
+         src/command/scan.cppm
+         src/command/format.cppm
+         src/command/update.cppm
+         src/command/scan_contract.cppm
+         src/command/project_contract.cppm
+         src/command/reporting.cppm
          src/lib.cppm)
 target_link_libraries(
   lito.lib

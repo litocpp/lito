@@ -1,7 +1,12 @@
 export module lito.modules:convention;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.source.discovery_contract;
+import lito.package.target_contract;
+import lito.package.identity;
+import lito.build.identity;
+import lito.build.plan_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

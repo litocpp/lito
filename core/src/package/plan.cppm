@@ -1,7 +1,15 @@
 export module lito.package:plan;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.cpp;
+import lito.cpp.bmi;
+import lito.manifest.contract;
+import lito.dependency.contract;
+import lito.package.identity;
+import lito.package.target_contract;
+import lito.build.identity;
+import lito.build.plan_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

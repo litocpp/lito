@@ -1,7 +1,8 @@
 export module lito.manifest:locator;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.manifest.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -16,22 +17,19 @@ auto locator_failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
 }
 
-auto manifest_directory(ref<rstd::path::Path> requested_directory)
-    -> Result<PathBuf> {
+auto manifest_directory(ref<rstd::path::Path> requested_directory) -> Result<PathBuf> {
     auto canonical_directory = rstd::fs::canonicalize(requested_directory);
     if (canonical_directory.is_err()) {
-        return locator_failure<PathBuf>(
-            rstd::format("cannot resolve manifest directory '{}': {}",
-                         requested_directory,
-                         rstd::move(canonical_directory).unwrap_err()));
+        return locator_failure<PathBuf>(rstd::format("cannot resolve manifest directory '{}': {}",
+                                                     requested_directory,
+                                                     rstd::move(canonical_directory).unwrap_err()));
     }
     auto directory = rstd::move(canonical_directory).unwrap();
     auto metadata  = rstd::fs::metadata(directory.as_path());
     if (metadata.is_err()) {
-        return locator_failure<PathBuf>(
-            rstd::format("cannot inspect manifest directory '{}': {}",
-                         directory.as_path(),
-                         rstd::move(metadata).unwrap_err()));
+        return locator_failure<PathBuf>(rstd::format("cannot inspect manifest directory '{}': {}",
+                                                     directory.as_path(),
+                                                     rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
         return locator_failure<PathBuf>(
@@ -45,10 +43,9 @@ auto try_manifest_path(ref<rstd::path::Path> directory) -> Result<Option<PathBuf
         auto candidate = PathBuf::from(directory).join(PathBuf::from(name).as_path());
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return locator_failure<Option<PathBuf>>(
-                rstd::format("cannot inspect manifest '{}': {}",
-                             candidate.as_path(),
-                             rstd::move(exists).unwrap_err()));
+            return locator_failure<Option<PathBuf>>(rstd::format("cannot inspect manifest '{}': {}",
+                                                                 candidate.as_path(),
+                                                                 rstd::move(exists).unwrap_err()));
         }
         if (! *exists) continue;
 
@@ -109,9 +106,8 @@ auto locate_manifest(ref<rstd::path::Path> requested_directory) -> Result<Manife
     if (located.is_err()) return Err(rstd::move(located).unwrap_err());
     auto manifest = rstd::move(located).unwrap();
     if (manifest.is_none()) {
-        return locator_failure<ManifestLocation>(
-            rstd::format("cannot find lito.toml or legacy tenon.toml in '{}'",
-                         requested_directory));
+        return locator_failure<ManifestLocation>(rstd::format(
+            "cannot find lito.toml or legacy tenon.toml in '{}'", requested_directory));
     }
     return Ok(rstd::move(manifest).unwrap());
 }

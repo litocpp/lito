@@ -1,7 +1,10 @@
 export module lito.modules:frontend;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.build.plan_contract;
+import lito.build.identity;
+import lito.source.discovery_contract;
 import lito.frontend.result;
 
 using namespace rstd::prelude;

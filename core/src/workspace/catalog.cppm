@@ -4,7 +4,10 @@ module;
 export module lito.workspace:catalog;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.workspace.contract;
+import lito.package.identity;
+import lito.build.profile_contract;
 import lito.manifest;
 import :member;
 

@@ -2,6 +2,8 @@ export module lito.test.support;
 
 import rstd;
 import lito;
+import lito.system.environment;
+import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

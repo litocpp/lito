@@ -4,7 +4,10 @@ module;
 export module lito.workspace:member;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.workspace.contract;
+import lito.source.contract;
+import lito.dependency.contract;
 import lito.manifest;
 
 using namespace rstd::prelude;

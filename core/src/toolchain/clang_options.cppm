@@ -1,7 +1,10 @@
 export module lito.toolchain:clang_options;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.cpp;
+import lito.cpp.bmi;
+import lito.build.profile_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

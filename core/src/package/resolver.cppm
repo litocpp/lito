@@ -4,9 +4,15 @@ module;
 export module lito.package:resolver;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.manifest.contract;
+import lito.package.identity;
+import lito.build.profile_contract;
+import lito.lock.contract;
+import lito.package.graph_contract;
+import lito.workspace.contract;
 import lito.source;
-import lito.environment;
+import lito.system.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

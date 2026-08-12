@@ -3,7 +3,7 @@ export module lito.executable;
 import rstd;
 import lito;
 import :cli;
-import lito.reporting;
+import lito.command.reporting;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

@@ -1,7 +1,9 @@
 export module lito.modules:graph;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.cpp.bmi;
+import lito.build.plan_contract;
 import :convention;
 
 using namespace rstd::prelude;

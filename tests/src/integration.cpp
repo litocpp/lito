@@ -3,7 +3,9 @@
 import rstd;
 import rstd.test;
 import lito;
+import lito.manifest;
 import lito.test.support;
+import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

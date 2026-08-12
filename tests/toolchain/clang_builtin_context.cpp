@@ -2,7 +2,10 @@
 
 import rstd;
 import rstd.test;
-import lito;
+import lito.error;
+import lito.cpp;
+import lito.package.target_contract;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -12,8 +15,8 @@ namespace
 {
 
 auto context_with(lito::Vec<String> options,
-                  CppOptimization    optimization = CppOptimization::Default,
-                  CppDebugInfo       debug_info   = CppDebugInfo::None) -> CompileContext {
+                  CppOptimization   optimization = CppOptimization::Default,
+                  CppDebugInfo      debug_info   = CppDebugInfo::None) -> CompileContext {
     auto parser = make_clang_cpp_argument_parser();
     if (parser.is_err()) return CompileContext {};
     auto arguments = parser->parse(options, "clang-builtin-context-test"_str);

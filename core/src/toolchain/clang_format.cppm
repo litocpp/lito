@@ -1,8 +1,9 @@
 export module lito.toolchain:clang_format;
 
 import rstd;
-import lito.model;
-import lito.environment;
+import lito.error;
+import lito.toolchain.spec;
+import lito.system.environment;
 import :clang_format_options;
 import :command;
 

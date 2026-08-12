@@ -2,8 +2,9 @@
 
 import rstd;
 import rstd.test;
-import lito.model;
-import lito.compile_executor;
+import lito.error;
+import lito.toolchain.contract;
+import lito.build.compile_executor;
 
 using namespace rstd::prelude;
 

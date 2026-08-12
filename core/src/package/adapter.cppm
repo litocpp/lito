@@ -4,7 +4,18 @@ module;
 export module lito.package:adapter;
 
 import rstd;
-import lito.model;
+import lito.error;
+import lito.cpp;
+import lito.manifest.contract;
+import lito.workspace.contract;
+import lito.source.discovery_contract;
+import lito.toolchain.spec;
+import lito.package.identity;
+import lito.build.profile_contract;
+import lito.build.configuration;
+import lito.platform.contract;
+import lito.package.graph_contract;
+import lito.package.target_contract;
 import lito.dependency;
 
 using namespace rstd::prelude;

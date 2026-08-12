@@ -3,7 +3,7 @@
 import rstd;
 import rstd.bench;
 import rstd.test;
-import lito.profiling;
+import lito.build.profiling;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -70,11 +70,10 @@ auto run_profiling_test() -> int {
         .source = rstd::path::PathBuf::from("/second.cpp"_str),
         .origin = lito::ScanSourceOrigin::Classify,
     });
-    auto report = lito::ScanProfileReport(
-        rstd::move(aggregate).finish(),
-        rstd::move(source_collector).finish(),
-        rstd::move(frames),
-        lito::ScanExecutionStatistics {});
+    auto report = lito::ScanProfileReport(rstd::move(aggregate).finish(),
+                                          rstd::move(source_collector).finish(),
+                                          rstd::move(frames),
+                                          lito::ScanExecutionStatistics {});
 
     auto slow = report.slow_sources(lito::ScanProbe::Preprocessor, usize(1));
     if (slow.len() != usize(1) || slow[usize()].frame != u64(2)) return 1;
@@ -94,10 +93,8 @@ auto run_profiling_test() -> int {
         return 4;
     }
     auto build_timing = lito::BuildTimingReport {};
-    build_timing.record(lito::BuildOperation::Compile,
-                        rstd::time::Duration::from_micros(u64(100)));
-    build_timing.record(lito::BuildOperation::Compile,
-                        rstd::time::Duration::from_micros(u64(250)));
+    build_timing.record(lito::BuildOperation::Compile, rstd::time::Duration::from_micros(u64(100)));
+    build_timing.record(lito::BuildOperation::Compile, rstd::time::Duration::from_micros(u64(250)));
     build_timing.record(lito::BuildOperation::Archive, rstd::time::Duration::from_micros(u64(50)));
     const auto& compile = build_timing.timing(lito::BuildOperation::Compile);
     const auto& archive = build_timing.timing(lito::BuildOperation::Archive);

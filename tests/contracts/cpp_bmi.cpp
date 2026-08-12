@@ -2,7 +2,13 @@
 
 import rstd;
 import rstd.test;
-import lito;
+import lito.error;
+import lito.compiler.arguments;
+import lito.cpp;
+import lito.cpp.bmi;
+import lito.package.target_contract;
+import lito.build.plan_contract;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

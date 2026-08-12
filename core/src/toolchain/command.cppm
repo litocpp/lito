@@ -1,9 +1,10 @@
 export module lito.toolchain:command;
 
 import rstd;
-import lito.model;
-import lito.process;
-import lito.environment;
+import lito.error;
+import lito.toolchain.contract;
+import lito.system.process;
+import lito.system.environment;
 
 using namespace rstd::prelude;
 
