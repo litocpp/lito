@@ -6,7 +6,7 @@ It uses `lito.toml` manifest to build packages.
 ## Requirements
 
 - LLVM/Clang 22 with libc++ and LLD
-- CMake 3.28 or newer
+- CMake 4.0 or newer
 
 ## Bootstrap
 
