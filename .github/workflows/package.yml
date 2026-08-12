@@ -68,3 +68,28 @@ jobs:
             dist/lito-linux-${{ matrix.arch }}.tar.gz
             dist/lito-linux-${{ matrix.arch }}.tar.gz.sha256
           if-no-files-found: error
+
+  release:
+    name: Release
+    if: github.event_name == 'push' && github.ref_type == 'tag'
+    needs: linux
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download packages
+        uses: actions/download-artifact@v4
+        with:
+          pattern: lito-linux-*
+          path: dist
+          merge-multiple: true
+
+      - name: Publish immutable release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "dist/*.tar.gz,dist/*.tar.gz.sha256"
+          artifactErrorsFailBuild: true
+          generateReleaseNotes: true
+          immutableCreate: true
+          tag: ${{ github.ref_name }}
