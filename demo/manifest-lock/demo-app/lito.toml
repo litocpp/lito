@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "demo-app"
 module = "demo.app"
 archive = "demo.app"
-discovery = "explicit"
 sources = [
   "src/lib.cppm",
   "src/lib.cpp",

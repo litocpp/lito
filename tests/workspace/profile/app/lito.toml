@@ -4,5 +4,4 @@ version = { workspace = true }
 
 [[bin]]
 name = "workspace-profile-app"
-discovery = "explicit"
 sources = ["main.cpp"]

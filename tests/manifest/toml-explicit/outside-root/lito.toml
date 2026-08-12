@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-outside"
 module = "fixture.outside"
 archive = "fixture.outside"
-discovery = "explicit"
 sources = ["../../../../demo/manifest-lock/demo-base/src/lib.cppm"]

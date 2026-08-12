@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-name-mismatch-root"
 module = "fixture.name.mismatch.root"
 archive = "fixture.name.mismatch.root"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-expected]

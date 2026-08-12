@@ -6,7 +6,6 @@ version.workspace = true
 name = "lito-core"
 module = "lito"
 archive = "lito"
-discovery = "module"
 
 [dependencies.lito-frontend]
 workspace = true

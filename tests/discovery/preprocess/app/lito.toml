@@ -3,7 +3,6 @@ name = "fixture-discovery-app"
 version = "0.1.0"
 [[bin]]
 name = "fixture-discovery-app"
-discovery = "module"
 
 [dependencies.fixture-discovery-lib]
 path = "../lib"

@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-conventional-boundary-root"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [dependencies.fixture-conventional-boundary-dependency]

@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-empty-targets"
 module = "cmake_empty_targets"
 archive = "cmake_empty_targets"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "LitoFixture"

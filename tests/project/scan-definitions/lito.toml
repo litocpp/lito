@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-scan-definitions"
 module = "fixture.scan.definitions"
 archive = "fixture.scan.definitions"
-discovery = "module"
 
 [usage]
 private-definitions = ["LITO_SCAN_DEFINITION=7"]

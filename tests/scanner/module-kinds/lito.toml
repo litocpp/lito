@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-scanner-module-kinds"
 module = "fixture.scanner.kinds"
 archive = "fixture.scanner.kinds"
-discovery = "explicit"
 sources = [
   "src/lib.cppm",
   "src/iface.cppm",

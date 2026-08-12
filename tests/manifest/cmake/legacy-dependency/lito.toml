@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-legacy-dependency"
 module = "cmake_legacy_dependency"
 archive = "cmake_legacy_dependency"
-discovery = "module"
 
 [dependencies.fixture]
 cmake = "LitoFixture"

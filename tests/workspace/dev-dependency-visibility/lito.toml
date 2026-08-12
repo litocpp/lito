@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-dev-dependency-visibility"
 module = "fixture.dev_dependency_visibility"
 archive = "fixture.dev-dependency-visibility"
-discovery = "explicit"
 sources = ["lib.cppm"]
 
 [dev-dependencies.helper]

@@ -3,7 +3,6 @@ name = "invalid-test-attach"
 
 [[test]]
 name = "invalid-test-attach"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [[test.attach]]

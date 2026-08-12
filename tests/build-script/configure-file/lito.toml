@@ -4,12 +4,10 @@ version = "0.1.0"
 
 [[bin]]
 name = "configure-file"
-discovery = "explicit"
 sources = ["src/main.cpp"]
 
 [[test]]
 name = "configure-file-test"
-discovery = "explicit"
 sources = ["src/main.cpp"]
 
 [usage]

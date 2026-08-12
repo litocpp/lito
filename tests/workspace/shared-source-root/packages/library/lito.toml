@@ -7,5 +7,4 @@ source-root = "../.."
 name = "fixture-shared-source-root-library"
 module = "fixture.shared_source_root"
 archive = "fixture-shared-source-root"
-discovery = "explicit"
 sources = ["src/shared.cppm"]

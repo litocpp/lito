@@ -24,12 +24,12 @@ auto package_key(ref<str> key) -> bool {
 
 auto library_key(ref<str> key) -> bool {
     return key == "name"_str || key == "archive"_str || key == "module"_str ||
-           key == "discovery"_str || key == "sources"_str || key == "source-groups"_str;
+           key == "sources"_str || key == "source-groups"_str;
 }
 
 auto runnable_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "module"_str || key == "discovery"_str ||
-           key == "sources"_str || key == "source-groups"_str || key == "link-stdlib"_str;
+    return key == "name"_str || key == "module"_str || key == "sources"_str ||
+           key == "source-groups"_str || key == "link-stdlib"_str;
 }
 
 auto test_key(ref<str> key) -> bool {

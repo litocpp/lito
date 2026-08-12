@@ -4,10 +4,8 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-invalid-test-artifact"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [[bin]]
 name = "fixture-invalid-test-artifact"
-discovery = "explicit"
 sources = ["main.cpp"]

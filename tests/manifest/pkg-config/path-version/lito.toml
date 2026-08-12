@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "pkg-config-path-version"
 module = "pkg_config_path_version"
 archive = "pkg_config_path_version"
-discovery = "module"
 
 [dependencies.local]
 path = "../valid"

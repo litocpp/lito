@@ -6,5 +6,4 @@ version.workspace = false
 name = "fixture-version_workspace_false"
 module = "fixture.version_workspace_false"
 archive = "fixture.version_workspace_false"
-discovery = "explicit"
 sources = ["source.cppm"]

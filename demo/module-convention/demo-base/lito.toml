@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "demo-base"
 module = "demo.base"
 archive = "demo.base"
-discovery = "module"
 
 [usage]
 public-include-directories = []

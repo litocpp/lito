@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-unsupported"
 module = "fixture.unsupported"
 archive = "fixture.unsupported"
-discovery = "explicit"
 sources = ["source.hpp"]

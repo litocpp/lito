@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-build-tree"
 module = "cmake_build_tree"
 archive = "cmake_build_tree"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "LitoBuildTree"

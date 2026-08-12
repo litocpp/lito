@@ -227,7 +227,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                              .help("Check formatting without changing files"_str));
 
     auto update = Command::make("update"_str);
-    update.about("Update Git dependencies and the lock file"_str);
+    update.about("Update lock file"_str);
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);

@@ -4,5 +4,4 @@ version = { workspace = true }
 
 [[bin]]
 name = "fixture-test-app"
-discovery = "explicit"
 sources = ["src/main.cpp"]

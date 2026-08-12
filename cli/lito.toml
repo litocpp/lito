@@ -5,7 +5,6 @@ version.workspace = true
 [[bin]]
 module = "lito.executable"
 name = "lito"
-discovery = "module"
 link-stdlib = false
 
 [dependencies.lito-core]

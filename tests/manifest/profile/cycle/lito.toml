@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[bin]]
 name = "profile-cycle"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [profile.first]

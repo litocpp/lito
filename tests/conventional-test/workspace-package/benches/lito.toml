@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[bench]]
 name = "fixture-associated-workspace-benchmark"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [dependencies.fixture-associated-workspace-library]

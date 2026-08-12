@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-environment-cache"
 module = "fixture.environment"
 archive = "fixture_environment_cache"
-discovery = "explicit"
 sources = ["one.cpp", "two.cpp"]

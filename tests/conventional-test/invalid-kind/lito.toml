@@ -4,5 +4,4 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-conventional-invalid-kind-root"
-discovery = "explicit"
 sources = ["main.cpp"]

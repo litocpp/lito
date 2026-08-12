@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[test]]
 name = "fixture-environment-test"
-discovery = "explicit"
 sources = ["test/path.cpp"]
 
 [usage]

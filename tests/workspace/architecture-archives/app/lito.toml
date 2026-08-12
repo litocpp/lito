@@ -4,7 +4,6 @@ version.workspace = true
 
 [[bin]]
 name = "fixture-workspace-architecture-archives-app"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [external-dependencies.cmake.fixture]

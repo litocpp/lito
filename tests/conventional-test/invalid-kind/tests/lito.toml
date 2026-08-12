@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-conventional-invalid-kind-test"
 module = "fixture.conventional.invalid_kind"
 archive = "fixture-conventional-invalid-kind"
-discovery = "explicit"
 sources = ["lib.cppm"]

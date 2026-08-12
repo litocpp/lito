@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-config-lock-local"
 module = "fixture.config.lock.local"
 archive = "fixture.config.lock.local"
-discovery = "explicit"
 sources = ["source.cppm"]

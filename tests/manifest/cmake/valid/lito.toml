@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-valid"
 module = "cmake_valid"
 archive = "cmake_valid"
-discovery = "module"
 
 [external-dependencies.cmake.vulkan]
 find-package = "Vulkan"

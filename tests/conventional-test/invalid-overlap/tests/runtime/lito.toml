@@ -4,5 +4,4 @@ version.workspace = true
 
 [[test]]
 name = "fixture-conventional-overlap-test"
-discovery = "explicit"
 sources = ["main.cpp"]

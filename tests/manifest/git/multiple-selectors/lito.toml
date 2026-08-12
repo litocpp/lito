@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-git-multiple-selectors"
 module = "fixture.git.multiple_selectors"
 archive = "fixture.git.multiple_selectors"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-dependency]

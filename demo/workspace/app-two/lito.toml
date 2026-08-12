@@ -4,7 +4,6 @@ version.workspace = true
 
 [[bin]]
 name = "demo-app"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [dependencies.demo-workspace-common]

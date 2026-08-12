@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-scan-cache"
 module = "fixture.scan.cache"
 archive = "fixture.scan.cache"
-discovery = "module"
 
 [usage]
 private-include-directories = ["high", "mid", "low"]

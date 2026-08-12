@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "pkg-config-legacy-dependency"
 module = "pkg_config_legacy_dependency"
 archive = "pkg_config_legacy_dependency"
-discovery = "module"
 
 [dependencies.fixture]
 pkg-config = "lito-fixture"

@@ -4,5 +4,4 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-environment-build"
-discovery = "explicit"
 sources = ["src/main.cpp"]

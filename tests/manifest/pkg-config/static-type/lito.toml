@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "pkg-config-static-type"
 module = "pkg_config_static_type"
 archive = "pkg_config_static_type"
-discovery = "module"
 
 [external-dependencies.pkg-config.curl]
 module = "libcurl"

@@ -221,13 +221,35 @@
         }
       ]
     },
+    "targetSources": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/explicitSources"
+        },
+        {
+          "not": {
+            "anyOf": [
+              {
+                "required": [
+                  "sources"
+                ]
+              },
+              {
+                "required": [
+                  "source-groups"
+                ]
+              }
+            ]
+          }
+        }
+      ]
+    },
     "libraryTarget": {
       "type": "object",
       "required": [
         "name",
         "archive",
-        "module",
-        "discovery"
+        "module"
       ],
       "properties": {
         "name": {
@@ -239,12 +261,6 @@
         "module": {
           "$ref": "#/definitions/moduleName"
         },
-        "discovery": {
-          "enum": [
-            "explicit",
-            "module"
-          ]
-        },
         "sources": {
           "$ref": "#/definitions/pathArray"
         },
@@ -252,32 +268,9 @@
           "$ref": "#/definitions/sourceGroups"
         }
       },
-      "oneOf": [
+      "allOf": [
         {
-          "properties": {
-            "discovery": {
-              "enum": [
-                "explicit"
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "$ref": "#/definitions/explicitSources"
-            }
-          ]
-        },
-        {
-          "required": [
-            "module"
-          ],
-          "properties": {
-            "discovery": {
-              "enum": [
-                "module"
-              ]
-            }
-          }
+          "$ref": "#/definitions/targetSources"
         }
       ],
       "additionalProperties": false
@@ -285,8 +278,7 @@
     "runnableTarget": {
       "type": "object",
       "required": [
-        "name",
-        "discovery"
+        "name"
       ],
       "properties": {
         "name": {
@@ -294,12 +286,6 @@
         },
         "module": {
           "$ref": "#/definitions/moduleName"
-        },
-        "discovery": {
-          "enum": [
-            "explicit",
-            "module"
-          ]
         },
         "sources": {
           "$ref": "#/definitions/pathArray"
@@ -312,32 +298,9 @@
           "default": true
         }
       },
-      "oneOf": [
+      "allOf": [
         {
-          "properties": {
-            "discovery": {
-              "enum": [
-                "explicit"
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "$ref": "#/definitions/explicitSources"
-            }
-          ]
-        },
-        {
-          "required": [
-            "module"
-          ],
-          "properties": {
-            "discovery": {
-              "enum": [
-                "module"
-              ]
-            }
-          }
+          "$ref": "#/definitions/targetSources"
         }
       ],
       "additionalProperties": false
@@ -392,8 +355,7 @@
     "test": {
       "type": "object",
       "required": [
-        "name",
-        "discovery"
+        "name"
       ],
       "properties": {
         "name": {
@@ -401,12 +363,6 @@
         },
         "module": {
           "$ref": "#/definitions/moduleName"
-        },
-        "discovery": {
-          "enum": [
-            "explicit",
-            "module"
-          ]
         },
         "sources": {
           "$ref": "#/definitions/pathArray"
@@ -426,32 +382,9 @@
           }
         }
       },
-      "oneOf": [
+      "allOf": [
         {
-          "properties": {
-            "discovery": {
-              "enum": [
-                "explicit"
-              ]
-            }
-          },
-          "allOf": [
-            {
-              "$ref": "#/definitions/explicitSources"
-            }
-          ]
-        },
-        {
-          "required": [
-            "module"
-          ],
-          "properties": {
-            "discovery": {
-              "enum": [
-                "module"
-              ]
-            }
-          }
+          "$ref": "#/definitions/targetSources"
         }
       ],
       "additionalProperties": false

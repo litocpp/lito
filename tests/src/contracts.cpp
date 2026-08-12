@@ -29,6 +29,7 @@ namespace
 
 inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/empty-target-array"_str,
+    "manifest/discovery-field"_str,
     "manifest/git/commit-invalid"_str,
     "manifest/git/multiple-selectors"_str,
     "manifest/git/path-and-git"_str,
@@ -497,6 +498,24 @@ TEST(Contracts, PackageManifestOwnsTypedTargetCollection) {
     EXPECT_EQ(tests, usize(2));
     EXPECT_EQ(benchmarks, usize(2));
     EXPECT_EQ(no_stdlib, usize(3));
+
+    for (const auto& target : loaded->targets) {
+        EXPECT_EQ(lito::package_target_source(target).discovery,
+                  lito::SourceDiscoveryMode::Explicit);
+    }
+
+    auto module = lito::load_package_manifest(
+        root("manifest/toml-module/directory-markers"_str).as_path());
+    ASSERT_TRUE(module.is_ok());
+    ASSERT_EQ(module->targets.len(), usize(1));
+    EXPECT_EQ(lito::package_target_source(module->targets[usize {}]).discovery,
+              lito::SourceDiscoveryMode::Module);
+
+    auto groups = lito::load_package_manifest(root("project/compile-lib"_str).as_path());
+    ASSERT_TRUE(groups.is_ok());
+    ASSERT_EQ(groups->targets.len(), usize(1));
+    EXPECT_EQ(lito::package_target_source(groups->targets[usize {}]).discovery,
+              lito::SourceDiscoveryMode::Explicit);
 }
 
 TEST(Contracts, ProjectProfileDefaultsAndRootOwnershipAreTyped) {

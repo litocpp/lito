@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-installed-config-directory"
 module = "cmake_installed_config_directory"
 archive = "cmake_installed_config_directory"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "LitoFixture"

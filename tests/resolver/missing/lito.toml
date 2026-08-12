@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-resolver-missing"
 module = "fixture.resolver.missing"
 archive = "fixture.resolver.missing"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.missing]

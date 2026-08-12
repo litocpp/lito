@@ -337,25 +337,23 @@ auto parse_target_source(const Toml& value, ref<str> context, bool module_requir
         return failure<TargetSourceManifest>(
             rstd::format("{}.module must be a valid module name", context));
     }
-    auto       discovery          = rstd_try(required_string(value, "discovery"_str, context));
-    const auto explicit_discovery = discovery.as_str() == "explicit"_str;
-    const auto module_discovery   = discovery.as_str() == "module"_str;
-    if (! explicit_discovery && ! module_discovery) {
+    auto source_value = member(value, "sources"_str);
+    auto group_value  = member(value, "source-groups"_str);
+    auto groups       = rstd_try(parse_source_groups(
+        group_value, rstd::format("{}.source-groups", context).as_str()));
+    auto sources      = rstd_try(declared_paths(
+        source_value, rstd::format("{}.sources", context).as_str(), false));
+    const auto module_discovery = source_value.is_none() && group_value.is_none();
+    if (! module_discovery && sources.is_empty() && groups.is_empty()) {
         return failure<TargetSourceManifest>(
-            rstd::format("{}.discovery must be explicit or module", context));
+            rstd::format("{} must contain sources or source-groups", context));
     }
-    if ((module_required || module_discovery) && module.is_none()) {
+    if (module_required && module.is_none()) {
         return failure<TargetSourceManifest>(rstd::format("{}.module is required", context));
     }
-    auto groups = rstd_try(parse_source_groups(member(value, "source-groups"_str),
-                                               rstd::format("{}.source-groups", context).as_str()));
-    auto sources = rstd_try(declared_paths(member(value, "sources"_str),
-                                           rstd::format("{}.sources", context).as_str(),
-                                           explicit_discovery && groups.is_empty()));
     return Ok(TargetSourceManifest {
         .module = rstd::move(module),
-        .discovery =
-            explicit_discovery ? SourceDiscoveryMode::Explicit : SourceDiscoveryMode::Module,
+        .discovery = module_discovery ? SourceDiscoveryMode::Module : SourceDiscoveryMode::Explicit,
         .declared_sources          = rstd::move(sources),
         .conditional_source_groups = rstd::move(groups),
     });

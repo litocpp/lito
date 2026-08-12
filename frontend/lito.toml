@@ -6,7 +6,6 @@ version.workspace = true
 name = "lito-frontend"
 module = "lito.frontend"
 archive = "lito.frontend"
-discovery = "module"
 
 [dependencies.rstd-std]
 workspace = true

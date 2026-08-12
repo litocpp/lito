@@ -1,0 +1,9 @@
+[package]
+name = "discovery-field"
+version = "0.1.0"
+
+[lib]
+name = "discovery-field"
+module = "fixture.discovery.field"
+archive = "fixture.discovery.field"
+discovery = "module"

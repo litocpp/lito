@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-workspace-inherited-app"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [dependencies.fixture-workspace-inherited-library]

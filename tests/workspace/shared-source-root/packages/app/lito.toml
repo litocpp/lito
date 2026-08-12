@@ -5,7 +5,6 @@ source-root = "../.."
 
 [[bin]]
 name = "fixture-shared-source-root-app"
-discovery = "explicit"
 sources = ["app/main.cpp"]
 
 [dependencies.fixture-shared-source-root-library]

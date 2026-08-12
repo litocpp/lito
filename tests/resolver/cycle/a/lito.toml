@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-cycle-a"
 module = "fixture.cycle.a"
 archive = "fixture.cycle.a"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-cycle-b]

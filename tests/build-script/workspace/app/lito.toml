@@ -4,7 +4,6 @@ version = { workspace = true }
 
 [[bin]]
 name = "configure-workspace"
-discovery = "explicit"
 sources = ["src/main.cpp"]
 
 [usage]

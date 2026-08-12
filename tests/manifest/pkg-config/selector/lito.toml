@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "pkg-config-selector"
 module = "pkg_config_selector"
 archive = "pkg_config_selector"
-discovery = "module"
 
 [external-dependencies.pkg-config.curl]
 module = "libcurl"

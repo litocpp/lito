@@ -4,7 +4,6 @@ version = "0.1.0"
 
 [[bin]]
 name = "fixture-multiple-primary-modules"
-discovery = "explicit"
 sources = [
   "src/alpha.cppm",
   "src/alpha-detail.cppm",

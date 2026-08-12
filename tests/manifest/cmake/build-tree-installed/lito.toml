@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-build-tree-installed"
 module = "cmake_build_tree_installed"
 archive = "cmake_build_tree_installed"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "Fixture"

@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-installed-cache"
 module = "cmake_installed_cache"
 archive = "cmake_installed_cache"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "LitoFixture"

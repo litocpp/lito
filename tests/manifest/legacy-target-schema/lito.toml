@@ -5,5 +5,4 @@ module = "fixture.legacy"
 
 [library]
 archive = "fixture-legacy"
-discovery = "explicit"
 sources = ["lib.cppm"]

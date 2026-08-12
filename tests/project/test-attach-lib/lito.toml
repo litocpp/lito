@@ -6,7 +6,6 @@ version = { workspace = true }
 name = "fixture-test-attach-lib"
 module = "fixture.test.attach"
 archive = "fixture_test_attach"
-discovery = "explicit"
 sources = ["src/lib.cppm", "src/internal.cppm"]
 
 [usage]

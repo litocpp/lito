@@ -4,5 +4,4 @@ version = "0.1.0"
 
 [[test]]
 name = "fixture-conventional-boundary-dependency-test"
-discovery = "explicit"
 sources = ["main.cpp"]

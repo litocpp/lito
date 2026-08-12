@@ -4,5 +4,4 @@ version.workspace = true
 
 [[test]]
 name = "fixture-conventional-invalid-version-test"
-discovery = "explicit"
 sources = ["main.cpp"]

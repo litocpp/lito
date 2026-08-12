@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-workspace-dependency-reference-mixed"
 module = "fixture.workspace_dependency_reference_mixed"
 archive = "fixture-workspace-dependency-reference-mixed"
-discovery = "module"
 
 [dependencies.mixed]
 workspace = true

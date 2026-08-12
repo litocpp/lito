@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-architecture-archives"
 module = "cmake_architecture_archives"
 archive = "cmake_architecture_archives"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "Fixture"

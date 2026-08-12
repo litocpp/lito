@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-conventional-bench-helper"
 module = "fixture.conventional.bench_helper"
 archive = "fixture.conventional.bench-helper"
-discovery = "explicit"
 sources = ["lib.cppm"]

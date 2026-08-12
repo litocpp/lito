@@ -6,5 +6,4 @@ version = { workspace = true }
 name = "fixture-test-lib"
 module = "fixture.test.lib"
 archive = "fixture_test_lib"
-discovery = "explicit"
 sources = ["src/lib.cppm"]

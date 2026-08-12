@@ -7,5 +7,4 @@ target = { family = "windows" }
 name = "fixture-windows-only"
 module = "fixture.windows.only"
 archive = "fixture_windows_only"
-discovery = "explicit"
 sources = ["src/lib.cppm"]

@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-git-path-and-git"
 module = "fixture.git.path_and_git"
 archive = "fixture.git.path_and_git"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-dependency]

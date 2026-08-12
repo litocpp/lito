@@ -3,7 +3,6 @@ name = "fixture-conventional-workspace-test"
 
 [[test]]
 name = "fixture-conventional-workspace-test"
-discovery = "explicit"
 sources = ["main.cpp"]
 
 [dependencies.fixture-conventional-workspace-library]

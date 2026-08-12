@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-git-url-fragment"
 module = "fixture.git.url_fragment"
 archive = "fixture.git.url_fragment"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-dependency]

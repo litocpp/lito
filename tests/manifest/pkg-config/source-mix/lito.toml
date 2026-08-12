@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "pkg-config-source-mix"
 module = "pkg_config_source_mix"
 archive = "pkg_config_source_mix"
-discovery = "module"
 
 [external-dependencies.pkg-config.curl]
 path = "../valid"

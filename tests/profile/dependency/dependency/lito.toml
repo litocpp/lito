@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-profile-dependency"
 module = "fixture.profile_dependency"
 archive = "fixture-profile-dependency"
-discovery = "explicit"
 sources = ["library.cppm"]
 
 [profile]

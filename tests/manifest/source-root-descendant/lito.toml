@@ -5,5 +5,4 @@ source-root = "src"
 
 [[bin]]
 name = "fixture-source-root-descendant"
-discovery = "explicit"
 sources = ["main.cpp"]

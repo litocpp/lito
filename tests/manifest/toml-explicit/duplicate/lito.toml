@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture-duplicate"
 module = "fixture.duplicate"
 archive = "fixture.duplicate"
-discovery = "explicit"
 sources = ["source.cppm", "source.cppm"]

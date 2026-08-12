@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-same-root"
 module = "fixture.same.root"
 archive = "fixture.same.root"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-same-wrapper-one]

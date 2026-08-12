@@ -6,5 +6,4 @@ version.workspace = true
 name = "fixture-workspace-duplicate-name"
 module = "fixture.workspace.duplicate_name.one"
 archive = "fixture.workspace.duplicate_name.one"
-discovery = "explicit"
 sources = ["source.cppm"]

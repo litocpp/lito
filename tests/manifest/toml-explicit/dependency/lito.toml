@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-dependency"
 module = "fixture.dependency"
 archive = "fixture.dependency"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies."fixture.base"]

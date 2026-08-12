@@ -32,9 +32,11 @@ version = "0.1.0"
 
 [[bin]]
 name = "hello"
-discovery = "explicit"
 sources = ["src/main.cpp"]
 ```
+
+Declaring `sources` or `source-groups` makes the target use those sources explicitly.   
+If neither is declared, Lito will discovery `src/lib.cppm` or `src/main.cppm`.
 
 Then run:
 

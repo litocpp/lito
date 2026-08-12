@@ -6,5 +6,4 @@ version = "0.1.0"
 name = "fixture.package.dot"
 module = "fixture.package.dot"
 archive = "fixture.package.dot"
-discovery = "explicit"
 sources = ["source.cppm"]

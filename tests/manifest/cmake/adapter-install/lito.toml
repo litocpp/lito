@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "cmake-adapter-install"
 module = "cmake_adapter_install"
 archive = "cmake_adapter_install"
-discovery = "module"
 
 [external-dependencies.cmake.fixture]
 find-package = "Fixture"

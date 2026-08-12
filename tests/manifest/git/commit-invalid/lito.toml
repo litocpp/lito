@@ -6,7 +6,6 @@ version = "0.1.0"
 name = "fixture-git-commit-invalid"
 module = "fixture.git.commit_invalid"
 archive = "fixture.git.commit_invalid"
-discovery = "explicit"
 sources = ["source.cppm"]
 
 [dependencies.fixture-dependency]

@@ -6,7 +6,6 @@ version.workspace = true
 name = "fixture-associated-workspace-library"
 module = "fixture.associated.workspace"
 archive = "fixture.associated.workspace"
-discovery = "explicit"
 sources = ["lib.cppm"]
 
 [dev-dependencies.fixture-associated-workspace-bench-helper]
