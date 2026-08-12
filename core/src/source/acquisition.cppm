@@ -6,6 +6,7 @@ export module lito.source:acquisition;
 import rstd;
 import lito.error;
 import lito.source.contract;
+import lito.build.contract;
 import lito.system.environment;
 import lito.system.storage;
 import lito.system.process;
@@ -64,8 +65,8 @@ struct ExternalSourceFetchOutcome {
 auto acquire_archive_source(ref<str>                          url,
                             ref<str>                          sha256,
                             ref<rstd::path::Path>             cmake_executable,
-                            const ResolvedProcessEnvironment& environment)
-    -> Result<AcquiredSource> {
+                            const ResolvedProcessEnvironment& environment,
+                            BuildObserver observer = {}) -> Result<AcquiredSource> {
     auto executable = cmake_executable.to_str();
     if (executable.is_none()) {
         return source_failure<AcquiredSource>(rstd::format(
@@ -169,6 +170,10 @@ auto acquire_archive_source(ref<str>                          url,
     arguments.push(rstd::format("-DARCHIVE_FILE={}", *archive_text));
     arguments.push(String::make("-P"_str));
     arguments.push(String::make(*script_path));
+    if (observer.notify != nullptr) {
+        observer.notify(observer.context,
+                        BuildEvent { BuildEventKind::Fetch, url, archive.as_path() });
+    }
     auto downloaded = run_command(arguments, environment);
     if (downloaded.is_err()) {
         return source_failure<AcquiredSource>(
@@ -270,8 +275,8 @@ auto acquire_archive_source(ref<str>                          url,
 auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               usize                             jobs,
                               ref<rstd::path::Path>             cmake_executable,
-                              const ResolvedProcessEnvironment& environment)
-    -> Result<Vec<AcquiredSource>> {
+                              const ResolvedProcessEnvironment& environment,
+                              BuildObserver observer = {}) -> Result<Vec<AcquiredSource>> {
     if (jobs == usize {}) {
         return source_failure<Vec<AcquiredSource>>(
             "archive source fetch jobs must be greater than zero"_str);
@@ -309,22 +314,26 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (usize index {}; index < unique.len(); ++index) {
-        auto request    = rstd::move(unique[index]);
-        auto executable = PathBuf::from(cmake_executable);
-        auto task_env   = environment.clone();
-        auto submitted  = group.submit(
-            [index,
-             request    = rstd::move(request),
-             executable = rstd::move(executable),
-             task_env   = rstd::move(task_env)]() mutable -> Result<FetchedArchiveSource> {
-                auto acquired = acquire_archive_source(
-                    request.url.as_str(), request.sha256.as_str(), executable.as_path(), task_env);
-                if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                return Ok(FetchedArchiveSource {
-                    .request = index,
-                    .source  = rstd::move(acquired).unwrap(),
-                });
+        auto request       = rstd::move(unique[index]);
+        auto executable    = PathBuf::from(cmake_executable);
+        auto task_env      = environment.clone();
+        auto task_observer = observer;
+        auto submitted = group.submit([index,
+                                       request    = rstd::move(request),
+                                       executable = rstd::move(executable),
+                                       task_env   = rstd::move(task_env),
+                                       task_observer]() mutable -> Result<FetchedArchiveSource> {
+            auto acquired = acquire_archive_source(request.url.as_str(),
+                                                   request.sha256.as_str(),
+                                                   executable.as_path(),
+                                                   task_env,
+                                                   task_observer);
+            if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+            return Ok(FetchedArchiveSource {
+                .request = index,
+                .source  = rstd::move(acquired).unwrap(),
             });
+        });
         if (submitted.is_err()) {
             return source_failure<Vec<AcquiredSource>>(
                 "cannot submit archive source fetch task"_str);

@@ -6,6 +6,7 @@ import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
 import lito.platform.contract;
+import lito.build.contract;
 import lito.manifest;
 import lito.package;
 import lito.system.environment;
@@ -142,10 +143,11 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                                                 const TargetInfo*                 target,
                                                 ToolResolver&                     tool_resolver,
                                                 const ResolvedProcessEnvironment& environment,
-                                                usize                             jobs = usize(1))
+                                                usize                             jobs = usize(1),
+                                                BuildObserver                     observer = {})
     -> Result<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment(
-        selection.root.as_path(), rstd::move(options), tool_resolver, environment, jobs);
+        selection.root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph      = rstd::move(resolved).unwrap();
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();

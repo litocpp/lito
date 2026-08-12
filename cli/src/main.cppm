@@ -19,8 +19,8 @@ struct EventContext {
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (event.completed) return;
-    if (! context.verbose && event.kind != lito::BuildEventKind::Scan &&
-        event.kind != lito::BuildEventKind::Compile &&
+    if (! context.verbose && event.kind != lito::BuildEventKind::Fetch &&
+        event.kind != lito::BuildEventKind::Scan && event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::CMakeConfigure &&
         event.kind != lito::BuildEventKind::CMakeBuild &&
@@ -123,7 +123,7 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation = rstd::move(parsed).as_Parsed();
+    auto invocation    = rstd::move(parsed).as_Parsed();
     auto loaded_config = lito::load_project_config(
         invocation.working_directory.as_path(),
         invocation.no_config ? lito::ConfigLoadMode::Disabled : lito::ConfigLoadMode::Enabled);
@@ -135,11 +135,16 @@ extern "C++" int main() {
     auto project = rstd::move(loaded_config).unwrap();
 
     if (invocation.command.is_Update()) {
-        auto request = lito::UpdateRequest {
+        auto event_context = EventContext {};
+        auto request       = lito::UpdateRequest {
             .root        = rstd::move(project.root),
             .environment = rstd::move(project.environment),
             .lock        = rstd::move(project.lock),
             .sources     = rstd::move(project.sources),
+            .observer    = Some(lito::BuildObserver {
+                .context = rstd::addressof(event_context),
+                .notify  = observe,
+            }),
         };
         auto result = lito::update_dependencies(request);
         if (result.is_err()) {
@@ -163,7 +168,12 @@ extern "C++" int main() {
         request.lock               = rstd::move(project.lock);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
-        request.mode = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
+        request.mode       = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
+        auto event_context = EventContext {};
+        request.observer   = Some(lito::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
 
         auto result = lito::format(request);
         if (result.is_err()) {

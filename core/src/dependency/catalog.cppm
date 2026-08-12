@@ -142,10 +142,13 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
         });
     }
     if (! archive_requests.is_empty()) {
+        auto fetch_observer = BuildObserver {};
+        if (observer.is_some()) fetch_observer = *observer;
         auto fetched = acquire_archive_frontier(rstd::move(archive_requests),
                                                 jobs,
                                                 resolved_cmake.executable.as_path(),
-                                                process_environment);
+                                                process_environment,
+                                                fetch_observer);
         if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
         for (usize index {}; index < fetched->len(); ++index) {
             auto acquired    = rstd::move((*fetched)[index]);

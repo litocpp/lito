@@ -345,6 +345,26 @@ auto resolved_git_commit(const lito::ResolvedPackageGraph& graph) -> Option<ref<
     return None();
 }
 
+struct FetchEventCapture {
+    ref<str> expected_url;
+    usize    count {};
+    bool     source_matches {};
+    bool     destination_matches {};
+};
+
+void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
+    if (event.kind != lito::BuildEventKind::Fetch) return;
+    auto& context = *static_cast<FetchEventCapture*>(raw_context);
+    ++context.count;
+    context.source_matches =
+        event.target.starts_with(context.expected_url) && event.target.ends_with("#HEAD"_str);
+    auto name = event.path.file_name();
+    if (name.is_some()) {
+        auto text                   = name->to_str();
+        context.destination_matches = text.is_some() && *text == "repository.git"_str;
+    }
+}
+
 auto write_executable(ref<rstd::path::Path> path) -> bool {
     if (rstd::fs::write(path, "fixture\n"_str.as_bytes()).is_err()) return false;
 #if RSTD_OS_UNIX
@@ -453,6 +473,7 @@ auto external_usage_metadata(lito::DependencyVisibility     visibility,
 
 TEST(Contracts, UserFacingEnumsImplementDisplay) {
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Scan).as_str(), "scan"_str);
+    EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Fetch).as_str(), "fetch"_str);
     EXPECT_EQ(rstd::to_string(lito::BuildEventKind::CMakeQueryBuild).as_str(),
               "cmake-query-build"_str);
     EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Benchmark).as_str(),
@@ -504,8 +525,8 @@ TEST(Contracts, PackageManifestOwnsTypedTargetCollection) {
                   lito::SourceDiscoveryMode::Explicit);
     }
 
-    auto module = lito::load_package_manifest(
-        root("manifest/toml-module/directory-markers"_str).as_path());
+    auto module =
+        lito::load_package_manifest(root("manifest/toml-module/directory-markers"_str).as_path());
     ASSERT_TRUE(module.is_ok());
     ASSERT_EQ(module->targets.len(), usize(1));
     EXPECT_EQ(lito::package_target_source(module->targets[usize {}]).discovery,
@@ -2235,13 +2256,22 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
         .commit    = previous->clone(),
     });
     auto update_graph = external_git_graph(*url, lito::GitReference {});
+    auto fetch_events = FetchEventCapture { .expected_url = *url };
     auto updated =
         lito::prepare_external_dependency_sources(update_graph,
                                                   lito::PackageResolutionOptions {
                                                       .git = lito::GitResolutionMode::Refresh,
                                                       .git_sources = rstd::move(locked_sources),
+                                                  },
+                                                  usize(1),
+                                                  lito::BuildObserver {
+                                                      .context = rstd::addressof(fetch_events),
+                                                      .notify  = capture_fetch,
                                                   });
     ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(fetch_events.count, usize(1));
+    EXPECT_TRUE(fetch_events.source_matches);
+    EXPECT_TRUE(fetch_events.destination_matches);
     auto updated_commit = resolved_git_commit(update_graph);
     ASSERT_TRUE(updated_commit.is_some());
     EXPECT_EQ(*updated_commit, current->as_str());
@@ -2289,13 +2319,12 @@ TEST(Contracts, DependencyUpdateWritesConfiguredLocalLock) {
     auto local_exists = rstd::fs::exists(configured_lock.as_path());
     ASSERT_TRUE(local_exists.is_ok());
     EXPECT_TRUE(*local_exists);
-    auto root_lock = directory.join(rstd::path::PathBuf::from("lito.lock"_str).as_path());
+    auto root_lock   = directory.join(rstd::path::PathBuf::from("lito.lock"_str).as_path());
     auto root_exists = rstd::fs::exists(root_lock.as_path());
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_FALSE(*root_exists);
 
-    auto defaults =
-        lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::Disabled);
+    auto defaults = lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::Disabled);
     ASSERT_TRUE(defaults.is_ok());
     auto repository_updated = lito::update_dependencies(lito::UpdateRequest {
         .root = defaults->root.clone(),

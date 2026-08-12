@@ -9,6 +9,7 @@ import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
 import lito.build.profile_contract;
+import lito.build.contract;
 import lito.source.contract;
 import lito.system.storage;
 import lito.manifest;
@@ -33,6 +34,7 @@ class SourceManager {
     IndexMap                          source_identities_ { IndexMap::make() };
     ToolResolver*                     resolver_ {};
     const ResolvedProcessEnvironment* environment_ {};
+    BuildObserver                     observer_;
     Option<PathBuf>                   git_;
 
     struct FetchedPackageSource {
@@ -141,6 +143,12 @@ class SourceManager {
         return Ok(rstd::move(arguments));
     }
 
+    auto emit_fetch(ref<str> source, ref<rstd::path::Path> destination) const noexcept -> void {
+        if (observer_.notify == nullptr) return;
+        observer_.notify(observer_.context,
+                         BuildEvent { BuildEventKind::Fetch, source, destination });
+    }
+
     auto patched_path(ref<str> url) -> Result<Option<ref<rstd::path::Path>>> {
         auto matched = Option<ref<rstd::path::Path>> {};
         for (const auto& patch : options_.sources.patches) {
@@ -245,7 +253,7 @@ class SourceManager {
         return Ok(output->exit_code == i32 {});
     }
 
-    auto fetch(ref<rstd::path::Path> repository, ref<str> revision) -> Result<empty> {
+    auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision) -> Result<empty> {
         auto arguments = rstd_try(git_command());
         arguments.push(String::make("--git-dir"_str));
         auto path = push_path(arguments, repository);
@@ -255,6 +263,8 @@ class SourceManager {
         arguments.push(String::make("--no-tags"_str));
         arguments.push(String::make("origin"_str));
         arguments.push(String::make(revision));
+        auto source = rstd::format("{}#{}", url, revision);
+        emit_fetch(source.as_str(), repository);
         return git_status(rstd::move(arguments), "Git source fetch"_str, *environment_);
     }
 
@@ -277,13 +287,14 @@ class SourceManager {
     }
 
     auto resolve_commit(ref<rstd::path::Path>        repository,
+                        ref<str>                     url,
                         const GitReference&          reference,
                         Option<ref<LockedGitSource>> locked) -> Result<String> {
         if (locked.is_some()) {
             auto present = object_exists(repository, (*locked)->commit.as_str());
             if (present.is_err()) return Err(rstd::move(present).unwrap_err());
             if (! *present) {
-                auto fetched = fetch(repository, (*locked)->commit.as_str());
+                auto fetched = fetch(repository, url, (*locked)->commit.as_str());
                 if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
             }
             return rev_parse(repository, (*locked)->commit.as_str());
@@ -298,7 +309,7 @@ class SourceManager {
                    reference.kind == GitReferenceKind::Commit) {
             revision = reference.value.clone();
         }
-        auto fetched = fetch(repository, revision.as_str());
+        auto fetched = fetch(repository, url, revision.as_str());
         if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
         return rev_parse(repository, "FETCH_HEAD"_str);
     }
@@ -527,7 +538,7 @@ class SourceManager {
         auto repo = repository(bucket.as_path(), url);
         if (repo.is_err()) return Err(rstd::move(repo).unwrap_err());
         auto repository_path = rstd::move(repo).unwrap();
-        auto commit          = resolve_commit(repository_path.as_path(), reference, pin);
+        auto commit          = resolve_commit(repository_path.as_path(), url, reference, pin);
         if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
         auto precise_commit = rstd::move(commit).unwrap();
         auto id             = git_source_identity(url, precise_commit.as_str());
@@ -598,11 +609,13 @@ public:
     explicit SourceManager(ref<rstd::path::Path>             graph_root,
                            PackageResolutionOptions          options,
                            ToolResolver&                     resolver,
-                           const ResolvedProcessEnvironment& environment)
+                           const ResolvedProcessEnvironment& environment,
+                           BuildObserver                     observer = {})
         : graph_root_(PathBuf::from(graph_root)),
           options_(rstd::move(options)),
           resolver_(rstd::addressof(resolver)),
-          environment_(rstd::addressof(environment)) {}
+          environment_(rstd::addressof(environment)),
+          observer_(observer) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
         auto primary = acquire_path(root, true);
@@ -668,23 +681,23 @@ public:
             auto graph_root  = graph_root_.clone();
             auto options     = options_.clone();
             auto environment = environment_->clone();
-            auto submitted   = group.submit(
-                [index,
-                 request     = rstd::move(request),
-                 graph_root  = rstd::move(graph_root),
-                 options     = rstd::move(options),
-                 environment = rstd::move(environment)]() mutable -> Result<FetchedPackageSource> {
-                    auto resolver = ToolResolver(environment);
-                    auto manager  = SourceManager(
-                        graph_root.as_path(), rstd::move(options), resolver, environment);
-                    auto acquired =
-                        manager.acquire(request.source, request.declaring_root.as_path());
-                    if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                    return Ok(FetchedPackageSource {
-                        .request = index,
-                        .entry   = manager.take_entry(*acquired),
-                    });
+            auto observer    = observer_;
+            auto submitted   = group.submit([index,
+                                             request     = rstd::move(request),
+                                             graph_root  = rstd::move(graph_root),
+                                             options     = rstd::move(options),
+                                             environment = rstd::move(environment),
+                                             observer]() mutable -> Result<FetchedPackageSource> {
+                auto resolver = ToolResolver(environment);
+                auto manager  = SourceManager(
+                    graph_root.as_path(), rstd::move(options), resolver, environment, observer);
+                auto acquired = manager.acquire(request.source, request.declaring_root.as_path());
+                if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+                return Ok(FetchedPackageSource {
+                    .request = index,
+                    .entry   = manager.take_entry(*acquired),
                 });
+            });
             if (submitted.is_err()) {
                 return source_failure<Vec<usize>>("cannot submit package source fetch task"_str);
             }
@@ -753,27 +766,28 @@ public:
             auto graph_root  = graph_root_.clone();
             auto options     = options_.clone();
             auto environment = environment_->clone();
-            auto submitted   = group.submit(
-                [index,
-                 request     = rstd::move(request),
-                 graph_root  = rstd::move(graph_root),
-                 options     = rstd::move(options),
-                 environment = rstd::move(environment)]() mutable -> Result<FetchedExternalSource> {
-                    auto resolver = ToolResolver(environment);
-                    auto manager  = SourceManager(
-                        graph_root.as_path(), rstd::move(options), resolver, environment);
-                    auto acquired =
-                        manager.acquire_external(request.source, request.declaring_root.as_path());
-                    if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                    return Ok(FetchedExternalSource {
-                        .request = index,
-                        .outcome =
-                            ExternalSourceFetchOutcome {
-                                .acquired = rstd::move(acquired).unwrap(),
-                                .sources  = manager.finish(),
-                            },
-                    });
+            auto observer    = observer_;
+            auto submitted   = group.submit([index,
+                                             request     = rstd::move(request),
+                                             graph_root  = rstd::move(graph_root),
+                                             options     = rstd::move(options),
+                                             environment = rstd::move(environment),
+                                             observer]() mutable -> Result<FetchedExternalSource> {
+                auto resolver = ToolResolver(environment);
+                auto manager  = SourceManager(
+                    graph_root.as_path(), rstd::move(options), resolver, environment, observer);
+                auto acquired =
+                    manager.acquire_external(request.source, request.declaring_root.as_path());
+                if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+                return Ok(FetchedExternalSource {
+                    .request = index,
+                    .outcome =
+                        ExternalSourceFetchOutcome {
+                            .acquired = rstd::move(acquired).unwrap(),
+                            .sources  = manager.finish(),
+                        },
                 });
+            });
             if (submitted.is_err()) {
                 return source_failure<Vec<ExternalSourceFetchOutcome>>(
                     "cannot submit external source fetch task"_str);

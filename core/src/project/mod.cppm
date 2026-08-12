@@ -46,6 +46,10 @@ struct StartedProjectResolution {
     PackageResolutionOptions external;
 };
 
+auto observer_value(const Option<BuildObserver>& observer) -> BuildObserver {
+    return observer.is_some() ? *observer : BuildObserver {};
+}
+
 auto start_project_resolution(const PackageSelection&           selection,
                               PackageSelectionPurpose           purpose,
                               const PackageSourceConfig&        sources,
@@ -55,14 +59,20 @@ auto start_project_resolution(const PackageSelection&           selection,
                               const TargetInfo*                 target,
                               ToolResolver&                     tool_resolver,
                               const ResolvedProcessEnvironment& environment,
-                              usize jobs = usize(1)) -> Result<StartedProjectResolution> {
-    auto lock_session =
-        rstd_try(load_lock_session(selection.root.as_path(), lock, locked, git));
-    auto resolution          = lock_session.take_resolution_options();
-    resolution.sources       = sources.clone();
+                              usize                             jobs = usize(1),
+                              BuildObserver observer = {}) -> Result<StartedProjectResolution> {
+    auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), lock, locked, git));
+    auto resolution    = lock_session.take_resolution_options();
+    resolution.sources = sources.clone();
     auto external_resolution = resolution.clone();
-    auto project             = rstd_try(resolve_package_selection_with_environment(
-        selection, purpose, rstd::move(resolution), target, tool_resolver, environment, jobs));
+    auto project = rstd_try(resolve_package_selection_with_environment(selection,
+                                                                       purpose,
+                                                                       rstd::move(resolution),
+                                                                       target,
+                                                                       tool_resolver,
+                                                                       environment,
+                                                                       jobs,
+                                                                       observer));
     return Ok(StartedProjectResolution {
         .selection = rstd::move(project),
         .lock      = rstd::move(lock_session),
@@ -79,24 +89,26 @@ auto resolve_project(const PackageSelection&           selection,
                      const TargetInfo*                 target,
                      ToolResolver&                     tool_resolver,
                      const ResolvedProcessEnvironment& environment,
-                     usize jobs = usize(1)) -> Result<ProjectResolution> {
-    auto started = rstd_try(start_project_resolution(
-        selection,
-        purpose,
-        sources,
-        lock_config,
-        locked,
-        git,
-        target,
-        tool_resolver,
-        environment,
-        jobs));
+                     usize                             jobs     = usize(1),
+                     BuildObserver                     observer = {}) -> Result<ProjectResolution> {
+    auto started = rstd_try(start_project_resolution(selection,
+                                                     purpose,
+                                                     sources,
+                                                     lock_config,
+                                                     locked,
+                                                     git,
+                                                     target,
+                                                     tool_resolver,
+                                                     environment,
+                                                     jobs,
+                                                     observer));
     rstd_try(prepare_external_dependency_sources(started.selection.graph,
                                                  started.selection.selected_package_names,
                                                  rstd::move(started.external),
                                                  tool_resolver,
                                                  environment,
-                                                 jobs));
+                                                 jobs,
+                                                 observer));
     auto lock = rstd_try(sync_lock(started.selection.graph, rstd::move(started.lock)));
     return Ok(ProjectResolution {
         .selection = rstd::move(started.selection),
@@ -116,7 +128,9 @@ auto resolve_project_selection(const PackageSelection&           selection,
                                bool                              locked,
                                ToolResolver&                     tool_resolver,
                                const ResolvedProcessEnvironment& environment,
-                               usize jobs = usize(1)) -> Result<ResolvedPackageSelection> {
+                               usize                             jobs     = usize(1),
+                               const Option<BuildObserver>&      observer = None())
+    -> Result<ResolvedPackageSelection> {
     auto started = start_project_resolution(selection,
                                             purpose,
                                             sources,
@@ -126,7 +140,8 @@ auto resolve_project_selection(const PackageSelection&           selection,
                                             nullptr,
                                             tool_resolver,
                                             environment,
-                                            jobs);
+                                            jobs,
+                                            observer_value(observer));
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
     return Ok(rstd::move(started).unwrap().selection);
 }
@@ -165,7 +180,8 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                              rstd::addressof(platform.effective_target),
                                              tool_resolver,
                                              environment,
-                                             jobs));
+                                             jobs,
+                                             observer_value(observer)));
     auto project  = rstd::move(resolved.selection);
     auto resolved_configuration                 = configuration.clone();
     resolved_configuration.toolchain.compiler   = PathBuf::from(toolchain.compiler_path());
@@ -255,7 +271,8 @@ auto update_project_dependencies(const UpdateRequest& request) -> Result<LockSta
                                              nullptr,
                                              tool_resolver,
                                              environment,
-                                             jobs));
+                                             jobs,
+                                             observer_value(request.observer)));
     return Ok(resolved.lock);
 }
 

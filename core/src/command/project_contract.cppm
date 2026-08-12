@@ -7,6 +7,7 @@ import lito.system.environment_contract;
 import lito.source.contract;
 import lito.workspace.contract;
 import lito.lock.contract;
+import lito.build.contract;
 
 using namespace rstd::prelude;
 
@@ -26,6 +27,7 @@ struct FormatRequest {
     LockConfig             lock;
     PackageSourceConfig    sources;
     FormatMode             mode { FormatMode::Write };
+    Option<BuildObserver>  observer;
 };
 
 struct UpdateRequest {
@@ -33,6 +35,7 @@ struct UpdateRequest {
     ProcessEnvironmentSpec environment;
     LockConfig             lock;
     PackageSourceConfig    sources;
+    Option<BuildObserver>  observer;
 };
 
 struct FormatSummary {

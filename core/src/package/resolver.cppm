@@ -8,6 +8,7 @@ import lito.error;
 import lito.manifest.contract;
 import lito.package.identity;
 import lito.build.profile_contract;
+import lito.build.contract;
 import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
@@ -103,9 +104,10 @@ public:
                       PackageResolutionOptions          options,
                       ToolResolver&                     resolver,
                       const ResolvedProcessEnvironment& environment,
-                      usize                             jobs)
+                      usize                             jobs,
+                      BuildObserver                     observer)
         : root_directory_(PathBuf::from(root_directory)),
-          sources_(root_directory, rstd::move(options), resolver, environment),
+          sources_(root_directory, rstd::move(options), resolver, environment, observer),
           jobs_(jobs) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
@@ -263,7 +265,9 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                                             PackageResolutionOptions          options,
                                             ToolResolver&                     tool_resolver,
                                             const ResolvedProcessEnvironment& environment,
-                                            usize jobs = usize(1)) -> Result<ResolvedPackageGraph> {
+                                            usize                             jobs     = usize(1),
+                                            BuildObserver                     observer = {})
+    -> Result<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return failure<ResolvedPackageGraph>(
             String::make("source fetch jobs must be greater than zero"_str));
@@ -275,9 +279,10 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                          requested_root,
                          rstd::move(canonical).unwrap_err()));
     }
-    auto root     = rstd::move(canonical).unwrap();
-    auto resolver = Resolver(root.as_path(), rstd::move(options), tool_resolver, environment, jobs);
-    auto source   = resolver.acquire_root(root.as_path());
+    auto root = rstd::move(canonical).unwrap();
+    auto resolver =
+        Resolver(root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer);
+    auto source = resolver.acquire_root(root.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto project_sources   = rstd::move(source).unwrap();
     auto root_source       = project_sources.primary;

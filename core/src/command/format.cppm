@@ -46,7 +46,9 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
                                                    request.lock,
                                                    false,
                                                    tool_resolver,
-                                                   *environment);
+                                                   *environment,
+                                                   usize(1),
+                                                   request.observer);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto selection = rstd::move(resolved).unwrap();
 

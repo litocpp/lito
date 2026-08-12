@@ -147,7 +147,8 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
                                          PackageResolutionOptions          options,
                                          ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment& environment,
-                                         usize jobs = usize(1)) -> Result<empty> {
+                                         usize                             jobs = usize(1),
+                                         BuildObserver observer = {}) -> Result<empty> {
     if (jobs == usize {}) {
         return dependency_failure<empty>("source fetch jobs must be greater than zero"_str);
     }
@@ -200,8 +201,8 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
     }
     if (tasks.is_empty()) return Ok(empty {});
 
-    auto source_manager =
-        SourceManager(graph.root_directory.as_path(), rstd::move(options), resolver, environment);
+    auto source_manager = SourceManager(
+        graph.root_directory.as_path(), rstd::move(options), resolver, environment, observer);
     auto fetched_result =
         source_manager.acquire_external_frontier(rstd::move(fetch_requests), jobs);
     if (fetched_result.is_err()) return Err(rstd::move(fetched_result).unwrap_err());
@@ -278,23 +279,25 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
                                          PackageResolutionOptions          options,
                                          ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment& environment,
-                                         usize jobs = usize(1)) -> Result<empty> {
+                                         usize                             jobs = usize(1),
+                                         BuildObserver observer = {}) -> Result<empty> {
     auto selected = Vec<String>::with_capacity(graph.packages.len());
     for (const auto& package : graph.packages) {
         selected.push(package.manifest.name.clone());
     }
     return prepare_external_dependency_sources(
-        graph, selected, rstd::move(options), resolver, environment, jobs);
+        graph, selected, rstd::move(options), resolver, environment, jobs, observer);
 }
 
 auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
                                          PackageResolutionOptions options,
-                                         usize jobs = usize(1)) -> Result<empty> {
+                                         usize                    jobs     = usize(1),
+                                         BuildObserver            observer = {}) -> Result<empty> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
     auto resolver = ToolResolver(*environment);
     return prepare_external_dependency_sources(
-        graph, rstd::move(options), resolver, *environment, jobs);
+        graph, rstd::move(options), resolver, *environment, jobs, observer);
 }
 
 auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
