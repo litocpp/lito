@@ -147,10 +147,11 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                                                 PackageResolutionOptions          options,
                                                 const TargetInfo*                 target,
                                                 ToolResolver&                     tool_resolver,
-                                                const ResolvedProcessEnvironment& environment)
+                                                const ResolvedProcessEnvironment& environment,
+                                                usize                             jobs = usize(1))
     -> Result<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment(
-        selection.root.as_path(), rstd::move(options), tool_resolver, environment);
+        selection.root.as_path(), rstd::move(options), tool_resolver, environment, jobs);
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph      = rstd::move(resolved).unwrap();
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();

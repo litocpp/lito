@@ -234,6 +234,54 @@ auto fixture_cmake() -> lito::CMakeProviderConfig {
     };
 }
 
+auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
+                            const lito::ProfileSpec&                             profile,
+                            const lito::BuildPlatform&                           platform,
+                            const lito::CppArgumentParser&                       parser,
+                            usize                                                jobs = usize(1))
+    -> lito::Result<Vec<lito::ResolvedExternalDependency>> {
+    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto resolver = lito::ToolResolver(*environment);
+    auto provider = fixture_cmake();
+    auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
+    if (tool.is_err()) return Err(rstd::move(tool).unwrap_err());
+    provider.executable = rstd::move(tool).unwrap().executable;
+    auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
+    if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
+    provider    = rstd::move(identified).unwrap();
+    auto result = Vec<lito::ResolvedExternalDependency>::make();
+    for (const auto& declaration : declarations) {
+        auto requirement = lito::resolve_cmake_requirement_for_platform(declaration, platform);
+        if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
+        if (requirement->adapter.is_some() && requirement->adapter_identity.is_empty()) {
+            auto contents = rstd::fs::read_to_string(requirement->adapter->as_path());
+            if (contents.is_err()) {
+                return Err(lito::Error::make(lito::ErrorKind::Dependency,
+                                             rstd::format("cannot read CMake adapter '{}': {}",
+                                                          requirement->adapter->as_path(),
+                                                          rstd::move(contents).unwrap_err())));
+            }
+            requirement->adapter_identity =
+                rstd::format("{}\n{}", requirement->adapter->as_path(), contents->as_str());
+        }
+        auto plan = lito::plan_cmake_package(*requirement,
+                                             provider,
+                                             configuration(),
+                                             profile,
+                                             platform.compiler_default,
+                                             platform.effective_target.triple.as_str(),
+                                             jobs);
+        if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
+        auto snapshot = lito::execute_cmake_package(*plan, *environment);
+        if (snapshot.is_err()) return Err(rstd::move(snapshot).unwrap_err());
+        auto usage = lito::materialize_cmake_usage(*plan, *snapshot, parser);
+        if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+        result.push(rstd::move(usage).unwrap());
+    }
+    return Ok(rstd::move(result));
+}
+
 auto git_revision(ref<rstd::path::Path> repository, ref<str> revision) -> Option<String> {
     auto command = rstd::process::Command::make("git"_str);
     command.arg("-C"_str).arg(repository.as_os_str()).arg("rev-parse"_str).arg(revision);
@@ -590,15 +638,22 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
     auto build_configuration = configuration();
     auto build_arguments     = lito::parse_build_arguments(build_configuration, *parser);
     ASSERT_TRUE(build_arguments.is_ok());
+    auto profile = lito::make_profile_spec(build_configuration,
+                                           graph->profile,
+                                           build_profile("debug"_str),
+                                           rstd::move(build_arguments).unwrap());
+    ASSERT_TRUE(profile.is_ok());
+    auto external_usage = lito::ExternalUsageCatalog {};
+    external_usage.packages.push(lito::ExternalPackageUsage {
+        .package = String::make("fixture-profile-owned_option"_str),
+    });
     auto metadata = lito::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                        packages,
                                                        targets,
                                                        build_configuration,
-                                                       build_profile("debug"_str),
-                                                       lito::PkgConfigProviderConfig {},
-                                                       lito::CMakeProviderConfig {},
+                                                       rstd::move(profile).unwrap(),
                                                        native_platform(),
-                                                       rstd::move(build_arguments).unwrap(),
+                                                       rstd::move(external_usage),
                                                        *parser);
     ASSERT_TRUE(metadata.is_ok());
 
@@ -1023,15 +1078,10 @@ TEST(Contracts, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     declarations.push(rstd::move(requirement));
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto cross_cmake =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            default_profile(*parser),
-                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
-                                            *parser);
+    auto cross_cmake = resolve_cmake_fixtures(declarations,
+                                              default_profile(*parser),
+                                              explicit_platform("aarch64-unknown-linux-gnu"_str),
+                                              *parser);
     ASSERT_TRUE(cross_cmake.is_err());
     EXPECT_TRUE(cross_cmake.unwrap_err().message.as_str().contains(
         "without an explicit CMake toolchain contract"_str));
@@ -1181,6 +1231,84 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
     }
 }
 
+TEST(Contracts, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto platform = native_platform();
+    auto targets  = Vec<lito::CMakeTargetRequirement>::make();
+    targets.push(lito::CMakeTargetRequirement {
+        .name = String::make("Fixture::fixture"_str),
+    });
+    auto prepared = lito::PreparedCMakeDependencyRequirement {
+        .alias   = String::make("planner-fixture"_str),
+        .package = String::make("Fixture"_str),
+        .source  = lito::PreparedCMakeDependencySource::Directory(
+            root("cmake/package"_str), String::make("lito-test-cmake-planner-pure-v1"_str), false),
+        .targets = rstd::move(targets),
+    };
+    auto requirement = lito::resolve_cmake_requirement_for_platform(prepared, platform);
+    ASSERT_TRUE(requirement.is_ok());
+    auto first = lito::plan_cmake_package(*requirement,
+                                          fixture_cmake(),
+                                          configuration(),
+                                          default_profile(*parser),
+                                          platform.compiler_default,
+                                          platform.effective_target.triple.as_str(),
+                                          usize(1));
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_EQ(first->operations.len(), usize(7));
+    EXPECT_EQ(first->operations[usize {}], lito::CMakePackageOperation::ConfigureSource);
+    EXPECT_EQ(first->operations[usize(1)], lito::CMakePackageOperation::BuildSource);
+    EXPECT_EQ(first->operations[usize(2)], lito::CMakePackageOperation::InstallSource);
+    EXPECT_EQ(first->operations[usize(3)], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(first->operations[usize(4)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(first->operations[usize(5)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(first->operations[usize(6)], lito::CMakePackageOperation::ReadUsage);
+    auto exists = rstd::fs::exists(first->area.root.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    EXPECT_FALSE(*exists);
+
+    auto parallel = lito::plan_cmake_package(*requirement,
+                                             fixture_cmake(),
+                                             configuration(),
+                                             default_profile(*parser),
+                                             platform.compiler_default,
+                                             platform.effective_target.triple.as_str(),
+                                             usize(8));
+    ASSERT_TRUE(parallel.is_ok());
+    EXPECT_EQ(first->area.root.as_path(), parallel->area.root.as_path());
+    EXPECT_EQ(first->area.query_root.as_path(), parallel->area.query_root.as_path());
+
+    requirement->integration = lito::CMakeIntegration::BuildTree;
+    auto build_tree          = lito::plan_cmake_package(*requirement,
+                                                        fixture_cmake(),
+                                                        configuration(),
+                                                        default_profile(*parser),
+                                                        platform.compiler_default,
+                                                        platform.effective_target.triple.as_str());
+    ASSERT_TRUE(build_tree.is_ok());
+    ASSERT_EQ(build_tree->operations.len(), usize(4));
+    EXPECT_EQ(build_tree->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(build_tree->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(build_tree->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(build_tree->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+
+    requirement->integration = lito::CMakeIntegration::Install;
+    requirement->source      = lito::ResolvedCMakeDependencySource::Installed();
+    auto installed           = lito::plan_cmake_package(*requirement,
+                                                        fixture_cmake(),
+                                                        configuration(),
+                                                        default_profile(*parser),
+                                                        platform.compiler_default,
+                                                        platform.effective_target.triple.as_str());
+    ASSERT_TRUE(installed.is_ok());
+    ASSERT_EQ(installed->operations.len(), usize(4));
+    EXPECT_EQ(installed->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(installed->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(installed->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(installed->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+}
+
 TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -1213,20 +1341,13 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoFixture"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            root("cmake/package"_str), String::make("lito-test-cmake-fixture-v3"_str)),
+            root("cmake/package"_str), String::make("lito-test-cmake-fixture-v3"_str), true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
     });
     auto resolved =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            default_profile(*parser),
-                                            native_platform(),
-                                            *parser);
+        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error.message.as_str());
@@ -1268,14 +1389,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
     declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
     auto queried_again =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            default_profile(*parser),
-                                            native_platform(),
-                                            *parser);
+        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(second_count.is_ok());
@@ -1286,14 +1400,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .value = String::make("ON"_str),
     });
     auto installed_again =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            default_profile(*parser),
-                                            native_platform(),
-                                            *parser);
+        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(third_count.is_ok());
@@ -1308,14 +1415,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                                     *parser);
     ASSERT_TRUE(disabled_profile.is_ok());
     auto profile_variant =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            *disabled_profile,
-                                            native_platform(),
-                                            *parser);
+        resolve_cmake_fixtures(declarations, *disabled_profile, native_platform(), *parser);
     ASSERT_TRUE(profile_variant.is_ok());
     auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(fourth_count.is_ok());
@@ -1336,21 +1436,14 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoBuildTree"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            root("cmake/build-tree"_str), String::make("lito-test-cmake-build-tree-v1"_str)),
+            root("cmake/build-tree"_str), String::make("lito-test-cmake-build-tree-v1"_str), false),
         .integration = lito::CMakeIntegration::BuildTree,
         .adapter     = Some(root("manifest/cmake/build-tree/adapter.cmake"_str)),
         .targets     = rstd::move(targets),
     });
     auto target = pkg_config_target();
     auto resolved =
-        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
-                                            declarations,
-                                            fixture_pkg_config(),
-                                            fixture_cmake(),
-                                            configuration(),
-                                            default_profile(*parser),
-                                            native_platform(),
-                                            *parser);
+        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error.message.as_str());
@@ -1376,7 +1469,9 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
 
     auto has_archive = false;
     for (const auto& token : dependency.link_arguments.tokens) {
-        if (token.as_str().contains("liblito_build_tree.a"_str)) has_archive = true;
+        if (token.as_str().contains("liblito_build_tree.a"_str)) {
+            has_archive = rstd::path::PathBuf::from(token.as_str()).as_path().is_absolute();
+        }
     }
     EXPECT_TRUE(has_archive);
 }
@@ -2029,12 +2124,29 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
         .commit    = previous->clone(),
     });
     auto reuse_graph = external_git_graph(*url, lito::GitReference {});
+    reuse_graph.packages[usize {}].manifest.cmake_external_dependencies.push(
+        lito::CMakeDependencyRequirement {
+            .alias   = String::make("fixture-reuse"_str),
+            .package = String::make("Fixture"_str),
+            .source  = lito::CMakeDependencySource::Git(String::make(*url), lito::GitReference {}),
+        });
     auto reused =
         lito::prepare_external_dependency_sources(reuse_graph,
                                                   lito::PackageResolutionOptions {
                                                       .git_sources = rstd::move(locked_sources),
-                                                  });
+                                                  },
+                                                  usize(2));
     ASSERT_TRUE(reused.is_ok());
+    ASSERT_EQ(reuse_graph.sources.len(), usize(1));
+    ASSERT_EQ(reuse_graph.packages[usize {}].cmake_external_dependencies.len(), usize(2));
+    EXPECT_EQ(reuse_graph.packages[usize {}]
+                  .cmake_external_dependencies[usize {}]
+                  .source.as_Directory()
+                  .identity,
+              reuse_graph.packages[usize {}]
+                  .cmake_external_dependencies[usize(1)]
+                  .source.as_Directory()
+                  .identity);
     auto reused_commit = resolved_git_commit(reuse_graph);
     ASSERT_TRUE(reused_commit.is_some());
     EXPECT_EQ(*reused_commit, previous->as_str());

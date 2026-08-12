@@ -20,6 +20,12 @@ inline constexpr BuildOperation BUILD_OPERATIONS[] = {
     BuildOperation::Strip,
 };
 
+inline constexpr ExternalPreparationOperation EXTERNAL_PREPARATION_OPERATIONS[] = {
+    ExternalPreparationOperation::CMakeConfigure,  ExternalPreparationOperation::CMakeBuild,
+    ExternalPreparationOperation::CMakeInstall,    ExternalPreparationOperation::CMakeQuery,
+    ExternalPreparationOperation::CMakeQueryBuild, ExternalPreparationOperation::CMakeSnapshot,
+};
+
 inline constexpr ScanTimingCategory SCAN_CATEGORIES[] = {
     ScanTimingCategory::Orchestration,
     ScanTimingCategory::Environment,
@@ -206,6 +212,14 @@ auto detailed_report(const BuildSummary& summary) -> String {
 
     append_line(output, "\nbuild timing"_str);
     append_line(output, "  name | calls | total_us"_str);
+    for (const auto operation : EXTERNAL_PREPARATION_OPERATIONS) {
+        const auto& timing = summary.external_preparation.timing(operation);
+        append_line(output,
+                    rstd::format("  {} | {} | {}",
+                                 external_preparation_operation_label(operation),
+                                 timing.count,
+                                 timing.total.as_micros()));
+    }
     for (const auto operation : BUILD_OPERATIONS) {
         const auto& timing = summary.build_timing.timing(operation);
         append_line(output,
@@ -297,6 +311,16 @@ void print_summary(const BuildSummary& summary) {
                       display_duration(execution.task_work).as_str());
 
     rstd::io::println("  build");
+    rstd::io::println("    external preparation");
+    rstd::io::println("      {:<30} {:>12} {:>8}", "operation"_str, "total"_str, "calls"_str);
+    for (const auto operation : EXTERNAL_PREPARATION_OPERATIONS) {
+        const auto& timing = summary.external_preparation.timing(operation);
+        auto        total  = display_duration(timing.total);
+        rstd::io::println("      {:<30} {:>12} {:>8}",
+                          external_preparation_operation_label(operation),
+                          total.as_str(),
+                          timing.count);
+    }
     const auto& compile_execution = summary.compile_execution;
     rstd::io::println("    jobs: {}; max in flight: {}; max active: {}; task work: {}",
                       compile_execution.jobs,

@@ -13,6 +13,7 @@ namespace
 
 struct EventContext {
     bool verbose { false };
+    bool standard_error { false };
 };
 
 auto event_name(lito::BuildEventKind kind) -> ref<str> {
@@ -26,20 +27,38 @@ auto event_name(lito::BuildEventKind kind) -> ref<str> {
     case lito::BuildEventKind::Strip: return "strip"_str;
     case lito::BuildEventKind::Configure: return "configure"_str;
     case lito::BuildEventKind::ConfigureReuse: return "configure-reuse"_str;
+    case lito::BuildEventKind::CMakeConfigure: return "cmake-configure"_str;
+    case lito::BuildEventKind::CMakeBuild: return "cmake-build"_str;
+    case lito::BuildEventKind::CMakeInstall: return "cmake-install"_str;
+    case lito::BuildEventKind::CMakeQuery: return "cmake-query"_str;
+    case lito::BuildEventKind::CMakeQueryBuild: return "cmake-query-build"_str;
+    case lito::BuildEventKind::CMakeSnapshot: return "cmake-snapshot"_str;
+    case lito::BuildEventKind::CMakeReuse: return "cmake-reuse"_str;
     }
     return "unknown"_str;
 }
 
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
+    if (event.completed) return;
     if (! context.verbose && event.kind != lito::BuildEventKind::Scan &&
         event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
+        event.kind != lito::BuildEventKind::CMakeConfigure &&
+        event.kind != lito::BuildEventKind::CMakeBuild &&
+        event.kind != lito::BuildEventKind::CMakeInstall &&
+        event.kind != lito::BuildEventKind::CMakeQuery &&
+        event.kind != lito::BuildEventKind::CMakeQueryBuild &&
+        event.kind != lito::BuildEventKind::CMakeSnapshot &&
         event.kind != lito::BuildEventKind::Archive && event.kind != lito::BuildEventKind::Link &&
         event.kind != lito::BuildEventKind::Strip) {
         return;
     }
-    rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
+    if (context.standard_error) {
+        rstd::io::eprintln("[{}] {} {}", event_name(event.kind), event.target, event.path);
+    } else {
+        rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
+    }
 }
 
 void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
@@ -190,6 +209,11 @@ extern "C++" int main() {
         request.source             = rstd::move(options.source);
         request.locked             = options.locked;
         if (options.profile.is_some()) request.profile = Some(options.profile->clone());
+        auto event_context = EventContext { .standard_error = true };
+        request.observer   = Some(lito::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
 
         auto scanned = lito::scan(request);
         if (scanned.is_err()) {

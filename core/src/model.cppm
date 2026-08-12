@@ -458,12 +458,14 @@ struct PkgConfigProviderConfig {
 struct CMakeProviderConfig {
     PathBuf      executable;
     String       generator;
+    String       identity;
     Vec<PathBuf> search_paths;
 
     auto clone() const -> CMakeProviderConfig {
         return CMakeProviderConfig {
             .executable   = executable.clone(),
             .generator    = generator.clone(),
+            .identity     = identity.clone(),
             .search_paths = as<rstd::clone::Clone>(search_paths).clone(),
         };
     }
@@ -871,7 +873,7 @@ struct ResolvedDependency {
 class PreparedCMakeDependencySource {
     RSTD_ENUM(PreparedCMakeDependencySource,
               (Installed),
-              (Directory, (PathBuf root; String identity;)),
+              (Directory, (PathBuf root; String identity; bool cacheable;)),
               (Archive, (String url; String sha256;)),
               (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
 };
@@ -882,6 +884,7 @@ struct PreparedCMakeDependencyRequirement {
     PreparedCMakeDependencySource source;
     CMakeIntegration              integration { CMakeIntegration::Install };
     Option<PathBuf>               adapter;
+    String                        adapter_identity;
     Option<PathBuf>               config_directory;
     Vec<CMakeCacheEntry>          cache;
     Vec<CMakeTargetRequirement>   targets;
@@ -890,7 +893,7 @@ struct PreparedCMakeDependencyRequirement {
 class ResolvedCMakeDependencySource {
     RSTD_ENUM(ResolvedCMakeDependencySource,
               (Installed),
-              (Directory, (PathBuf root; String identity;)),
+              (Directory, (PathBuf root; String identity; bool add_subdirectory; bool cacheable;)),
               (Archive, (String url; String sha256;)))
 };
 
@@ -900,6 +903,7 @@ struct ResolvedCMakeDependencyRequirement {
     ResolvedCMakeDependencySource source;
     CMakeIntegration              integration { CMakeIntegration::Install };
     Option<PathBuf>               adapter;
+    String                        adapter_identity;
     Option<PathBuf>               config_directory;
     Vec<CMakeCacheEntry>          cache;
     Vec<CMakeTargetRequirement>   targets;
@@ -1219,12 +1223,21 @@ enum class BuildEventKind
     Strip,
     Configure,
     ConfigureReuse,
+    CMakeConfigure,
+    CMakeBuild,
+    CMakeInstall,
+    CMakeQuery,
+    CMakeQueryBuild,
+    CMakeSnapshot,
+    CMakeReuse,
 };
 
 struct BuildEvent {
     BuildEventKind        kind { BuildEventKind::Scan };
     ref<str>              target;
     ref<rstd::path::Path> path;
+    rstd::time::Duration  elapsed;
+    bool                  completed { false };
 };
 
 struct BuildObserver {
@@ -1320,20 +1333,21 @@ struct BuildScriptReport {
 };
 
 struct BuildSummary {
-    String                       package;
-    String                       profile;
-    PathBuf                      output;
-    usize                        scanned {};
-    usize                        compiled {};
-    usize                        reused {};
-    Vec<BuiltArtifact>           artifacts;
-    frontend::FrontendStatistics frontend;
-    ToolchainStatistics          toolchain;
-    ScanProfileReport            scan_profile;
-    CompileExecutionStatistics   compile_execution;
-    BuildTimingReport            build_timing;
-    Vec<CompileTestExecution>    compile_tests;
-    BuildScriptReport            script;
+    String                          package;
+    String                          profile;
+    PathBuf                         output;
+    usize                           scanned {};
+    usize                           compiled {};
+    usize                           reused {};
+    Vec<BuiltArtifact>              artifacts;
+    frontend::FrontendStatistics    frontend;
+    ToolchainStatistics             toolchain;
+    ScanProfileReport               scan_profile;
+    CompileExecutionStatistics      compile_execution;
+    ExternalPreparationTimingReport external_preparation;
+    BuildTimingReport               build_timing;
+    Vec<CompileTestExecution>       compile_tests;
+    BuildScriptReport               script;
 };
 
 struct ScanRequest {
@@ -1347,6 +1361,7 @@ struct ScanRequest {
     PkgConfigProviderConfig  pkg_config;
     CMakeProviderConfig      cmake;
     bool                     locked { false };
+    Option<BuildObserver>    observer;
 };
 
 struct ScanReport {

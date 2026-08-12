@@ -110,17 +110,22 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     }
     auto toolchain = rstd::move(created_toolchain).unwrap();
     auto profile   = request.profile.is_some() ? request.profile->clone() : BuildProfileName {};
-    auto loaded    = resolve_project_metadata(request.selection,
-                                              request.configuration,
-                                              profile,
-                                              request.sources,
-                                              request.pkg_config,
-                                              request.cmake,
-                                              toolchain,
-                                              tool_resolver,
-                                              *environment,
-                                              request.locked,
-                                              PackageSelectionPurpose::All);
+    auto jobs      = usize(1);
+    auto available = rstd::thread::available_parallelism();
+    if (available.is_ok()) jobs = available->get();
+    auto loaded = resolve_project_metadata(request.selection,
+                                           request.configuration,
+                                           profile,
+                                           request.sources,
+                                           request.pkg_config,
+                                           request.cmake,
+                                           toolchain,
+                                           tool_resolver,
+                                           *environment,
+                                           request.locked,
+                                           PackageSelectionPurpose::All,
+                                           jobs,
+                                           request.observer);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata = rstd::move(loaded).unwrap();
     auto resolved =

@@ -20,6 +20,17 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
+auto clone_package_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
+    if (source.is_Path()) {
+        return PackageSourceRequirement::Path(source.as_Path().path.clone());
+    }
+    return PackageSourceRequirement::Git(source.as_Git().url.clone(),
+                                         GitReference {
+                                             .kind  = source.as_Git().reference.kind,
+                                             .value = source.as_Git().reference.value.clone(),
+                                         });
+}
+
 struct PackageCoordinate {
     Option<String> version;
     String         source_identity;
@@ -79,14 +90,17 @@ class Resolver {
     Vec<ResolvedPackage> packages_;
     CoordinateMap        coordinates_ { CoordinateMap::make() };
     StringSet            active_ { StringSet::make() };
+    usize                jobs_ { usize(1) };
 
 public:
     explicit Resolver(ref<rstd::path::Path>             root_directory,
                       PackageResolutionOptions          options,
                       ToolResolver&                     resolver,
-                      const ResolvedProcessEnvironment& environment)
+                      const ResolvedProcessEnvironment& environment,
+                      usize                             jobs)
         : root_directory_(PathBuf::from(root_directory)),
-          sources_(root_directory, rstd::move(options), resolver, environment) {}
+          sources_(root_directory, rstd::move(options), resolver, environment),
+          jobs_(jobs) {}
 
     auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
         return sources_.acquire_root(root);
@@ -150,19 +164,32 @@ public:
                             });
         active_.insert(loaded.package.name.clone(), empty {});
 
+        auto fetch_requests = Vec<PackageSourceFetchRequest>::with_capacity(
+            loaded.package.dependencies.len() + loaded.package.dev_dependencies.len());
+        const auto append_fetch_requests =
+            [&](const Vec<DeclaredDependency>& declarations) -> void {
+            for (const auto& dependency : declarations) {
+                auto declaring_root = loaded.package.root.clone();
+                if (dependency.declaration_root.is_some()) {
+                    declaring_root = dependency.declaration_root->clone();
+                }
+                fetch_requests.push(PackageSourceFetchRequest {
+                    .source         = clone_package_source(dependency.source),
+                    .declaring_root = rstd::move(declaring_root),
+                });
+            }
+        };
+        append_fetch_requests(loaded.package.dependencies);
+        append_fetch_requests(loaded.package.dev_dependencies);
+        auto fetched_sources =
+            rstd_try(sources_.acquire_frontier(rstd::move(fetch_requests), jobs_));
+        auto       source_offset = usize {};
         const auto resolve_dependencies =
             [&](const Vec<DeclaredDependency>& declarations) -> Result<Vec<ResolvedDependency>> {
             auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
             for (const auto& dependency : declarations) {
-                auto declaring_root = loaded.package.root.as_path();
-                if (dependency.declaration_root.is_some()) {
-                    declaring_root = dependency.declaration_root->as_path();
-                }
-                auto dependency_source = sources_.acquire(dependency.source, declaring_root);
-                if (dependency_source.is_err()) {
-                    return Err(rstd::move(dependency_source).unwrap_err());
-                }
-                auto dependency_name = resolve(*dependency_source, dependency.name.as_str());
+                auto dependency_name =
+                    resolve(fetched_sources[source_offset++], dependency.name.as_str());
                 if (dependency_name.is_err()) {
                     return Err(rstd::move(dependency_name).unwrap_err());
                 }
@@ -229,8 +256,12 @@ export namespace lito
 auto resolve_package_graph_with_environment(ref<rstd::path::Path>             requested_root,
                                             PackageResolutionOptions          options,
                                             ToolResolver&                     tool_resolver,
-                                            const ResolvedProcessEnvironment& environment)
-    -> Result<ResolvedPackageGraph> {
+                                            const ResolvedProcessEnvironment& environment,
+                                            usize jobs = usize(1)) -> Result<ResolvedPackageGraph> {
+    if (jobs == usize {}) {
+        return failure<ResolvedPackageGraph>(
+            String::make("source fetch jobs must be greater than zero"_str));
+    }
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
         return failure<ResolvedPackageGraph>(
@@ -239,7 +270,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                          rstd::move(canonical).unwrap_err()));
     }
     auto root     = rstd::move(canonical).unwrap();
-    auto resolver = Resolver(root.as_path(), rstd::move(options), tool_resolver, environment);
+    auto resolver = Resolver(root.as_path(), rstd::move(options), tool_resolver, environment, jobs);
     auto source   = resolver.acquire_root(root.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto project_sources   = rstd::move(source).unwrap();

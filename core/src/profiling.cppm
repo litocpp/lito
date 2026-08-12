@@ -69,6 +69,16 @@ enum class BuildOperation
     Strip,
 };
 
+enum class ExternalPreparationOperation
+{
+    CMakeConfigure,
+    CMakeBuild,
+    CMakeInstall,
+    CMakeQuery,
+    CMakeQueryBuild,
+    CMakeSnapshot,
+};
+
 enum class ScanTimingCategory
 {
     Orchestration,
@@ -97,9 +107,63 @@ auto build_operation_label(BuildOperation operation) noexcept -> ref<str> {
     return "build.unknown"_str;
 }
 
+auto external_preparation_operation_label(ExternalPreparationOperation operation) noexcept
+    -> ref<str> {
+    switch (operation) {
+    case ExternalPreparationOperation::CMakeConfigure: return "external.cmake.configure"_str;
+    case ExternalPreparationOperation::CMakeBuild: return "external.cmake.build"_str;
+    case ExternalPreparationOperation::CMakeInstall: return "external.cmake.install"_str;
+    case ExternalPreparationOperation::CMakeQuery: return "external.cmake.query"_str;
+    case ExternalPreparationOperation::CMakeQueryBuild: return "external.cmake.query-build"_str;
+    case ExternalPreparationOperation::CMakeSnapshot: return "external.cmake.snapshot"_str;
+    }
+    return "external.cmake.unknown"_str;
+}
+
 struct BuildOperationTiming {
     usize                count {};
     rstd::time::Duration total;
+};
+
+class ExternalPreparationTimingReport {
+    BuildOperationTiming cmake_configure_;
+    BuildOperationTiming cmake_build_;
+    BuildOperationTiming cmake_install_;
+    BuildOperationTiming cmake_query_;
+    BuildOperationTiming cmake_query_build_;
+    BuildOperationTiming cmake_snapshot_;
+
+    auto timing_mut(ExternalPreparationOperation operation) noexcept -> BuildOperationTiming& {
+        switch (operation) {
+        case ExternalPreparationOperation::CMakeConfigure: return cmake_configure_;
+        case ExternalPreparationOperation::CMakeBuild: return cmake_build_;
+        case ExternalPreparationOperation::CMakeInstall: return cmake_install_;
+        case ExternalPreparationOperation::CMakeQuery: return cmake_query_;
+        case ExternalPreparationOperation::CMakeQueryBuild: return cmake_query_build_;
+        case ExternalPreparationOperation::CMakeSnapshot: return cmake_snapshot_;
+        }
+        return cmake_snapshot_;
+    }
+
+public:
+    void record(ExternalPreparationOperation operation, rstd::time::Duration elapsed) noexcept {
+        auto& timing = timing_mut(operation);
+        if (timing.count != usize::MAX) ++timing.count;
+        timing.total = timing.total.saturating_add(elapsed);
+    }
+
+    auto timing(ExternalPreparationOperation operation) const noexcept
+        -> const BuildOperationTiming& {
+        switch (operation) {
+        case ExternalPreparationOperation::CMakeConfigure: return cmake_configure_;
+        case ExternalPreparationOperation::CMakeBuild: return cmake_build_;
+        case ExternalPreparationOperation::CMakeInstall: return cmake_install_;
+        case ExternalPreparationOperation::CMakeQuery: return cmake_query_;
+        case ExternalPreparationOperation::CMakeQueryBuild: return cmake_query_build_;
+        case ExternalPreparationOperation::CMakeSnapshot: return cmake_snapshot_;
+        }
+        return cmake_snapshot_;
+    }
 };
 
 struct CompileExecutionStatistics {

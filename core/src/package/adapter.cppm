@@ -5,9 +5,7 @@ export module lito.package:adapter;
 
 import rstd;
 import lito.model;
-import lito.build_profile;
 import lito.dependency;
-import lito.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -132,18 +130,14 @@ auto selected_target(const Vec<PackageTargetId>& selected, const PackageTargetId
 export namespace lito
 {
 
-auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
-                                  const Vec<String>&                selected_package_names,
-                                  const Vec<PackageTargetId>&       selected_targets,
-                                  const BuildConfiguration&         configuration,
-                                  const BuildProfileName&           selected_profile,
-                                  const PkgConfigProviderConfig&    pkg_config,
-                                  const CMakeProviderConfig&        cmake,
-                                  const BuildPlatform&              platform,
-                                  CppArgumentLayer                  build_arguments,
-                                  const CppArgumentParser&          argument_parser,
-                                  ToolResolver&                     tool_resolver,
-                                  const ResolvedProcessEnvironment& environment)
+auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
+                                  const Vec<String>&          selected_package_names,
+                                  const Vec<PackageTargetId>& selected_targets,
+                                  const BuildConfiguration&   configuration,
+                                  ProfileSpec                 profile,
+                                  const BuildPlatform&        platform,
+                                  ExternalUsageCatalog        external_usage,
+                                  const CppArgumentParser&    argument_parser)
     -> Result<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() || configuration.toolchain.linker.is_empty() ||
@@ -151,8 +145,6 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
     }
-    auto profile   = rstd_try(make_profile_spec(
-        configuration, graph.profile, selected_profile, rstd::move(build_arguments)));
     auto libraries = library_targets(graph);
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
@@ -163,19 +155,12 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
     for (usize index {}; index < graph.packages.len(); ++index) {
         external_by_package.emplace_back();
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
-        auto resolved = resolve_external_dependencies(
-            graph.packages[index].manifest.pkg_config_external_dependencies,
-            graph.packages[index].cmake_external_dependencies,
-            pkg_config,
-            cmake,
-            configuration,
-            profile,
-            platform,
-            argument_parser,
-            tool_resolver,
-            environment);
-        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-        external_by_package[index] = rstd::move(resolved).unwrap();
+        external_by_package[index] =
+            rstd_try(external_usage.take(graph.packages[index].manifest.name.as_str()));
+    }
+    if (! external_usage.all_consumed()) {
+        return adapter_failure<PackageMetadata>(
+            String::make("external usage catalog contains an unselected package"_str));
     }
 
     for (const auto& package : graph.packages) {
@@ -495,34 +480,6 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
         .profiles = rstd::move(profiles),
         .targets  = rstd::move(targets),
     });
-}
-
-auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
-                                  const Vec<String>&             selected_package_names,
-                                  const Vec<PackageTargetId>&    selected_targets,
-                                  const BuildConfiguration&      configuration,
-                                  const BuildProfileName&        selected_profile,
-                                  const PkgConfigProviderConfig& pkg_config,
-                                  const CMakeProviderConfig&     cmake,
-                                  const BuildPlatform&           platform,
-                                  CppArgumentLayer               build_arguments,
-                                  const CppArgumentParser&       argument_parser)
-    -> Result<PackageMetadata> {
-    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    auto resolver = ToolResolver(*environment);
-    return adapt_package_graph_metadata(rstd::move(graph),
-                                        selected_package_names,
-                                        selected_targets,
-                                        configuration,
-                                        selected_profile,
-                                        pkg_config,
-                                        cmake,
-                                        platform,
-                                        rstd::move(build_arguments),
-                                        argument_parser,
-                                        resolver,
-                                        *environment);
 }
 
 auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> source_sets)

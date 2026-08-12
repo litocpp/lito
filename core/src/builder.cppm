@@ -49,6 +49,35 @@ struct ResolvedScanExecution {
     usize max_in_flight { usize(1) };
 };
 
+struct PreparationObserverContext {
+    ExternalPreparationTimingReport* report {};
+    const Option<BuildObserver>*     downstream {};
+};
+
+auto external_preparation_operation(BuildEventKind kind) -> Option<ExternalPreparationOperation> {
+    switch (kind) {
+    case BuildEventKind::CMakeConfigure: return Some(ExternalPreparationOperation::CMakeConfigure);
+    case BuildEventKind::CMakeBuild: return Some(ExternalPreparationOperation::CMakeBuild);
+    case BuildEventKind::CMakeInstall: return Some(ExternalPreparationOperation::CMakeInstall);
+    case BuildEventKind::CMakeQuery: return Some(ExternalPreparationOperation::CMakeQuery);
+    case BuildEventKind::CMakeQueryBuild:
+        return Some(ExternalPreparationOperation::CMakeQueryBuild);
+    case BuildEventKind::CMakeSnapshot: return Some(ExternalPreparationOperation::CMakeSnapshot);
+    default: return None();
+    }
+}
+
+void observe_preparation(void* raw_context, const BuildEvent& event) noexcept {
+    auto& context = *static_cast<PreparationObserverContext*>(raw_context);
+    if (event.completed) {
+        auto operation = external_preparation_operation(event.kind);
+        if (operation.is_some()) context.report->record(*operation, event.elapsed);
+    }
+    if (context.downstream == nullptr || context.downstream->is_none()) return;
+    const auto& observer = **context.downstream;
+    if (observer.notify != nullptr) observer.notify(observer.context, event);
+}
+
 auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<ResolvedScanExecution> {
     auto jobs = usize(1);
     if (policy.jobs.is_some()) {
@@ -98,17 +127,30 @@ auto build_with_environment(const BuildRequest&               request,
                                             ? "release"_str
                                             : "debug"_str),
               };
-    auto loaded = resolve_project_metadata(request.selection,
-                                           request.configuration,
-                                           profile,
-                                           request.sources,
-                                           request.pkg_config,
-                                           request.cmake,
-                                           toolchain,
-                                           tool_resolver,
-                                           process_environment,
-                                           request.locked,
-                                           request.purpose);
+    auto execution = resolve_scan_execution(request.execution.scan);
+    if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
+    auto preparation_timing  = ExternalPreparationTimingReport {};
+    auto preparation_context = PreparationObserverContext {
+        .report     = rstd::addressof(preparation_timing),
+        .downstream = rstd::addressof(request.observer),
+    };
+    auto preparation_observer = Some(BuildObserver {
+        .context = rstd::addressof(preparation_context),
+        .notify  = observe_preparation,
+    });
+    auto loaded               = resolve_project_metadata(request.selection,
+                                                         request.configuration,
+                                                         profile,
+                                                         request.sources,
+                                                         request.pkg_config,
+                                                         request.cmake,
+                                                         toolchain,
+                                                         tool_resolver,
+                                                         process_environment,
+                                                         request.locked,
+                                                         request.purpose,
+                                                         execution->jobs,
+                                                         preparation_observer);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto metadata         = rstd::move(loaded).unwrap();
     auto created_profiler = ScanProfiler::create();
@@ -155,8 +197,6 @@ auto build_with_environment(const BuildRequest&               request,
         }
         stripper = Some(rstd::move(resolved_stripper).unwrap().executable);
     }
-    auto execution = resolve_scan_execution(request.execution.scan);
-    if (execution.is_err()) return Err(rstd::move(execution).unwrap_err());
     auto compile_execution = resolve_compile_execution(request.execution.compile);
     if (compile_execution.is_err()) return Err(rstd::move(compile_execution).unwrap_err());
 
@@ -500,20 +540,21 @@ auto build_with_environment(const BuildRequest&               request,
     }
 
     return Ok(BuildSummary {
-        .package           = package.name.clone(),
-        .profile           = package_plan.profile->name.clone(),
-        .output            = PathBuf::from(layout.output()),
-        .scanned           = scans.len(),
-        .compiled          = compiled,
-        .reused            = reused,
-        .artifacts         = rstd::move(artifacts),
-        .frontend          = frontend_statistics,
-        .toolchain         = toolchain.statistics(),
-        .scan_profile      = rstd::move(scan_profile),
-        .compile_execution = compile_statistics,
-        .build_timing      = rstd::move(build_timing),
-        .compile_tests     = rstd::move(compile_tests),
-        .script            = rstd::move(script_report),
+        .package              = package.name.clone(),
+        .profile              = package_plan.profile->name.clone(),
+        .output               = PathBuf::from(layout.output()),
+        .scanned              = scans.len(),
+        .compiled             = compiled,
+        .reused               = reused,
+        .artifacts            = rstd::move(artifacts),
+        .frontend             = frontend_statistics,
+        .toolchain            = toolchain.statistics(),
+        .scan_profile         = rstd::move(scan_profile),
+        .compile_execution    = compile_statistics,
+        .external_preparation = rstd::move(preparation_timing),
+        .build_timing         = rstd::move(build_timing),
+        .compile_tests        = rstd::move(compile_tests),
+        .script               = rstd::move(script_report),
     });
 }
 

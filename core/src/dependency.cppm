@@ -5,7 +5,7 @@ import lito.model;
 import lito.process;
 import lito.environment;
 import lito.source;
-import :cmake;
+export import :cmake;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -254,6 +254,152 @@ auto snapshot_identity(ref<str>                              provider,
     return result;
 }
 
+auto clone_cmake_declaration(const CMakeDependencyRequirement& declaration)
+    -> CMakeDependencyRequirement {
+    auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
+    for (const auto& entry : declaration.cache) {
+        cache.push(CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    auto targets = Vec<CMakeTargetRequirement>::with_capacity(declaration.targets.len());
+    for (const auto& target : declaration.targets) {
+        targets.push(CMakeTargetRequirement {
+            .name       = target.name.clone(),
+            .visibility = target.visibility,
+        });
+    }
+    auto result = CMakeDependencyRequirement {
+        .alias       = declaration.alias.clone(),
+        .package     = declaration.package.clone(),
+        .source      = declaration.source.clone(),
+        .integration = declaration.integration,
+        .cache       = rstd::move(cache),
+        .targets     = rstd::move(targets),
+    };
+    if (declaration.adapter.is_some()) result.adapter = Some(declaration.adapter->clone());
+    if (declaration.config_directory.is_some()) {
+        result.config_directory = Some(declaration.config_directory->clone());
+    }
+    if (declaration.declaration_root.is_some()) {
+        result.declaration_root = Some(declaration.declaration_root->clone());
+    }
+    if (declaration.adapter_root.is_some()) {
+        result.adapter_root = Some(declaration.adapter_root->clone());
+    }
+    return result;
+}
+
+struct ExternalSourceTask {
+    usize                      package {};
+    usize                      declaration {};
+    CMakeDependencyRequirement requirement;
+    PathBuf                    source_root;
+    Option<usize>              source_fetch;
+    Option<AcquiredSource>     acquired;
+};
+
+struct PreparedExternalSourceTask {
+    usize                              package {};
+    usize                              declaration {};
+    PreparedCMakeDependencyRequirement requirement;
+};
+
+auto prepare_external_source_task(ExternalSourceTask task) -> Result<PreparedExternalSourceTask> {
+    auto        source      = PreparedCMakeDependencySource::Installed();
+    const auto& declaration = task.requirement;
+    if (declaration.source.is_Archive()) {
+        source =
+            PreparedCMakeDependencySource::Archive(declaration.source.as_Archive().url.clone(),
+                                                   declaration.source.as_Archive().sha256.clone());
+    } else if (declaration.source.is_ArchitectureArchives()) {
+        auto variants = Vec<CMakeArchiveVariant>::with_capacity(
+            declaration.source.as_ArchitectureArchives().variants.len());
+        for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
+            variants.push(CMakeArchiveVariant {
+                .architecture = variant.architecture.clone(),
+                .url          = variant.url.clone(),
+                .sha256       = variant.sha256.clone(),
+            });
+        }
+        source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
+    } else if (! declaration.source.is_Installed()) {
+        if (task.acquired.is_none()) {
+            return dependency_failure<PreparedExternalSourceTask>(
+                rstd::format("external source for CMake dependency '{}' was not fetched",
+                             declaration.alias.as_str()));
+        }
+        auto value = rstd::move(task.acquired).unwrap();
+        source     = PreparedCMakeDependencySource::Directory(
+            rstd::move(value.root), rstd::move(value.identity), value.cacheable);
+    }
+
+    auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
+    for (const auto& entry : declaration.cache) {
+        cache.push(CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    auto targets = Vec<CMakeTargetRequirement>::with_capacity(declaration.targets.len());
+    for (const auto& target : declaration.targets) {
+        targets.push(CMakeTargetRequirement {
+            .name       = target.name.clone(),
+            .visibility = target.visibility,
+        });
+    }
+    auto config_directory = Option<PathBuf> {};
+    if (declaration.config_directory.is_some()) {
+        config_directory = Some(declaration.config_directory->clone());
+    }
+    auto adapter          = Option<PathBuf> {};
+    auto adapter_identity = String::make();
+    if (declaration.adapter.is_some()) {
+        auto adapter_root = task.source_root.as_path();
+        if (declaration.adapter_root.is_some()) adapter_root = declaration.adapter_root->as_path();
+        auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
+        auto canonical = rstd::fs::canonicalize(path.as_path());
+        if (canonical.is_err()) {
+            return dependency_failure<PreparedExternalSourceTask>(
+                rstd::format("cannot resolve CMake adapter '{}': {}",
+                             path.as_path(),
+                             rstd::move(canonical).unwrap_err()));
+        }
+        if (! canonical->as_path().starts_with(adapter_root)) {
+            return dependency_failure<PreparedExternalSourceTask>(
+                rstd::format("CMake adapter '{}' escapes declaration root '{}'",
+                             canonical->as_path(),
+                             adapter_root));
+        }
+        auto contents = rstd::fs::read_to_string(canonical->as_path());
+        if (contents.is_err()) {
+            return dependency_failure<PreparedExternalSourceTask>(
+                rstd::format("cannot read CMake adapter '{}': {}",
+                             canonical->as_path(),
+                             rstd::move(contents).unwrap_err()));
+        }
+        adapter_identity = rstd::format("{}\n{}", canonical->as_path(), contents->as_str());
+        adapter          = Some(rstd::move(canonical).unwrap());
+    }
+    return Ok(PreparedExternalSourceTask {
+        .package     = task.package,
+        .declaration = task.declaration,
+        .requirement =
+            PreparedCMakeDependencyRequirement {
+                .alias            = declaration.alias.clone(),
+                .package          = declaration.package.clone(),
+                .source           = rstd::move(source),
+                .integration      = declaration.integration,
+                .adapter          = rstd::move(adapter),
+                .adapter_identity = rstd::move(adapter_identity),
+                .config_directory = rstd::move(config_directory),
+                .cache            = rstd::move(cache),
+                .targets          = rstd::move(targets),
+            },
+    });
+}
+
 } // namespace lito
 
 export namespace lito
@@ -264,33 +410,33 @@ auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
 }
 
 auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph,
+                                         const Vec<String>&                selected_packages,
                                          PackageResolutionOptions          options,
                                          ToolResolver&                     resolver,
-                                         const ResolvedProcessEnvironment& environment)
-    -> Result<empty> {
-    auto sources =
-        SourceManager(graph.root_directory.as_path(), rstd::move(options), resolver, environment);
-    for (auto& package : graph.packages) {
-        auto resolved = Vec<PreparedCMakeDependencyRequirement>::with_capacity(
-            package.manifest.cmake_external_dependencies.len());
-        for (const auto& declaration : package.manifest.cmake_external_dependencies) {
-            auto source = PreparedCMakeDependencySource::Installed();
-            if (declaration.source.is_Archive()) {
-                source = PreparedCMakeDependencySource::Archive(
-                    declaration.source.as_Archive().url.clone(),
-                    declaration.source.as_Archive().sha256.clone());
-            } else if (declaration.source.is_ArchitectureArchives()) {
-                auto variants = Vec<CMakeArchiveVariant>::with_capacity(
-                    declaration.source.as_ArchitectureArchives().variants.len());
-                for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
-                    variants.push(CMakeArchiveVariant {
-                        .architecture = variant.architecture.clone(),
-                        .url          = variant.url.clone(),
-                        .sha256       = variant.sha256.clone(),
-                    });
-                }
-                source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
-            } else if (! declaration.source.is_Installed()) {
+                                         const ResolvedProcessEnvironment& environment,
+                                         usize jobs = usize(1)) -> Result<empty> {
+    if (jobs == usize {}) {
+        return dependency_failure<empty>("source fetch jobs must be greater than zero"_str);
+    }
+    auto tasks          = Vec<ExternalSourceTask>::make();
+    auto fetch_requests = Vec<PackageSourceFetchRequest>::make();
+    for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
+        const auto& package  = graph.packages[package_index];
+        auto        selected = false;
+        for (const auto& name : selected_packages) {
+            if (name == package.manifest.name.as_str()) {
+                selected = true;
+                break;
+            }
+        }
+        if (! selected) continue;
+        for (usize declaration_index {};
+             declaration_index < package.manifest.cmake_external_dependencies.len();
+             ++declaration_index) {
+            const auto& declaration =
+                package.manifest.cmake_external_dependencies[declaration_index];
+            auto source_fetch = Option<usize> {};
+            if (declaration.source.is_Git() || declaration.source.is_Path()) {
                 auto acquisition =
                     declaration.source.is_Git()
                         ? PackageSourceRequirement::Git(
@@ -300,69 +446,81 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
                                   .value = declaration.source.as_Git().reference.value.clone(),
                               })
                         : PackageSourceRequirement::Path(declaration.source.as_Path().path.clone());
-                auto declaring_root = package.manifest.root.as_path();
+                auto declaring_root = package.manifest.root.clone();
                 if (declaration.declaration_root.is_some()) {
-                    declaring_root = declaration.declaration_root->as_path();
+                    declaring_root = declaration.declaration_root->clone();
                 }
-                auto acquired = sources.acquire_external(acquisition, declaring_root);
-                if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                source = PreparedCMakeDependencySource::Directory(rstd::move(acquired->root),
-                                                                  rstd::move(acquired->identity));
-            }
-            auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
-            for (const auto& entry : declaration.cache) {
-                cache.push(CMakeCacheEntry {
-                    .name  = entry.name.clone(),
-                    .value = entry.value.clone(),
+                source_fetch = Some(fetch_requests.len());
+                fetch_requests.push(PackageSourceFetchRequest {
+                    .source         = rstd::move(acquisition),
+                    .declaring_root = rstd::move(declaring_root),
                 });
             }
-            auto targets = Vec<CMakeTargetRequirement>::with_capacity(declaration.targets.len());
-            for (const auto& target : declaration.targets) {
-                targets.push(CMakeTargetRequirement {
-                    .name       = target.name.clone(),
-                    .visibility = target.visibility,
-                });
-            }
-            auto config_directory = Option<PathBuf> {};
-            if (declaration.config_directory.is_some()) {
-                config_directory = Some(declaration.config_directory->clone());
-            }
-            auto adapter = Option<PathBuf> {};
-            if (declaration.adapter.is_some()) {
-                auto adapter_root = package.manifest.source_root.as_path();
-                if (declaration.adapter_root.is_some()) {
-                    adapter_root = declaration.adapter_root->as_path();
-                }
-                auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
-                auto canonical = rstd::fs::canonicalize(path.as_path());
-                if (canonical.is_err()) {
-                    return dependency_failure<empty>(
-                        rstd::format("cannot resolve CMake adapter '{}': {}",
-                                     path.as_path(),
-                                     rstd::move(canonical).unwrap_err()));
-                }
-                if (! canonical->as_path().starts_with(adapter_root)) {
-                    return dependency_failure<empty>(
-                        rstd::format("CMake adapter '{}' escapes declaration root '{}'",
-                                     canonical->as_path(),
-                                     adapter_root));
-                }
-                adapter = Some(rstd::move(canonical).unwrap());
-            }
-            resolved.push(PreparedCMakeDependencyRequirement {
-                .alias            = declaration.alias.clone(),
-                .package          = declaration.package.clone(),
-                .source           = rstd::move(source),
-                .integration      = declaration.integration,
-                .adapter          = rstd::move(adapter),
-                .config_directory = rstd::move(config_directory),
-                .cache            = rstd::move(cache),
-                .targets          = rstd::move(targets),
+            tasks.push(ExternalSourceTask {
+                .package      = package_index,
+                .declaration  = declaration_index,
+                .requirement  = clone_cmake_declaration(declaration),
+                .source_root  = package.manifest.source_root.clone(),
+                .source_fetch = rstd::move(source_fetch),
             });
         }
-        package.cmake_external_dependencies = rstd::move(resolved);
     }
-    for (auto& source : sources.finish()) {
+    if (tasks.is_empty()) return Ok(empty {});
+
+    auto source_manager =
+        SourceManager(graph.root_directory.as_path(), rstd::move(options), resolver, environment);
+    auto fetched_result =
+        source_manager.acquire_external_frontier(rstd::move(fetch_requests), jobs);
+    if (fetched_result.is_err()) return Err(rstd::move(fetched_result).unwrap_err());
+    auto fetched = rstd::move(fetched_result).unwrap();
+    for (auto& task : tasks) {
+        if (task.source_fetch.is_none()) continue;
+        task.acquired = Some(rstd::move(fetched[*task.source_fetch].acquired));
+    }
+    auto prepared_sources = Vec<ResolvedPackageSource>::make();
+    for (auto& outcome : fetched) {
+        for (auto& source : outcome.sources) {
+            auto present = false;
+            for (const auto& existing : prepared_sources) {
+                if (existing.identity == source.identity.as_str()) {
+                    present = true;
+                    break;
+                }
+            }
+            if (! present) prepared_sources.push(rstd::move(source));
+        }
+    }
+
+    auto worker_count = jobs < tasks.len() ? jobs : tasks.len();
+    auto created      = rstd::thread::BlockingTaskGroup<Result<PreparedExternalSourceTask>>::make(
+        worker_count, tasks.len());
+    if (created.is_err()) {
+        return dependency_failure<empty>(
+            rstd::format("cannot create external source fetch executor: {}",
+                         rstd::move(created).unwrap_err_unchecked()));
+    }
+    auto group = rstd::move(created).unwrap_unchecked();
+    for (auto& task : tasks) {
+        auto submitted = group.submit([task = rstd::move(task)]() mutable {
+            return prepare_external_source_task(rstd::move(task));
+        });
+        if (submitted.is_err()) {
+            return dependency_failure<empty>("cannot submit external source fetch task"_str);
+        }
+    }
+    auto outcomes = rstd::move(group).join();
+    auto prepared = Vec<PreparedExternalSourceTask>::with_capacity(outcomes.len());
+    for (auto& outcome : outcomes) {
+        auto value = rstd::move(outcome).into_value();
+        if (value.is_none()) {
+            return dependency_failure<empty>("external source fetch task was cancelled"_str);
+        }
+        auto result = rstd::move(value).unwrap_unchecked();
+        if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+        prepared.push(rstd::move(result).unwrap());
+    }
+    for (auto& package : graph.packages) package.cmake_external_dependencies.clear();
+    for (auto& source : prepared_sources) {
         auto present = false;
         for (const auto& existing : graph.sources) {
             if (existing.identity == source.identity.as_str()) {
@@ -372,6 +530,9 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
         }
         if (! present) graph.sources.push(rstd::move(source));
     }
+    for (auto& task : prepared) {
+        graph.packages[task.package].cmake_external_dependencies.push(rstd::move(task.requirement));
+    }
     rstd::slice_::sort_unstable_by(
         graph.sources.as_mut_slice().as_mut_ref(),
         [](const ResolvedPackageSource& left, const ResolvedPackageSource& right) {
@@ -380,12 +541,27 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
     return Ok(empty {});
 }
 
+auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph,
+                                         PackageResolutionOptions          options,
+                                         ToolResolver&                     resolver,
+                                         const ResolvedProcessEnvironment& environment,
+                                         usize jobs = usize(1)) -> Result<empty> {
+    auto selected = Vec<String>::with_capacity(graph.packages.len());
+    for (const auto& package : graph.packages) {
+        selected.push(package.manifest.name.clone());
+    }
+    return prepare_external_dependency_sources(
+        graph, selected, rstd::move(options), resolver, environment, jobs);
+}
+
 auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
-                                         PackageResolutionOptions options) -> Result<empty> {
+                                         PackageResolutionOptions options,
+                                         usize jobs = usize(1)) -> Result<empty> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
     auto resolver = ToolResolver(*environment);
-    return prepare_external_dependency_sources(graph, rstd::move(options), resolver, *environment);
+    return prepare_external_dependency_sources(
+        graph, rstd::move(options), resolver, *environment, jobs);
 }
 
 auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
@@ -395,7 +571,9 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
     if (requirement.source.is_Directory()) {
         source = ResolvedCMakeDependencySource::Directory(
             requirement.source.as_Directory().root.clone(),
-            requirement.source.as_Directory().identity.clone());
+            requirement.source.as_Directory().identity.clone(),
+            true,
+            requirement.source.as_Directory().cacheable);
     } else if (requirement.source.is_Archive()) {
         source =
             ResolvedCMakeDependencySource::Archive(requirement.source.as_Archive().url.clone(),
@@ -448,23 +626,20 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         .source           = rstd::move(source),
         .integration      = requirement.integration,
         .adapter          = rstd::move(adapter),
+        .adapter_identity = requirement.adapter_identity.clone(),
         .config_directory = rstd::move(config_directory),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
     });
 }
 
-auto resolve_external_dependencies(
-    const Vec<PkgConfigExternalDependency>&        pkg_config_declarations,
-    const Vec<PreparedCMakeDependencyRequirement>& cmake_declarations,
-    const PkgConfigProviderConfig&                 pkg_config,
-    const CMakeProviderConfig&                     cmake_config,
-    const BuildConfiguration&                      configuration,
-    const ProfileSpec&                             profile,
-    const BuildPlatform&                           platform,
-    const CppArgumentParser&                       parser,
-    ToolResolver&                                  tool_resolver,
-    const ResolvedProcessEnvironment&              process_environment)
+auto resolve_pkg_config_dependencies(
+    const Vec<PkgConfigExternalDependency>& pkg_config_declarations,
+    const PkgConfigProviderConfig&          pkg_config,
+    const BuildPlatform&                    platform,
+    const CppArgumentParser&                parser,
+    ToolResolver&                           tool_resolver,
+    const ResolvedProcessEnvironment&       process_environment)
     -> Result<Vec<ResolvedExternalDependency>> {
     auto result              = Vec<ResolvedExternalDependency>::make();
     auto environment         = CommandEnvironment {};
@@ -590,77 +765,21 @@ auto resolve_external_dependencies(
             .identity       = snapshot.identity.clone(),
         });
     }
-    auto resolved_cmake = cmake_config.clone();
-    if (! cmake_declarations.is_empty()) {
-        auto resolved =
-            tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
-        if (resolved.is_err()) {
-            auto error = rstd::move(resolved).unwrap_err();
-            return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::move(error.message));
-        }
-        resolved_cmake.executable = rstd::move(resolved).unwrap().executable;
-    }
-    for (const auto& declaration : cmake_declarations) {
-        auto requirement = resolve_cmake_requirement_for_platform(declaration, platform);
-        if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
-        auto resolved = resolve_cmake_dependency(*requirement,
-                                                 resolved_cmake,
-                                                 configuration,
-                                                 profile,
-                                                 platform.compiler_default,
-                                                 platform.effective_target.triple.as_str(),
-                                                 parser,
-                                                 process_environment);
-        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-        result.push(rstd::move(resolved).unwrap());
-    }
     return Ok(rstd::move(result));
-}
-
-auto resolve_external_dependencies(
-    const Vec<PkgConfigExternalDependency>&        pkg_config_declarations,
-    const Vec<PreparedCMakeDependencyRequirement>& cmake_declarations,
-    const PkgConfigProviderConfig&                 pkg_config,
-    const CMakeProviderConfig&                     cmake_config,
-    const BuildConfiguration&                      configuration,
-    const ProfileSpec&                             profile,
-    const BuildPlatform&                           platform,
-    const CppArgumentParser& parser) -> Result<Vec<ResolvedExternalDependency>> {
-    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    auto resolver = ToolResolver(*environment);
-    return resolve_external_dependencies(pkg_config_declarations,
-                                         cmake_declarations,
-                                         pkg_config,
-                                         cmake_config,
-                                         configuration,
-                                         profile,
-                                         platform,
-                                         parser,
-                                         resolver,
-                                         *environment);
 }
 
 auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& declarations,
                                    const PkgConfigProviderConfig&          pkg_config,
-                                   const CMakeProviderConfig&              cmake_config,
-                                   const BuildConfiguration&               configuration,
-                                   const ProfileSpec&                      profile,
-                                   const BuildPlatform&                    platform,
-                                   const CppArgumentParser&                parser,
-                                   ToolResolver&                           tool_resolver,
-                                   const ResolvedProcessEnvironment&       process_environment)
+                                   const CMakeProviderConfig&,
+                                   const BuildConfiguration&,
+                                   const ProfileSpec&,
+                                   const BuildPlatform&              platform,
+                                   const CppArgumentParser&          parser,
+                                   ToolResolver&                     tool_resolver,
+                                   const ResolvedProcessEnvironment& process_environment)
     -> Result<Vec<ResolvedExternalDependency>> {
-    return resolve_external_dependencies(declarations,
-                                         Vec<PreparedCMakeDependencyRequirement>::make(),
-                                         pkg_config,
-                                         cmake_config,
-                                         configuration,
-                                         profile,
-                                         platform,
-                                         parser,
-                                         tool_resolver,
-                                         process_environment);
+    return resolve_pkg_config_dependencies(
+        declarations, pkg_config, platform, parser, tool_resolver, process_environment);
 }
 
 auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& declarations,
@@ -671,14 +790,188 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const BuildPlatform&                    platform,
                                    const CppArgumentParser&                parser)
     -> Result<Vec<ResolvedExternalDependency>> {
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    auto resolver = ToolResolver(*environment);
     return resolve_external_dependencies(declarations,
-                                         Vec<PreparedCMakeDependencyRequirement>::make(),
                                          pkg_config,
                                          cmake_config,
                                          configuration,
                                          profile,
                                          platform,
-                                         parser);
+                                         parser,
+                                         resolver,
+                                         *environment);
+}
+
+struct ExternalPackageUsage {
+    String                          package;
+    Vec<ResolvedExternalDependency> dependencies;
+    bool                            consumed { false };
+};
+
+struct ExternalUsageCatalog {
+    Vec<ExternalPackageUsage> packages;
+
+    auto take(ref<str> package) -> Result<Vec<ResolvedExternalDependency>> {
+        for (auto& entry : packages) {
+            if (entry.package.as_str() != package) continue;
+            if (entry.consumed) {
+                return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::format(
+                    "external usage for package '{}' was consumed more than once", package));
+            }
+            entry.consumed = true;
+            return Ok(rstd::move(entry.dependencies));
+        }
+        return dependency_failure<Vec<ResolvedExternalDependency>>(
+            rstd::format("external usage catalog has no package '{}'", package));
+    }
+
+    auto all_consumed() const noexcept -> bool {
+        for (const auto& entry : packages) {
+            if (! entry.consumed) return false;
+        }
+        return true;
+    }
+};
+
+auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
+                                    const Vec<String>&                selected_package_names,
+                                    const PkgConfigProviderConfig&    pkg_config,
+                                    const CMakeProviderConfig&        cmake_config,
+                                    const BuildConfiguration&         configuration,
+                                    const ProfileSpec&                profile,
+                                    const BuildPlatform&              platform,
+                                    const CppArgumentParser&          parser,
+                                    ToolResolver&                     tool_resolver,
+                                    const ResolvedProcessEnvironment& process_environment,
+                                    usize                             jobs,
+                                    const Option<BuildObserver>&      observer)
+    -> Result<ExternalUsageCatalog> {
+    if (jobs == usize {}) {
+        return dependency_failure<ExternalUsageCatalog>(
+            "external dependency jobs must be greater than zero"_str);
+    }
+    auto selected = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& name : selected_package_names) selected.insert(name.clone(), empty {});
+
+    struct CMakeBinding {
+        usize                              catalog {};
+        String                             owner;
+        ResolvedCMakeDependencyRequirement requirement;
+    };
+    auto result   = ExternalUsageCatalog {};
+    auto bindings = Vec<CMakeBinding>::make();
+    for (const auto& package : graph.packages) {
+        if (! selected.contains_key(package.manifest.name.as_str())) continue;
+        auto dependencies =
+            resolve_pkg_config_dependencies(package.manifest.pkg_config_external_dependencies,
+                                            pkg_config,
+                                            platform,
+                                            parser,
+                                            tool_resolver,
+                                            process_environment);
+        if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
+        auto catalog_index = result.packages.len();
+        result.packages.push(ExternalPackageUsage {
+            .package      = package.manifest.name.clone(),
+            .dependencies = rstd::move(dependencies).unwrap(),
+        });
+        for (const auto& declaration : package.cmake_external_dependencies) {
+            auto requirement = resolve_cmake_requirement_for_platform(declaration, platform);
+            if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
+            bindings.push(CMakeBinding {
+                .catalog     = catalog_index,
+                .owner       = package.manifest.name.clone(),
+                .requirement = rstd::move(requirement).unwrap(),
+            });
+        }
+    }
+    if (bindings.is_empty()) return Ok(rstd::move(result));
+    rstd::slice_::sort_unstable_by(bindings.as_mut_slice().as_mut_ref(),
+                                   [](const CMakeBinding& left, const CMakeBinding& right) {
+                                       if (left.owner != right.owner)
+                                           return left.owner < right.owner;
+                                       if (left.requirement.alias != right.requirement.alias) {
+                                           return left.requirement.alias < right.requirement.alias;
+                                       }
+                                       return left.requirement.package < right.requirement.package;
+                                   });
+
+    auto resolved_tool =
+        tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
+    if (resolved_tool.is_err()) {
+        auto error = rstd::move(resolved_tool).unwrap_err();
+        return dependency_failure<ExternalUsageCatalog>(rstd::move(error.message));
+    }
+    auto resolved_cmake       = cmake_config.clone();
+    resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
+    auto identified = identify_cmake_provider(rstd::move(resolved_cmake), process_environment);
+    if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
+    resolved_cmake = rstd::move(identified).unwrap();
+
+    auto archive_requests = Vec<ArchiveSourceFetchRequest>::make();
+    auto archive_bindings = Vec<usize>::make();
+    for (usize index {}; index < bindings.len(); ++index) {
+        const auto& source = bindings[index].requirement.source;
+        if (! source.is_Archive()) continue;
+        archive_bindings.push(usize(index));
+        archive_requests.push(ArchiveSourceFetchRequest {
+            .url    = source.as_Archive().url.clone(),
+            .sha256 = source.as_Archive().sha256.clone(),
+        });
+    }
+    if (! archive_requests.is_empty()) {
+        auto fetched = acquire_archive_frontier(rstd::move(archive_requests),
+                                                jobs,
+                                                resolved_cmake.executable.as_path(),
+                                                process_environment);
+        if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
+        for (usize index {}; index < fetched->len(); ++index) {
+            auto acquired    = rstd::move((*fetched)[index]);
+            auto cmake_lists = acquired.root.join(PathBuf::from("CMakeLists.txt"_str).as_path());
+            auto has_project = rstd::fs::exists(cmake_lists.as_path());
+            if (has_project.is_err()) {
+                return dependency_failure<ExternalUsageCatalog>(
+                    rstd::format("cannot inspect archive source CMake project '{}': {}",
+                                 cmake_lists.as_path(),
+                                 rstd::move(has_project).unwrap_err()));
+            }
+            bindings[archive_bindings[index]].requirement.source =
+                ResolvedCMakeDependencySource::Directory(
+                    rstd::move(acquired.root), rstd::move(acquired.identity), *has_project, true);
+        }
+    }
+
+    auto snapshots = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
+    for (auto& binding : bindings) {
+        auto plan = plan_cmake_package(binding.requirement,
+                                       resolved_cmake,
+                                       configuration,
+                                       profile,
+                                       platform.compiler_default,
+                                       platform.effective_target.triple.as_str(),
+                                       jobs);
+        if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
+        auto key_text = plan->area.query_root.as_path().to_str();
+        if (key_text.is_none()) {
+            return dependency_failure<ExternalUsageCatalog>(rstd::format(
+                "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
+        }
+        auto cached = snapshots.get(*key_text);
+        auto usage  = [&]() -> Result<ResolvedExternalDependency> {
+            if (cached.is_some()) return materialize_cmake_usage(*plan, **cached, parser);
+            auto executed = execute_cmake_package(*plan, process_environment, observer);
+            if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
+            auto materialized = materialize_cmake_usage(*plan, *executed, parser);
+            if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+            snapshots.insert(String::make(*key_text), rstd::move(executed).unwrap());
+            return materialized;
+        }();
+        if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+        result.packages[binding.catalog].dependencies.push(rstd::move(usage).unwrap());
+    }
+    return Ok(rstd::move(result));
 }
 
 } // namespace lito

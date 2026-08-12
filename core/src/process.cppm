@@ -126,6 +126,41 @@ auto run_command(const Vec<String>&                arguments,
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
 
+auto run_command_observed(const Vec<String>&                arguments,
+                          const ResolvedProcessEnvironment& environment,
+                          rstd::process::OutputObserver     observer,
+                          Option<ref<rstd::path::Path>>     working_directory = None(),
+                          Option<ref<CommandEnvironment>>   overrides         = None())
+    -> Result<CommandOutput> {
+    if (arguments.is_empty()) {
+        return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+    }
+    auto program = PathBuf::from(arguments[usize {}].as_str());
+    if (! program.as_path().is_absolute()) {
+        return Err(Error::make(ErrorKind::InvalidRequest,
+                               rstd::format("command program '{}' is not an absolute path",
+                                            arguments[usize {}].as_str())));
+    }
+
+    auto command = rstd::process::Command::make(arguments[usize {}].as_str());
+    for (auto index = usize(1); index < arguments.len(); ++index) {
+        command.arg(arguments[index].as_str());
+    }
+    if (working_directory.is_some()) command.current_dir(*working_directory);
+    apply_command_environment(command, environment, overrides);
+
+    auto started = rstd::time::Instant::now();
+    auto output  = command.output(observer);
+    auto elapsed = started.elapsed();
+    if (output.is_err()) {
+        return Err(Error::make(ErrorKind::Toolchain,
+                               rstd::format("failed to execute '{}': {}",
+                                            arguments[usize {}].as_str(),
+                                            rstd::move(output).unwrap_err())));
+    }
+    return decode_command_output(rstd::move(output).unwrap(), elapsed);
+}
+
 auto run_command_with_input(const Vec<String>&                arguments,
                             ref<str>                          standard_input,
                             const ResolvedProcessEnvironment& environment,
