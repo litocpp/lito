@@ -193,6 +193,7 @@ auto lito_scan_report_json(const ScanReport& report) -> Result<String> {
         auto required = JsonMap::make();
         required.insert(String::make("logical-name"_str),
                         json_string(imported.logical_name.as_str()));
+        required.insert(String::make("exported"_str), Json::Bool(imported.exported));
         auto path = json_path(imported.location.path.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         required.insert(String::make("source-path"_str), rstd::move(path).unwrap());
@@ -215,7 +216,7 @@ auto lito_scan_report_json(const ScanReport& report) -> Result<String> {
     auto document = JsonMap::make();
     document.insert(String::make("format"_str), json_string("lito-scan"_str));
     document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(1))));
+                    Json::Number(rstd::json::Number::from_u64(u64(2))));
     document.insert(String::make("target"_str), json_string(report.target.as_str()));
     document.insert(String::make("profile"_str), json_string(report.profile.as_str()));
     document.insert(String::make("source"_str), Json::String(rstd::move(source).unwrap()));

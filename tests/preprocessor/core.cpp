@@ -177,7 +177,7 @@ auto run_preprocessor_test() -> int {
                 "__has_builtin(__builtin_assume)\n"
                 "/// active documentation\n"
                 "export LITO_MODULE fixture.memory;\n"
-                "LITO_IMPORT :dependency;\n"
+                "export LITO_IMPORT :dependency;\n"
                 "#endif\n"
                 "#define LITO_DUP(value) value + value\n"
                 "LITO_DUP(__COUNTER__)\n"
@@ -249,7 +249,8 @@ auto run_preprocessor_test() -> int {
         return 9;
     }
     if (facts->imports.len() != usize(1) ||
-        facts->imports[usize {}].logical_name.as_str() != "fixture.memory:dependency"_str) {
+        facts->imports[usize {}].logical_name.as_str() != "fixture.memory:dependency"_str ||
+        ! facts->imports[usize {}].exported) {
         return 10;
     }
     return 0;

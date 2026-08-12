@@ -26,9 +26,9 @@ namespace lito
 auto parse_visibility(ref<str> value, ref<str> context) -> Result<DependencyVisibility> {
     if (value == "public"_str) return Ok(DependencyVisibility::Public);
     if (value == "private"_str) return Ok(DependencyVisibility::Private);
-    if (value == "runtime"_str) return Ok(DependencyVisibility::Runtime);
+    if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
     return failure<DependencyVisibility>(
-        rstd::format("{} must be public, private, or runtime", context));
+        rstd::format("{} must be public, private, or link", context));
 }
 
 auto parse_pkg_config_version(ref<str> value, ref<str> context)

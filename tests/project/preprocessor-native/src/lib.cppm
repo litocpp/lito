@@ -3,7 +3,7 @@ module;
 #include "config.hpp"
 
 #define LITO_JOIN(left, right) left##right
-#define LITO_IMPORT(name) import name;
+#define LITO_IMPORT(name) export import name;
 #define LITO_OPTIONAL_IMPORT(...) __VA_OPT__(LITO_IMPORT(__VA_ARGS__))
 #define LITO_PRAGMA(value) _Pragma(#value)
 

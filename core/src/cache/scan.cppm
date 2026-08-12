@@ -208,6 +208,7 @@ auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> Result<Json> {
                         cache_u64(rstd::as_cast<u64>(imported.location.line)));
         location.insert(String::make("path"_str), cache_string(path->as_str()));
         auto value = JsonMap::make();
+        value.insert(String::make("exported"_str), Json::Bool(imported.exported));
         value.insert(String::make("location"_str), Json::Object(rstd::move(location)));
         value.insert(String::make("logical-name"_str),
                      cache_string(imported.logical_name.as_str()));
@@ -269,7 +270,10 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
         auto item_ref = ref<Json>::from_raw_parts(rstd::addressof(item));
         auto name     = json_text(item_ref, "logical-name"_str);
         auto location = json_member(item_ref, "location"_str);
-        if (name.is_none() || location.is_none()) return None();
+        auto exported = json_member(item_ref, "exported"_str);
+        if (name.is_none() || location.is_none() || exported.is_none()) return None();
+        auto is_exported = (**exported).as_bool();
+        if (is_exported.is_none()) return None();
         auto path = json_text(*location, "path"_str);
         auto line = json_number(*location, "line"_str);
         if (path.is_none() || line.is_none()) return None();
@@ -280,6 +284,7 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
                     .path = PathBuf::from(*path),
                     .line = usize(static_cast<rstd::size_t>(line->to_primitive())),
                 },
+            .exported = *is_exported,
         });
     }
     auto headers = Vec<PathBuf>::with_capacity((**header_values).len());

@@ -6,7 +6,7 @@ import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using StringSet = rstd::collections::BTreeMap<String, empty>;
+using ImportIndexMap = rstd::collections::BTreeMap<String, usize>;
 
 namespace lito::frontend::parser
 {
@@ -32,6 +32,7 @@ struct PendingImport {
     String                      logical_name;
     lexical::SourceLocation     location;
     Option<rstd::path::PathBuf> presumed_path;
+    bool                        exported { false };
 };
 
 auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context)
@@ -178,6 +179,7 @@ public:
                 .logical_name = rstd::move(pending.logical_name),
                 .location =
                     DependencyLocation { .path = rstd::move(path), .line = pending.location.line },
+                .exported = pending.exported,
             });
         }
         return Ok(rstd::move(facts));
@@ -222,13 +224,18 @@ private:
         auto normalized = normalized_import(name.as_str(), declared_.as_str());
         if (normalized.is_err()) return Err(rstd::move(normalized).unwrap_err());
         auto logical_name = rstd::move(normalized).unwrap();
-        if (import_names_.contains_key(logical_name.as_str())) return Ok(empty {});
-        import_names_.insert(logical_name.clone(), empty {});
+        auto existing = import_names_.get(logical_name.as_str());
+        if (existing.is_some()) {
+            if (exported) imports_[**existing].exported = true;
+            return Ok(empty {});
+        }
+        import_names_.insert(logical_name.clone(), imports_.len());
         const auto& origin = candidate_[declaration];
         imports_.push(PendingImport {
             .logical_name  = rstd::move(logical_name),
             .location      = origin.expansion,
             .presumed_path = copied_path(origin.presumed_path),
+            .exported      = exported,
         });
         return Ok(empty {});
     }
@@ -236,7 +243,7 @@ private:
     Option<ProvidedModule> provided_;
     Option<String>         implementation_module_;
     String                 declared_;
-    StringSet              import_names_;
+    ImportIndexMap         import_names_;
     Vec<PendingImport>     imports_;
     Vec<lexical::Token>    candidate_;
     usize                  brace_depth_ {};

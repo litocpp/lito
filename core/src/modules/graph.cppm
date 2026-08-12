@@ -145,11 +145,11 @@ auto resolve_modules(const PackagePlan&       package,
     for (const auto& scan : scans) {
         auto names = StringSet::make();
         for (const auto& required : scan.required_modules) {
-            auto provider = providers.get(required.as_str());
+            auto provider = providers.get(required.logical_name.as_str());
             if (provider.is_none()) {
                 return graph_failure<ModulePlan>(
                     rstd::format("missing module provider '{}' imported by '{}'",
-                                 required.as_str(),
+                                 required.logical_name.as_str(),
                                  units[scan.unit].unit.source.as_path()));
             }
             const auto provider_unit   = **provider;
@@ -159,7 +159,7 @@ auto resolve_modules(const PackagePlan&       package,
                 ! contains_target(package.visible_targets[importer_target], provider_target)) {
                 return graph_failure<ModulePlan>(
                     rstd::format("module '{}' from target '{}' is not visible to target '{}'",
-                                 required.as_str(),
+                                 required.logical_name.as_str(),
                                  package.package->targets[provider_target].id.name.as_str(),
                                  package.package->targets[importer_target].id.name.as_str()));
             }
@@ -174,14 +174,14 @@ auto resolve_modules(const PackagePlan&       package,
                 return graph_failure<ModulePlan>(
                     rstd::format("module '{}' imported by '{}' has incompatible {}: provider '{}', "
                                  "consumer '{}'",
-                                 required.as_str(),
+                                 required.logical_name.as_str(),
                                  units[scan.unit].unit.source.as_path(),
                                  difference.field,
                                  difference.provider.as_str(),
                                  difference.consumer.as_str()));
             }
-            if (names.contains_key(required.as_str())) continue;
-            names.insert(required.clone(), empty {});
+            if (names.contains_key(required.logical_name.as_str())) continue;
+            names.insert(required.logical_name.clone(), empty {});
             direct_inputs[scan.unit].emplace_back(provider_unit);
         }
     }

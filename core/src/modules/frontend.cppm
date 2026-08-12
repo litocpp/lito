@@ -12,11 +12,14 @@ using namespace rstd::prelude;
 namespace lito::modules
 {
 
-auto contains_name(const Vec<String>& values, ref<str> name) -> bool {
-    for (const auto& value : values) {
-        if (value.as_str() == name) return true;
+auto append_requirement(Vec<RequiredModule>& values, ref<str> name, bool exported) -> empty {
+    for (auto& value : values) {
+        if (value.logical_name.as_str() != name) continue;
+        value.exported = value.exported || exported;
+        return {};
     }
-    return false;
+    values.push(RequiredModule { .logical_name = String::make(name), .exported = exported });
+    return {};
 }
 
 } // namespace lito::modules
@@ -37,12 +40,11 @@ auto scan_from_frontend(const frontend::FrontendResult& facts, UnitId unit) -> S
     }
     if (facts.implementation_module.is_some()) {
         result.implementation_module = Some(facts.implementation_module->clone());
-        result.required_modules.push(facts.implementation_module->clone());
+        append_requirement(result.required_modules, facts.implementation_module->as_str(), false);
     }
     for (const auto& imported : facts.imports) {
-        if (! contains_name(result.required_modules, imported.logical_name.as_str())) {
-            result.required_modules.push(imported.logical_name.clone());
-        }
+        append_requirement(
+            result.required_modules, imported.logical_name.as_str(), imported.exported);
     }
     for (const auto& header : facts.header_inputs) result.header_inputs.push(header.clone());
     return result;

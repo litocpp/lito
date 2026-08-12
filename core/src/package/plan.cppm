@@ -134,9 +134,9 @@ auto visit_target(const PackageMetadata& package,
 
     color = 1;
     for (auto pass = usize {}; pass < usize(2); ++pass) {
-        const auto runtime = pass == usize {};
+        const auto link_only = pass == usize {};
         for (const auto& dependency : package.targets[target].dependencies) {
-            if ((dependency.visibility == DependencyVisibility::Runtime) != runtime) continue;
+            if ((dependency.visibility == DependencyVisibility::LinkOnly) != link_only) continue;
             auto found = target_index(package, dependency.target);
             if (found.is_none()) {
                 return plan_failure<empty>(
@@ -461,7 +461,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
         for (const auto& dependency : spec.dependencies) {
-            if (dependency.visibility == DependencyVisibility::Runtime) continue;
+            if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
             auto dependency_id = *target_index(package, dependency.target);
             append_unique(visible, public_visible[dependency_id]);
             if (dependency.visibility == DependencyVisibility::Public) continue;

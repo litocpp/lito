@@ -18,7 +18,7 @@ enum class DependencyVisibility
 {
     Public,
     Private,
-    Runtime,
+    LinkOnly,
 };
 
 enum class PkgConfigVersionOperator

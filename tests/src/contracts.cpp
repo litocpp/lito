@@ -1356,7 +1356,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     });
     targets.push(lito::CMakeTargetRequirement {
         .name       = String::make("LitoFixture::order"_str),
-        .visibility = lito::DependencyVisibility::Runtime,
+        .visibility = lito::DependencyVisibility::LinkOnly,
     });
     auto cache = Vec<lito::CMakeCacheEntry>::make();
     cache.push(lito::CMakeCacheEntry {
@@ -1407,7 +1407,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
     EXPECT_EQ(dependency.targets[usize(1)].visibility, lito::DependencyVisibility::Public);
     EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
-    EXPECT_EQ(dependency.targets[usize(2)].visibility, lito::DependencyVisibility::Runtime);
+    EXPECT_EQ(dependency.targets[usize(2)].visibility, lito::DependencyVisibility::LinkOnly);
 
     auto first_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(first_count.is_ok());
@@ -1659,15 +1659,16 @@ TEST(Contracts, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosure) {
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize {}]));
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize(1)]));
 
-    auto runtime_metadata = external_usage_metadata(lito::DependencyVisibility::Runtime, *parser);
-    ASSERT_TRUE(runtime_metadata.is_ok());
-    auto runtime_plan =
-        lito::resolve_source_discovery(*runtime_metadata, "debug"_str, Vec<String>::make());
-    ASSERT_TRUE(runtime_plan.is_ok());
-    EXPECT_FALSE(has_external_macro(runtime_plan->contexts[usize {}]));
-    EXPECT_FALSE(has_external_macro(runtime_plan->contexts[usize(1)]));
-    ASSERT_EQ(runtime_plan->link_inputs[usize(1)].len(), usize(2));
-    EXPECT_TRUE(runtime_plan->link_inputs[usize(1)][usize(1)].is_External());
+    auto link_only_metadata =
+        external_usage_metadata(lito::DependencyVisibility::LinkOnly, *parser);
+    ASSERT_TRUE(link_only_metadata.is_ok());
+    auto link_only_plan =
+        lito::resolve_source_discovery(*link_only_metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(link_only_plan.is_ok());
+    EXPECT_FALSE(has_external_macro(link_only_plan->contexts[usize {}]));
+    EXPECT_FALSE(has_external_macro(link_only_plan->contexts[usize(1)]));
+    ASSERT_EQ(link_only_plan->link_inputs[usize(1)].len(), usize(2));
+    EXPECT_TRUE(link_only_plan->link_inputs[usize(1)][usize(1)].is_External());
 }
 
 TEST(Contracts, InvalidDependencyGraphsAreRejectedByResolverOwner) {

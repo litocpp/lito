@@ -23,7 +23,7 @@ namespace lito
 {
 
 inline constexpr auto CACHE_VERSION  = u64(3);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v1"_str;
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v2"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
 
 template<typename T>

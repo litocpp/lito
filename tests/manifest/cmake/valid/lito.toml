@@ -20,5 +20,5 @@ cache = { LITO_FIXTURE_OPTION = true }
 targets = [
   { name = "LitoFixture::fixture", visibility = "private" },
   { name = "LitoFixture::headers", visibility = "public" },
-  { name = "LitoFixture::order", visibility = "runtime" },
+  { name = "LitoFixture::order", visibility = "link" },
 ]

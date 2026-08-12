@@ -114,6 +114,7 @@ struct DependencyLocation : DefaultInClass<DependencyLocation, Clone> {
 struct ModuleImport : DefaultInClass<ModuleImport, Clone> {
     String             logical_name;
     DependencyLocation location;
+    bool               exported { false };
 
     auto clone() const -> ModuleImport;
 };
@@ -204,6 +205,7 @@ auto ModuleImport::clone() const -> ModuleImport {
     return ModuleImport {
         .logical_name = logical_name.clone(),
         .location     = as<Clone>(location).clone(),
+        .exported     = exported,
     };
 }
 

@@ -70,11 +70,16 @@ struct PreparedUnit {
     Option<frontend::FrontendAnalysis> frontend_analysis;
 };
 
+struct RequiredModule {
+    String logical_name;
+    bool   exported { false };
+};
+
 struct ScanResult {
     UnitId                           unit {};
     Option<frontend::ProvidedModule> provided;
     Option<String>                   implementation_module;
-    Vec<String>                      required_modules;
+    Vec<RequiredModule>              required_modules;
     Vec<PathBuf>                     header_inputs;
     String                           preprocessor_environment;
 };

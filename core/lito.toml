@@ -34,4 +34,4 @@ visibility = "private"
 
 [dependencies.rstd-nostd]
 workspace = true
-visibility = "runtime"
+visibility = "link"
