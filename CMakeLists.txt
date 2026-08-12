@@ -6,6 +6,8 @@ project(
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
+include(GNUInstallDirs)
+
 if(NOT CMAKE_CXX_COMPILER_ID STREQUAL "Clang")
   message(FATAL_ERROR "lito only supports clang++")
 endif()
@@ -55,3 +57,6 @@ FetchContent_MakeAvailable(luato)
 add_subdirectory(frontend)
 add_subdirectory(core)
 add_subdirectory(cli)
+
+install(FILES schema/lito.schema.json DESTINATION ${CMAKE_INSTALL_DATADIR}/lito)
+install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/lito)

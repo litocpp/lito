@@ -1,0 +1,70 @@
+name: Package
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux:
+    name: Linux ${{ matrix.arch }}
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - arch: x86_64
+            runner: ubuntu-24.04
+          - arch: aarch64
+            runner: ubuntu-24.04-arm
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install LLVM 22
+        run: |
+          wget --quiet https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 22
+          sudo apt-get install --yes libc++-22-dev libc++abi-22-dev lld-22 ninja-build
+
+      - name: Configure
+        run: |
+          cmake \
+            -S . \
+            -B build/cmake-package \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_C_COMPILER=/usr/bin/clang-22 \
+            -DCMAKE_CXX_COMPILER=/usr/bin/clang++-22
+
+      - name: Build
+        run: cmake --build build/cmake-package --target lito --parallel 2
+
+      - name: Package
+        env:
+          LITO_ARCH: ${{ matrix.arch }}
+        run: |
+          test "$(uname -m)" = "$LITO_ARCH"
+          package="lito-linux-$LITO_ARCH"
+          cmake --install build/cmake-package --prefix "dist/$package" --strip
+          "dist/$package/bin/lito" --help >/dev/null
+          tar -C dist -czf "dist/$package.tar.gz" "$package"
+          tar -tzf "dist/$package.tar.gz"
+          cd dist
+          sha256sum "$package.tar.gz" >"$package.tar.gz.sha256"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: lito-linux-${{ matrix.arch }}
+          path: |
+            dist/lito-linux-${{ matrix.arch }}.tar.gz
+            dist/lito-linux-${{ matrix.arch }}.tar.gz.sha256
+          if-no-files-found: error

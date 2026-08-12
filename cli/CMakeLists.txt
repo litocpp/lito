@@ -10,3 +10,5 @@ target_sources(
           src/cli.cppm
           src/main.cppm)
 target_link_libraries(lito PRIVATE lito.core rstd.argparse rstd::nostd)
+
+install(TARGETS lito RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
