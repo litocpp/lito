@@ -16,6 +16,7 @@ target_sources(
          src/cpp_source.cppm
          src/bmi.cppm
          src/model.cppm
+         src/platform.cppm
          src/environment.cppm
          src/build_profile.cppm
          src/process.cppm

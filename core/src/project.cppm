@@ -11,6 +11,8 @@ import lito.package;
 import lito.dependency;
 import lito.toolchain;
 import lito.environment;
+import lito.platform;
+import lito.build_profile;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -37,7 +39,7 @@ auto resolve_project(const PackageSelection&           selection,
     auto external_resolution = resolution.clone();
     auto project             = rstd_try(resolve_package_selection_with_environment(
         selection, purpose, rstd::move(resolution), target, tool_resolver, environment));
-    rstd_try(resolve_external_dependency_sources(
+    rstd_try(prepare_external_dependency_sources(
         project.graph, rstd::move(external_resolution), tool_resolver, environment));
     auto lock = rstd_try(sync_lock(project.graph, rstd::move(lock_session)));
     return Ok(ProjectResolution {
@@ -63,16 +65,21 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                               bool                              locked,
                               PackageSelectionPurpose purpose = PackageSelectionPurpose::All)
     -> Result<PackageMetadata> {
-    auto resolved               = rstd_try(resolve_project(selection,
-                                                           purpose,
-                                                           sources,
-                                                           locked,
-                                                           GitResolutionMode::ReuseLocked,
-                                                           rstd::addressof(toolchain.target_info()),
-                                                           tool_resolver,
-                                                           environment));
-    auto project                = rstd::move(resolved.selection);
-    auto resolved_configuration = configuration.clone();
+    auto build_arguments =
+        rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
+    auto host     = rstd_try(detect_host_info());
+    auto platform = rstd_try(resolve_build_platform(
+        host, toolchain.target_info(), explicit_cpp_target(build_arguments)));
+    auto resolved = rstd_try(resolve_project(selection,
+                                             purpose,
+                                             sources,
+                                             locked,
+                                             GitResolutionMode::ReuseLocked,
+                                             rstd::addressof(platform.effective_target),
+                                             tool_resolver,
+                                             environment));
+    auto project  = rstd::move(resolved.selection);
+    auto resolved_configuration                 = configuration.clone();
     resolved_configuration.toolchain.compiler   = PathBuf::from(toolchain.compiler_path());
     resolved_configuration.toolchain.c_compiler = PathBuf::from(toolchain.c_compiler_path());
     resolved_configuration.toolchain.linker     = PathBuf::from(toolchain.linker_path());
@@ -84,7 +91,8 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                         profile,
                                         pkg_config,
                                         cmake,
-                                        toolchain.target_info(),
+                                        platform,
+                                        rstd::move(build_arguments),
                                         toolchain.argument_parser(),
                                         tool_resolver,
                                         environment);

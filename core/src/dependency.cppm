@@ -263,7 +263,7 @@ auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
     return tokenize_command_fragments(input, "pkg-config output"_str);
 }
 
-auto resolve_external_dependency_sources(ResolvedPackageGraph&             graph,
+auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph,
                                          PackageResolutionOptions          options,
                                          ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment& environment)
@@ -271,14 +271,25 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&             graph
     auto sources =
         SourceManager(graph.root_directory.as_path(), rstd::move(options), resolver, environment);
     for (auto& package : graph.packages) {
-        auto resolved = Vec<ResolvedCMakeDependencyRequirement>::with_capacity(
+        auto resolved = Vec<PreparedCMakeDependencyRequirement>::with_capacity(
             package.manifest.cmake_external_dependencies.len());
         for (const auto& declaration : package.manifest.cmake_external_dependencies) {
-            auto source = ResolvedCMakeDependencySource::Installed();
+            auto source = PreparedCMakeDependencySource::Installed();
             if (declaration.source.is_Archive()) {
-                source = ResolvedCMakeDependencySource::Archive(
+                source = PreparedCMakeDependencySource::Archive(
                     declaration.source.as_Archive().url.clone(),
                     declaration.source.as_Archive().sha256.clone());
+            } else if (declaration.source.is_ArchitectureArchives()) {
+                auto variants = Vec<CMakeArchiveVariant>::with_capacity(
+                    declaration.source.as_ArchitectureArchives().variants.len());
+                for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
+                    variants.push(CMakeArchiveVariant {
+                        .architecture = variant.architecture.clone(),
+                        .url          = variant.url.clone(),
+                        .sha256       = variant.sha256.clone(),
+                    });
+                }
+                source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
             } else if (! declaration.source.is_Installed()) {
                 auto acquisition =
                     declaration.source.is_Git()
@@ -295,7 +306,7 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&             graph
                 }
                 auto acquired = sources.acquire_external(acquisition, declaring_root);
                 if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                source = ResolvedCMakeDependencySource::Directory(rstd::move(acquired->root),
+                source = PreparedCMakeDependencySource::Directory(rstd::move(acquired->root),
                                                                   rstd::move(acquired->identity));
             }
             auto cache = Vec<CMakeCacheEntry>::with_capacity(declaration.cache.len());
@@ -338,7 +349,7 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&             graph
                 }
                 adapter = Some(rstd::move(canonical).unwrap());
             }
-            resolved.push(ResolvedCMakeDependencyRequirement {
+            resolved.push(PreparedCMakeDependencyRequirement {
                 .alias            = declaration.alias.clone(),
                 .package          = declaration.package.clone(),
                 .source           = rstd::move(source),
@@ -369,23 +380,88 @@ auto resolve_external_dependency_sources(ResolvedPackageGraph&             graph
     return Ok(empty {});
 }
 
-auto resolve_external_dependency_sources(ResolvedPackageGraph&    graph,
+auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
                                          PackageResolutionOptions options) -> Result<empty> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
     auto resolver = ToolResolver(*environment);
-    return resolve_external_dependency_sources(graph, rstd::move(options), resolver, *environment);
+    return prepare_external_dependency_sources(graph, rstd::move(options), resolver, *environment);
+}
+
+auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
+                                            const BuildPlatform&                      platform)
+    -> Result<ResolvedCMakeDependencyRequirement> {
+    auto source = ResolvedCMakeDependencySource::Installed();
+    if (requirement.source.is_Directory()) {
+        source = ResolvedCMakeDependencySource::Directory(
+            requirement.source.as_Directory().root.clone(),
+            requirement.source.as_Directory().identity.clone());
+    } else if (requirement.source.is_Archive()) {
+        source =
+            ResolvedCMakeDependencySource::Archive(requirement.source.as_Archive().url.clone(),
+                                                   requirement.source.as_Archive().sha256.clone());
+    } else if (requirement.source.is_ArchitectureArchives()) {
+        const CMakeArchiveVariant* selected  = nullptr;
+        auto                       available = String::make();
+        for (const auto& variant : requirement.source.as_ArchitectureArchives().variants) {
+            if (! available.is_empty()) available.push_str(", "_str);
+            available.push_str(variant.architecture.as_str());
+            if (variant.architecture == platform.effective_target.architecture) {
+                selected = rstd::addressof(variant);
+            }
+        }
+        if (selected == nullptr) {
+            return dependency_failure<ResolvedCMakeDependencyRequirement>(rstd::format(
+                "CMake dependency '{}' has no archive for target '{}' (architecture '{}'); "
+                "available architectures: {}",
+                requirement.alias.as_str(),
+                platform.effective_target.triple.as_str(),
+                platform.effective_target.architecture.as_str(),
+                available.as_str()));
+        }
+        source =
+            ResolvedCMakeDependencySource::Archive(selected->url.clone(), selected->sha256.clone());
+    }
+    auto adapter = Option<PathBuf> {};
+    if (requirement.adapter.is_some()) adapter = Some(requirement.adapter->clone());
+    auto config_directory = Option<PathBuf> {};
+    if (requirement.config_directory.is_some()) {
+        config_directory = Some(requirement.config_directory->clone());
+    }
+    auto cache = Vec<CMakeCacheEntry>::with_capacity(requirement.cache.len());
+    for (const auto& entry : requirement.cache) {
+        cache.push(CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    auto targets = Vec<CMakeTargetRequirement>::with_capacity(requirement.targets.len());
+    for (const auto& target : requirement.targets) {
+        targets.push(CMakeTargetRequirement {
+            .name       = target.name.clone(),
+            .visibility = target.visibility,
+        });
+    }
+    return Ok(ResolvedCMakeDependencyRequirement {
+        .alias            = requirement.alias.clone(),
+        .package          = requirement.package.clone(),
+        .source           = rstd::move(source),
+        .integration      = requirement.integration,
+        .adapter          = rstd::move(adapter),
+        .config_directory = rstd::move(config_directory),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
+    });
 }
 
 auto resolve_external_dependencies(
     const Vec<PkgConfigExternalDependency>&        pkg_config_declarations,
-    const Vec<ResolvedCMakeDependencyRequirement>& cmake_declarations,
+    const Vec<PreparedCMakeDependencyRequirement>& cmake_declarations,
     const PkgConfigProviderConfig&                 pkg_config,
     const CMakeProviderConfig&                     cmake_config,
     const BuildConfiguration&                      configuration,
     const ProfileSpec&                             profile,
-    const TargetInfo&                              default_target,
-    ref<str>                                       effective_target,
+    const BuildPlatform&                           platform,
     const CppArgumentParser&                       parser,
     ToolResolver&                                  tool_resolver,
     const ResolvedProcessEnvironment&              process_environment)
@@ -395,11 +471,12 @@ auto resolve_external_dependencies(
     auto provider_id         = String::make();
     auto resolved_pkg_config = pkg_config.clone();
     if (! pkg_config_declarations.is_empty()) {
-        if (effective_target != default_target.triple.as_str() && ! pkg_config.target_configured) {
+        if (platform.effective_target.triple != platform.compiler_default.triple.as_str() &&
+            ! pkg_config.target_configured) {
             return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::format(
                 "target '{}' requires explicit pkg-config executable, library-path, or "
                 "sysroot configuration",
-                effective_target));
+                platform.effective_target.triple.as_str()));
         }
         auto resolved =
             tool_resolver.resolve(pkg_config.executable.as_path(), "pkg-config executable"_str);
@@ -408,7 +485,8 @@ auto resolve_external_dependencies(
             return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::move(error.message));
         }
         resolved_pkg_config.executable = rstd::move(resolved).unwrap().executable;
-        auto configured_environment    = provider_environment(resolved_pkg_config, default_target);
+        auto configured_environment =
+            provider_environment(resolved_pkg_config, platform.compiler_default);
         if (configured_environment.is_err()) {
             return Err(rstd::move(configured_environment).unwrap_err());
         }
@@ -418,8 +496,8 @@ auto resolve_external_dependencies(
                                          process_environment,
                                          pkg_config_declarations[usize {}]);
         if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
-        auto identity =
-            provider_identity(resolved_pkg_config, effective_target, provider->as_str());
+        auto identity = provider_identity(
+            resolved_pkg_config, platform.effective_target.triple.as_str(), provider->as_str());
         if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
         provider_id = rstd::move(identity).unwrap();
     }
@@ -523,12 +601,14 @@ auto resolve_external_dependencies(
         resolved_cmake.executable = rstd::move(resolved).unwrap().executable;
     }
     for (const auto& declaration : cmake_declarations) {
-        auto resolved = resolve_cmake_dependency(declaration,
+        auto requirement = resolve_cmake_requirement_for_platform(declaration, platform);
+        if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
+        auto resolved = resolve_cmake_dependency(*requirement,
                                                  resolved_cmake,
                                                  configuration,
                                                  profile,
-                                                 default_target,
-                                                 effective_target,
+                                                 platform.compiler_default,
+                                                 platform.effective_target.triple.as_str(),
                                                  parser,
                                                  process_environment);
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
@@ -539,13 +619,12 @@ auto resolve_external_dependencies(
 
 auto resolve_external_dependencies(
     const Vec<PkgConfigExternalDependency>&        pkg_config_declarations,
-    const Vec<ResolvedCMakeDependencyRequirement>& cmake_declarations,
+    const Vec<PreparedCMakeDependencyRequirement>& cmake_declarations,
     const PkgConfigProviderConfig&                 pkg_config,
     const CMakeProviderConfig&                     cmake_config,
     const BuildConfiguration&                      configuration,
     const ProfileSpec&                             profile,
-    const TargetInfo&                              default_target,
-    ref<str>                                       effective_target,
+    const BuildPlatform&                           platform,
     const CppArgumentParser& parser) -> Result<Vec<ResolvedExternalDependency>> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
@@ -556,8 +635,7 @@ auto resolve_external_dependencies(
                                          cmake_config,
                                          configuration,
                                          profile,
-                                         default_target,
-                                         effective_target,
+                                         platform,
                                          parser,
                                          resolver,
                                          *environment);
@@ -568,20 +646,18 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const CMakeProviderConfig&              cmake_config,
                                    const BuildConfiguration&               configuration,
                                    const ProfileSpec&                      profile,
-                                   const TargetInfo&                       default_target,
-                                   ref<str>                                effective_target,
+                                   const BuildPlatform&                    platform,
                                    const CppArgumentParser&                parser,
                                    ToolResolver&                           tool_resolver,
                                    const ResolvedProcessEnvironment&       process_environment)
     -> Result<Vec<ResolvedExternalDependency>> {
     return resolve_external_dependencies(declarations,
-                                         Vec<ResolvedCMakeDependencyRequirement>::make(),
+                                         Vec<PreparedCMakeDependencyRequirement>::make(),
                                          pkg_config,
                                          cmake_config,
                                          configuration,
                                          profile,
-                                         default_target,
-                                         effective_target,
+                                         platform,
                                          parser,
                                          tool_resolver,
                                          process_environment);
@@ -592,18 +668,16 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const CMakeProviderConfig&              cmake_config,
                                    const BuildConfiguration&               configuration,
                                    const ProfileSpec&                      profile,
-                                   const TargetInfo&                       default_target,
-                                   ref<str>                                effective_target,
+                                   const BuildPlatform&                    platform,
                                    const CppArgumentParser&                parser)
     -> Result<Vec<ResolvedExternalDependency>> {
     return resolve_external_dependencies(declarations,
-                                         Vec<ResolvedCMakeDependencyRequirement>::make(),
+                                         Vec<PreparedCMakeDependencyRequirement>::make(),
                                          pkg_config,
                                          cmake_config,
                                          configuration,
                                          profile,
-                                         default_target,
-                                         effective_target,
+                                         platform,
                                          parser);
 }
 

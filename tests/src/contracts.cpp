@@ -56,6 +56,21 @@ inline constexpr ref<str> INVALID_CMAKE_MANIFESTS[] = {
     "manifest/cmake/provider-mix"_str,         "manifest/cmake/unsafe-target"_str,
 };
 
+inline constexpr ref<str> INVALID_CMAKE_ARCHITECTURE_ARCHIVE_MANIFESTS[] = {
+    "manifest/cmake/archives-empty"_str,
+    "manifest/cmake/archives-git-mix"_str,
+    "manifest/cmake/archives-install"_str,
+    "manifest/cmake/archives-invalid-sha"_str,
+    "manifest/cmake/archives-invalid-url"_str,
+    "manifest/cmake/archives-missing-archive"_str,
+    "manifest/cmake/archives-missing-sha"_str,
+    "manifest/cmake/archives-noncanonical-architecture"_str,
+    "manifest/cmake/archives-path-mix"_str,
+    "manifest/cmake/archives-source-mix"_str,
+    "manifest/cmake/archives-unknown-field"_str,
+    "manifest/cmake/archives-unsafe-architecture"_str,
+};
+
 inline constexpr ref<str> INVALID_EXPLICIT_SOURCES[] = {
     "manifest/toml-explicit/duplicate"_str,
     "manifest/toml-explicit/missing"_str,
@@ -164,10 +179,37 @@ auto has_external_macro(const lito::CompileContext& context) -> bool {
 auto pkg_config_target() -> lito::TargetInfo {
     return lito::TargetInfo {
         .triple = String::make("x86_64-unknown-linux-gnu"_str),
-        .arch   = String::make("x86_64"_str),
+        .architecture =
+            lito::Architecture {
+                .name = String::make("x86_64"_str),
+            },
         .os     = String::make("linux"_str),
         .family = lito::TargetFamily::Unix,
     };
+}
+
+auto native_platform() -> lito::BuildPlatform {
+    auto target   = pkg_config_target();
+    auto resolved = lito::resolve_build_platform(
+        lito::HostInfo {
+            .architecture = target.architecture.clone(),
+            .os           = target.os.clone(),
+        },
+        target,
+        None());
+    return rstd::move(resolved).unwrap();
+}
+
+auto explicit_platform(ref<str> target_triple) -> lito::BuildPlatform {
+    auto target   = pkg_config_target();
+    auto resolved = lito::resolve_build_platform(
+        lito::HostInfo {
+            .architecture = target.architecture.clone(),
+            .os           = target.os.clone(),
+        },
+        target,
+        Some(target_triple));
+    return rstd::move(resolved).unwrap();
 }
 
 auto default_profile(const lito::CppArgumentParser& parser) -> lito::ProfileSpec {
@@ -538,7 +580,6 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
 
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto target   = pkg_config_target();
     auto packages = strings("fixture-profile-owned_option"_str);
     auto targets  = Vec<lito::PackageTargetId>::make();
     targets.push(lito::PackageTargetId {
@@ -546,14 +587,18 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
         .kind    = lito::PackageTargetKind::Binary,
         .name    = String::make("fixture-profile-owned_option"_str),
     });
+    auto build_configuration = configuration();
+    auto build_arguments     = lito::parse_build_arguments(build_configuration, *parser);
+    ASSERT_TRUE(build_arguments.is_ok());
     auto metadata = lito::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                        packages,
                                                        targets,
-                                                       configuration(),
+                                                       build_configuration,
                                                        build_profile("debug"_str),
                                                        lito::PkgConfigProviderConfig {},
                                                        lito::CMakeProviderConfig {},
-                                                       target,
+                                                       native_platform(),
+                                                       rstd::move(build_arguments).unwrap(),
                                                        *parser);
     ASSERT_TRUE(metadata.is_ok());
 
@@ -865,7 +910,7 @@ TEST(Contracts, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     EXPECT_TRUE(graph->packages[usize {}].cmake_external_dependencies.is_empty());
-    auto external = lito::resolve_external_dependency_sources(*graph, {});
+    auto external = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
     ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(2));
     const auto resolved_index =
@@ -892,7 +937,7 @@ TEST(Contracts, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner)
 
     auto graph = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
-    ASSERT_TRUE(lito::resolve_external_dependency_sources(*graph, {}).is_ok());
+    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
     const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
     EXPECT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.integration, lito::CMakeIntegration::BuildTree);
@@ -905,6 +950,148 @@ TEST(Contracts, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
         auto loaded = lito::load_manifest_document(root(path).as_path());
         EXPECT_TRUE(loaded.is_err());
     }
+}
+
+TEST(Contracts, CMakeArchitectureArchivesManifestIsTyped) {
+    auto loaded =
+        lito::load_package_manifest(root("manifest/cmake/architecture-archives"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
+    const auto& source = loaded->cmake_external_dependencies[usize {}].source;
+    ASSERT_TRUE(source.is_ArchitectureArchives());
+    const auto& variants = source.as_ArchitectureArchives().variants;
+    ASSERT_EQ(variants.len(), usize(2));
+    EXPECT_EQ(variants[usize {}].architecture.as_str(), "aarch64"_str);
+    EXPECT_EQ(variants[usize {}].url.as_str(), "https://example.com/fixture-linuxarm64.tar.gz"_str);
+    EXPECT_EQ(variants[usize(1)].architecture.as_str(), "x86_64"_str);
+    EXPECT_EQ(variants[usize(1)].sha256.as_str(),
+              "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str);
+}
+
+TEST(Contracts, CMakeArchitectureArchivesInvalidManifestsAreRejected) {
+    for (const auto path : INVALID_CMAKE_ARCHITECTURE_ARCHIVE_MANIFESTS) {
+        auto loaded = lito::load_manifest_document(root(path).as_path());
+        if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
+        EXPECT_TRUE(loaded.is_err());
+    }
+}
+
+TEST(Contracts, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
+    auto variants = Vec<lito::CMakeArchiveVariant>::make();
+    variants.push(lito::CMakeArchiveVariant {
+        .architecture = lito::Architecture { .name = String::make("aarch64"_str) },
+        .url          = String::make("https://example.com/arm64.tar.gz"_str),
+        .sha256 =
+            String::make("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str),
+    });
+    variants.push(lito::CMakeArchiveVariant {
+        .architecture = lito::Architecture { .name = String::make("x86_64"_str) },
+        .url          = String::make("https://example.com/x64.tar.gz"_str),
+        .sha256 =
+            String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str),
+    });
+    auto requirement = lito::PreparedCMakeDependencyRequirement {
+        .alias   = String::make("fixture"_str),
+        .package = String::make("Fixture"_str),
+        .source  = lito::PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants)),
+        .integration = lito::CMakeIntegration::BuildTree,
+    };
+
+    auto native = lito::resolve_cmake_requirement_for_platform(requirement, native_platform());
+    ASSERT_TRUE(native.is_ok());
+    ASSERT_TRUE(native->source.is_Archive());
+    EXPECT_EQ(native->source.as_Archive().url.as_str(), "https://example.com/x64.tar.gz"_str);
+
+    auto arm = lito::resolve_cmake_requirement_for_platform(
+        requirement, explicit_platform("aarch64-unknown-linux-gnu"_str));
+    ASSERT_TRUE(arm.is_ok());
+    ASSERT_TRUE(arm->source.is_Archive());
+    EXPECT_EQ(arm->source.as_Archive().url.as_str(), "https://example.com/arm64.tar.gz"_str);
+    EXPECT_EQ(arm->source.as_Archive().sha256.as_str(),
+              "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str);
+
+    auto missing = lito::resolve_cmake_requirement_for_platform(
+        requirement, explicit_platform("riscv64-unknown-linux-gnu"_str));
+    ASSERT_TRUE(missing.is_err());
+    const auto& message = missing.unwrap_err().message;
+    EXPECT_TRUE(message.as_str().contains("fixture"_str));
+    EXPECT_TRUE(message.as_str().contains("riscv64-unknown-linux-gnu"_str));
+    EXPECT_TRUE(message.as_str().contains("architecture 'riscv64'"_str));
+    EXPECT_TRUE(message.as_str().contains("aarch64, x86_64"_str));
+
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
+    declarations.push(rstd::move(requirement));
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto cross_cmake =
+        lito::resolve_external_dependencies(Vec<lito::PkgConfigExternalDependency>::make(),
+                                            declarations,
+                                            fixture_pkg_config(),
+                                            fixture_cmake(),
+                                            configuration(),
+                                            default_profile(*parser),
+                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
+                                            *parser);
+    ASSERT_TRUE(cross_cmake.is_err());
+    EXPECT_TRUE(cross_cmake.unwrap_err().message.as_str().contains(
+        "without an explicit CMake toolchain contract"_str));
+}
+
+TEST(Contracts, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) {
+    auto directory = root("workspace/architecture-archives"_str);
+    auto document  = lito::load_manifest_document(directory.as_path());
+    ASSERT_TRUE(document.is_ok());
+    ASSERT_TRUE(document->workspace.is_some());
+    ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
+    const auto& declared = document->workspace->cmake_external_dependencies[usize {}];
+    ASSERT_TRUE(declared.source.is_ArchitectureArchives());
+    ASSERT_EQ(declared.source.as_ArchitectureArchives().variants.len(), usize(2));
+
+    auto graph = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->packages.len(), usize(1));
+    ASSERT_EQ(graph->packages[usize {}].manifest.cmake_external_dependencies.len(), usize(1));
+    const auto& inherited =
+        graph->packages[usize {}].manifest.cmake_external_dependencies[usize {}];
+    ASSERT_TRUE(inherited.source.is_ArchitectureArchives());
+    ASSERT_EQ(inherited.source.as_ArchitectureArchives().variants.len(), usize(2));
+    ASSERT_EQ(inherited.targets.len(), usize(1));
+    EXPECT_EQ(inherited.targets[usize {}].name.as_str(), "Fixture::fixture"_str);
+
+    const auto source_count = graph->sources.len();
+    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
+    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
+    const auto& prepared = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    ASSERT_TRUE(prepared.source.is_ArchitectureArchives());
+    EXPECT_EQ(prepared.source.as_ArchitectureArchives().variants.len(), usize(2));
+    EXPECT_EQ(graph->sources.len(), source_count);
+}
+
+TEST(Contracts, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
+    auto compiler_default = pkg_config_target();
+    auto host             = lito::HostInfo {
+        .architecture = compiler_default.architecture.clone(),
+        .os           = compiler_default.os.clone(),
+    };
+    auto native = lito::resolve_build_platform(host, compiler_default, None());
+    ASSERT_TRUE(native.is_ok());
+    EXPECT_EQ(native->intent, lito::BuildTargetIntent::Native);
+    EXPECT_FALSE(native->cross);
+    EXPECT_EQ(native->effective_target.architecture.as_str(), "x86_64"_str);
+
+    auto arm_default = lito::parse_target_info("aarch64-unknown-linux-gnu"_str);
+    ASSERT_TRUE(arm_default.is_ok());
+    auto unintentional_cross = lito::resolve_build_platform(host, *arm_default, None());
+    ASSERT_TRUE(unintentional_cross.is_err());
+    EXPECT_TRUE(unintentional_cross.unwrap_err().message.as_str().contains(
+        "declare an explicit target/toolchain contract"_str));
+
+    auto explicit_cross =
+        lito::resolve_build_platform(host, compiler_default, Some("aarch64-unknown-linux-gnu"_str));
+    ASSERT_TRUE(explicit_cross.is_ok());
+    EXPECT_EQ(explicit_cross->intent, lito::BuildTargetIntent::ExplicitTarget);
+    EXPECT_TRUE(explicit_cross->cross);
+    EXPECT_EQ(explicit_cross->effective_target.architecture.as_str(), "aarch64"_str);
 }
 
 TEST(Contracts, CMakeManifestAcceptsUnnamespacedTargets) {
@@ -953,8 +1140,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        target,
-                                                        target.triple.as_str(),
+                                                        native_platform(),
                                                         *parser);
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(1));
@@ -987,8 +1173,7 @@ TEST(Contracts, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
                                                       fixture_cmake(),
                                                       configuration(),
                                                       default_profile(*parser),
-                                                      target,
-                                                      target.triple.as_str(),
+                                                      native_platform(),
                                                       *parser);
     ASSERT_TRUE(shared.is_ok());
     for (const auto& token : (*shared)[usize {}].link_arguments.tokens) {
@@ -1005,7 +1190,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto count_path =
         count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
     auto target       = pkg_config_target();
-    auto declarations = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     auto targets      = Vec<lito::CMakeTargetRequirement>::make();
     targets.push(lito::CMakeTargetRequirement {
         .name       = String::make("LitoFixture::fixture"_str),
@@ -1024,10 +1209,10 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .name  = String::make("LITO_FIXTURE_CONFIGURE_COUNT"_str),
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
-    declarations.push(lito::ResolvedCMakeDependencyRequirement {
+    declarations.push(lito::PreparedCMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoFixture"_str),
-        .source  = lito::ResolvedCMakeDependencySource::Directory(
+        .source  = lito::PreparedCMakeDependencySource::Directory(
             root("cmake/package"_str), String::make("lito-test-cmake-fixture-v3"_str)),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
@@ -1040,8 +1225,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            target,
-                                            target.triple.as_str(),
+                                            native_platform(),
                                             *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
@@ -1090,8 +1274,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            target,
-                                            target.triple.as_str(),
+                                            native_platform(),
                                             *parser);
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
@@ -1109,8 +1292,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            target,
-                                            target.triple.as_str(),
+                                            native_platform(),
                                             *parser);
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
@@ -1132,8 +1314,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                             fixture_cmake(),
                                             configuration(),
                                             *disabled_profile,
-                                            target,
-                                            target.triple.as_str(),
+                                            native_platform(),
                                             *parser);
     ASSERT_TRUE(profile_variant.is_ok());
     auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
@@ -1150,11 +1331,11 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         .name       = String::make("LitoBuildTree::fixture"_str),
         .visibility = lito::DependencyVisibility::Private,
     });
-    auto declarations = Vec<lito::ResolvedCMakeDependencyRequirement>::make();
-    declarations.push(lito::ResolvedCMakeDependencyRequirement {
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
+    declarations.push(lito::PreparedCMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoBuildTree"_str),
-        .source  = lito::ResolvedCMakeDependencySource::Directory(
+        .source  = lito::PreparedCMakeDependencySource::Directory(
             root("cmake/build-tree"_str), String::make("lito-test-cmake-build-tree-v1"_str)),
         .integration = lito::CMakeIntegration::BuildTree,
         .adapter     = Some(root("manifest/cmake/build-tree/adapter.cmake"_str)),
@@ -1168,8 +1349,7 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            target,
-                                            target.triple.as_str(),
+                                            native_platform(),
                                             *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
@@ -1222,8 +1402,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        target,
-                                                        target.triple.as_str(),
+                                                        native_platform(),
                                                         *parser);
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
@@ -1236,8 +1415,7 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
                                                       fixture_cmake(),
                                                       configuration(),
                                                       default_profile(*parser),
-                                                      target,
-                                                      target.triple.as_str(),
+                                                      native_platform(),
                                                       *parser);
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
@@ -1254,25 +1432,25 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     declarations.push(versioned_fixture(
         "fixture"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
 
-    auto implicit_cross = lito::resolve_external_dependencies(declarations,
-                                                              config,
-                                                              fixture_cmake(),
-                                                              configuration(),
-                                                              default_profile(*parser),
-                                                              target,
-                                                              "aarch64-unknown-linux-gnu"_str,
-                                                              *parser);
+    auto implicit_cross =
+        lito::resolve_external_dependencies(declarations,
+                                            config,
+                                            fixture_cmake(),
+                                            configuration(),
+                                            default_profile(*parser),
+                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
+                                            *parser);
     EXPECT_TRUE(implicit_cross.is_err());
 
     config.target_configured = true;
-    auto explicit_cross      = lito::resolve_external_dependencies(declarations,
-                                                                   config,
-                                                                   fixture_cmake(),
-                                                                   configuration(),
-                                                                   default_profile(*parser),
-                                                                   target,
-                                                                   "aarch64-unknown-linux-gnu"_str,
-                                                                   *parser);
+    auto explicit_cross =
+        lito::resolve_external_dependencies(declarations,
+                                            config,
+                                            fixture_cmake(),
+                                            configuration(),
+                                            default_profile(*parser),
+                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
+                                            *parser);
     EXPECT_TRUE(explicit_cross.is_ok());
 
     config.executable     = rstd::path::PathBuf::from("lito-missing-pkg-config-provider"_str);
@@ -1281,8 +1459,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                 fixture_cmake(),
                                                                 configuration(),
                                                                 default_profile(*parser),
-                                                                target,
-                                                                target.triple.as_str(),
+                                                                native_platform(),
                                                                 *parser);
     ASSERT_TRUE(missing_provider.is_err());
     auto provider_error = rstd::move(missing_provider).unwrap_err();
@@ -1297,8 +1474,7 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               fixture_cmake(),
                                                               configuration(),
                                                               default_profile(*parser),
-                                                              target,
-                                                              target.triple.as_str(),
+                                                              native_platform(),
                                                               *parser);
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
@@ -1328,8 +1504,7 @@ TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        target,
-                                                        target.triple.as_str(),
+                                                        native_platform(),
                                                         *parser);
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(2));
@@ -1721,7 +1896,7 @@ TEST(Contracts, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
     ASSERT_TRUE(cmake.adapter_root.is_some());
     EXPECT_EQ(cmake.adapter_root->as_path(), directory.as_path());
 
-    ASSERT_TRUE(lito::resolve_external_dependency_sources(*graph, {}).is_ok());
+    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
     ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
     const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
     ASSERT_TRUE(resolved.source.is_Directory());
@@ -1855,7 +2030,7 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     });
     auto reuse_graph = external_git_graph(*url, lito::GitReference {});
     auto reused =
-        lito::resolve_external_dependency_sources(reuse_graph,
+        lito::prepare_external_dependency_sources(reuse_graph,
                                                   lito::PackageResolutionOptions {
                                                       .git_sources = rstd::move(locked_sources),
                                                   });
@@ -1871,7 +2046,7 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     });
     auto update_graph = external_git_graph(*url, lito::GitReference {});
     auto updated =
-        lito::resolve_external_dependency_sources(update_graph,
+        lito::prepare_external_dependency_sources(update_graph,
                                                   lito::PackageResolutionOptions {
                                                       .git = lito::GitResolutionMode::Refresh,
                                                       .git_sources = rstd::move(locked_sources),
@@ -1887,7 +2062,7 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                                                .value = previous->clone(),
                                            });
     auto pinned =
-        lito::resolve_external_dependency_sources(pinned_graph,
+        lito::prepare_external_dependency_sources(pinned_graph,
                                                   lito::PackageResolutionOptions {
                                                       .git = lito::GitResolutionMode::Refresh,
                                                   });

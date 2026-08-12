@@ -12,6 +12,10 @@ discovery = "module"
 workspace = true
 visibility = "public"
 
+[dependencies.luato]
+workspace = true
+visibility = "private"
+
 [dependencies.rstd-std]
 workspace = true
 visibility = "public"

@@ -589,12 +589,38 @@
     "archiveUrl": {
       "description": "A non-empty archive URL safe for a generated CMake project.",
       "type": "string",
-      "pattern": "^[^-#\\\"\\\\;\\r\\n][^#\\\"\\\\;\\r\\n]*$"
+      "pattern": "^[^-#\"\\\\;\\r\\n][^#\"\\\\;\\r\\n]*$"
     },
     "sha256": {
       "description": "A full hexadecimal SHA-256 digest.",
       "type": "string",
       "pattern": "^[0-9A-Fa-f]{64}$"
+    },
+    "cmakeArchiveVariant": {
+      "type": "object",
+      "required": [
+        "archive",
+        "sha256"
+      ],
+      "properties": {
+        "archive": {
+          "$ref": "#/definitions/archiveUrl"
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeArchitectureArchives": {
+      "type": "object",
+      "minProperties": 1,
+      "patternProperties": {
+        "^(?!(amd64|x64|arm64)$)[a-z0-9_-]+$": {
+          "$ref": "#/definitions/cmakeArchiveVariant"
+        }
+      },
+      "additionalProperties": false
     },
     "pkgConfigModule": {
       "description": "A non-empty pkg-config module name not starting with '-'.",
@@ -1014,6 +1040,9 @@
         "sha256": {
           "$ref": "#/definitions/sha256"
         },
+        "archives": {
+          "$ref": "#/definitions/cmakeArchitectureArchives"
+        },
         "integration": {
           "enum": [
             "install",
@@ -1067,6 +1096,11 @@
                   },
                   {
                     "required": [
+                      "archives"
+                    ]
+                  },
+                  {
+                    "required": [
                       "branch"
                     ]
                   },
@@ -1103,6 +1137,68 @@
                     "required": [
                       "sha256"
                     ]
+                  },
+                  {
+                    "required": [
+                      "archives"
+                    ]
+                  }
+                ]
+              }
+            },
+            {
+              "required": [
+                "archives",
+                "integration"
+              ],
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "build-tree"
+                  ]
+                }
+              },
+              "not": {
+                "anyOf": [
+                  {
+                    "required": [
+                      "path"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archive"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "sha256"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "branch"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "tag"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "rev"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "config-directory"
+                    ]
                   }
                 ]
               }
@@ -1130,6 +1226,11 @@
                   {
                     "required": [
                       "git"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archives"
                     ]
                   },
                   {
@@ -1183,6 +1284,11 @@
                   {
                     "required": [
                       "sha256"
+                    ]
+                  },
+                  {
+                    "required": [
+                      "archives"
                     ]
                   },
                   {

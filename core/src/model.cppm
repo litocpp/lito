@@ -159,6 +159,16 @@ enum class GitResolutionMode
     Refresh,
 };
 
+struct Architecture {
+    String name;
+
+    auto as_str() const noexcept -> ref<str> { return name.as_str(); }
+
+    auto clone() const -> Architecture { return Architecture { .name = name.clone() }; }
+
+    auto operator==(const Architecture& other) const noexcept -> bool { return name == other.name; }
+};
+
 auto git_commit_is_valid(ref<str> value) noexcept -> bool {
     if (value.len() != usize(40)) return false;
     for (const auto character : value) {
@@ -202,12 +212,48 @@ struct CMakeCacheEntry {
     String value;
 };
 
+struct CMakeArchiveVariant {
+    Architecture architecture;
+    String       url;
+    String       sha256;
+};
+
 class CMakeDependencySource {
     RSTD_ENUM(CMakeDependencySource,
               (Installed),
               (Path, (PathBuf path;)),
               (Git, (String url; GitReference reference;)),
-              (Archive, (String url; String sha256;)))
+              (Archive, (String url; String sha256;)),
+              (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
+
+public:
+    auto clone() const -> CMakeDependencySource {
+        if (is_Path()) return CMakeDependencySource::Path(as_Path().path.clone());
+        if (is_Git()) {
+            return CMakeDependencySource::Git(as_Git().url.clone(),
+                                              GitReference {
+                                                  .kind  = as_Git().reference.kind,
+                                                  .value = as_Git().reference.value.clone(),
+                                              });
+        }
+        if (is_Archive()) {
+            return CMakeDependencySource::Archive(as_Archive().url.clone(),
+                                                  as_Archive().sha256.clone());
+        }
+        if (is_ArchitectureArchives()) {
+            auto variants =
+                Vec<CMakeArchiveVariant>::with_capacity(as_ArchitectureArchives().variants.len());
+            for (const auto& variant : as_ArchitectureArchives().variants) {
+                variants.push(CMakeArchiveVariant {
+                    .architecture = variant.architecture.clone(),
+                    .url          = variant.url.clone(),
+                    .sha256       = variant.sha256.clone(),
+                });
+            }
+            return CMakeDependencySource::ArchitectureArchives(rstd::move(variants));
+        }
+        return CMakeDependencySource::Installed();
+    }
 };
 
 enum class CMakeIntegration
@@ -514,14 +560,14 @@ struct IncludeDirectoryRequirement {
 };
 
 struct UsageRequirements {
-    Vec<PathBuf>     public_include_directories;
-    Vec<PathBuf>     private_include_directories;
-    Vec<String>      public_definitions;
-    Vec<String>      private_definitions;
-    Vec<String>      public_options;
-    Vec<String>      private_options;
-    CppArgumentLayer public_arguments;
-    CppArgumentLayer private_arguments;
+    Vec<PathBuf>                     public_include_directories;
+    Vec<PathBuf>                     private_include_directories;
+    Vec<String>                      public_definitions;
+    Vec<String>                      private_definitions;
+    Vec<String>                      public_options;
+    Vec<String>                      private_options;
+    CppArgumentLayer                 public_arguments;
+    CppArgumentLayer                 private_arguments;
     Vec<String>                      private_linker_options;
     Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
 };
@@ -557,9 +603,18 @@ enum class TargetFamily
 
 struct TargetInfo {
     String       triple;
-    String       arch;
+    Architecture architecture;
     String       os;
     TargetFamily family { TargetFamily::Unknown };
+
+    auto clone() const -> TargetInfo {
+        return TargetInfo {
+            .triple       = triple.clone(),
+            .architecture = architecture.clone(),
+            .os           = os.clone(),
+            .family       = family,
+        };
+    }
 
     auto family_name() const noexcept -> ref<str> {
         switch (family) {
@@ -569,6 +624,32 @@ struct TargetInfo {
         }
         return "unknown"_str;
     }
+};
+
+struct HostInfo {
+    Architecture architecture;
+    String       os;
+
+    auto clone() const -> HostInfo {
+        return HostInfo {
+            .architecture = architecture.clone(),
+            .os           = os.clone(),
+        };
+    }
+};
+
+enum class BuildTargetIntent
+{
+    Native,
+    ExplicitTarget,
+};
+
+struct BuildPlatform {
+    HostInfo          host;
+    TargetInfo        compiler_default;
+    TargetInfo        effective_target;
+    BuildTargetIntent intent { BuildTargetIntent::Native };
+    bool              cross { false };
 };
 
 struct TargetPredicate {
@@ -787,6 +868,25 @@ struct ResolvedDependency {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+class PreparedCMakeDependencySource {
+    RSTD_ENUM(PreparedCMakeDependencySource,
+              (Installed),
+              (Directory, (PathBuf root; String identity;)),
+              (Archive, (String url; String sha256;)),
+              (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
+};
+
+struct PreparedCMakeDependencyRequirement {
+    String                        alias;
+    String                        package;
+    PreparedCMakeDependencySource source;
+    CMakeIntegration              integration { CMakeIntegration::Install };
+    Option<PathBuf>               adapter;
+    Option<PathBuf>               config_directory;
+    Vec<CMakeCacheEntry>          cache;
+    Vec<CMakeTargetRequirement>   targets;
+};
+
 class ResolvedCMakeDependencySource {
     RSTD_ENUM(ResolvedCMakeDependencySource,
               (Installed),
@@ -855,7 +955,7 @@ struct ResolvedPackage {
     PackageManifest                         manifest;
     Vec<ResolvedDependency>                 dependencies;
     Vec<ResolvedDependency>                 dev_dependencies;
-    Vec<ResolvedCMakeDependencyRequirement> cmake_external_dependencies;
+    Vec<PreparedCMakeDependencyRequirement> cmake_external_dependencies;
 };
 
 struct ResolvedProjectRoot {

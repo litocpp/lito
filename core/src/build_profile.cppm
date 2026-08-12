@@ -214,15 +214,18 @@ auto is_profile_owned_linker_option(ref<str> option) -> bool {
            option.ends_with(",-s"_str) || option.contains(",-s,"_str);
 }
 
+auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
+    -> Result<CppArgumentLayer> {
+    return parser.parse(configuration.options, "build.options"_str).map_err([](String error) {
+        return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
+    });
+}
+
 auto make_profile_spec(const BuildConfiguration& configuration,
                        const ProjectProfile&     project_profile,
                        const BuildProfileName&   selected_profile,
-                       const CppArgumentParser&  parser) -> Result<ProfileSpec> {
+                       CppArgumentLayer          arguments) -> Result<ProfileSpec> {
     auto selected = rstd_try(resolve_build_profile(project_profile, selected_profile));
-    auto arguments =
-        rstd_try(parser.parse(configuration.options, "build.options"_str), [](String error) {
-            return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
-        });
     for (const auto& occurrence : arguments.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
         RSTD_MATCH(occurrence.argument) {
@@ -312,6 +315,15 @@ auto make_profile_spec(const BuildConfiguration& configuration,
         .strip          = selected.strip,
         .linker_options = configuration.linker_options.clone(),
     });
+}
+
+auto make_profile_spec(const BuildConfiguration& configuration,
+                       const ProjectProfile&     project_profile,
+                       const BuildProfileName&   selected_profile,
+                       const CppArgumentParser&  parser) -> Result<ProfileSpec> {
+    auto arguments = rstd_try(parse_build_arguments(configuration, parser));
+    return make_profile_spec(
+        configuration, project_profile, selected_profile, rstd::move(arguments));
 }
 
 } // namespace lito

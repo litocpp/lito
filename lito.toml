@@ -12,6 +12,9 @@ path = "frontend"
 [workspace.dependencies.lito-core]
 path = "core"
 
+[workspace.dependencies.luato]
+git = "https://github.com/litocpp/luato.git"
+
 [workspace.dependencies.rstd-std]
 git = "https://github.com/litocpp/rstd.git"
 

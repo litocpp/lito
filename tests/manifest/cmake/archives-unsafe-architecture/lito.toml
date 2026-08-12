@@ -1,0 +1,9 @@
+[package]
+name = "cmake-archives-unsafe-architecture"
+version = "0.1.0"
+
+[external-dependencies.cmake.fixture]
+find-package = "Fixture"
+integration = "build-tree"
+archives = { "x86/64" = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
+targets = [{ name = "Fixture::fixture", visibility = "private" }]

@@ -88,22 +88,6 @@ auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& requirem
     };
 }
 
-auto clone_cmake_source(const CMakeDependencySource& source) -> CMakeDependencySource {
-    if (source.is_Path()) return CMakeDependencySource::Path(source.as_Path().path.clone());
-    if (source.is_Git()) {
-        return CMakeDependencySource::Git(source.as_Git().url.clone(),
-                                          GitReference {
-                                              .kind  = source.as_Git().reference.kind,
-                                              .value = source.as_Git().reference.value.clone(),
-                                          });
-    }
-    if (source.is_Archive()) {
-        return CMakeDependencySource::Archive(source.as_Archive().url.clone(),
-                                              source.as_Archive().sha256.clone());
-    }
-    return CMakeDependencySource::Installed();
-}
-
 auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
                                            const WorkspaceManifest& workspace) -> Result<empty> {
     const auto resolve_package_dependencies =
@@ -201,7 +185,7 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
         manifest.cmake_external_dependencies.push(CMakeDependencyRequirement {
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
-            .source           = clone_cmake_source(definition->source),
+            .source           = definition->source.clone(),
             .integration      = definition->integration,
             .adapter          = rstd::move(adapter),
             .config_directory = rstd::move(config_directory),

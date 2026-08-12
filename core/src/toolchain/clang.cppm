@@ -5,6 +5,7 @@ export module lito.toolchain:clang;
 
 import rstd;
 import lito.model;
+import lito.platform;
 import lito.process;
 import lito.environment;
 import lito.frontend;
@@ -198,49 +199,6 @@ auto argument_identity(ref<str> recipe, const Vec<String>& arguments) -> String 
         identity.push_str(rstd::format("{}:{}\n", argument.size(), argument.as_str()).as_str());
     }
     return identity;
-}
-
-auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
-    if (triple.is_empty()) return failure<TargetInfo>("clang target triple is empty"_str);
-    auto arch_end = usize {};
-    while (arch_end < triple.len() && triple.as_bytes()[arch_end] != u8('-')) ++arch_end;
-    auto arch = triple.get(usize {}, arch_end);
-    if (arch.is_none() || arch->is_empty()) {
-        return failure<TargetInfo>(
-            rstd::format("clang target triple '{}' has no architecture", triple));
-    }
-
-    auto os     = String::make("unknown"_str);
-    auto family = TargetFamily::Unknown;
-    if (triple.contains("-windows"_str) || triple.contains("-win32"_str) ||
-        triple.contains("-mingw"_str)) {
-        os     = String::make("windows"_str);
-        family = TargetFamily::Windows;
-    } else if (triple.contains("-android"_str)) {
-        os     = String::make("android"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-linux"_str)) {
-        os     = String::make("linux"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-darwin"_str) || triple.contains("-apple"_str)) {
-        os     = String::make("macos"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-freebsd"_str)) {
-        os     = String::make("freebsd"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-netbsd"_str)) {
-        os     = String::make("netbsd"_str);
-        family = TargetFamily::Unix;
-    } else if (triple.contains("-openbsd"_str)) {
-        os     = String::make("openbsd"_str);
-        family = TargetFamily::Unix;
-    }
-    return Ok(TargetInfo {
-        .triple = String::make(triple),
-        .arch   = String::make(*arch),
-        .os     = rstd::move(os),
-        .family = family,
-    });
 }
 
 auto clang_warning_option(CppWarningOption option) noexcept -> ref<str> {

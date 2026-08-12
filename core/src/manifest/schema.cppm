@@ -6,6 +6,7 @@ export module lito.manifest:schema;
 import rstd;
 import rstd.toml;
 import lito.model;
+import lito.platform;
 import :locator;
 import lito.build_profile;
 import lito.cpp_source;
@@ -354,9 +355,13 @@ auto external_dependencies_key(ref<str> key) -> bool {
 auto cmake_external_key(ref<str> key) -> bool {
     return key == "find-package"_str || key == "path"_str || key == "git"_str ||
            key == "branch"_str || key == "tag"_str || key == "rev"_str || key == "archive"_str ||
-           key == "sha256"_str || key == "integration"_str || key == "adapter"_str ||
-           key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
-           key == "workspace"_str;
+           key == "archives"_str || key == "sha256"_str || key == "integration"_str ||
+           key == "adapter"_str || key == "cache"_str || key == "config-directory"_str ||
+           key == "targets"_str || key == "workspace"_str;
+}
+
+auto cmake_archive_variant_key(ref<str> key) -> bool {
+    return key == "archive"_str || key == "sha256"_str;
 }
 
 auto workspace_cmake_external_key(ref<str> key) -> bool {
@@ -1612,6 +1617,60 @@ auto sha256_is_valid(ref<str> value) -> bool {
     return true;
 }
 
+auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
+    -> Result<Option<Vec<CMakeArchiveVariant>>> {
+    if (value.is_none()) return Ok(Option<Vec<CMakeArchiveVariant>> {});
+    auto variant_context = rstd::format("{}.archives", context);
+    auto table           = table_value(**value, variant_context.as_str());
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    if ((**table).is_empty()) {
+        return failure<Option<Vec<CMakeArchiveVariant>>>(
+            rstd::format("{}.archives must not be empty", context));
+    }
+    auto variants = Vec<CMakeArchiveVariant>::with_capacity((**table).len());
+    auto keys     = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name          = **key;
+        auto        entry_context = rstd::format("{}.archives.{}", context, name.as_str());
+        auto        entry         = (**table).get(name.as_str());
+        auto        fields        = table_value(**entry, entry_context.as_str());
+        if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
+        rstd_try(reject_unknown(**fields, entry_context.as_str(), cmake_archive_variant_key));
+        auto archive = required_string(**entry, "archive"_str, entry_context.as_str());
+        auto sha256  = required_string(**entry, "sha256"_str, entry_context.as_str());
+        if (archive.is_err()) return Err(rstd::move(archive).unwrap_err());
+        if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
+        rstd_try(validate_archive_url(archive->as_str(), entry_context.as_str()));
+        if (! sha256_is_valid(sha256->as_str())) {
+            return failure<Option<Vec<CMakeArchiveVariant>>>(rstd::format(
+                "{}.sha256 must be a full hexadecimal SHA-256 digest", entry_context.as_str()));
+        }
+        auto architecture = canonical_architecture(name.as_str());
+        if (architecture.is_err()) {
+            return failure<Option<Vec<CMakeArchiveVariant>>>(
+                rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
+        }
+        if (architecture->as_str() != name.as_str()) {
+            return failure<Option<Vec<CMakeArchiveVariant>>>(
+                rstd::format("{}.archives architecture '{}' is not canonical; use '{}'",
+                             context,
+                             name.as_str(),
+                             architecture->as_str()));
+        }
+        variants.push(CMakeArchiveVariant {
+            .architecture = rstd::move(architecture).unwrap(),
+            .url          = rstd::move(archive).unwrap(),
+            .sha256       = rstd::move(sha256).unwrap(),
+        });
+    }
+    rstd::slice_::sort_unstable_by(
+        variants.as_mut_slice().as_mut_ref(),
+        [](const CMakeArchiveVariant& left, const CMakeArchiveVariant& right) {
+            return left.architecture.name < right.architecture.name;
+        });
+    return Ok(Some(rstd::move(variants)));
+}
+
 auto workspace_reference_enabled(const Toml& specification, ref<str> context) -> Result<bool> {
     auto value = member(specification, "workspace"_str);
     if (value.is_none()) return Ok(false);
@@ -1918,18 +1977,20 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
                                                 String      alias,
                                                 ref<str>    context)
     -> Result<WorkspaceCMakeExternalDependencyDefinition> {
-    auto package          = required_string(specification, "find-package"_str, context);
-    auto path             = optional_string(specification, "path"_str, context);
-    auto git              = optional_string(specification, "git"_str, context);
-    auto archive          = optional_string(specification, "archive"_str, context);
-    auto sha256           = optional_string(specification, "sha256"_str, context);
-    auto integration      = optional_string(specification, "integration"_str, context);
-    auto adapter          = optional_string(specification, "adapter"_str, context);
+    auto package     = required_string(specification, "find-package"_str, context);
+    auto path        = optional_string(specification, "path"_str, context);
+    auto git         = optional_string(specification, "git"_str, context);
+    auto archive     = optional_string(specification, "archive"_str, context);
+    auto archives    = parse_cmake_archive_variants(member(specification, "archives"_str), context);
+    auto sha256      = optional_string(specification, "sha256"_str, context);
+    auto integration = optional_string(specification, "integration"_str, context);
+    auto adapter     = optional_string(specification, "adapter"_str, context);
     auto config_directory = optional_string(specification, "config-directory"_str, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     if (git.is_err()) return Err(rstd::move(git).unwrap_err());
     if (archive.is_err()) return Err(rstd::move(archive).unwrap_err());
+    if (archives.is_err()) return Err(rstd::move(archives).unwrap_err());
     if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
     if (integration.is_err()) return Err(rstd::move(integration).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
@@ -1938,14 +1999,15 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.find-package is unsafe", context));
     }
-    auto path_value    = rstd::move(path).unwrap();
-    auto git_value     = rstd::move(git).unwrap();
-    auto archive_value = rstd::move(archive).unwrap();
-    auto source_count =
-        usize(path_value.is_some()) + usize(git_value.is_some()) + usize(archive_value.is_some());
+    auto path_value     = rstd::move(path).unwrap();
+    auto git_value      = rstd::move(git).unwrap();
+    auto archive_value  = rstd::move(archive).unwrap();
+    auto archives_value = rstd::move(archives).unwrap();
+    auto source_count   = usize(path_value.is_some()) + usize(git_value.is_some()) +
+                          usize(archive_value.is_some()) + usize(archives_value.is_some());
     if (source_count > usize(1)) {
         return failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} cannot combine 'path', 'git', and 'archive'", context));
+            rstd::format("{} cannot combine 'path', 'git', 'archive', and 'archives'", context));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
@@ -1993,6 +2055,10 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive requires build-tree integration", context));
     }
+    if (archives_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
+        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+            rstd::format("{}.archives requires build-tree integration", context));
+    }
     auto source = CMakeDependencySource::Installed();
     if (path_value.is_some()) {
         auto parsed =
@@ -2011,6 +2077,8 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
                 rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
         }
         source = CMakeDependencySource::Archive(rstd::move(url), rstd::move(hash_value).unwrap());
+    } else if (archives_value.is_some()) {
+        source = CMakeDependencySource::ArchitectureArchives(rstd::move(archives_value).unwrap());
     }
     auto adapter_path = Option<PathBuf> {};
     if (adapter_value.is_some()) {

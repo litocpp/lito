@@ -139,7 +139,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                                   const BuildProfileName&           selected_profile,
                                   const PkgConfigProviderConfig&    pkg_config,
                                   const CMakeProviderConfig&        cmake,
-                                  const TargetInfo&                 target_info,
+                                  const BuildPlatform&              platform,
+                                  CppArgumentLayer                  build_arguments,
                                   const CppArgumentParser&          argument_parser,
                                   ToolResolver&                     tool_resolver,
                                   const ResolvedProcessEnvironment& environment)
@@ -150,8 +151,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
     }
-    auto profile = rstd_try(
-        make_profile_spec(configuration, graph.profile, selected_profile, argument_parser));
+    auto profile   = rstd_try(make_profile_spec(
+        configuration, graph.profile, selected_profile, rstd::move(build_arguments)));
     auto libraries = library_targets(graph);
 
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
@@ -159,9 +160,6 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
 
     auto external_by_package =
         Vec<Vec<ResolvedExternalDependency>>::with_capacity(graph.packages.len());
-    auto effective_target = profile.cpp.target.target.is_some()
-                                ? profile.cpp.target.target->as_str()
-                                : target_info.triple.as_str();
     for (usize index {}; index < graph.packages.len(); ++index) {
         external_by_package.emplace_back();
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
@@ -172,8 +170,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
             cmake,
             configuration,
             profile,
-            target_info,
-            effective_target,
+            platform,
             argument_parser,
             tool_resolver,
             environment);
@@ -281,7 +278,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
             };
             auto& source = package_target_source(manifest_target);
             for (auto& group : source.conditional_source_groups) {
-                if (! group.predicate.matches(target_info)) continue;
+                if (! group.predicate.matches(platform.effective_target)) continue;
                 for (auto& path : group.sources) source.declared_sources.push(rstd::move(path));
             }
             source.conditional_source_groups.clear();
@@ -290,7 +287,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph              graph,
                 attachments = rstd::move(manifest_target.as_Test().attachments);
                 for (auto& attachment : attachments) {
                     for (auto& group : attachment.conditional_source_groups) {
-                        if (! group.predicate.matches(target_info)) continue;
+                        if (! group.predicate.matches(platform.effective_target)) continue;
                         for (auto& path : group.sources) {
                             attachment.sources.push(rstd::move(path));
                         }
@@ -507,7 +504,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
                                   const BuildProfileName&        selected_profile,
                                   const PkgConfigProviderConfig& pkg_config,
                                   const CMakeProviderConfig&     cmake,
-                                  const TargetInfo&              target_info,
+                                  const BuildPlatform&           platform,
+                                  CppArgumentLayer               build_arguments,
                                   const CppArgumentParser&       argument_parser)
     -> Result<PackageMetadata> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
@@ -520,7 +518,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph           graph,
                                         selected_profile,
                                         pkg_config,
                                         cmake,
-                                        target_info,
+                                        platform,
+                                        rstd::move(build_arguments),
                                         argument_parser,
                                         resolver,
                                         *environment);
