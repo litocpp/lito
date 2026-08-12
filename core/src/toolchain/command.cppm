@@ -59,9 +59,9 @@ auto push_option(Vec<String>& arguments, ref<str> option) -> void {
     arguments.push(String::make(option));
 }
 
-auto tool_output(Vec<String>                       arguments,
-                 ref<str>                          description,
-                 const ResolvedProcessEnvironment& environment) -> Result<String> {
+auto tool_output_raw(Vec<String>                       arguments,
+                     ref<str>                          description,
+                     const ResolvedProcessEnvironment& environment) -> Result<String> {
     auto output = run_command(arguments, environment);
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     auto value = rstd::move(output).unwrap();
@@ -71,7 +71,15 @@ auto tool_output(Vec<String>                       arguments,
                                             value.exit_code,
                                             value.standard_error.as_str()));
     }
-    return Ok(trim_ascii(rstd::move(value.standard_output)));
+    return Ok(rstd::move(value.standard_output));
+}
+
+auto tool_output(Vec<String>                       arguments,
+                 ref<str>                          description,
+                 const ResolvedProcessEnvironment& environment) -> Result<String> {
+    auto output = tool_output_raw(rstd::move(arguments), description, environment);
+    if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+    return Ok(trim_ascii(rstd::move(output).unwrap()));
 }
 
 } // namespace lito::toolchain::command

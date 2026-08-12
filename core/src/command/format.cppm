@@ -66,8 +66,14 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
         if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
         auto sources = rstd::move(discovered).unwrap();
         for (const auto& source : sources.sources) {
-            auto formatted = formatter.format(source.canonical_path.as_path());
-            if (formatted.is_err()) return Err(rstd::move(formatted).unwrap_err());
+            if (request.mode == FormatMode::Check) {
+                auto formatted = formatter.is_formatted(source.canonical_path.as_path());
+                if (formatted.is_err()) return Err(rstd::move(formatted).unwrap_err());
+                if (! *formatted) summary.unformatted_files.push(source.canonical_path.clone());
+            } else {
+                auto formatted = formatter.format(source.canonical_path.as_path());
+                if (formatted.is_err()) return Err(rstd::move(formatted).unwrap_err());
+            }
             ++summary.files;
         }
         ++summary.packages;
@@ -76,7 +82,7 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
         return format_failure<FormatSummary>(
             ErrorKind::Manifest, "selected packages are missing from resolved graph"_str);
     }
-    return Ok(summary);
+    return Ok(rstd::move(summary));
 }
 
 } // namespace lito

@@ -84,6 +84,7 @@ struct CliSchema {
     ArgKey<ScanOutputFormat> scan_format;
     ArgKey<bool>             scan_locked;
     ArgKey<String>           format_package;
+    ArgKey<bool>             format_check;
     Parser                   parser;
 };
 
@@ -220,6 +221,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto format = Command::make("format"_str);
     format.about("Format package sources"_str);
     auto format_package = format.add_arg(package_arg());
+    auto format_check   = format.add_arg(Arg<bool>::flag("check"_str)
+                                             .long_name("check"_str)
+                                             .help("Check formatting without changing files"_str));
 
     auto update = Command::make("update"_str);
     update.about("Update Git dependencies and the lock file"_str);
@@ -280,6 +284,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_format       = scan_format,
         .scan_locked       = scan_locked,
         .format_package    = format_package,
+        .format_check      = format_check,
         .parser            = rstd::move(parser).unwrap(),
     });
 }
@@ -361,6 +366,7 @@ struct BenchOptions {
 
 struct FormatOptions {
     Vec<String> packages;
+    bool        check {};
 };
 
 class CliCommand {
@@ -498,6 +504,7 @@ auto parse() -> CliOutcome {
     return CliOutcome::Parsed(rstd::move(working_directory),
                               CliCommand::Format(FormatOptions {
                                   .packages = string_values(*child, schema.format_package),
+                                  .check    = flag_value(*child, schema.format_check),
                               }));
 }
 

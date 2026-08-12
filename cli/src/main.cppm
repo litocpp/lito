@@ -161,6 +161,7 @@ extern "C++" int main() {
         request.toolchain          = rstd::move(project.toolchain);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
+        request.mode = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
 
         auto result = lito::format(request);
         if (result.is_err()) {
@@ -169,6 +170,14 @@ extern "C++" int main() {
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
+        if (options.check) {
+            for (const auto& path : summary.unformatted_files) {
+                rstd::io::eprintln("would reformat {}", path.as_path());
+            }
+            if (! summary.success()) return 1;
+            rstd::io::println("checked {} packages, {} files", summary.packages, summary.files);
+            return 0;
+        }
         rstd::io::println("formatted {} packages, {} files", summary.packages, summary.files);
         return 0;
     }

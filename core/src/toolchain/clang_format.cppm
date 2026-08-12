@@ -54,6 +54,26 @@ public:
     auto path() const -> ref<rstd::path::Path> { return path_.as_path(); }
     auto version() const -> ref<str> { return version_.as_str(); }
 
+    auto is_formatted(ref<rstd::path::Path> source) const -> Result<bool> {
+        auto contents = rstd::fs::read_to_string(source);
+        if (contents.is_err()) {
+            return Err(Error::make(ErrorKind::Toolchain,
+                                   rstd::format("cannot read format source '{}': {}",
+                                                source,
+                                                rstd::move(contents).unwrap_err())));
+        }
+
+        auto arguments = Vec<String>::make();
+        auto pushed    = command::push_path(arguments, path_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        pushed = command::push_path(arguments, source);
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        auto output =
+            command::tool_output_raw(rstd::move(arguments), "clang-format"_str, *environment_);
+        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        return Ok(contents->as_str() == output->as_str());
+    }
+
     auto format(ref<rstd::path::Path> source) const -> Result<empty> {
         auto arguments = Vec<String>::make();
         auto pushed    = command::push_path(arguments, path_.as_path());
