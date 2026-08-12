@@ -9,6 +9,10 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
+struct LockConfig {
+    PathBuf path;
+};
+
 struct LockedGitSource {
     String       git;
     GitReference reference;

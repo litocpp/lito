@@ -6,6 +6,7 @@ import lito.toolchain.spec;
 import lito.system.environment_contract;
 import lito.source.contract;
 import lito.workspace.contract;
+import lito.lock.contract;
 
 using namespace rstd::prelude;
 
@@ -22,6 +23,7 @@ struct FormatRequest {
     PackageSelection       selection;
     ProcessEnvironmentSpec environment;
     ToolchainSpec          toolchain;
+    LockConfig             lock;
     PackageSourceConfig    sources;
     FormatMode             mode { FormatMode::Write };
 };
@@ -29,6 +31,7 @@ struct FormatRequest {
 struct UpdateRequest {
     PathBuf                root;
     ProcessEnvironmentSpec environment;
+    LockConfig             lock;
     PackageSourceConfig    sources;
 };
 

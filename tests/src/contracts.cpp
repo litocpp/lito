@@ -739,6 +739,38 @@ TEST(Contracts, EnvironmentAppendPathBelongsToProjectConfig) {
     EXPECT_TRUE(unconfigured->environment.append_path.is_empty());
 }
 
+TEST(Contracts, LockPathBelongsToProjectConfig) {
+    auto root_path = root("config/lock-local"_str);
+    auto loaded    = lito::load_project_config(root_path.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->lock.path.as_path(),
+              root_path.join(rstd::path::PathBuf::from(".lito/lito.lock"_str).as_path()).as_path());
+
+    auto disabled = lito::load_project_config(root_path.as_path(), lito::ConfigLoadMode::Disabled);
+    ASSERT_TRUE(disabled.is_ok());
+    EXPECT_EQ(disabled->lock.path.as_path(),
+              root_path.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
+
+    auto invalid_root = root("config/lock-missing-path"_str);
+    auto ignored =
+        lito::load_project_config(invalid_root.as_path(), lito::ConfigLoadMode::Disabled);
+    ASSERT_TRUE(ignored.is_ok());
+    EXPECT_EQ(ignored->lock.path.as_path(),
+              invalid_root.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
+}
+
+TEST(Contracts, InvalidLockPathsAreRejectedByConfigOwner) {
+    constexpr ref<str> cases[] = {
+        "config/lock-empty"_str,
+        "config/lock-missing-path"_str,
+        "config/lock-missing-parent"_str,
+        "config/lock-directory"_str,
+    };
+    for (const auto path : cases) {
+        EXPECT_TRUE(lito::load_project_config(root(path).as_path()).is_err());
+    }
+}
+
 TEST(Contracts, InvalidEnvironmentAppendPathIsRejectedByConfigOwner) {
     constexpr ref<str> cases[] = {
         "config/environment-wrong-type"_str, "config/environment-empty-entry"_str,
@@ -2218,6 +2250,44 @@ TEST(Contracts, DependencyUpdateOwnsExplicitLockRefresh) {
     });
     ASSERT_TRUE(updated.is_ok());
     EXPECT_EQ(*updated, lito::LockStatus::Unchanged);
+}
+
+TEST(Contracts, DependencyUpdateWritesConfiguredLocalLock) {
+    auto source    = root("config/lock-local"_str);
+    auto directory = output_root("config-lock-local"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    ASSERT_TRUE(copy_directory(source.as_path(), directory.as_path()));
+
+    auto config = lito::load_project_config(directory.as_path());
+    ASSERT_TRUE(config.is_ok());
+    auto configured_lock = config->lock.path.clone();
+    auto updated         = lito::update_dependencies(lito::UpdateRequest {
+        .root = config->root.clone(),
+        .lock = rstd::move(config->lock),
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(*updated, lito::LockStatus::Updated);
+    auto local_exists = rstd::fs::exists(configured_lock.as_path());
+    ASSERT_TRUE(local_exists.is_ok());
+    EXPECT_TRUE(*local_exists);
+    auto root_lock = directory.join(rstd::path::PathBuf::from("lito.lock"_str).as_path());
+    auto root_exists = rstd::fs::exists(root_lock.as_path());
+    ASSERT_TRUE(root_exists.is_ok());
+    EXPECT_FALSE(*root_exists);
+
+    auto defaults =
+        lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::Disabled);
+    ASSERT_TRUE(defaults.is_ok());
+    auto repository_updated = lito::update_dependencies(lito::UpdateRequest {
+        .root = defaults->root.clone(),
+        .lock = rstd::move(defaults->lock),
+    });
+    ASSERT_TRUE(repository_updated.is_ok());
+    EXPECT_EQ(*repository_updated, lito::LockStatus::Updated);
+    root_exists = rstd::fs::exists(root_lock.as_path());
+    ASSERT_TRUE(root_exists.is_ok());
+    EXPECT_TRUE(*root_exists);
+    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
 TEST(Contracts, DiscoveryAndModuleConventionsBuildExpectedCases) {

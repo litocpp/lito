@@ -14,6 +14,7 @@ import lito.manifest.contract;
 import lito.package.identity;
 import lito.package.target_contract;
 import lito.workspace.contract;
+import lito.lock.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -75,6 +76,7 @@ struct BuildRequest {
     PathBuf                  output;
     ProcessEnvironmentSpec   environment;
     BuildConfiguration       configuration;
+    LockConfig               lock;
     Option<BuildProfileName> profile;
     PackageSourceConfig      sources;
     PkgConfigProviderConfig  pkg_config;

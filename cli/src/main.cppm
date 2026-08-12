@@ -123,8 +123,10 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation    = rstd::move(parsed).as_Parsed();
-    auto loaded_config = lito::load_project_config(invocation.working_directory.as_path());
+    auto invocation = rstd::move(parsed).as_Parsed();
+    auto loaded_config = lito::load_project_config(
+        invocation.working_directory.as_path(),
+        invocation.no_config ? lito::ConfigLoadMode::Disabled : lito::ConfigLoadMode::Enabled);
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
         rstd::io::eprintln("lito: {}", error.message.as_str());
@@ -136,6 +138,7 @@ extern "C++" int main() {
         auto request = lito::UpdateRequest {
             .root        = rstd::move(project.root),
             .environment = rstd::move(project.environment),
+            .lock        = rstd::move(project.lock),
             .sources     = rstd::move(project.sources),
         };
         auto result = lito::update_dependencies(request);
@@ -145,9 +148,7 @@ extern "C++" int main() {
             return 1;
         }
         if (*result == lito::LockStatus::Updated)
-            rstd::io::println(
-                "updated {}",
-                request.root.join(lito::PathBuf::from("lito.lock"_str).as_path()).as_path());
+            rstd::io::println("updated {}", request.lock.path.as_path());
         else
             rstd::io::println("dependencies are up to date");
         return 0;
@@ -159,6 +160,7 @@ extern "C++" int main() {
         request.selection.root     = rstd::move(project.root);
         request.environment        = rstd::move(project.environment);
         request.toolchain          = rstd::move(project.toolchain);
+        request.lock               = rstd::move(project.lock);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
         request.mode = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
@@ -188,6 +190,7 @@ extern "C++" int main() {
         request.selection.root     = rstd::move(project.root);
         request.environment        = rstd::move(project.environment);
         request.configuration      = build_configuration(rstd::move(project.toolchain));
+        request.lock               = rstd::move(project.lock);
         request.sources            = rstd::move(project.sources);
         request.pkg_config         = rstd::move(project.pkg_config);
         request.cmake              = rstd::move(project.cmake);
@@ -227,6 +230,7 @@ extern "C++" int main() {
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain));
+        request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
@@ -342,6 +346,7 @@ extern "C++" int main() {
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain));
+        request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
@@ -431,6 +436,7 @@ extern "C++" int main() {
     request.selection.root     = rstd::move(project.root);
     request.environment        = rstd::move(project.environment);
     request.configuration      = build_configuration(rstd::move(project.toolchain));
+    request.lock               = rstd::move(project.lock);
     request.sources            = rstd::move(project.sources);
     request.pkg_config         = rstd::move(project.pkg_config);
     request.cmake              = rstd::move(project.cmake);

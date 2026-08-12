@@ -31,8 +31,12 @@ auto failure(ref<str> message) -> Result<T> {
     return Err(Error::make(ErrorKind::Lock, message));
 }
 
-auto lock_path(const ResolvedPackageGraph& graph) -> PathBuf {
-    return graph.root_directory.join(PathBuf::from("lito.lock"_str).as_path());
+auto lock_path(ref<rstd::path::Path> root, const LockConfig& config) -> PathBuf {
+    if (! config.path.is_empty()) {
+        if (config.path.as_path().is_absolute()) return config.path.clone();
+        return PathBuf::from(root).join(config.path.as_path());
+    }
+    return PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
 }
 
 auto path_string(ref<rstd::path::Path> path) -> Result<String> {
@@ -427,6 +431,7 @@ export namespace lito
 
 class LockSession {
     bool                     locked_ { false };
+    PathBuf                  root_;
     PathBuf                  destination_;
     Option<Json>             existing_;
     PackageResolutionOptions options_;
@@ -436,28 +441,33 @@ public:
 
     auto take_resolution_options() -> PackageResolutionOptions { return rstd::move(options_); }
 
-    friend auto load_lock_session(ref<rstd::path::Path> root, bool locked, GitResolutionMode git)
-        -> Result<LockSession>;
+    friend auto load_lock_session(ref<rstd::path::Path> root,
+                                  const LockConfig&     config,
+                                  bool                  locked,
+                                  GitResolutionMode     git) -> Result<LockSession>;
     friend auto sync_lock(const ResolvedPackageGraph& graph, LockSession session)
         -> Result<LockStatus>;
 };
 
 auto load_lock_session(ref<rstd::path::Path> root,
+                       const LockConfig&     config,
                        bool                  locked,
                        GitResolutionMode     git = GitResolutionMode::ReuseLocked)
     -> Result<LockSession> {
     if (locked && git == GitResolutionMode::Refresh) {
         return failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
-    auto destination = PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
+    auto destination = lock_path(root, config);
     auto loaded      = load_existing(destination.as_path());
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto existing = rstd::move(loaded).unwrap();
     if (existing.is_none()) {
         if (locked) {
-            return failure<LockSession>("--locked requires an existing lito.lock"_str);
+            return failure<LockSession>(
+                rstd::format("--locked requires an existing lock file at '{}'", destination.as_path()));
         }
         auto session         = LockSession {};
+        session.root_        = PathBuf::from(root);
         session.destination_ = rstd::move(destination);
         session.options_     = PackageResolutionOptions { .locked = locked, .git = git };
         return Ok(rstd::move(session));
@@ -492,26 +502,35 @@ auto load_lock_session(ref<rstd::path::Path> root,
     }
     auto session         = LockSession {};
     session.locked_      = locked;
+    session.root_        = PathBuf::from(root);
     session.destination_ = rstd::move(destination);
     session.existing_    = rstd::move(existing);
     session.options_     = rstd::move(options);
     return Ok(rstd::move(session));
 }
 
+auto load_lock_session(ref<rstd::path::Path> root,
+                       bool                  locked,
+                       GitResolutionMode     git = GitResolutionMode::ReuseLocked)
+    -> Result<LockSession> {
+    return load_lock_session(root, LockConfig {}, locked, git);
+}
+
 auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> Result<LockStatus> {
     auto desired_result = graph_json(graph);
     if (desired_result.is_err()) return Err(rstd::move(desired_result).unwrap_err());
     auto desired           = rstd::move(desired_result).unwrap();
-    auto graph_destination = lock_path(graph);
-    if (! (graph_destination.as_path().starts_with(session.destination_.as_path()) &&
-           session.destination_.as_path().starts_with(graph_destination.as_path()))) {
+    if (! (graph.root_directory.as_path().starts_with(session.root_.as_path()) &&
+           session.root_.as_path().starts_with(graph.root_directory.as_path()))) {
         return failure<LockStatus>("lock session root does not match resolved graph root"_str);
     }
     if (session.locked_) {
         if (session.existing_.is_some() && *session.existing_ == desired) {
             return Ok(LockStatus::Unchanged);
         }
-        return failure<LockStatus>("--locked forbids updating stale lito.lock"_str);
+        return failure<LockStatus>(
+            rstd::format("--locked forbids updating stale lock file '{}'",
+                         session.destination_.as_path()));
     }
 
     if (session.existing_.is_some() && *session.existing_ == desired) {

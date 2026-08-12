@@ -46,6 +46,7 @@ public:
 
 struct CliSchema {
     ArgKey<String>           directory;
+    ArgKey<bool>             no_config;
     ArgKey<String>           build_package;
     ArgKey<BuildProfileName> build_profile;
     ArgKey<String>           build_target;
@@ -236,6 +237,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .value_name("DIRECTORY"_str)
                                       .help("Change the working directory"_str)
                                       .default_value("."_str));
+    auto no_config = root.add_arg(Arg<bool>::flag("no-config"_str)
+                                      .long_name("no-config"_str)
+                                      .help("Ignore .lito/config.toml"_str));
     root.add_subcommand(rstd::move(build));
     root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(bench));
@@ -246,6 +250,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
         .directory         = directory,
+        .no_config         = no_config,
         .build_package     = build_package,
         .build_profile     = build_profile,
         .build_target      = build_target,
@@ -381,7 +386,7 @@ class CliCommand {
 
 class CliOutcome {
     RSTD_ENUM(CliOutcome,
-              (Parsed, (PathBuf working_directory; CliCommand command;)),
+              (Parsed, (PathBuf working_directory; bool no_config; CliCommand command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
 
@@ -413,6 +418,7 @@ auto parse() -> CliOutcome {
     auto matches           = rstd::move(outcome).as_Parsed().value;
     auto directory_value   = optional_value(matches, schema.directory);
     auto working_directory = PathBuf::from((**directory_value).clone());
+    auto no_config         = flag_value(matches, schema.no_config);
     auto subcommand        = matches.subcommand();
     if (subcommand->get<0>() == "build"_str) {
         auto child       = subcommand->get<1>();
@@ -422,6 +428,7 @@ auto parse() -> CliOutcome {
         auto jobs        = optional_value(*child, schema.build_jobs);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
+            no_config,
             CliCommand::Build(BuildOptions {
                 .packages = string_values(*child, schema.build_package),
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
@@ -442,6 +449,7 @@ auto parse() -> CliOutcome {
         auto format  = optional_value(*child, schema.scan_format);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
+            no_config,
             CliCommand::Scan(ScanOptions {
                 .source   = PathBuf::from((**source).clone()),
                 .packages = string_values(*child, schema.scan_package),
@@ -459,6 +467,7 @@ auto parse() -> CliOutcome {
         auto jobs        = optional_value(*child, schema.test_jobs);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
+            no_config,
             CliCommand::Test(TestOptions {
                 .packages = string_values(*child, schema.test_package),
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
@@ -482,6 +491,7 @@ auto parse() -> CliOutcome {
         auto jobs        = optional_value(*child, schema.bench_jobs);
         return CliOutcome::Parsed(
             rstd::move(working_directory),
+            no_config,
             CliCommand::Bench(BenchOptions {
                 .packages = string_values(*child, schema.bench_package),
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
@@ -498,10 +508,11 @@ auto parse() -> CliOutcome {
             }));
     }
     if (subcommand->get<0>() == "update"_str) {
-        return CliOutcome::Parsed(rstd::move(working_directory), CliCommand::Update());
+        return CliOutcome::Parsed(rstd::move(working_directory), no_config, CliCommand::Update());
     }
     auto child = subcommand->get<1>();
     return CliOutcome::Parsed(rstd::move(working_directory),
+                              no_config,
                               CliCommand::Format(FormatOptions {
                                   .packages = string_values(*child, schema.format_package),
                                   .check    = flag_value(*child, schema.format_check),

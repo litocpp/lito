@@ -43,6 +43,7 @@ auto format(const FormatRequest& request) -> Result<FormatSummary> {
     auto resolved      = resolve_project_selection(request.selection,
                                                    PackageSelectionPurpose::All,
                                                    request.sources,
+                                                   request.lock,
                                                    false,
                                                    tool_resolver,
                                                    *environment);

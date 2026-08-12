@@ -10,6 +10,7 @@ import lito.system.environment_contract;
 import lito.source.contract;
 import lito.dependency.contract;
 import lito.workspace.contract;
+import lito.lock.contract;
 
 using namespace rstd::prelude;
 
@@ -22,6 +23,7 @@ struct ScanRequest {
     PathBuf                  source;
     ProcessEnvironmentSpec   environment;
     BuildConfiguration       configuration;
+    LockConfig               lock;
     Option<BuildProfileName> profile;
     PackageSourceConfig      sources;
     PkgConfigProviderConfig  pkg_config;

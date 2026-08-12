@@ -115,6 +115,7 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                           request.configuration,
                                           profile,
                                           request.sources,
+                                          request.lock,
                                           request.pkg_config,
                                           request.cmake,
                                           tool_resolver,
