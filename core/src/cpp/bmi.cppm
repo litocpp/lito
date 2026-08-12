@@ -138,26 +138,6 @@ auto bmi_supports_use(BmiRepresentation representation, BmiUse use) noexcept -> 
     return use == BmiUse::Import || representation == BmiRepresentation::Full;
 }
 
-auto bmi_compatibility_field_name(BmiCompatibilityField value) noexcept -> ref<str> {
-    switch (value) {
-    case BmiCompatibilityField::Format: return "compiler/BMI format"_str;
-    case BmiCompatibilityField::LanguageStandard: return "C++ language standard"_str;
-    case BmiCompatibilityField::StandardLibrary: return "standard library"_str;
-    case BmiCompatibilityField::Exceptions: return "exceptions"_str;
-    case BmiCompatibilityField::Rtti: return "RTTI"_str;
-    case BmiCompatibilityField::SizedDeallocation: return "sized deallocation"_str;
-    case BmiCompatibilityField::LanguageModes: return "C++ language modes"_str;
-    case BmiCompatibilityField::AbiModes: return "C++ ABI modes"_str;
-    case BmiCompatibilityField::Target: return "target"_str;
-    case BmiCompatibilityField::Sysroot: return "sysroot"_str;
-    case BmiCompatibilityField::TargetFeatures: return "target features"_str;
-    case BmiCompatibilityField::PublicPreprocessorRequirements:
-        return "public preprocessor requirements"_str;
-    case BmiCompatibilityField::VendorSemantics: return "vendor semantic options"_str;
-    }
-    return "BMI compatibility"_str;
-}
-
 auto bmi_format_identity(const BmiFormatIdentity& format) -> String;
 
 auto bmi_format_key(const BmiFormatIdentity& format) -> String;
@@ -171,6 +151,40 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
 auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey;
 
 } // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::BmiCompatibilityField> : ImplBase<lito::BmiCompatibilityField> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        auto name = "BMI compatibility"_str;
+        switch (this->self()) {
+        case lito::BmiCompatibilityField::Format: name = "compiler/BMI format"_str; break;
+        case lito::BmiCompatibilityField::LanguageStandard:
+            name = "C++ language standard"_str;
+            break;
+        case lito::BmiCompatibilityField::StandardLibrary: name = "standard library"_str; break;
+        case lito::BmiCompatibilityField::Exceptions: name = "exceptions"_str; break;
+        case lito::BmiCompatibilityField::Rtti: name = "RTTI"_str; break;
+        case lito::BmiCompatibilityField::SizedDeallocation: name = "sized deallocation"_str; break;
+        case lito::BmiCompatibilityField::LanguageModes: name = "C++ language modes"_str; break;
+        case lito::BmiCompatibilityField::AbiModes: name = "C++ ABI modes"_str; break;
+        case lito::BmiCompatibilityField::Target: name = "target"_str; break;
+        case lito::BmiCompatibilityField::Sysroot: name = "sysroot"_str; break;
+        case lito::BmiCompatibilityField::TargetFeatures: name = "target features"_str; break;
+        case lito::BmiCompatibilityField::PublicPreprocessorRequirements:
+            name = "public preprocessor requirements"_str;
+            break;
+        case lito::BmiCompatibilityField::VendorSemantics:
+            name = "vendor semantic options"_str;
+            break;
+        }
+        return formatter.write_str(name);
+    }
+};
+
+} // namespace rstd
 
 namespace lito
 {

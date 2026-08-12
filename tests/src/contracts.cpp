@@ -450,6 +450,19 @@ auto external_usage_metadata(lito::DependencyVisibility     visibility,
 
 } // namespace
 
+TEST(Contracts, UserFacingEnumsImplementDisplay) {
+    EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Scan).as_str(), "scan"_str);
+    EXPECT_EQ(rstd::to_string(lito::BuildEventKind::CMakeQueryBuild).as_str(),
+              "cmake-query-build"_str);
+    EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Benchmark).as_str(),
+              "benchmark"_str);
+    EXPECT_EQ(rstd::format("{}", lito::ProjectRootRole::AssociatedTest).as_str(), "test"_str);
+    EXPECT_EQ(rstd::format("{}", lito::CMakePackageOperation::WriteQuery).as_str(),
+              "query materialization"_str);
+    EXPECT_EQ(rstd::format("{}", lito::BmiCompatibilityField::TargetFeatures).as_str(),
+              "target features"_str);
+}
+
 TEST(Contracts, InvalidManifestDocumentsAreRejectedByManifestOwner) {
     for (const auto path : INVALID_MANIFESTS) {
         auto loaded = lito::load_manifest_document(root(path).as_path());

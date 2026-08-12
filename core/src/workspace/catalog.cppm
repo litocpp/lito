@@ -57,11 +57,6 @@ auto associated_package_matches(const PackageManifest& package, ProjectRootRole 
     return false;
 }
 
-auto associated_kind_name(ProjectRootRole role) noexcept -> ref<str> {
-    if (role == ProjectRootRole::AssociatedTest) return "test"_str;
-    return "unknown"_str;
-}
-
 auto associated_declarations(ProjectRootRole role) noexcept -> ref<str> {
     if (role == ProjectRootRole::AssociatedTest) return "[[test]] or [compile-test]"_str;
     return "associated targets"_str;
@@ -241,7 +236,7 @@ auto validate_associated_catalog(const WorkspaceCatalog& primary,
     if (role != ProjectRootRole::AssociatedTest) {
         return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
     }
-    const auto kind = associated_kind_name(role);
+    const auto kind = role;
     if (associated.profile_declared_) {
         return catalog_failure<empty>(rstd::format(
             "associated {} manifest '{}' declares [profile]; project profile belongs to '{}'",

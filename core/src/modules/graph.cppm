@@ -134,7 +134,7 @@ auto resolve_modules(const PackagePlan&       package,
                              "primary '{}', partition '{}'",
                              provided.logical_name.as_str(),
                              primary_name,
-                             bmi_compatibility_field_name(difference.field),
+                             difference.field,
                              difference.provider.as_str(),
                              difference.consumer.as_str()));
         }
@@ -176,7 +176,7 @@ auto resolve_modules(const PackagePlan&       package,
                                  "consumer '{}'",
                                  required.as_str(),
                                  units[scan.unit].unit.source.as_path(),
-                                 bmi_compatibility_field_name(difference.field),
+                                 difference.field,
                                  difference.provider.as_str(),
                                  difference.consumer.as_str()));
             }

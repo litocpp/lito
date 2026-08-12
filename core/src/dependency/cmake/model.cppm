@@ -156,19 +156,6 @@ struct CMakePackagePlan {
     usize                              jobs { usize(1) };
 };
 
-auto cmake_operation_name(CMakePackageOperation operation) noexcept -> ref<str> {
-    switch (operation) {
-    case CMakePackageOperation::ConfigureSource: return "source configure"_str;
-    case CMakePackageOperation::BuildSource: return "source build"_str;
-    case CMakePackageOperation::InstallSource: return "source install"_str;
-    case CMakePackageOperation::WriteQuery: return "query materialization"_str;
-    case CMakePackageOperation::ConfigureQuery: return "query configure"_str;
-    case CMakePackageOperation::BuildQuery: return "query build"_str;
-    case CMakePackageOperation::ReadUsage: return "usage snapshot"_str;
-    }
-    return "unknown"_str;
-}
-
 template<typename T>
 auto with_operation_context(Result<T>               result,
                             const CMakePackagePlan& plan,
@@ -177,7 +164,7 @@ auto with_operation_context(Result<T>               result,
     auto error = rstd::move(result).unwrap_err();
     return cmake_failure<T>(rstd::format("CMake dependency '{}' {} failed in '{}': {}",
                                          plan.requirement.alias.as_str(),
-                                         cmake_operation_name(operation),
+                                         operation,
                                          plan.area.root.as_path(),
                                          error.message.as_str()));
 }
@@ -324,3 +311,25 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
 }
 
 } // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::CMakePackageOperation> : ImplBase<lito::CMakePackageOperation> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        auto name = "unknown"_str;
+        switch (this->self()) {
+        case lito::CMakePackageOperation::ConfigureSource: name = "source configure"_str; break;
+        case lito::CMakePackageOperation::BuildSource: name = "source build"_str; break;
+        case lito::CMakePackageOperation::InstallSource: name = "source install"_str; break;
+        case lito::CMakePackageOperation::WriteQuery: name = "query materialization"_str; break;
+        case lito::CMakePackageOperation::ConfigureQuery: name = "query configure"_str; break;
+        case lito::CMakePackageOperation::BuildQuery: name = "query build"_str; break;
+        case lito::CMakePackageOperation::ReadUsage: name = "usage snapshot"_str; break;
+        }
+        return formatter.write_str(name);
+    }
+};
+
+} // namespace rstd

@@ -16,28 +16,6 @@ struct EventContext {
     bool standard_error { false };
 };
 
-auto event_name(lito::BuildEventKind kind) -> ref<str> {
-    switch (kind) {
-    case lito::BuildEventKind::Scan: return "scan"_str;
-    case lito::BuildEventKind::ScanReuse: return "scan-reuse"_str;
-    case lito::BuildEventKind::Compile: return "compile"_str;
-    case lito::BuildEventKind::Reuse: return "reuse"_str;
-    case lito::BuildEventKind::Archive: return "archive"_str;
-    case lito::BuildEventKind::Link: return "link"_str;
-    case lito::BuildEventKind::Strip: return "strip"_str;
-    case lito::BuildEventKind::Configure: return "configure"_str;
-    case lito::BuildEventKind::ConfigureReuse: return "configure-reuse"_str;
-    case lito::BuildEventKind::CMakeConfigure: return "cmake-configure"_str;
-    case lito::BuildEventKind::CMakeBuild: return "cmake-build"_str;
-    case lito::BuildEventKind::CMakeInstall: return "cmake-install"_str;
-    case lito::BuildEventKind::CMakeQuery: return "cmake-query"_str;
-    case lito::BuildEventKind::CMakeQueryBuild: return "cmake-query-build"_str;
-    case lito::BuildEventKind::CMakeSnapshot: return "cmake-snapshot"_str;
-    case lito::BuildEventKind::CMakeReuse: return "cmake-reuse"_str;
-    }
-    return "unknown"_str;
-}
-
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (event.completed) return;
@@ -55,9 +33,9 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         return;
     }
     if (context.standard_error) {
-        rstd::io::eprintln("[{}] {} {}", event_name(event.kind), event.target, event.path);
+        rstd::io::eprintln("[{}] {} {}", event.kind, event.target, event.path);
     } else {
-        rstd::io::println("[{}] {} {}", event_name(event.kind), event.target, event.path);
+        rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
     }
 }
 

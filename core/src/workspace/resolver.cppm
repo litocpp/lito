@@ -51,16 +51,6 @@ auto selected_by_purpose(ProjectRootRole         role,
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
 }
 
-auto purpose_name(PackageSelectionPurpose purpose) noexcept -> ref<str> {
-    switch (purpose) {
-    case PackageSelectionPurpose::All: return "all"_str;
-    case PackageSelectionPurpose::Production: return "production"_str;
-    case PackageSelectionPurpose::Test: return "test"_str;
-    case PackageSelectionPurpose::Benchmark: return "benchmark"_str;
-    }
-    return "unknown"_str;
-}
-
 auto append_selected_targets(Vec<PackageTargetId>&   output,
                              const PackageManifest&  package,
                              ProjectRootRole         role,
@@ -229,8 +219,8 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
             }
             if (manifest == nullptr ||
                 ! append_selected_targets(selected_targets, *manifest, **role, purpose)) {
-                return failure<ResolvedPackageSelection>(rstd::format(
-                    "project package '{}' has no {} target", name.as_str(), purpose_name(purpose)));
+                return failure<ResolvedPackageSelection>(
+                    rstd::format("project package '{}' has no {} target", name.as_str(), purpose));
             }
             selected_names.insert(name.clone(), empty {});
             selected_roots.push(name.clone());
@@ -238,7 +228,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     }
     if (selected_roots.is_empty()) {
         return failure<ResolvedPackageSelection>(
-            rstd::format("project has no selected {} package", purpose_name(purpose)));
+            rstd::format("project has no selected {} package", purpose));
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
