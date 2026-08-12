@@ -127,11 +127,14 @@ struct BuildScriptReport {
 struct BuildSummary {
     String                          package;
     String                          profile;
+    String                          target;
     PathBuf                         output;
     usize                           scanned {};
     usize                           compiled {};
     usize                           reused {};
     Vec<BuiltArtifact>              artifacts;
+    Vec<PackageTargetId>            selected_targets;
+    Vec<SelectedPackageMetadata>    selected_packages;
     frontend::FrontendStatistics    frontend;
     ToolchainStatistics             toolchain;
     ScanProfileReport               scan_profile;

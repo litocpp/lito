@@ -12,6 +12,7 @@ enum class PackageSelectionPurpose
 {
     All,
     Production,
+    Install,
     Test,
     Benchmark,
 };
@@ -40,6 +41,7 @@ struct Impl<fmt::Display, lito::PackageSelectionPurpose> : ImplBase<lito::Packag
         switch (this->self()) {
         case lito::PackageSelectionPurpose::All: name = "all"_str; break;
         case lito::PackageSelectionPurpose::Production: name = "production"_str; break;
+        case lito::PackageSelectionPurpose::Install: name = "install"_str; break;
         case lito::PackageSelectionPurpose::Test: name = "test"_str; break;
         case lito::PackageSelectionPurpose::Benchmark: name = "benchmark"_str; break;
         }

@@ -56,6 +56,16 @@ struct CliSchema {
     ArgKey<String>           build_timing_file;
     ArgKey<bool>             build_no_timing;
     ArgKey<usize>            build_jobs;
+    ArgKey<String>           install_package;
+    ArgKey<BuildProfileName> install_profile;
+    ArgKey<String>           install_binary;
+    ArgKey<String>           install_root;
+    ArgKey<bool>             install_force;
+    ArgKey<bool>             install_locked;
+    ArgKey<bool>             install_verbose;
+    ArgKey<String>           install_timing_file;
+    ArgKey<bool>             install_no_timing;
+    ArgKey<usize>            install_jobs;
     ArgKey<String>           test_package;
     ArgKey<BuildProfileName> test_profile;
     ArgKey<String>           test_target;
@@ -157,6 +167,29 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build_no_timing   = build.add_arg(no_timing_arg());
     auto build_jobs        = build.add_arg(jobs_arg());
 
+    auto install = Command::make("install"_str);
+    install.about("Build and install package binaries"_str);
+    auto install_package = install.add_arg(package_arg());
+    auto install_profile = install.add_arg(profile_arg());
+    auto install_binary  = install.add_arg(Arg<String>::value("bin"_str, string_parser())
+                                               .long_name("bin"_str)
+                                               .value_name("NAME"_str)
+                                               .help("Install only the selected binary"_str)
+                                               .append());
+    auto install_root    = install.add_arg(Arg<String>::value("root"_str, string_parser())
+                                               .long_name("root"_str)
+                                               .value_name("DIRECTORY"_str)
+                                               .help("Set the installation root"_str));
+    auto install_force   = install.add_arg(Arg<bool>::flag("force"_str)
+                                               .long_name("force"_str)
+                                               .help("Replace conflicting binaries"_str));
+    auto install_locked  = install.add_arg(locked_arg());
+    auto install_verbose = install.add_arg(
+        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
+    auto install_timing_file = install.add_arg(timing_file_arg());
+    auto install_no_timing   = install.add_arg(no_timing_arg());
+    auto install_jobs        = install.add_arg(jobs_arg());
+
     auto test = Command::make("test"_str);
     test.about("Build and run test packages"_str);
     auto test_package = test.add_arg(package_arg());
@@ -241,6 +274,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .long_name("no-config"_str)
                                       .help("Ignore .lito/config.toml"_str));
     root.add_subcommand(rstd::move(build));
+    root.add_subcommand(rstd::move(install));
     root.add_subcommand(rstd::move(test));
     root.add_subcommand(rstd::move(bench));
     root.add_subcommand(rstd::move(scan));
@@ -249,48 +283,58 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
-        .directory         = directory,
-        .no_config         = no_config,
-        .build_package     = build_package,
-        .build_profile     = build_profile,
-        .build_target      = build_target,
-        .build_output      = build_output,
-        .build_locked      = build_locked,
-        .build_verbose     = build_verbose,
-        .build_timing_file = build_timing_file,
-        .build_no_timing   = build_no_timing,
-        .build_jobs        = build_jobs,
-        .test_package      = test_package,
-        .test_profile      = test_profile,
-        .test_target       = test_target,
-        .test_output       = test_output,
-        .test_locked       = test_locked,
-        .test_no_run       = test_no_run,
-        .test_verbose      = test_verbose,
-        .test_timing_file  = test_timing_file,
-        .test_no_timing    = test_no_timing,
-        .test_jobs         = test_jobs,
-        .test_arguments    = test_arguments,
-        .bench_package     = bench_package,
-        .bench_profile     = bench_profile,
-        .bench_target      = bench_target,
-        .bench_output      = bench_output,
-        .bench_locked      = bench_locked,
-        .bench_no_run      = bench_no_run,
-        .bench_verbose     = bench_verbose,
-        .bench_timing_file = bench_timing_file,
-        .bench_no_timing   = bench_no_timing,
-        .bench_jobs        = bench_jobs,
-        .bench_arguments   = bench_arguments,
-        .scan_source       = scan_source,
-        .scan_package      = scan_package,
-        .scan_profile      = scan_profile,
-        .scan_target       = scan_target,
-        .scan_format       = scan_format,
-        .scan_locked       = scan_locked,
-        .format_package    = format_package,
-        .format_check      = format_check,
-        .parser            = rstd::move(parser).unwrap(),
+        .directory           = directory,
+        .no_config           = no_config,
+        .build_package       = build_package,
+        .build_profile       = build_profile,
+        .build_target        = build_target,
+        .build_output        = build_output,
+        .build_locked        = build_locked,
+        .build_verbose       = build_verbose,
+        .build_timing_file   = build_timing_file,
+        .build_no_timing     = build_no_timing,
+        .build_jobs          = build_jobs,
+        .install_package     = install_package,
+        .install_profile     = install_profile,
+        .install_binary      = install_binary,
+        .install_root        = install_root,
+        .install_force       = install_force,
+        .install_locked      = install_locked,
+        .install_verbose     = install_verbose,
+        .install_timing_file = install_timing_file,
+        .install_no_timing   = install_no_timing,
+        .install_jobs        = install_jobs,
+        .test_package        = test_package,
+        .test_profile        = test_profile,
+        .test_target         = test_target,
+        .test_output         = test_output,
+        .test_locked         = test_locked,
+        .test_no_run         = test_no_run,
+        .test_verbose        = test_verbose,
+        .test_timing_file    = test_timing_file,
+        .test_no_timing      = test_no_timing,
+        .test_jobs           = test_jobs,
+        .test_arguments      = test_arguments,
+        .bench_package       = bench_package,
+        .bench_profile       = bench_profile,
+        .bench_target        = bench_target,
+        .bench_output        = bench_output,
+        .bench_locked        = bench_locked,
+        .bench_no_run        = bench_no_run,
+        .bench_verbose       = bench_verbose,
+        .bench_timing_file   = bench_timing_file,
+        .bench_no_timing     = bench_no_timing,
+        .bench_jobs          = bench_jobs,
+        .bench_arguments     = bench_arguments,
+        .scan_source         = scan_source,
+        .scan_package        = scan_package,
+        .scan_profile        = scan_profile,
+        .scan_target         = scan_target,
+        .scan_format         = scan_format,
+        .scan_locked         = scan_locked,
+        .format_package      = format_package,
+        .format_check        = format_check,
+        .parser              = rstd::move(parser).unwrap(),
     });
 }
 
@@ -341,6 +385,19 @@ struct ScanOptions {
     bool                     locked {};
 };
 
+struct InstallOptions {
+    Vec<String>              packages;
+    Option<BuildProfileName> profile;
+    Vec<String>              binaries;
+    Option<PathBuf>          root;
+    bool                     force {};
+    bool                     locked {};
+    bool                     verbose {};
+    Option<PathBuf>          timing_file;
+    bool                     no_timing {};
+    Option<usize>            jobs;
+};
+
 struct TestOptions {
     Vec<String>              packages;
     Option<BuildProfileName> profile;
@@ -377,6 +434,7 @@ struct FormatOptions {
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
+              (Install, (InstallOptions options;)),
               (Test, (TestOptions options;)),
               (Bench, (BenchOptions options;)),
               (Scan, (ScanOptions options;)),
@@ -457,6 +515,29 @@ auto parse() -> CliOutcome {
                 .targets = string_values(*child, schema.scan_target),
                 .format  = format.is_some() ? **format : ScanOutputFormat::Lito,
                 .locked  = flag_value(*child, schema.scan_locked),
+            }));
+    }
+    if (subcommand->get<0>() == "install"_str) {
+        auto child       = subcommand->get<1>();
+        auto profile     = optional_value(*child, schema.install_profile);
+        auto root        = optional_value(*child, schema.install_root);
+        auto timing_file = optional_value(*child, schema.install_timing_file);
+        auto jobs        = optional_value(*child, schema.install_jobs);
+        return CliOutcome::Parsed(
+            rstd::move(working_directory),
+            no_config,
+            CliCommand::Install(InstallOptions {
+                .packages = string_values(*child, schema.install_package),
+                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
+                .binaries = string_values(*child, schema.install_binary),
+                .root     = root.is_some() ? Some(PathBuf::from((**root).clone())) : None(),
+                .force    = flag_value(*child, schema.install_force),
+                .locked   = flag_value(*child, schema.install_locked),
+                .verbose  = flag_value(*child, schema.install_verbose),
+                .timing_file =
+                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
+                .no_timing = flag_value(*child, schema.install_no_timing),
+                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
             }));
     }
     if (subcommand->get<0>() == "test"_str) {

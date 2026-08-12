@@ -5,6 +5,7 @@ import lito.error;
 import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
+import lito.workspace;
 import lito.platform.contract;
 import lito.build.contract;
 import lito.manifest;
@@ -48,6 +49,9 @@ auto selected_by_purpose(ProjectRootRole         role,
     }
     if (purpose == PackageSelectionPurpose::Benchmark) {
         return kind == PackageTargetKind::Benchmark;
+    }
+    if (purpose == PackageSelectionPurpose::Install) {
+        return kind == PackageTargetKind::Binary;
     }
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
 }
@@ -144,10 +148,16 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                                                 ToolResolver&                     tool_resolver,
                                                 const ResolvedProcessEnvironment& environment,
                                                 usize                             jobs = usize(1),
-                                                BuildObserver                     observer = {})
+                                                BuildObserver                     observer = {},
+                                                Option<WorkspaceCatalog>          catalog  = None())
     -> Result<ResolvedPackageSelection> {
-    auto resolved = resolve_package_graph_with_environment(
-        selection.root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer);
+    auto resolved = resolve_package_graph_with_environment(selection.root.as_path(),
+                                                           rstd::move(options),
+                                                           tool_resolver,
+                                                           environment,
+                                                           jobs,
+                                                           observer,
+                                                           rstd::move(catalog));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     auto graph      = rstd::move(resolved).unwrap();
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();

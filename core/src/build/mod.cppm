@@ -4,6 +4,7 @@ import rstd;
 import lito.error;
 import lito.manifest.contract;
 import lito.workspace.contract;
+import lito.workspace;
 import lito.build.profile_contract;
 import lito.build.identity;
 import lito.build.plan_contract;
@@ -112,12 +113,12 @@ auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<Resolve
 
 } // namespace lito
 
-export namespace lito
+namespace lito
 {
 
-auto build_with_environment(const BuildRequest&               request,
-                            const ResolvedProcessEnvironment& process_environment)
-    -> Result<BuildSummary> {
+auto build_with_environment_impl(const BuildRequest&               request,
+                                 const ResolvedProcessEnvironment& process_environment,
+                                 Option<WorkspaceCatalog> catalog) -> Result<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
     }
@@ -153,7 +154,8 @@ auto build_with_environment(const BuildRequest&               request,
                                                       request.locked,
                                                       request.purpose,
                                                       execution->jobs,
-                                                      preparation_observer);
+                                                      preparation_observer,
+                                                      rstd::move(catalog));
     if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
     auto  project          = rstd::move(prepared).unwrap();
     auto& toolchain        = project.toolchain;
@@ -170,6 +172,29 @@ auto build_with_environment(const BuildRequest&               request,
     auto selected =
         resolve_source_selection(metadata, metadata.default_profile.as_str(), request.targets);
     if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+    auto selected_targets = Vec<PackageTargetId>::with_capacity(selected->selected_targets.len());
+    for (auto target : selected->selected_targets) {
+        selected_targets.push(metadata.targets[target].id.clone());
+    }
+    auto selected_packages = Vec<SelectedPackageMetadata>::make();
+    for (const auto& package : metadata.selected_packages) {
+        auto used = false;
+        for (const auto& target : selected_targets) {
+            if (target.package == package.name.as_str()) {
+                used = true;
+                break;
+            }
+        }
+        if (! used) continue;
+        auto version = Option<String> {};
+        if (package.version.is_some()) version = Some(package.version->clone());
+        selected_packages.push(SelectedPackageMetadata {
+            .name            = package.name.clone(),
+            .version         = rstd::move(version),
+            .source_identity = package.source_identity.clone(),
+            .root            = package.root.clone(),
+        });
+    }
     auto script_packages = resolve_build_script_packages(metadata, *selected);
     if (script_packages.is_err()) return Err(rstd::move(script_packages).unwrap_err());
 
@@ -484,11 +509,14 @@ auto build_with_environment(const BuildRequest&               request,
     return Ok(BuildSummary {
         .package              = package.name.clone(),
         .profile              = package_plan.profile->name.clone(),
+        .target               = String::make(toolchain.target()),
         .output               = PathBuf::from(layout.output()),
         .scanned              = scans.len(),
         .compiled             = compiled,
         .reused               = reused,
         .artifacts            = rstd::move(artifacts),
+        .selected_targets     = rstd::move(selected_targets),
+        .selected_packages    = rstd::move(selected_packages),
         .frontend             = frontend_statistics,
         .toolchain            = toolchain.statistics(),
         .scan_profile         = rstd::move(scan_profile),
@@ -500,10 +528,29 @@ auto build_with_environment(const BuildRequest&               request,
     });
 }
 
+} // namespace lito
+
+export namespace lito
+{
+
+auto build_with_environment(const BuildRequest&               request,
+                            const ResolvedProcessEnvironment& process_environment)
+    -> Result<BuildSummary> {
+    return build_with_environment_impl(request, process_environment, None());
+}
+
+auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
+    -> Result<BuildSummary> {
+    request.selection.root = rstd::move(project.root);
+    auto environment       = ResolvedProcessEnvironment::resolve(request.environment);
+    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    return build_with_environment_impl(request, *environment, Some(rstd::move(project.catalog)));
+}
+
 auto build(const BuildRequest& request) -> Result<BuildSummary> {
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-    return build_with_environment(request, *environment);
+    return build_with_environment_impl(request, *environment, None());
 }
 
 } // namespace lito

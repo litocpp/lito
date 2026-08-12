@@ -15,6 +15,7 @@ import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.package.target_contract;
 import lito.workspace.contract;
+import lito.workspace;
 import lito.workspace.resolver;
 import lito.lock;
 import lito.package;
@@ -59,8 +60,10 @@ auto start_project_resolution(const PackageSelection&           selection,
                               const TargetInfo*                 target,
                               ToolResolver&                     tool_resolver,
                               const ResolvedProcessEnvironment& environment,
-                              usize                             jobs = usize(1),
-                              BuildObserver observer = {}) -> Result<StartedProjectResolution> {
+                              usize                             jobs     = usize(1),
+                              BuildObserver                     observer = {},
+                              Option<WorkspaceCatalog>          catalog  = None())
+    -> Result<StartedProjectResolution> {
     auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), lock, locked, git));
     auto resolution    = lock_session.take_resolution_options();
     resolution.sources = sources.clone();
@@ -72,7 +75,8 @@ auto start_project_resolution(const PackageSelection&           selection,
                                                                        tool_resolver,
                                                                        environment,
                                                                        jobs,
-                                                                       observer));
+                                                                       observer,
+                                                                       rstd::move(catalog)));
     return Ok(StartedProjectResolution {
         .selection = rstd::move(project),
         .lock      = rstd::move(lock_session),
@@ -90,7 +94,8 @@ auto resolve_project(const PackageSelection&           selection,
                      ToolResolver&                     tool_resolver,
                      const ResolvedProcessEnvironment& environment,
                      usize                             jobs     = usize(1),
-                     BuildObserver                     observer = {}) -> Result<ProjectResolution> {
+                     BuildObserver                     observer = {},
+                     Option<WorkspaceCatalog> catalog = None()) -> Result<ProjectResolution> {
     auto started = rstd_try(start_project_resolution(selection,
                                                      purpose,
                                                      sources,
@@ -101,7 +106,8 @@ auto resolve_project(const PackageSelection&           selection,
                                                      tool_resolver,
                                                      environment,
                                                      jobs,
-                                                     observer));
+                                                     observer,
+                                                     rstd::move(catalog)));
     rstd_try(prepare_external_dependency_sources(started.selection.graph,
                                                  started.selection.selected_package_names,
                                                  rstd::move(started.external),
@@ -164,7 +170,8 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                               bool                              locked,
                               PackageSelectionPurpose      purpose  = PackageSelectionPurpose::All,
                               usize                        jobs     = usize(1),
-                              const Option<BuildObserver>& observer = None())
+                              const Option<BuildObserver>& observer = None(),
+                              Option<WorkspaceCatalog>     catalog  = None())
     -> Result<PackageMetadata> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
@@ -181,7 +188,8 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                              tool_resolver,
                                              environment,
                                              jobs,
-                                             observer_value(observer)));
+                                             observer_value(observer),
+                                             rstd::move(catalog)));
     auto project  = rstd::move(resolved.selection);
     auto resolved_configuration                 = configuration.clone();
     resolved_configuration.toolchain.compiler   = PathBuf::from(toolchain.compiler_path());
@@ -224,7 +232,8 @@ auto prepare_build_project(const PackageSelection&           selection,
                            bool                              locked,
                            PackageSelectionPurpose           purpose = PackageSelectionPurpose::All,
                            usize                             jobs    = usize(1),
-                           const Option<BuildObserver>&      observer = None())
+                           const Option<BuildObserver>&      observer = None(),
+                           Option<WorkspaceCatalog>          catalog  = None())
     -> Result<PreparedBuildProject> {
     auto created = ClangToolchain::create(configuration.toolchain, tool_resolver, environment);
     if (created.is_err()) return Err(rstd::move(created).unwrap_err());
@@ -242,7 +251,8 @@ auto prepare_build_project(const PackageSelection&           selection,
                                               locked,
                                               purpose,
                                               jobs,
-                                              observer);
+                                              observer,
+                                              rstd::move(catalog));
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     return Ok(PreparedBuildProject {
         .toolchain = rstd::move(toolchain),

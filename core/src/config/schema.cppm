@@ -45,7 +45,7 @@ auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
 
 auto root_config_key(ref<str> key) -> bool {
     return key == "environment"_str || key == "toolchain"_str || key == "pkg-config"_str ||
-           key == "cmake"_str || key == "patch"_str || key == "lock"_str;
+           key == "cmake"_str || key == "patch"_str || key == "lock"_str || key == "install"_str;
 }
 
 auto environment_config_key(ref<str> key) -> bool {
@@ -63,6 +63,10 @@ auto patch_config_key(ref<str> key) -> bool {
 
 auto lock_config_key(ref<str> key) -> bool {
     return key == "path"_str;
+}
+
+auto install_config_key(ref<str> key) -> bool {
+    return key == "root"_str;
 }
 
 auto pkg_config_key(ref<str> key) -> bool {
@@ -284,13 +288,12 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
                          *parent,
                          rstd::move(canonical_parent).unwrap_err()));
     }
-    auto path = canonical_parent->join(PathBuf::from(*name).as_path());
+    auto path   = canonical_parent->join(PathBuf::from(*name).as_path());
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
-        return config_failure<LockConfig>(
-            rstd::format("cannot inspect config.lock.path '{}': {}",
-                         path.as_path(),
-                         rstd::move(exists).unwrap_err()));
+        return config_failure<LockConfig>(rstd::format("cannot inspect config.lock.path '{}': {}",
+                                                       path.as_path(),
+                                                       rstd::move(exists).unwrap_err()));
     }
     if (*exists) {
         auto metadata = rstd::fs::metadata(path.as_path());
@@ -306,6 +309,27 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
         }
     }
     return Ok(LockConfig { .path = rstd::move(path) });
+}
+
+auto configured_install(const Toml& document, ref<rstd::path::Path> project_root)
+    -> Result<InstallConfig> {
+    auto value = config_member(document, "install"_str);
+    if (value.is_none()) return Ok(InstallConfig {});
+    auto table = config_table(**value, "config.install"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.install"_str, install_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto root_value = config_member(**value, "root"_str);
+    if (root_value.is_none()) {
+        return config_failure<InstallConfig>("config.install is missing 'root'"_str);
+    }
+    auto text = (**root_value).as_str();
+    if (text.is_none() || text->is_empty()) {
+        return config_failure<InstallConfig>("config.install.root must be a non-empty string"_str);
+    }
+    auto root = PathBuf::from(*text);
+    if (root.as_path().is_relative()) root = PathBuf::from(project_root).join(root.as_path());
+    return Ok(InstallConfig { .root = Some(rstd::move(root)) });
 }
 
 auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root)
@@ -394,8 +418,7 @@ export namespace lito
 {
 
 auto load_project_config(ref<rstd::path::Path> requested_root,
-                         ConfigLoadMode mode = ConfigLoadMode::Enabled)
-    -> Result<ProjectConfig> {
+                         ConfigLoadMode mode = ConfigLoadMode::Enabled) -> Result<ProjectConfig> {
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
         return config_failure<ProjectConfig>(rstd::format("cannot resolve project root '{}': {}",
@@ -500,8 +523,10 @@ auto load_project_config(ref<rstd::path::Path> requested_root,
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
-    auto cmake = configured_cmake(document, root.as_path());
+    auto cmake   = configured_cmake(document, root.as_path());
+    auto install = configured_install(document, root.as_path());
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
+    if (install.is_err()) return Err(rstd::move(install).unwrap_err());
 
     return Ok(ProjectConfig {
         .root        = rstd::move(root),
@@ -511,6 +536,7 @@ auto load_project_config(ref<rstd::path::Path> requested_root,
         .sources     = rstd::move(sources).unwrap(),
         .pkg_config  = rstd::move(pkg_config).unwrap(),
         .cmake       = rstd::move(cmake).unwrap(),
+        .install     = rstd::move(install).unwrap(),
     });
 }
 

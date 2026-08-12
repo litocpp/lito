@@ -8,6 +8,8 @@ import lito.source.contract;
 import lito.dependency.contract;
 import lito.lock.contract;
 
+using namespace rstd::prelude;
+
 export namespace lito
 {
 
@@ -15,6 +17,10 @@ enum class ConfigLoadMode
 {
     Enabled,
     Disabled,
+};
+
+struct InstallConfig {
+    Option<PathBuf> root;
 };
 
 struct ProjectConfig {
@@ -25,6 +31,7 @@ struct ProjectConfig {
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
     CMakeProviderConfig     cmake;
+    InstallConfig           install;
 };
 
 } // namespace lito

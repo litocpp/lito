@@ -12,6 +12,7 @@ import lito.build.contract;
 import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
+import lito.workspace;
 import lito.source;
 import lito.system.environment;
 
@@ -27,7 +28,7 @@ auto failure(String message) -> Result<T> {
     return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
 }
 
-auto clone_package_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
+auto clone_dependency_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
     if (source.is_Path()) {
         return PackageSourceRequirement::Path(source.as_Path().path.clone());
     }
@@ -110,8 +111,9 @@ public:
           sources_(root_directory, rstd::move(options), resolver, environment, observer),
           jobs_(jobs) {}
 
-    auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
-        return sources_.acquire_root(root);
+    auto acquire_root(ref<rstd::path::Path> root, Option<WorkspaceCatalog> catalog)
+        -> Result<AcquiredProjectSources> {
+        return sources_.acquire_root(root, rstd::move(catalog));
     }
 
     auto package_names(usize source) const -> Vec<String> { return sources_.package_names(source); }
@@ -182,7 +184,7 @@ public:
                     declaring_root = dependency.declaration_root->clone();
                 }
                 fetch_requests.push(PackageSourceFetchRequest {
-                    .source         = clone_package_source(dependency.source),
+                    .source         = clone_dependency_source(dependency.source),
                     .declaring_root = rstd::move(declaring_root),
                 });
             }
@@ -266,7 +268,8 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                                             ToolResolver&                     tool_resolver,
                                             const ResolvedProcessEnvironment& environment,
                                             usize                             jobs     = usize(1),
-                                            BuildObserver                     observer = {})
+                                            BuildObserver                     observer = {},
+                                            Option<WorkspaceCatalog>          catalog  = None())
     -> Result<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return failure<ResolvedPackageGraph>(
@@ -282,7 +285,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
     auto root = rstd::move(canonical).unwrap();
     auto resolver =
         Resolver(root.as_path(), rstd::move(options), tool_resolver, environment, jobs, observer);
-    auto source = resolver.acquire_root(root.as_path());
+    auto source = resolver.acquire_root(root.as_path(), rstd::move(catalog));
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto project_sources   = rstd::move(source).unwrap();
     auto root_source       = project_sources.primary;

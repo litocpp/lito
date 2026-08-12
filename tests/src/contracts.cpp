@@ -23,6 +23,7 @@ import lito.test.support;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito_test;
+using PathBuf = rstd::path::PathBuf;
 
 namespace
 {
@@ -478,6 +479,7 @@ TEST(Contracts, UserFacingEnumsImplementDisplay) {
               "cmake-query-build"_str);
     EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Benchmark).as_str(),
               "benchmark"_str);
+    EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Install).as_str(), "install"_str);
     EXPECT_EQ(rstd::format("{}", lito::ProjectRootRole::AssociatedTest).as_str(), "test"_str);
     EXPECT_EQ(rstd::format("{}", lito::CMakePackageOperation::WriteQuery).as_str(),
               "query materialization"_str);
@@ -797,6 +799,149 @@ TEST(Contracts, LockPathBelongsToProjectConfig) {
     ASSERT_TRUE(ignored.is_ok());
     EXPECT_EQ(ignored->lock.path.as_path(),
               invalid_root.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
+}
+
+TEST(Contracts, InstallPurposeSelectsWorkspaceBinaries) {
+    auto directory = root("project"_str);
+    auto package   = lito::resolve_package_selection(
+        lito::PackageSelection { .root = root("project/multi-target"_str) },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(package.is_ok());
+    ASSERT_EQ(package->selected_root_names.len(), usize(3));
+    EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-multi-consumer"_str));
+    EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-multi-target"_str));
+    EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-test-app"_str));
+
+    auto workspace = lito::resolve_package_selection(
+        lito::PackageSelection { .root = root("workspace/profile"_str) },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(workspace.is_ok());
+    ASSERT_EQ(workspace->selected_root_names.len(), usize(1));
+    EXPECT_EQ(workspace->selected_root_names[usize {}].as_str(),
+              "fixture-workspace-profile-app"_str);
+
+    auto member = lito::resolve_package_selection(
+        lito::PackageSelection { .root = root("build-script/workspace/app"_str) },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(member.is_ok());
+    ASSERT_EQ(member->selected_root_names.len(), usize(2));
+    EXPECT_TRUE(contains_name(member->selected_root_names, "fixture-configure-workspace-app"_str));
+    EXPECT_TRUE(
+        contains_name(member->selected_root_names, "fixture-configure-workspace-other"_str));
+
+    auto selected_member = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = root("build-script/workspace/app"_str),
+            .packages = strings("fixture-configure-workspace-app"_str),
+        },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(selected_member.is_ok());
+    ASSERT_EQ(selected_member->selected_root_names.len(), usize(1));
+    EXPECT_EQ(selected_member->selected_root_names[usize {}].as_str(),
+              "fixture-configure-workspace-app"_str);
+
+    auto selected = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-multi-target"_str),
+        },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(selected.is_ok());
+    ASSERT_EQ(selected->selected_root_names.len(), usize(1));
+    ASSERT_EQ(selected->selected_targets.len(), usize(2));
+    for (const auto& target : selected->selected_targets) {
+        EXPECT_EQ(target.package.as_str(), "fixture-multi-target"_str);
+        EXPECT_EQ(target.kind, lito::PackageTargetKind::Binary);
+    }
+
+    auto consumer = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-multi-consumer"_str),
+        },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(consumer.is_ok());
+    ASSERT_EQ(consumer->selected_targets.len(), usize(1));
+    EXPECT_EQ(consumer->selected_targets[usize {}].package.as_str(), "fixture-multi-consumer"_str);
+    EXPECT_EQ(consumer->selected_targets[usize {}].kind, lito::PackageTargetKind::Binary);
+
+    auto library = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-test-lib"_str),
+        },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(library.is_err());
+    EXPECT_TRUE(library.unwrap_err().message.as_str().contains("no install target"_str));
+
+    auto all = lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
+                                               lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(all.is_ok());
+    ASSERT_EQ(all->selected_root_names.len(), usize(3));
+}
+
+TEST(Contracts, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
+    auto directory = root("project/multi-target"_str);
+    auto workspace = root("project"_str);
+    auto source    = lito::resolve_install_source(
+        lito::InstallSourceRequirement::LocalProject(directory.clone()));
+    ASSERT_TRUE(source.is_ok());
+    EXPECT_EQ(source->project.root.as_path(), workspace.as_path());
+    EXPECT_TRUE(source->provenance.is_Local());
+    EXPECT_EQ(source->identity.as_str(), rstd::format("path+{}", workspace.as_path()).as_str());
+
+    auto configured = lito::resolve_install_root(
+        directory.as_path(),
+        None(),
+        lito::InstallConfig { .root = Some(PathBuf::from("/tmp/lito-configured-install"_str)) });
+    ASSERT_TRUE(configured.is_ok());
+    EXPECT_EQ(configured->path.as_path(),
+              PathBuf::from("/tmp/lito-configured-install"_str).as_path());
+
+    auto command = lito::resolve_install_root(
+        directory.as_path(),
+        Some(PathBuf::from("local-prefix"_str)),
+        lito::InstallConfig { .root = Some(PathBuf::from("/tmp/lito-configured-install"_str)) });
+    ASSERT_TRUE(command.is_ok());
+    EXPECT_EQ(command->path.as_path(),
+              directory.join(PathBuf::from("local-prefix"_str).as_path()).as_path());
+
+    auto empty = lito::resolve_install_root(
+        directory.as_path(), Some(PathBuf::make()), lito::InstallConfig {});
+    ASSERT_TRUE(empty.is_err());
+    EXPECT_TRUE(empty.unwrap_err().message.as_str().contains("must not be empty"_str));
+}
+
+TEST(Contracts, WorkspaceAndMemberInstallUseTheSameSource) {
+    auto workspace        = root("workspace/profile"_str);
+    auto member           = workspace.join(PathBuf::from("app"_str).as_path());
+    auto workspace_source = lito::resolve_install_source(
+        lito::InstallSourceRequirement::LocalProject(workspace.clone()));
+    auto member_source =
+        lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(member.clone()));
+    ASSERT_TRUE(workspace_source.is_ok());
+    ASSERT_TRUE(member_source.is_ok());
+    EXPECT_EQ(workspace_source->project.root.as_path(), workspace.as_path());
+    EXPECT_EQ(member_source->project.root.as_path(), workspace.as_path());
+    EXPECT_EQ(workspace_source->identity.as_str(), member_source->identity.as_str());
+    EXPECT_EQ(workspace_source->identity.as_str(),
+              lito::path_source_identity(workspace.as_path()).as_str());
+}
+
+TEST(Contracts, ProjectConfigParsesInstallRootRelativeToProject) {
+    auto directory = output_root("install-config"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
+    auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(config.as_path(), "[install]\nroot = \"tools\"\n"_str.as_bytes()).is_ok());
+    auto loaded = lito::load_project_config(directory.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->install.root.is_some());
+    EXPECT_EQ(loaded->install.root->as_path(),
+              directory.join(PathBuf::from("tools"_str).as_path()).as_path());
+    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
 TEST(Contracts, InvalidLockPathsAreRejectedByConfigOwner) {

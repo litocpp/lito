@@ -123,9 +123,22 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation    = rstd::move(parsed).as_Parsed();
+    auto invocation     = rstd::move(parsed).as_Parsed();
+    auto install_source = Option<lito::ResolvedInstallSource> {};
+    if (invocation.command.is_Install()) {
+        auto resolved = lito::resolve_install_source(
+            lito::InstallSourceRequirement::LocalProject(invocation.working_directory.clone()));
+        if (resolved.is_err()) {
+            auto error = rstd::move(resolved).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        install_source = Some(rstd::move(resolved).unwrap());
+    }
+    auto config_root   = install_source.is_some() ? install_source->project.root.as_path()
+                                                  : invocation.working_directory.as_path();
     auto loaded_config = lito::load_project_config(
-        invocation.working_directory.as_path(),
+        config_root,
         invocation.no_config ? lito::ConfigLoadMode::Disabled : lito::ConfigLoadMode::Enabled);
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
@@ -133,6 +146,63 @@ extern "C++" int main() {
         return 1;
     }
     auto project = rstd::move(loaded_config).unwrap();
+
+    if (invocation.command.is_Install()) {
+        auto options = rstd::move(invocation.command).as_Install().options;
+        auto root    = lito::resolve_install_root(
+            invocation.working_directory.as_path(), rstd::move(options.root), project.install);
+        if (root.is_err()) {
+            auto error = rstd::move(root).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        auto timing  = make_timing_output(project.root.as_path(),
+                                          rstd::move(options.timing_file),
+                                          options.verbose && ! options.no_timing);
+        auto request = lito::InstallRequest {
+            .source = rstd::move(install_source).unwrap(),
+            .root   = rstd::move(root).unwrap(),
+        };
+        request.binaries                 = rstd::move(options.binaries);
+        request.force                    = options.force;
+        request.build.selection.root     = project.root.clone();
+        request.build.environment        = rstd::move(project.environment);
+        request.build.configuration      = build_configuration(rstd::move(project.toolchain));
+        request.build.lock               = rstd::move(project.lock);
+        request.build.sources            = rstd::move(project.sources);
+        request.build.pkg_config         = rstd::move(project.pkg_config);
+        request.build.cmake              = rstd::move(project.cmake);
+        request.build.selection.packages = rstd::move(options.packages);
+        request.build.locked             = options.locked;
+        if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
+        request.build.execution.scan.jobs    = options.jobs;
+        request.build.execution.compile.jobs = options.jobs;
+        auto event_context                   = EventContext { .verbose = options.verbose };
+        request.build.observer               = Some(lito::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
+        auto result                          = lito::install(rstd::move(request));
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            rstd::io::eprintln("lito: {}", error.message.as_str());
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        for (const auto& binary : summary.binaries) {
+            rstd::io::println("[install] {}", binary.destination.as_path());
+        }
+        auto emitted = lito::timing_output::emit(summary.build, timing);
+        if (emitted.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+            return 1;
+        }
+        rstd::io::println("installed {} binaries ({}) to {}",
+                          summary.binaries.len(),
+                          summary.build.profile.as_str(),
+                          summary.root.path.as_path());
+        return 0;
+    }
 
     if (invocation.command.is_Update()) {
         auto event_context = EventContext {};

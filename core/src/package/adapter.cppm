@@ -469,6 +469,24 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
             break;
         }
     }
+    auto selected_packages      = Vec<SelectedPackageMetadata>::make();
+    auto selected_root_packages = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& target : selected_targets) {
+        selected_root_packages.insert(target.package.clone(), empty {});
+    }
+    for (const auto& package : graph.packages) {
+        if (! selected_root_packages.contains_key(package.manifest.name.as_str())) continue;
+        auto version = Option<String> {};
+        if (package.manifest.version.value.is_some()) {
+            version = Some(package.manifest.version.value->clone());
+        }
+        selected_packages.push(SelectedPackageMetadata {
+            .name            = package.manifest.name.clone(),
+            .version         = rstd::move(version),
+            .source_identity = package.source_identity.clone(),
+            .root            = package.manifest.root.clone(),
+        });
+    }
     auto profiles        = Vec<ProfileSpec>::make();
     auto default_profile = profile.name.clone();
     profiles.push(rstd::move(profile));
@@ -479,6 +497,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
         .build_script_packages = rstd::move(build_script_packages),
         .default_profile       = rstd::move(default_profile),
         .default_targets       = rstd::move(default_targets),
+        .selected_packages     = rstd::move(selected_packages),
         .toolchain =
             ToolchainSpec {
                 .compiler   = configuration.toolchain.compiler.clone(),

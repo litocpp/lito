@@ -58,6 +58,10 @@ target_sources(
          src/config/schema.cppm
          src/config/contract.cppm
          src/config/mod.cppm
+         src/install/contract.cppm
+         src/install/source.cppm
+         src/install/store.cppm
+         src/install/mod.cppm
          src/modules/convention.cppm
          src/modules/graph.cppm
          src/modules/frontend.cppm
@@ -122,6 +126,7 @@ target_sources(
          src/command/scan.cppm
          src/command/format.cppm
          src/command/update.cppm
+         src/command/install.cppm
          src/command/scan_contract.cppm
          src/command/project_contract.cppm
          src/command/reporting.cppm

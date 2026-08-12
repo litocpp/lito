@@ -321,4 +321,34 @@ auto try_containing_workspace(const PackageManifest& manifest)
     return Ok(None());
 }
 
+struct ResolvedProjectEntry {
+    PathBuf          root;
+    WorkspaceCatalog catalog;
+};
+
+auto resolve_project_entry(ref<rstd::path::Path> requested_root) -> Result<ResolvedProjectEntry> {
+    auto document = rstd_try(load_manifest_document(requested_root));
+    if (document.kind == ManifestKind::Workspace && document.workspace.is_some()) {
+        auto catalog = rstd_try(load_workspace_catalog(rstd::move(document.workspace).unwrap()));
+        return Ok(ResolvedProjectEntry {
+            .root    = PathBuf::from(catalog.root()),
+            .catalog = rstd::move(catalog),
+        });
+    }
+    if (document.kind != ManifestKind::Package || document.package.is_none()) {
+        return catalog_failure<ResolvedProjectEntry>(
+            String::make("project manifest has no package or workspace"_str));
+    }
+    auto package   = rstd::move(document.package).unwrap();
+    auto workspace = rstd_try(try_containing_workspace(package));
+    auto catalog   = workspace.is_some()
+                         ? rstd_try(load_workspace_catalog(rstd::move(workspace).unwrap(),
+                                                           Some(rstd::move(package))))
+                         : rstd_try(WorkspaceCatalog::single(rstd::move(package)));
+    return Ok(ResolvedProjectEntry {
+        .root    = PathBuf::from(catalog.root()),
+        .catalog = rstd::move(catalog),
+    });
+}
+
 } // namespace lito

@@ -375,9 +375,10 @@ class SourceManager {
         return Ok(rstd::move(checkout));
     }
 
-    auto acquire_path(ref<rstd::path::Path>   requested,
-                      bool                    package_source,
-                      const WorkspaceCatalog* associated_primary = nullptr) -> Result<usize> {
+    auto acquire_path(ref<rstd::path::Path>    requested,
+                      bool                     package_source,
+                      const WorkspaceCatalog*  associated_primary = nullptr,
+                      Option<WorkspaceCatalog> preloaded          = None()) -> Result<usize> {
         auto canonical = rstd::fs::canonicalize(requested);
         if (canonical.is_err()) {
             return source_failure<usize>(rstd::format("cannot resolve path source '{}': {}",
@@ -388,38 +389,45 @@ class SourceManager {
         auto catalog        = Option<WorkspaceCatalog> {};
         auto source_root    = requested_root.clone();
         if (package_source) {
-            auto document = load_manifest_document(requested_root.as_path());
-            if (document.is_err()) return Err(rstd::move(document).unwrap_err());
-            auto loaded         = rstd::move(document).unwrap();
-            auto loaded_catalog = WorkspaceCatalog {};
-            if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
-                auto workspace = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
-                if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
-                loaded_catalog = rstd::move(workspace).unwrap();
-            } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-                auto package = rstd::move(loaded.package).unwrap();
-                if (associated_primary != nullptr) {
-                    auto associated = WorkspaceCatalog::associated_package(rstd::move(package),
-                                                                           *associated_primary);
-                    if (associated.is_err()) return Err(rstd::move(associated).unwrap_err());
-                    loaded_catalog = rstd::move(associated).unwrap();
-                } else {
-                    auto containing = try_containing_workspace(package);
-                    if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
-                    if (containing->is_some()) {
-                        auto workspace = load_workspace_catalog(
-                            rstd::move(containing).unwrap().unwrap(), Some(rstd::move(package)));
-                        if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
-                        loaded_catalog = rstd::move(workspace).unwrap();
-                    } else {
-                        loaded_catalog = rstd_try(WorkspaceCatalog::single(rstd::move(package)));
-                    }
-                }
+            if (preloaded.is_some()) {
+                source_root = PathBuf::from(preloaded->root());
+                catalog     = Some(rstd::move(preloaded).unwrap());
             } else {
-                return source_failure<usize>("source manifest has no package or workspace"_str);
+                auto document = load_manifest_document(requested_root.as_path());
+                if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+                auto loaded         = rstd::move(document).unwrap();
+                auto loaded_catalog = WorkspaceCatalog {};
+                if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
+                    auto workspace = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
+                    if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
+                    loaded_catalog = rstd::move(workspace).unwrap();
+                } else if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
+                    auto package = rstd::move(loaded.package).unwrap();
+                    if (associated_primary != nullptr) {
+                        auto associated = WorkspaceCatalog::associated_package(rstd::move(package),
+                                                                               *associated_primary);
+                        if (associated.is_err()) return Err(rstd::move(associated).unwrap_err());
+                        loaded_catalog = rstd::move(associated).unwrap();
+                    } else {
+                        auto containing = try_containing_workspace(package);
+                        if (containing.is_err()) return Err(rstd::move(containing).unwrap_err());
+                        if (containing->is_some()) {
+                            auto workspace =
+                                load_workspace_catalog(rstd::move(containing).unwrap().unwrap(),
+                                                       Some(rstd::move(package)));
+                            if (workspace.is_err()) return Err(rstd::move(workspace).unwrap_err());
+                            loaded_catalog = rstd::move(workspace).unwrap();
+                        } else {
+                            loaded_catalog =
+                                rstd_try(WorkspaceCatalog::single(rstd::move(package)));
+                        }
+                    }
+                } else {
+                    return source_failure<usize>("source manifest has no package or workspace"_str);
+                }
+                source_root = PathBuf::from(loaded_catalog.root());
+                catalog     = Some(rstd::move(loaded_catalog));
             }
-            source_root = PathBuf::from(loaded_catalog.root());
-            catalog     = Some(rstd::move(loaded_catalog));
         }
 
         auto root_text = source_root.as_path().to_str();
@@ -617,8 +625,9 @@ public:
           environment_(rstd::addressof(environment)),
           observer_(observer) {}
 
-    auto acquire_root(ref<rstd::path::Path> root) -> Result<AcquiredProjectSources> {
-        auto primary = acquire_path(root, true);
+    auto acquire_root(ref<rstd::path::Path> root, Option<WorkspaceCatalog> catalog = None())
+        -> Result<AcquiredProjectSources> {
+        auto primary = acquire_path(root, true, nullptr, rstd::move(catalog));
         if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
         const auto primary_source = *primary;
         auto       tests          = rstd_try(acquire_associated_catalog(

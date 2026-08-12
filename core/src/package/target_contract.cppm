@@ -59,16 +59,24 @@ struct ResolvedTarget {
     Option<TestAttachmentTarget>    test_attachment;
 };
 
+struct SelectedPackageMetadata {
+    String         name;
+    Option<String> version;
+    String         source_identity;
+    PathBuf        root;
+};
+
 struct PackageMetadata {
-    String               name;
-    PathBuf              root;
-    PathBuf              manifest_path;
-    Vec<String>          build_script_packages;
-    String               default_profile;
-    Vec<PackageTargetId> default_targets;
-    ToolchainSpec        toolchain;
-    Vec<ProfileSpec>     profiles;
-    Vec<ResolvedTarget>  targets;
+    String                       name;
+    PathBuf                      root;
+    PathBuf                      manifest_path;
+    Vec<String>                  build_script_packages;
+    String                       default_profile;
+    Vec<PackageTargetId>         default_targets;
+    Vec<SelectedPackageMetadata> selected_packages;
+    ToolchainSpec                toolchain;
+    Vec<ProfileSpec>             profiles;
+    Vec<ResolvedTarget>          targets;
 };
 
 struct TargetSpec {
