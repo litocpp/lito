@@ -209,8 +209,9 @@ extern "C++" int main() {
     }
     auto project = rstd::move(loaded_config).unwrap();
 
-    if (invocation.command.is_LockExport()) {
-        auto options = rstd::move(invocation.command).as_LockExport().options;
+    if (invocation.command.is_Lock()) {
+        auto command = rstd::move(invocation.command).as_Lock().command;
+        auto options = rstd::move(command).as_Export().options;
         if (options.format.as_str() != "flatpak-sources"_str) {
             rstd::io::eprintln("lito: unsupported lock export format '{}'",
                                options.format.as_str());

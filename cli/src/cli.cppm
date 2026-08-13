@@ -12,455 +12,6 @@ using namespace rstd::literals;
 using namespace rstd::argparse;
 using rstd::ffi::OsStr;
 
-namespace lito::cli
-{
-
-class BuildProfileParser {
-public:
-    auto parse(ref<OsStr> value) const -> rstd::Result<BuildProfileName, ValueError> {
-        auto text = value.to_str();
-        if (text.is_none()) return Err(ValueError::InvalidUtf8());
-        auto profile = parse_build_profile(*text);
-        if (profile.is_ok()) return Ok(rstd::move(profile).unwrap());
-        return Err(ValueError::Message(rstd::format("{}", rstd::move(profile).unwrap_err())));
-    }
-};
-
-class ScanOutputFormatParser {
-public:
-    auto parse(ref<OsStr> value) const -> rstd::Result<ScanOutputFormat, ValueError> {
-        auto text = value.to_str();
-        if (text.is_none()) return Err(ValueError::InvalidUtf8());
-        auto format = parse_scan_output_format(*text);
-        if (format.is_ok()) return Ok(rstd::move(format).unwrap());
-        return Err(ValueError::Message(rstd::format("{}", rstd::move(format).unwrap_err())));
-    }
-
-    auto possible_values() const -> Vec<String> {
-        auto values = Vec<String>::with_capacity(usize(2));
-        values.push(String::make(scan_output_format_name(ScanOutputFormat::Lito)));
-        values.push(String::make(scan_output_format_name(ScanOutputFormat::P1689)));
-        return values;
-    }
-};
-
-struct CliSchema {
-    ArgKey<String>           directory;
-    ArgKey<bool>             no_config;
-    ArgKey<String>           build_package;
-    ArgKey<BuildProfileName> build_profile;
-    ArgKey<String>           build_target;
-    ArgKey<String>           build_output;
-    ArgKey<bool>             build_locked;
-    ArgKey<bool>             build_offline;
-    ArgKey<bool>             build_frozen;
-    ArgKey<String>           build_fetch_seed;
-    ArgKey<bool>             build_verbose;
-    ArgKey<String>           build_timing_file;
-    ArgKey<bool>             build_no_timing;
-    ArgKey<usize>            build_jobs;
-    ArgKey<String>           install_package;
-    ArgKey<BuildProfileName> install_profile;
-    ArgKey<String>           install_binary;
-    ArgKey<String>           install_root;
-    ArgKey<bool>             install_force;
-    ArgKey<bool>             install_locked;
-    ArgKey<bool>             install_offline;
-    ArgKey<bool>             install_frozen;
-    ArgKey<String>           install_fetch_seed;
-    ArgKey<bool>             install_verbose;
-    ArgKey<String>           install_timing_file;
-    ArgKey<bool>             install_no_timing;
-    ArgKey<usize>            install_jobs;
-    ArgKey<String>           test_package;
-    ArgKey<BuildProfileName> test_profile;
-    ArgKey<String>           test_target;
-    ArgKey<String>           test_output;
-    ArgKey<bool>             test_locked;
-    ArgKey<bool>             test_offline;
-    ArgKey<bool>             test_frozen;
-    ArgKey<String>           test_fetch_seed;
-    ArgKey<bool>             test_no_run;
-    ArgKey<bool>             test_verbose;
-    ArgKey<String>           test_timing_file;
-    ArgKey<bool>             test_no_timing;
-    ArgKey<usize>            test_jobs;
-    ArgKey<String>           test_arguments;
-    ArgKey<String>           bench_package;
-    ArgKey<BuildProfileName> bench_profile;
-    ArgKey<String>           bench_target;
-    ArgKey<String>           bench_output;
-    ArgKey<bool>             bench_locked;
-    ArgKey<bool>             bench_offline;
-    ArgKey<bool>             bench_frozen;
-    ArgKey<String>           bench_fetch_seed;
-    ArgKey<bool>             bench_no_run;
-    ArgKey<bool>             bench_verbose;
-    ArgKey<String>           bench_timing_file;
-    ArgKey<bool>             bench_no_timing;
-    ArgKey<usize>            bench_jobs;
-    ArgKey<String>           bench_arguments;
-    ArgKey<String>           scan_source;
-    ArgKey<String>           scan_package;
-    ArgKey<BuildProfileName> scan_profile;
-    ArgKey<String>           scan_target;
-    ArgKey<ScanOutputFormat> scan_format;
-    ArgKey<bool>             scan_locked;
-    ArgKey<bool>             scan_offline;
-    ArgKey<bool>             scan_frozen;
-    ArgKey<String>           scan_fetch_seed;
-    ArgKey<String>           format_package;
-    ArgKey<bool>             format_check;
-    ArgKey<bool>             update_offline;
-    ArgKey<String>           update_fetch_seed;
-    ArgKey<String>           lock_export_format;
-    ArgKey<String>           lock_export_output;
-    Parser                   parser;
-};
-
-auto package_arg() -> Arg<String> {
-    return Arg<String>::value("package"_str, string_parser())
-        .short_name(u8('p'))
-        .long_name("package"_str)
-        .value_name("NAME"_str)
-        .help("Select a package"_str)
-        .append();
-}
-
-auto profile_arg() -> Arg<BuildProfileName> {
-    return Arg<BuildProfileName>::value("profile"_str, BuildProfileParser {})
-        .long_name("profile"_str)
-        .value_name("PROFILE"_str)
-        .help("Select the build profile"_str);
-}
-
-auto target_arg() -> Arg<String> {
-    return Arg<String>::value("target"_str, string_parser())
-        .long_name("target"_str)
-        .value_name("NAME"_str)
-        .help("Select a target"_str)
-        .append();
-}
-
-auto locked_arg() -> Arg<bool> {
-    return Arg<bool>::flag("locked"_str)
-        .long_name("locked"_str)
-        .help("Require an unchanged lock file"_str);
-}
-
-auto offline_arg() -> Arg<bool> {
-    return Arg<bool>::flag("offline"_str)
-        .long_name("offline"_str)
-        .help("Forbid network source acquisition"_str);
-}
-
-auto frozen_arg() -> Arg<bool> {
-    return Arg<bool>::flag("frozen"_str)
-        .long_name("frozen"_str)
-        .help("Require an unchanged lock file and forbid network access"_str);
-}
-
-auto fetch_seed_arg() -> Arg<String> {
-    return Arg<String>::value("fetch-seed"_str, string_parser())
-        .long_name("fetch-seed"_str)
-        .value_name("DIRECTORY"_str)
-        .help("Use a read-only fetch seed directory"_str)
-        .append();
-}
-
-auto timing_file_arg() -> Arg<String> {
-    return Arg<String>::value("timing-file"_str, string_parser())
-        .long_name("timing-file"_str)
-        .value_name("FILE"_str)
-        .help("Write the detailed timing report to a file"_str);
-}
-
-auto no_timing_arg() -> Arg<bool> {
-    return Arg<bool>::flag("no-timing"_str)
-        .long_name("no-timing"_str)
-        .help("Hide timing output on stdout"_str);
-}
-
-auto jobs_arg() -> Arg<usize> {
-    return Arg<usize>::value("jobs"_str, from_str_parser<usize>())
-        .short_name(u8('j'))
-        .long_name("jobs"_str)
-        .value_name("N"_str)
-        .help("Set the scan and compile worker count"_str);
-}
-
-auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
-    auto build = Command::make("build"_str);
-    build.about("Build packages"_str);
-    auto build_package = build.add_arg(package_arg());
-    auto build_profile = build.add_arg(profile_arg());
-    auto build_target  = build.add_arg(target_arg());
-    auto build_output  = build.add_arg(Arg<String>::value("out"_str, string_parser())
-                                           .long_name("out"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Override the build output directory"_str));
-    auto build_locked  = build.add_arg(locked_arg());
-    auto build_offline    = build.add_arg(offline_arg());
-    auto build_frozen     = build.add_arg(frozen_arg());
-    auto build_fetch_seed = build.add_arg(fetch_seed_arg());
-    auto build_verbose = build.add_arg(
-        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
-    auto build_timing_file = build.add_arg(timing_file_arg());
-    auto build_no_timing   = build.add_arg(no_timing_arg());
-    auto build_jobs        = build.add_arg(jobs_arg());
-
-    auto install = Command::make("install"_str);
-    install.about("Build and install packages"_str);
-    auto install_package = install.add_arg(package_arg());
-    auto install_profile = install.add_arg(profile_arg());
-    auto install_binary  = install.add_arg(Arg<String>::value("bin"_str, string_parser())
-                                               .long_name("bin"_str)
-                                               .value_name("NAME"_str)
-                                               .help("Install only the selected binary"_str)
-                                               .append());
-    auto install_root    = install.add_arg(Arg<String>::value("root"_str, string_parser())
-                                               .long_name("root"_str)
-                                               .value_name("DIRECTORY"_str)
-                                               .help("Set the installation root"_str));
-    auto install_force   = install.add_arg(Arg<bool>::flag("force"_str)
-                                               .long_name("force"_str)
-                                               .help("Replace conflicting files"_str));
-    auto install_locked  = install.add_arg(locked_arg());
-    auto install_offline    = install.add_arg(offline_arg());
-    auto install_frozen     = install.add_arg(frozen_arg());
-    auto install_fetch_seed = install.add_arg(fetch_seed_arg());
-    auto install_verbose = install.add_arg(
-        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
-    auto install_timing_file = install.add_arg(timing_file_arg());
-    auto install_no_timing   = install.add_arg(no_timing_arg());
-    auto install_jobs        = install.add_arg(jobs_arg());
-
-    auto test = Command::make("test"_str);
-    test.about("Build and run test packages"_str);
-    auto test_package = test.add_arg(package_arg());
-    auto test_profile = test.add_arg(profile_arg());
-    auto test_target  = test.add_arg(target_arg());
-    auto test_output  = test.add_arg(Arg<String>::value("out"_str, string_parser())
-                                         .long_name("out"_str)
-                                         .value_name("DIRECTORY"_str)
-                                         .help("Override the build output directory"_str));
-    auto test_locked  = test.add_arg(locked_arg());
-    auto test_offline    = test.add_arg(offline_arg());
-    auto test_frozen     = test.add_arg(frozen_arg());
-    auto test_fetch_seed = test.add_arg(fetch_seed_arg());
-    auto test_no_run  = test.add_arg(Arg<bool>::flag("no-run"_str)
-                                         .long_name("no-run"_str)
-                                         .help("Build tests without running"_str));
-    auto test_verbose = test.add_arg(
-        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
-    auto test_timing_file = test.add_arg(timing_file_arg());
-    auto test_no_timing   = test.add_arg(no_timing_arg());
-    auto test_jobs        = test.add_arg(jobs_arg());
-    auto test_arguments   = test.add_arg(Arg<String>::value("arguments"_str, string_parser())
-                                             .value_name("ARGS"_str)
-                                             .num_args(NumArgs::any())
-                                             .allow_hyphen_values());
-
-    auto bench = Command::make("bench"_str);
-    bench.about("Build and run benchmarks"_str);
-    auto bench_package = bench.add_arg(package_arg());
-    auto bench_profile = bench.add_arg(profile_arg());
-    auto bench_target  = bench.add_arg(target_arg());
-    auto bench_output  = bench.add_arg(Arg<String>::value("out"_str, string_parser())
-                                           .long_name("out"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Override the build output directory"_str));
-    auto bench_locked  = bench.add_arg(locked_arg());
-    auto bench_offline    = bench.add_arg(offline_arg());
-    auto bench_frozen     = bench.add_arg(frozen_arg());
-    auto bench_fetch_seed = bench.add_arg(fetch_seed_arg());
-    auto bench_no_run  = bench.add_arg(Arg<bool>::flag("no-run"_str)
-                                           .long_name("no-run"_str)
-                                           .help("Build benchmarks without running"_str));
-    auto bench_verbose = bench.add_arg(
-        Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
-    auto bench_timing_file = bench.add_arg(timing_file_arg());
-    auto bench_no_timing   = bench.add_arg(no_timing_arg());
-    auto bench_jobs        = bench.add_arg(jobs_arg());
-    auto bench_arguments   = bench.add_arg(Arg<String>::value("arguments"_str, string_parser())
-                                               .value_name("ARGS"_str)
-                                               .num_args(NumArgs::any())
-                                               .allow_hyphen_values());
-
-    auto scan = Command::make("scan"_str);
-    scan.about("Scan one source file"_str);
-    auto scan_source  = scan.add_arg(Arg<String>::value("source"_str, string_parser())
-                                         .value_name("SOURCE"_str)
-                                         .help("Source file to scan"_str)
-                                         .required());
-    auto scan_package = scan.add_arg(package_arg());
-    auto scan_profile = scan.add_arg(profile_arg());
-    auto scan_target  = scan.add_arg(target_arg());
-    auto scan_format =
-        scan.add_arg(Arg<ScanOutputFormat>::value("format"_str, ScanOutputFormatParser {})
-                         .long_name("format"_str)
-                         .value_name("FORMAT"_str)
-                         .help("Select the JSON output format"_str));
-    auto scan_locked = scan.add_arg(locked_arg());
-    auto scan_offline    = scan.add_arg(offline_arg());
-    auto scan_frozen     = scan.add_arg(frozen_arg());
-    auto scan_fetch_seed = scan.add_arg(fetch_seed_arg());
-
-    auto format = Command::make("format"_str);
-    format.about("Format package sources"_str);
-    auto format_package = format.add_arg(package_arg());
-    auto format_check   = format.add_arg(Arg<bool>::flag("check"_str)
-                                             .long_name("check"_str)
-                                             .help("Check formatting without changing files"_str));
-
-    auto update = Command::make("update"_str);
-    update.about("Update lock file"_str);
-    auto update_offline    = update.add_arg(offline_arg());
-    auto update_fetch_seed = update.add_arg(fetch_seed_arg());
-
-    auto lock_export = Command::make("export"_str);
-    lock_export.about("Export locked source inputs"_str);
-    auto lock_export_format = lock_export.add_arg(Arg<String>::value("format"_str, string_parser())
-                                                      .long_name("format"_str)
-                                                      .value_name("FORMAT"_str)
-                                                      .help("Select the exported source format"_str)
-                                                      .required());
-    auto lock_export_output = lock_export.add_arg(Arg<String>::value("output"_str, string_parser())
-                                                      .long_name("output"_str)
-                                                      .value_name("FILE"_str)
-                                                      .help("Write exported sources to a file"_str)
-                                                      .required());
-    auto lock               = Command::make("lock"_str);
-    lock.about("Inspect and export the lock file"_str);
-    lock.require_subcommand();
-    lock.add_subcommand(rstd::move(lock_export));
-
-    auto root = Command::make("lito"_str);
-    root.about("Module-first C++ builder"_str);
-    root.require_subcommand();
-    auto directory = root.add_arg(Arg<String>::value("directory"_str, string_parser())
-                                      .short_name(u8('C'))
-                                      .value_name("DIRECTORY"_str)
-                                      .help("Change the working directory"_str)
-                                      .default_value("."_str));
-    auto no_config = root.add_arg(Arg<bool>::flag("no-config"_str)
-                                      .long_name("no-config"_str)
-                                      .help("Ignore .lito/config.toml"_str));
-    root.add_subcommand(rstd::move(build));
-    root.add_subcommand(rstd::move(install));
-    root.add_subcommand(rstd::move(test));
-    root.add_subcommand(rstd::move(bench));
-    root.add_subcommand(rstd::move(scan));
-    root.add_subcommand(rstd::move(format));
-    root.add_subcommand(rstd::move(update));
-    root.add_subcommand(rstd::move(lock));
-    auto parser = rstd::move(root).build();
-    if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
-    return Ok(CliSchema {
-        .directory           = directory,
-        .no_config           = no_config,
-        .build_package       = build_package,
-        .build_profile       = build_profile,
-        .build_target        = build_target,
-        .build_output        = build_output,
-        .build_locked        = build_locked,
-        .build_offline       = build_offline,
-        .build_frozen        = build_frozen,
-        .build_fetch_seed    = build_fetch_seed,
-        .build_verbose       = build_verbose,
-        .build_timing_file   = build_timing_file,
-        .build_no_timing     = build_no_timing,
-        .build_jobs          = build_jobs,
-        .install_package     = install_package,
-        .install_profile     = install_profile,
-        .install_binary      = install_binary,
-        .install_root        = install_root,
-        .install_force       = install_force,
-        .install_locked      = install_locked,
-        .install_offline     = install_offline,
-        .install_frozen      = install_frozen,
-        .install_fetch_seed  = install_fetch_seed,
-        .install_verbose     = install_verbose,
-        .install_timing_file = install_timing_file,
-        .install_no_timing   = install_no_timing,
-        .install_jobs        = install_jobs,
-        .test_package        = test_package,
-        .test_profile        = test_profile,
-        .test_target         = test_target,
-        .test_output         = test_output,
-        .test_locked         = test_locked,
-        .test_offline        = test_offline,
-        .test_frozen         = test_frozen,
-        .test_fetch_seed     = test_fetch_seed,
-        .test_no_run         = test_no_run,
-        .test_verbose        = test_verbose,
-        .test_timing_file    = test_timing_file,
-        .test_no_timing      = test_no_timing,
-        .test_jobs           = test_jobs,
-        .test_arguments      = test_arguments,
-        .bench_package       = bench_package,
-        .bench_profile       = bench_profile,
-        .bench_target        = bench_target,
-        .bench_output        = bench_output,
-        .bench_locked        = bench_locked,
-        .bench_offline       = bench_offline,
-        .bench_frozen        = bench_frozen,
-        .bench_fetch_seed    = bench_fetch_seed,
-        .bench_no_run        = bench_no_run,
-        .bench_verbose       = bench_verbose,
-        .bench_timing_file   = bench_timing_file,
-        .bench_no_timing     = bench_no_timing,
-        .bench_jobs          = bench_jobs,
-        .bench_arguments     = bench_arguments,
-        .scan_source         = scan_source,
-        .scan_package        = scan_package,
-        .scan_profile        = scan_profile,
-        .scan_target         = scan_target,
-        .scan_format         = scan_format,
-        .scan_locked         = scan_locked,
-        .scan_offline        = scan_offline,
-        .scan_frozen         = scan_frozen,
-        .scan_fetch_seed     = scan_fetch_seed,
-        .format_package      = format_package,
-        .format_check        = format_check,
-        .update_offline      = update_offline,
-        .update_fetch_seed   = update_fetch_seed,
-        .lock_export_format  = lock_export_format,
-        .lock_export_output  = lock_export_output,
-        .parser              = rstd::move(parser).unwrap(),
-    });
-}
-
-template<typename T>
-auto optional_value(const Matches& matches, const ArgKey<T>& key) -> Option<ref<T>> {
-    return matches.get_one(key).unwrap();
-}
-
-auto string_values(const Matches& matches, const ArgKey<String>& key) -> Vec<String> {
-    auto result = Vec<String>::make();
-    auto values = matches.get_many(key).unwrap();
-    if (values.is_none()) return result;
-    auto iterator = rstd::move(*values);
-    for (auto value = iterator.next(); value.is_some(); value = iterator.next()) {
-        result.push((**value).clone());
-    }
-    return result;
-}
-
-auto path_values(const Matches& matches, const ArgKey<String>& key) -> Vec<PathBuf> {
-    auto strings = string_values(matches, key);
-    auto result  = Vec<PathBuf>::with_capacity(strings.len());
-    for (auto& value : strings) result.push(PathBuf::from(rstd::move(value)));
-    return result;
-}
-
-auto flag_value(const Matches& matches, const ArgKey<bool>& key) -> bool {
-    auto value = optional_value(matches, key);
-    return value.is_some() && **value;
-}
-
-} // namespace lito::cli
-
 export namespace lito::cli
 {
 
@@ -556,6 +107,10 @@ struct LockExportOptions {
     PathBuf output;
 };
 
+class LockCommand {
+    RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
+};
+
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
@@ -565,7 +120,7 @@ class CliCommand {
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
-              (LockExport, (LockExportOptions options;)))
+              (Lock, (LockCommand command;)))
 };
 
 class CliOutcome {
@@ -573,6 +128,859 @@ class CliOutcome {
               (Parsed, (PathBuf working_directory; bool no_config; CliCommand command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
+
+} // namespace lito::cli
+
+namespace lito::cli
+{
+
+class BuildProfileParser {
+public:
+    auto parse(ref<OsStr> value) const -> rstd::Result<BuildProfileName, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        auto profile = parse_build_profile(*text);
+        if (profile.is_ok()) return Ok(rstd::move(profile).unwrap());
+        return Err(ValueError::Message(rstd::format("{}", rstd::move(profile).unwrap_err())));
+    }
+};
+
+class ScanOutputFormatParser {
+public:
+    auto parse(ref<OsStr> value) const -> rstd::Result<ScanOutputFormat, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        auto format = parse_scan_output_format(*text);
+        if (format.is_ok()) return Ok(rstd::move(format).unwrap());
+        return Err(ValueError::Message(rstd::format("{}", rstd::move(format).unwrap_err())));
+    }
+
+    auto possible_values() const -> Vec<String> {
+        auto values = Vec<String>::with_capacity(usize(2));
+        values.push(String::make(scan_output_format_name(ScanOutputFormat::Lito)));
+        values.push(String::make(scan_output_format_name(ScanOutputFormat::P1689)));
+        return values;
+    }
+};
+
+class CliDecodeError {
+    RSTD_ENUM(CliDecodeError,
+              (MatchAccess, (MatchAccessError error;)),
+              (MissingValue, (String argument;)),
+              (CommandMismatch, (String command;)))
+};
+
+struct PackageProfileArgs {
+    ArgKey<String>           package;
+    ArgKey<BuildProfileName> profile;
+};
+
+struct SourceAcquisitionArgs {
+    ArgKey<bool>   locked;
+    ArgKey<bool>   offline;
+    ArgKey<bool>   frozen;
+    ArgKey<String> fetch_seed;
+};
+
+struct BuildExecutionArgs {
+    ArgKey<bool>   verbose;
+    ArgKey<String> timing_file;
+    ArgKey<bool>   no_timing;
+    ArgKey<usize>  jobs;
+};
+
+struct RootArgs {
+    ArgKey<String> directory;
+    ArgKey<bool>   no_config;
+};
+
+struct BuildSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        target;
+    ArgKey<String>        output;
+    SourceAcquisitionArgs source_acquisition;
+    BuildExecutionArgs    execution;
+
+    auto decode(const Matches& matches) const -> rstd::Result<BuildOptions, CliDecodeError>;
+};
+
+struct InstallSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        binary;
+    ArgKey<String>        root;
+    ArgKey<bool>          force;
+    SourceAcquisitionArgs source_acquisition;
+    BuildExecutionArgs    execution;
+
+    auto decode(const Matches& matches) const -> rstd::Result<InstallOptions, CliDecodeError>;
+};
+
+struct TestSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        target;
+    ArgKey<String>        output;
+    SourceAcquisitionArgs source_acquisition;
+    ArgKey<bool>          no_run;
+    BuildExecutionArgs    execution;
+    ArgKey<String>        arguments;
+
+    auto decode(const Matches& matches) const -> rstd::Result<TestOptions, CliDecodeError>;
+};
+
+struct BenchSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        target;
+    ArgKey<String>        output;
+    SourceAcquisitionArgs source_acquisition;
+    ArgKey<bool>          no_run;
+    BuildExecutionArgs    execution;
+    ArgKey<String>        arguments;
+
+    auto decode(const Matches& matches) const -> rstd::Result<BenchOptions, CliDecodeError>;
+};
+
+struct ScanSchema {
+    CommandKey               command;
+    ArgKey<String>           source;
+    PackageProfileArgs       package;
+    ArgKey<String>           target;
+    ArgKey<ScanOutputFormat> format;
+    SourceAcquisitionArgs    source_acquisition;
+
+    auto decode(const Matches& matches) const -> rstd::Result<ScanOptions, CliDecodeError>;
+};
+
+struct FormatSchema {
+    CommandKey     command;
+    ArgKey<String> package;
+    ArgKey<bool>   check;
+
+    auto decode(const Matches& matches) const -> rstd::Result<FormatOptions, CliDecodeError>;
+};
+
+struct UpdateSchema {
+    CommandKey     command;
+    ArgKey<bool>   offline;
+    ArgKey<String> fetch_seed;
+
+    auto decode(const Matches& matches) const -> rstd::Result<UpdateOptions, CliDecodeError>;
+};
+
+struct LockExportSchema {
+    CommandKey     command;
+    ArgKey<String> format;
+    ArgKey<String> output;
+
+    auto decode(const Matches& matches) const -> rstd::Result<LockExportOptions, CliDecodeError>;
+};
+
+struct LockSchema {
+    CommandKey       command;
+    LockExportSchema export_command;
+
+    auto decode(const Matches& matches) const -> rstd::Result<LockCommand, CliDecodeError>;
+};
+
+struct CliSchema {
+    RootArgs      root;
+    BuildSchema   build;
+    InstallSchema install;
+    TestSchema    test;
+    BenchSchema   bench;
+    ScanSchema    scan;
+    FormatSchema  format;
+    UpdateSchema  update;
+    LockSchema    lock;
+    Parser        parser;
+};
+
+template<typename Schema>
+struct CommandDefinition {
+    Schema  schema;
+    Command command;
+};
+
+auto package_arg() -> Arg<String> {
+    return Arg<String>::value("package"_str, string_parser())
+        .short_name(u8('p'))
+        .long_name("package"_str)
+        .value_name("NAME"_str)
+        .help("Select a package"_str)
+        .append();
+}
+
+auto profile_arg() -> Arg<BuildProfileName> {
+    return Arg<BuildProfileName>::value("profile"_str, BuildProfileParser {})
+        .long_name("profile"_str)
+        .value_name("PROFILE"_str)
+        .help("Select the build profile"_str);
+}
+
+auto target_arg() -> Arg<String> {
+    return Arg<String>::value("target"_str, string_parser())
+        .long_name("target"_str)
+        .value_name("NAME"_str)
+        .help("Select a target"_str)
+        .append();
+}
+
+auto output_arg() -> Arg<String> {
+    return Arg<String>::value("out"_str, string_parser())
+        .long_name("out"_str)
+        .value_name("DIRECTORY"_str)
+        .help("Override the build output directory"_str);
+}
+
+auto locked_arg() -> Arg<bool> {
+    return Arg<bool>::flag("locked"_str)
+        .long_name("locked"_str)
+        .help("Require an unchanged lock file"_str);
+}
+
+auto offline_arg() -> Arg<bool> {
+    return Arg<bool>::flag("offline"_str)
+        .long_name("offline"_str)
+        .help("Forbid network source acquisition"_str);
+}
+
+auto frozen_arg() -> Arg<bool> {
+    return Arg<bool>::flag("frozen"_str)
+        .long_name("frozen"_str)
+        .help("Require an unchanged lock file and forbid network access"_str);
+}
+
+auto fetch_seed_arg() -> Arg<String> {
+    return Arg<String>::value("fetch-seed"_str, string_parser())
+        .long_name("fetch-seed"_str)
+        .value_name("DIRECTORY"_str)
+        .help("Use a read-only fetch seed directory"_str)
+        .append();
+}
+
+auto timing_file_arg() -> Arg<String> {
+    return Arg<String>::value("timing-file"_str, string_parser())
+        .long_name("timing-file"_str)
+        .value_name("FILE"_str)
+        .help("Write the detailed timing report to a file"_str);
+}
+
+auto no_timing_arg() -> Arg<bool> {
+    return Arg<bool>::flag("no-timing"_str)
+        .long_name("no-timing"_str)
+        .help("Hide timing output on stdout"_str);
+}
+
+auto jobs_arg() -> Arg<usize> {
+    return Arg<usize>::value("jobs"_str, from_str_parser<usize>())
+        .short_name(u8('j'))
+        .long_name("jobs"_str)
+        .value_name("N"_str)
+        .help("Set the scan and compile worker count"_str);
+}
+
+auto add_package_profile_args(Command& command) -> PackageProfileArgs {
+    return PackageProfileArgs {
+        .package = command.add_arg(package_arg()),
+        .profile = command.add_arg(profile_arg()),
+    };
+}
+
+auto add_source_acquisition_args(Command& command) -> SourceAcquisitionArgs {
+    return SourceAcquisitionArgs {
+        .locked     = command.add_arg(locked_arg()),
+        .offline    = command.add_arg(offline_arg()),
+        .frozen     = command.add_arg(frozen_arg()),
+        .fetch_seed = command.add_arg(fetch_seed_arg()),
+    };
+}
+
+auto add_build_execution_args(Command& command) -> BuildExecutionArgs {
+    return BuildExecutionArgs {
+        .verbose = command.add_arg(
+            Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str)),
+        .timing_file = command.add_arg(timing_file_arg()),
+        .no_timing   = command.add_arg(no_timing_arg()),
+        .jobs        = command.add_arg(jobs_arg()),
+    };
+}
+
+auto make_build_definition() -> CommandDefinition<BuildSchema> {
+    auto command = Command::make("build"_str);
+    command.about("Build packages"_str);
+    auto key                = command.key();
+    auto package            = add_package_profile_args(command);
+    auto target             = command.add_arg(target_arg());
+    auto output             = command.add_arg(output_arg());
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto execution          = add_build_execution_args(command);
+    return {
+        BuildSchema {
+            .command            = key,
+            .package            = rstd::move(package),
+            .target             = target,
+            .output             = output,
+            .source_acquisition = rstd::move(source_acquisition),
+            .execution          = rstd::move(execution),
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_install_definition() -> CommandDefinition<InstallSchema> {
+    auto command = Command::make("install"_str);
+    command.about("Build and install packages"_str);
+    auto key     = command.key();
+    auto package = add_package_profile_args(command);
+    auto binary  = command.add_arg(Arg<String>::value("bin"_str, string_parser())
+                                       .long_name("bin"_str)
+                                       .value_name("NAME"_str)
+                                       .help("Install only the selected binary"_str)
+                                       .append());
+    auto root    = command.add_arg(Arg<String>::value("root"_str, string_parser())
+                                       .long_name("root"_str)
+                                       .value_name("DIRECTORY"_str)
+                                       .help("Set the installation root"_str));
+    auto force   = command.add_arg(
+        Arg<bool>::flag("force"_str).long_name("force"_str).help("Replace conflicting files"_str));
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto execution          = add_build_execution_args(command);
+    return {
+        InstallSchema {
+            .command            = key,
+            .package            = rstd::move(package),
+            .binary             = binary,
+            .root               = root,
+            .force              = force,
+            .source_acquisition = rstd::move(source_acquisition),
+            .execution          = rstd::move(execution),
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_test_definition() -> CommandDefinition<TestSchema> {
+    auto command = Command::make("test"_str);
+    command.about("Build and run test packages"_str);
+    auto key                = command.key();
+    auto package            = add_package_profile_args(command);
+    auto target             = command.add_arg(target_arg());
+    auto output             = command.add_arg(output_arg());
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto no_run             = command.add_arg(Arg<bool>::flag("no-run"_str)
+                                                  .long_name("no-run"_str)
+                                                  .help("Build tests without running"_str));
+    auto execution          = add_build_execution_args(command);
+    auto arguments          = command.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                                  .value_name("ARGS"_str)
+                                                  .num_args(NumArgs::any())
+                                                  .allow_hyphen_values());
+    return {
+        TestSchema {
+            .command            = key,
+            .package            = rstd::move(package),
+            .target             = target,
+            .output             = output,
+            .source_acquisition = rstd::move(source_acquisition),
+            .no_run             = no_run,
+            .execution          = rstd::move(execution),
+            .arguments          = arguments,
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_bench_definition() -> CommandDefinition<BenchSchema> {
+    auto command = Command::make("bench"_str);
+    command.about("Build and run benchmarks"_str);
+    auto key                = command.key();
+    auto package            = add_package_profile_args(command);
+    auto target             = command.add_arg(target_arg());
+    auto output             = command.add_arg(output_arg());
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto no_run             = command.add_arg(Arg<bool>::flag("no-run"_str)
+                                                  .long_name("no-run"_str)
+                                                  .help("Build benchmarks without running"_str));
+    auto execution          = add_build_execution_args(command);
+    auto arguments          = command.add_arg(Arg<String>::value("arguments"_str, string_parser())
+                                                  .value_name("ARGS"_str)
+                                                  .num_args(NumArgs::any())
+                                                  .allow_hyphen_values());
+    return {
+        BenchSchema {
+            .command            = key,
+            .package            = rstd::move(package),
+            .target             = target,
+            .output             = output,
+            .source_acquisition = rstd::move(source_acquisition),
+            .no_run             = no_run,
+            .execution          = rstd::move(execution),
+            .arguments          = arguments,
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_scan_definition() -> CommandDefinition<ScanSchema> {
+    auto command = Command::make("scan"_str);
+    command.about("Scan one source file"_str);
+    auto key     = command.key();
+    auto source  = command.add_arg(Arg<String>::value("source"_str, string_parser())
+                                       .value_name("SOURCE"_str)
+                                       .help("Source file to scan"_str)
+                                       .required());
+    auto package = add_package_profile_args(command);
+    auto target  = command.add_arg(target_arg());
+    auto format =
+        command.add_arg(Arg<ScanOutputFormat>::value("format"_str, ScanOutputFormatParser {})
+                            .long_name("format"_str)
+                            .value_name("FORMAT"_str)
+                            .help("Select the JSON output format"_str));
+    auto source_acquisition = add_source_acquisition_args(command);
+    return {
+        ScanSchema {
+            .command            = key,
+            .source             = source,
+            .package            = rstd::move(package),
+            .target             = target,
+            .format             = format,
+            .source_acquisition = rstd::move(source_acquisition),
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_format_definition() -> CommandDefinition<FormatSchema> {
+    auto command = Command::make("format"_str);
+    command.about("Format package sources"_str);
+    auto key     = command.key();
+    auto package = command.add_arg(package_arg());
+    auto check   = command.add_arg(Arg<bool>::flag("check"_str)
+                                       .long_name("check"_str)
+                                       .help("Check formatting without changing files"_str));
+    return {
+        FormatSchema { .command = key, .package = package, .check = check },
+        rstd::move(command),
+    };
+}
+
+auto make_update_definition() -> CommandDefinition<UpdateSchema> {
+    auto command = Command::make("update"_str);
+    command.about("Update lock file"_str);
+    auto key        = command.key();
+    auto offline    = command.add_arg(offline_arg());
+    auto fetch_seed = command.add_arg(fetch_seed_arg());
+    return {
+        UpdateSchema { .command = key, .offline = offline, .fetch_seed = fetch_seed },
+        rstd::move(command),
+    };
+}
+
+auto make_lock_definition() -> CommandDefinition<LockSchema> {
+    auto export_command = Command::make("export"_str);
+    export_command.about("Export locked source inputs"_str);
+    auto export_key = export_command.key();
+    auto format     = export_command.add_arg(Arg<String>::value("format"_str, string_parser())
+                                                 .long_name("format"_str)
+                                                 .value_name("FORMAT"_str)
+                                                 .help("Select the exported source format"_str)
+                                                 .required());
+    auto output     = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
+                                                 .long_name("output"_str)
+                                                 .value_name("FILE"_str)
+                                                 .help("Write exported sources to a file"_str)
+                                                 .required());
+
+    auto command = Command::make("lock"_str);
+    command.about("Inspect and export the lock file"_str);
+    command.require_subcommand();
+    auto key = command.key();
+    command.add_subcommand(rstd::move(export_command));
+    return {
+        LockSchema {
+            .command = key,
+            .export_command =
+                LockExportSchema { .command = export_key, .format = format, .output = output },
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
+    auto build   = make_build_definition();
+    auto install = make_install_definition();
+    auto test    = make_test_definition();
+    auto bench   = make_bench_definition();
+    auto scan    = make_scan_definition();
+    auto format  = make_format_definition();
+    auto update  = make_update_definition();
+    auto lock    = make_lock_definition();
+
+    auto root = Command::make("lito"_str);
+    root.about("Module-first C++ builder"_str);
+    root.require_subcommand();
+    auto root_args = RootArgs {
+        .directory = root.add_arg(Arg<String>::value("directory"_str, string_parser())
+                                      .short_name(u8('C'))
+                                      .value_name("DIRECTORY"_str)
+                                      .help("Change the working directory"_str)
+                                      .default_value("."_str)),
+        .no_config = root.add_arg(Arg<bool>::flag("no-config"_str)
+                                      .long_name("no-config"_str)
+                                      .help("Ignore .lito/config.toml"_str)),
+    };
+    root.add_subcommand(rstd::move(build.command));
+    root.add_subcommand(rstd::move(install.command));
+    root.add_subcommand(rstd::move(test.command));
+    root.add_subcommand(rstd::move(bench.command));
+    root.add_subcommand(rstd::move(scan.command));
+    root.add_subcommand(rstd::move(format.command));
+    root.add_subcommand(rstd::move(update.command));
+    root.add_subcommand(rstd::move(lock.command));
+
+    auto parser = rstd::move(root).build();
+    if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
+    return Ok(CliSchema {
+        .root    = rstd::move(root_args),
+        .build   = rstd::move(build.schema),
+        .install = rstd::move(install.schema),
+        .test    = rstd::move(test.schema),
+        .bench   = rstd::move(bench.schema),
+        .scan    = rstd::move(scan.schema),
+        .format  = rstd::move(format.schema),
+        .update  = rstd::move(update.schema),
+        .lock    = rstd::move(lock.schema),
+        .parser  = rstd::move(parser).unwrap(),
+    });
+}
+
+template<typename T>
+auto optional_value(const Matches& matches, const ArgKey<T>& key)
+    -> rstd::Result<Option<ref<T>>, CliDecodeError> {
+    auto value = matches.get_one(key);
+    if (value.is_err()) {
+        return Err(CliDecodeError::MatchAccess(rstd::move(value).unwrap_err()));
+    }
+    return Ok(rstd::move(value).unwrap());
+}
+
+auto string_values(const Matches& matches, const ArgKey<String>& key)
+    -> rstd::Result<Vec<String>, CliDecodeError> {
+    auto values = matches.get_many(key);
+    if (values.is_err()) {
+        return Err(CliDecodeError::MatchAccess(rstd::move(values).unwrap_err()));
+    }
+    auto result = Vec<String>::make();
+    auto parsed = rstd::move(values).unwrap();
+    if (parsed.is_none()) return Ok(rstd::move(result));
+    auto iterator = rstd::move(*parsed);
+    for (auto value = iterator.next(); value.is_some(); value = iterator.next()) {
+        result.push((**value).clone());
+    }
+    return Ok(rstd::move(result));
+}
+
+auto path_values(const Matches& matches, const ArgKey<String>& key)
+    -> rstd::Result<Vec<PathBuf>, CliDecodeError> {
+    auto strings = rstd_try(string_values(matches, key));
+    auto result  = Vec<PathBuf>::with_capacity(strings.len());
+    for (auto& value : strings) result.push(PathBuf::from(rstd::move(value)));
+    return Ok(rstd::move(result));
+}
+
+auto flag_value(const Matches& matches, const ArgKey<bool>& key)
+    -> rstd::Result<bool, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    return Ok(value.is_some() && **value);
+}
+
+auto optional_path(const Matches& matches, const ArgKey<String>& key)
+    -> rstd::Result<Option<PathBuf>, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    if (value.is_none()) return Ok(None());
+    return Ok(Some(PathBuf::from((**value).clone())));
+}
+
+auto optional_profile(const Matches& matches, const ArgKey<BuildProfileName>& key)
+    -> rstd::Result<Option<BuildProfileName>, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    if (value.is_none()) return Ok(None());
+    return Ok(Some<BuildProfileName>((**value).clone()));
+}
+
+auto optional_jobs(const Matches& matches, const ArgKey<usize>& key)
+    -> rstd::Result<Option<usize>, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    if (value.is_none()) return Ok(None());
+    return Ok(Some<usize>(**value));
+}
+
+auto required_string(const Matches& matches, const ArgKey<String>& key, ref<str> name)
+    -> rstd::Result<String, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    if (value.is_none()) return Err(CliDecodeError::MissingValue(String::make(name)));
+    return Ok((**value).clone());
+}
+
+struct PackageProfileValues {
+    Vec<String>              packages;
+    Option<BuildProfileName> profile;
+};
+
+auto decode_package_profile(const Matches& matches, const PackageProfileArgs& args)
+    -> rstd::Result<PackageProfileValues, CliDecodeError> {
+    return Ok(PackageProfileValues {
+        .packages = rstd_try(string_values(matches, args.package)),
+        .profile  = rstd_try(optional_profile(matches, args.profile)),
+    });
+}
+
+struct SourceAcquisitionValues {
+    bool         locked {};
+    bool         offline {};
+    bool         frozen {};
+    Vec<PathBuf> fetch_seeds;
+};
+
+auto decode_source_acquisition(const Matches& matches, const SourceAcquisitionArgs& args)
+    -> rstd::Result<SourceAcquisitionValues, CliDecodeError> {
+    return Ok(SourceAcquisitionValues {
+        .locked      = rstd_try(flag_value(matches, args.locked)),
+        .offline     = rstd_try(flag_value(matches, args.offline)),
+        .frozen      = rstd_try(flag_value(matches, args.frozen)),
+        .fetch_seeds = rstd_try(path_values(matches, args.fetch_seed)),
+    });
+}
+
+struct BuildExecutionValues {
+    bool            verbose {};
+    Option<PathBuf> timing_file;
+    bool            no_timing {};
+    Option<usize>   jobs;
+};
+
+auto decode_build_execution(const Matches& matches, const BuildExecutionArgs& args)
+    -> rstd::Result<BuildExecutionValues, CliDecodeError> {
+    return Ok(BuildExecutionValues {
+        .verbose     = rstd_try(flag_value(matches, args.verbose)),
+        .timing_file = rstd_try(optional_path(matches, args.timing_file)),
+        .no_timing   = rstd_try(flag_value(matches, args.no_timing)),
+        .jobs        = rstd_try(optional_jobs(matches, args.jobs)),
+    });
+}
+
+auto BuildSchema::decode(const Matches& matches) const
+    -> rstd::Result<BuildOptions, CliDecodeError> {
+    auto package   = rstd_try(decode_package_profile(matches, this->package));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    return Ok(BuildOptions {
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .targets     = rstd_try(string_values(matches, target)),
+        .output      = rstd_try(optional_path(matches, output)),
+        .locked      = source.locked,
+        .offline     = source.offline,
+        .frozen      = source.frozen,
+        .fetch_seeds = rstd::move(source.fetch_seeds),
+        .verbose     = execution.verbose,
+        .timing_file = rstd::move(execution.timing_file),
+        .no_timing   = execution.no_timing,
+        .jobs        = rstd::move(execution.jobs),
+    });
+}
+
+auto InstallSchema::decode(const Matches& matches) const
+    -> rstd::Result<InstallOptions, CliDecodeError> {
+    auto package   = rstd_try(decode_package_profile(matches, this->package));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    return Ok(InstallOptions {
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .binaries    = rstd_try(string_values(matches, binary)),
+        .root        = rstd_try(optional_path(matches, this->root)),
+        .force       = rstd_try(flag_value(matches, force)),
+        .locked      = source.locked,
+        .offline     = source.offline,
+        .frozen      = source.frozen,
+        .fetch_seeds = rstd::move(source.fetch_seeds),
+        .verbose     = execution.verbose,
+        .timing_file = rstd::move(execution.timing_file),
+        .no_timing   = execution.no_timing,
+        .jobs        = rstd::move(execution.jobs),
+    });
+}
+
+auto TestSchema::decode(const Matches& matches) const -> rstd::Result<TestOptions, CliDecodeError> {
+    auto package   = rstd_try(decode_package_profile(matches, this->package));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    return Ok(TestOptions {
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .targets     = rstd_try(string_values(matches, target)),
+        .output      = rstd_try(optional_path(matches, output)),
+        .arguments   = rstd_try(string_values(matches, arguments)),
+        .locked      = source.locked,
+        .offline     = source.offline,
+        .frozen      = source.frozen,
+        .fetch_seeds = rstd::move(source.fetch_seeds),
+        .no_run      = rstd_try(flag_value(matches, no_run)),
+        .verbose     = execution.verbose,
+        .timing_file = rstd::move(execution.timing_file),
+        .no_timing   = execution.no_timing,
+        .jobs        = rstd::move(execution.jobs),
+    });
+}
+
+auto BenchSchema::decode(const Matches& matches) const
+    -> rstd::Result<BenchOptions, CliDecodeError> {
+    auto package   = rstd_try(decode_package_profile(matches, this->package));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    return Ok(BenchOptions {
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .targets     = rstd_try(string_values(matches, target)),
+        .output      = rstd_try(optional_path(matches, output)),
+        .arguments   = rstd_try(string_values(matches, arguments)),
+        .locked      = source.locked,
+        .offline     = source.offline,
+        .frozen      = source.frozen,
+        .fetch_seeds = rstd::move(source.fetch_seeds),
+        .no_run      = rstd_try(flag_value(matches, no_run)),
+        .verbose     = execution.verbose,
+        .timing_file = rstd::move(execution.timing_file),
+        .no_timing   = execution.no_timing,
+        .jobs        = rstd::move(execution.jobs),
+    });
+}
+
+auto ScanSchema::decode(const Matches& matches) const -> rstd::Result<ScanOptions, CliDecodeError> {
+    auto package       = rstd_try(decode_package_profile(matches, this->package));
+    auto source_values = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto input         = rstd_try(required_string(matches, this->source, "source"_str));
+    auto format_value  = rstd_try(optional_value(matches, format));
+    return Ok(ScanOptions {
+        .source      = PathBuf::from(rstd::move(input)),
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .targets     = rstd_try(string_values(matches, target)),
+        .format      = format_value.is_some() ? **format_value : ScanOutputFormat::Lito,
+        .locked      = source_values.locked,
+        .offline     = source_values.offline,
+        .frozen      = source_values.frozen,
+        .fetch_seeds = rstd::move(source_values.fetch_seeds),
+    });
+}
+
+auto FormatSchema::decode(const Matches& matches) const
+    -> rstd::Result<FormatOptions, CliDecodeError> {
+    return Ok(FormatOptions {
+        .packages = rstd_try(string_values(matches, package)),
+        .check    = rstd_try(flag_value(matches, check)),
+    });
+}
+
+auto UpdateSchema::decode(const Matches& matches) const
+    -> rstd::Result<UpdateOptions, CliDecodeError> {
+    return Ok(UpdateOptions {
+        .offline     = rstd_try(flag_value(matches, offline)),
+        .fetch_seeds = rstd_try(path_values(matches, fetch_seed)),
+    });
+}
+
+auto LockExportSchema::decode(const Matches& matches) const
+    -> rstd::Result<LockExportOptions, CliDecodeError> {
+    auto format_value = rstd_try(required_string(matches, format, "format"_str));
+    auto output_value = rstd_try(required_string(matches, output, "output"_str));
+    return Ok(LockExportOptions {
+        .format = rstd::move(format_value),
+        .output = PathBuf::from(rstd::move(output_value)),
+    });
+}
+
+auto LockSchema::decode(const Matches& matches) const -> rstd::Result<LockCommand, CliDecodeError> {
+    auto export_matches = matches.subcommand_matches(export_command.command);
+    if (export_matches.is_some()) {
+        auto options = rstd_try(export_command.decode(**export_matches));
+        return Ok(LockCommand::Export(rstd::move(options)));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("lock"_str)));
+}
+
+auto decode_command(const CliSchema& schema, const Matches& matches)
+    -> rstd::Result<CliCommand, CliDecodeError> {
+    if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
+        auto options = rstd_try(schema.build.decode(**child));
+        return Ok(CliCommand::Build(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.install.command); child.is_some()) {
+        auto options = rstd_try(schema.install.decode(**child));
+        return Ok(CliCommand::Install(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.test.command); child.is_some()) {
+        auto options = rstd_try(schema.test.decode(**child));
+        return Ok(CliCommand::Test(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.bench.command); child.is_some()) {
+        auto options = rstd_try(schema.bench.decode(**child));
+        return Ok(CliCommand::Bench(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.scan.command); child.is_some()) {
+        auto options = rstd_try(schema.scan.decode(**child));
+        return Ok(CliCommand::Scan(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.format.command); child.is_some()) {
+        auto options = rstd_try(schema.format.decode(**child));
+        return Ok(CliCommand::Format(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.update.command); child.is_some()) {
+        auto options = rstd_try(schema.update.decode(**child));
+        return Ok(CliCommand::Update(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.lock.command); child.is_some()) {
+        auto command = rstd_try(schema.lock.decode(**child));
+        return Ok(CliCommand::Lock(rstd::move(command)));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("lito"_str)));
+}
+
+struct CliInvocation {
+    PathBuf    working_directory;
+    bool       no_config {};
+    CliCommand command;
+};
+
+auto decode_invocation(const CliSchema& schema, const Matches& matches)
+    -> rstd::Result<CliInvocation, CliDecodeError> {
+    auto directory = rstd_try(required_string(matches, schema.root.directory, "directory"_str));
+    return Ok(CliInvocation {
+        .working_directory = PathBuf::from(rstd::move(directory)),
+        .no_config         = rstd_try(flag_value(matches, schema.root.no_config)),
+        .command           = rstd_try(decode_command(schema, matches)),
+    });
+}
+
+auto decode_error_text(const CliDecodeError& error) -> String {
+    if (error.is_MatchAccess()) {
+        return rstd::format("argument access failed: {}", error.as_MatchAccess().error);
+    }
+    if (error.is_MissingValue()) {
+        return rstd::format("required argument '{}' is missing", error.as_MissingValue().argument);
+    }
+    return rstd::format("parsed command '{}' does not match its schema",
+                        error.as_CommandMismatch().command);
+}
+
+} // namespace lito::cli
+
+export namespace lito::cli
+{
 
 auto parse() -> CliOutcome {
     auto schema_result = make_schema();
@@ -599,164 +1007,18 @@ auto parse() -> CliOutcome {
                                 request.exit_code());
     }
 
-    auto matches           = rstd::move(outcome).as_Parsed().value;
-    auto directory_value   = optional_value(matches, schema.directory);
-    auto working_directory = PathBuf::from((**directory_value).clone());
-    auto no_config         = flag_value(matches, schema.no_config);
-    auto subcommand        = matches.subcommand();
-    if (subcommand->get<0>() == "build"_str) {
-        auto child       = subcommand->get<1>();
-        auto profile     = optional_value(*child, schema.build_profile);
-        auto output      = optional_value(*child, schema.build_output);
-        auto timing_file = optional_value(*child, schema.build_timing_file);
-        auto jobs        = optional_value(*child, schema.build_jobs);
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            no_config,
-            CliCommand::Build(BuildOptions {
-                .packages = string_values(*child, schema.build_package),
-                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .targets = string_values(*child, schema.build_target),
-                .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .locked  = flag_value(*child, schema.build_locked),
-                .offline = flag_value(*child, schema.build_offline),
-                .frozen  = flag_value(*child, schema.build_frozen),
-                .fetch_seeds = path_values(*child, schema.build_fetch_seed),
-                .verbose     = flag_value(*child, schema.build_verbose),
-                .timing_file =
-                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
-                .no_timing = flag_value(*child, schema.build_no_timing),
-                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
-            }));
+    auto matches    = rstd::move(outcome).as_Parsed().value;
+    auto invocation = decode_invocation(schema, matches);
+    if (invocation.is_err()) {
+        auto error = rstd::move(invocation).unwrap_err();
+        return CliOutcome::Exit(
+            rstd::format("lito: invalid parsed command: {}\n", decode_error_text(error)),
+            true,
+            i32(1));
     }
-    if (subcommand->get<0>() == "scan"_str) {
-        auto child   = subcommand->get<1>();
-        auto source  = optional_value(*child, schema.scan_source);
-        auto profile = optional_value(*child, schema.scan_profile);
-        auto format  = optional_value(*child, schema.scan_format);
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            no_config,
-            CliCommand::Scan(ScanOptions {
-                .source   = PathBuf::from((**source).clone()),
-                .packages = string_values(*child, schema.scan_package),
-                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .targets = string_values(*child, schema.scan_target),
-                .format  = format.is_some() ? **format : ScanOutputFormat::Lito,
-                .locked  = flag_value(*child, schema.scan_locked),
-                .offline = flag_value(*child, schema.scan_offline),
-                .frozen  = flag_value(*child, schema.scan_frozen),
-                .fetch_seeds = path_values(*child, schema.scan_fetch_seed),
-            }));
-    }
-    if (subcommand->get<0>() == "install"_str) {
-        auto child       = subcommand->get<1>();
-        auto profile     = optional_value(*child, schema.install_profile);
-        auto root        = optional_value(*child, schema.install_root);
-        auto timing_file = optional_value(*child, schema.install_timing_file);
-        auto jobs        = optional_value(*child, schema.install_jobs);
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            no_config,
-            CliCommand::Install(InstallOptions {
-                .packages = string_values(*child, schema.install_package),
-                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .binaries    = string_values(*child, schema.install_binary),
-                .root        = root.is_some() ? Some(PathBuf::from((**root).clone())) : None(),
-                .force       = flag_value(*child, schema.install_force),
-                .locked      = flag_value(*child, schema.install_locked),
-                .offline     = flag_value(*child, schema.install_offline),
-                .frozen      = flag_value(*child, schema.install_frozen),
-                .fetch_seeds = path_values(*child, schema.install_fetch_seed),
-                .verbose     = flag_value(*child, schema.install_verbose),
-                .timing_file =
-                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
-                .no_timing = flag_value(*child, schema.install_no_timing),
-                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
-            }));
-    }
-    if (subcommand->get<0>() == "test"_str) {
-        auto child       = subcommand->get<1>();
-        auto profile     = optional_value(*child, schema.test_profile);
-        auto output      = optional_value(*child, schema.test_output);
-        auto timing_file = optional_value(*child, schema.test_timing_file);
-        auto jobs        = optional_value(*child, schema.test_jobs);
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            no_config,
-            CliCommand::Test(TestOptions {
-                .packages = string_values(*child, schema.test_package),
-                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .targets = string_values(*child, schema.test_target),
-                .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .arguments   = string_values(*child, schema.test_arguments),
-                .locked      = flag_value(*child, schema.test_locked),
-                .offline     = flag_value(*child, schema.test_offline),
-                .frozen      = flag_value(*child, schema.test_frozen),
-                .fetch_seeds = path_values(*child, schema.test_fetch_seed),
-                .no_run      = flag_value(*child, schema.test_no_run),
-                .verbose     = flag_value(*child, schema.test_verbose),
-                .timing_file =
-                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
-                .no_timing = flag_value(*child, schema.test_no_timing),
-                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
-            }));
-    }
-    if (subcommand->get<0>() == "bench"_str) {
-        auto child       = subcommand->get<1>();
-        auto profile     = optional_value(*child, schema.bench_profile);
-        auto output      = optional_value(*child, schema.bench_output);
-        auto timing_file = optional_value(*child, schema.bench_timing_file);
-        auto jobs        = optional_value(*child, schema.bench_jobs);
-        return CliOutcome::Parsed(
-            rstd::move(working_directory),
-            no_config,
-            CliCommand::Bench(BenchOptions {
-                .packages = string_values(*child, schema.bench_package),
-                .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .targets = string_values(*child, schema.bench_target),
-                .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .arguments   = string_values(*child, schema.bench_arguments),
-                .locked      = flag_value(*child, schema.bench_locked),
-                .offline     = flag_value(*child, schema.bench_offline),
-                .frozen      = flag_value(*child, schema.bench_frozen),
-                .fetch_seeds = path_values(*child, schema.bench_fetch_seed),
-                .no_run      = flag_value(*child, schema.bench_no_run),
-                .verbose     = flag_value(*child, schema.bench_verbose),
-                .timing_file =
-                    timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
-                .no_timing = flag_value(*child, schema.bench_no_timing),
-                .jobs      = jobs.is_some() ? Some<usize>(**jobs) : None(),
-            }));
-    }
-    if (subcommand->get<0>() == "update"_str) {
-        auto child = subcommand->get<1>();
-        return CliOutcome::Parsed(rstd::move(working_directory),
-                                  no_config,
-                                  CliCommand::Update(UpdateOptions {
-                                      .offline     = flag_value(*child, schema.update_offline),
-                                      .fetch_seeds = path_values(*child, schema.update_fetch_seed),
-                                  }));
-    }
-    if (subcommand->get<0>() == "lock"_str) {
-        auto lock_command = subcommand->get<1>()->subcommand();
-        auto child        = lock_command->get<1>();
-        auto format       = optional_value(*child, schema.lock_export_format);
-        auto output       = optional_value(*child, schema.lock_export_output);
-        return CliOutcome::Parsed(rstd::move(working_directory),
-                                  no_config,
-                                  CliCommand::LockExport(LockExportOptions {
-                                      .format = (**format).clone(),
-                                      .output = PathBuf::from((**output).clone()),
-                                  }));
-    }
-    auto child = subcommand->get<1>();
-    return CliOutcome::Parsed(rstd::move(working_directory),
-                              no_config,
-                              CliCommand::Format(FormatOptions {
-                                  .packages = string_values(*child, schema.format_package),
-                                  .check    = flag_value(*child, schema.format_check),
-                              }));
+    auto value = rstd::move(invocation).unwrap();
+    return CliOutcome::Parsed(
+        rstd::move(value.working_directory), value.no_config, rstd::move(value.command));
 }
 
 } // namespace lito::cli
