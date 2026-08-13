@@ -47,6 +47,39 @@ auto package_name_is_valid(ref<str> value) -> bool {
     return true;
 }
 
+auto discover_install_script(ref<rstd::path::Path> package_root)
+    -> ManifestSchemaResult<Option<PathBuf>> {
+    auto requested = PathBuf::from(package_root).join(PathBuf::from("install.lua"_str).as_path());
+    auto exists = rstd::fs::exists(requested.as_path());
+    if (exists.is_err()) {
+        return manifest_io_failure<Option<PathBuf>>("install script"_str,
+                                                    "inspect file"_str,
+                                                    requested.as_path(),
+                                                    rstd::move(exists).unwrap_err());
+    }
+    if (! *exists) return Ok(None());
+    auto metadata = rstd::fs::symlink_metadata(requested.as_path());
+    if (metadata.is_err()) {
+        return manifest_io_failure<Option<PathBuf>>("install script"_str,
+                                                    "inspect file"_str,
+                                                    requested.as_path(),
+                                                    rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_file() || metadata->is_symlink()) {
+        return failure<Option<PathBuf>>(
+            rstd::format("install script '{}' must be a regular file and not a symlink",
+                         requested.as_path()));
+    }
+    auto canonical = rstd::fs::canonicalize(requested.as_path());
+    if (canonical.is_err()) {
+        return manifest_io_failure<Option<PathBuf>>("install script"_str,
+                                                    "resolve file"_str,
+                                                    requested.as_path(),
+                                                    rstd::move(canonical).unwrap_err());
+    }
+    return Ok(Some(rstd::move(canonical).unwrap()));
+}
+
 struct ConventionalSource {
     String  key;
     PathBuf path;

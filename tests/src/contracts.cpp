@@ -253,7 +253,8 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                             const lito::ProfileSpec&                             profile,
                             const lito::BuildPlatform&                           platform,
                             const lito::CppArgumentParser&                       parser,
-                            usize                                                jobs = usize(1))
+                            usize                                                jobs = usize(1),
+                            Vec<lito::ExternalAssetSet>*                         assets = nullptr)
     -> lito::DependencyResult<Vec<lito::ResolvedExternalDependency>> {
     auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
     if (environment.is_err()) {
@@ -294,6 +295,9 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto snapshot = lito::execute_cmake_package(*plan, *environment);
         if (snapshot.is_err()) return Err(rstd::move(snapshot).unwrap_err());
+        if (assets != nullptr) {
+            for (const auto& set : snapshot->assets) assets->push(set.clone());
+        }
         auto usage = lito::materialize_cmake_usage(*plan, *snapshot, parser);
         if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
         result.push(rstd::move(usage).unwrap());
@@ -948,6 +952,128 @@ TEST(Contracts, InstallPurposeSelectsWorkspaceBinaries) {
                                                lito::PackageSelectionPurpose::Install);
     ASSERT_TRUE(all.is_ok());
     ASSERT_EQ(all->selected_root_names.len(), usize(3));
+}
+
+TEST(Contracts, InstallOnlyManifestOwnsItsConventionalScript) {
+    auto directory = root("manifest/install-only"_str);
+    auto loaded    = lito::load_package_manifest(directory.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->install_script.is_some());
+    EXPECT_EQ(loaded->install_script->as_path(),
+              directory.join(PathBuf::from("install.lua"_str).as_path()).as_path());
+    ASSERT_TRUE(loaded->version.value.is_some());
+    EXPECT_EQ(loaded->version.value->as_str(), "1.2.3"_str);
+
+    auto missing = lito::load_package_manifest(
+        root("manifest/install-only-missing-version"_str).as_path());
+    ASSERT_TRUE(missing.is_err());
+    EXPECT_TRUE(error_chain_text(missing.unwrap_err()).as_str().contains("version"_str));
+}
+
+TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
+    auto directory = root("install-script/recipe"_str);
+    auto manifest  = lito::load_package_manifest(directory.as_path());
+    ASSERT_TRUE(manifest.is_ok());
+    ASSERT_TRUE(manifest->install_script.is_some());
+    auto recipe = lito::execute_install_script(
+        lito::PackageInstallInput {
+            .name          = manifest->name.clone(),
+            .version       = manifest->version.value->clone(),
+            .root          = manifest->root.clone(),
+            .manifest_path = manifest->manifest_path.clone(),
+            .script        = Some(manifest->install_script->clone()),
+        },
+        lito::InstallScriptContext {
+            .profile     = String::make("release"_str),
+            .target      = String::make("x86_64-test-linux"_str),
+            .target_arch = String::make("x86_64"_str),
+        });
+    ASSERT_TRUE(recipe.is_ok());
+    EXPECT_EQ(recipe->owner.as_str(), "fixture-install-script"_str);
+    ASSERT_EQ(recipe->artifacts.len(), usize(1));
+    EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(), "fixture-producer"_str);
+    EXPECT_EQ(recipe->artifacts[usize {}].destination.as_path(),
+              PathBuf::from("bin/producer"_str).as_path());
+    ASSERT_EQ(recipe->external_assets.len(), usize(1));
+    ASSERT_EQ(recipe->files.len(), usize(1));
+    ASSERT_EQ(recipe->templates.len(), usize(1));
+    ASSERT_EQ(recipe->inventories.len(), usize(1));
+    auto fragment = recipe->templates[usize {}].values.get("FRAGMENT"_str);
+    ASSERT_TRUE(fragment.is_some());
+    EXPECT_EQ((**fragment).string(), "fixture-install-script 2.4.6\n"_str);
+
+    constexpr ref<str> binding_errors[] = {
+        "install-script/duplicate"_str,
+        "install-script/unknown-field"_str,
+        "install-script/wrong-type"_str,
+    };
+    for (auto fixture : binding_errors) {
+        auto invalid = lito::load_package_manifest(root(fixture).as_path());
+        ASSERT_TRUE(invalid.is_ok());
+        auto executed = lito::execute_install_script(
+            lito::PackageInstallInput {
+                .name          = invalid->name.clone(),
+                .version       = invalid->version.value->clone(),
+                .root          = invalid->root.clone(),
+                .manifest_path = invalid->manifest_path.clone(),
+                .script        = Some(invalid->install_script->clone()),
+            },
+            lito::InstallScriptContext {
+                .profile     = String::make("release"_str),
+                .target      = String::make("x86_64-test-linux"_str),
+                .target_arch = String::make("x86_64"_str),
+            });
+        ASSERT_TRUE(executed.is_err());
+        EXPECT_TRUE(executed.unwrap_err().is_Binding());
+    }
+
+    auto missing = lito::load_package_manifest(root("install-script/missing"_str).as_path());
+    ASSERT_TRUE(missing.is_ok());
+    auto unregistered = lito::execute_install_script(
+        lito::PackageInstallInput {
+            .name          = missing->name.clone(),
+            .version       = missing->version.value->clone(),
+            .root          = missing->root.clone(),
+            .manifest_path = missing->manifest_path.clone(),
+            .script        = Some(missing->install_script->clone()),
+        },
+        lito::InstallScriptContext {
+            .profile     = String::make("release"_str),
+            .target      = String::make("x86_64-test-linux"_str),
+            .target_arch = String::make("x86_64"_str),
+        });
+    ASSERT_TRUE(unregistered.is_err());
+    EXPECT_TRUE(unregistered.unwrap_err().is_Message());
+}
+
+TEST(Contracts, InstallBuildRequirementsValidateExactArtifactTargets) {
+    auto source = lito::resolve_install_source(
+        lito::InstallSourceRequirement::LocalProject(project_root()));
+    ASSERT_TRUE(source.is_ok());
+    auto recipe = lito::InstallRecipe {
+        .owner   = String::make("fixture-multi-target"_str),
+        .version = String::make("1.0.0"_str),
+        .root    = project_root(),
+    };
+    auto target = lito::PackageTargetId {
+        .package = String::make("fixture-multi-target"_str),
+        .kind    = lito::PackageTargetKind::Binary,
+        .name    = String::make("tool"_str),
+    };
+    recipe.artifacts.push(lito::InstallArtifactRecipe {
+        .target      = target.clone(),
+        .destination = PathBuf::from("bin/tool"_str),
+    });
+    recipe.artifacts.push(lito::InstallArtifactRecipe {
+        .target      = rstd::move(target),
+        .destination = PathBuf::from("bin/tool-copy"_str),
+    });
+    auto recipes = Vec<lito::InstallRecipe>::make();
+    recipes.push(rstd::move(recipe));
+    auto duplicate = source->project.catalog.install_build_requirements(
+        recipes, pkg_config_target());
+    ASSERT_TRUE(duplicate.is_err());
+    EXPECT_TRUE(rstd::format("{}", duplicate.unwrap_err()).as_str().contains("repeats"_str));
 }
 
 TEST(Contracts, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
@@ -1664,13 +1790,18 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoFixture"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            root("cmake/package"_str), String::make("lito-test-cmake-fixture-v3"_str), true),
+            root("cmake/package"_str), String::make("lito-test-cmake-fixture-v4"_str), true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
     });
-    auto resolved =
-        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
+    auto cold_assets = Vec<lito::ExternalAssetSet>::make();
+    auto resolved = resolve_cmake_fixtures(declarations,
+                                           default_profile(*parser),
+                                           native_platform(),
+                                           *parser,
+                                           usize(1),
+                                           rstd::addressof(cold_assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error);
@@ -1706,9 +1837,37 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
     EXPECT_EQ(dependency.targets[usize(2)].visibility, lito::DependencyVisibility::LinkOnly);
 
+    ASSERT_EQ(cold_assets.len(), usize(1));
+    EXPECT_EQ(cold_assets[usize {}].alias.as_str(), "fixture"_str);
+    EXPECT_EQ(cold_assets[usize {}].name.as_str(), "runtime"_str);
+    ASSERT_EQ(cold_assets[usize {}].entries.len(), usize(2));
+    EXPECT_EQ(cold_assets[usize {}].entries[usize {}].logical_path.as_path(),
+              PathBuf::from("runtime.bin"_str).as_path());
+    EXPECT_EQ(cold_assets[usize {}].entries[usize(1)].logical_path.as_path(),
+              PathBuf::from("nested/resource.dat"_str).as_path());
+
     auto first_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(first_count.is_ok());
     EXPECT_EQ(first_count->as_str(), "configure\n"_str);
+    auto warm_assets = Vec<lito::ExternalAssetSet>::make();
+    auto warm = resolve_cmake_fixtures(declarations,
+                                       default_profile(*parser),
+                                       native_platform(),
+                                       *parser,
+                                       usize(1),
+                                       rstd::addressof(warm_assets));
+    ASSERT_TRUE(warm.is_ok());
+    ASSERT_EQ(warm_assets.len(), cold_assets.len());
+    ASSERT_EQ(warm_assets[usize {}].entries.len(), cold_assets[usize {}].entries.len());
+    for (usize index {}; index < cold_assets[usize {}].entries.len(); ++index) {
+        EXPECT_EQ(warm_assets[usize {}].entries[index].logical_path.as_path(),
+                  cold_assets[usize {}].entries[index].logical_path.as_path());
+        EXPECT_EQ(warm_assets[usize {}].entries[index].source.as_path(),
+                  cold_assets[usize {}].entries[index].source.as_path());
+    }
+    auto warm_count = rstd::fs::read_to_string(count_path.as_path());
+    ASSERT_TRUE(warm_count.is_ok());
+    EXPECT_EQ(warm_count->as_str(), "configure\n"_str);
     declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
     declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
     auto queried_again =

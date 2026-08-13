@@ -156,6 +156,7 @@ struct PackageManifest {
     PathBuf                                            root;
     PathBuf                                            source_root;
     PathBuf                                            manifest_path;
+    Option<PathBuf>                                    install_script;
     Option<ProjectProfile>                             profile;
     Vec<PackageTargetManifest>                         targets;
     TargetPredicate                                    target;
@@ -169,6 +170,20 @@ struct PackageManifest {
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
     Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
+};
+
+struct PackageInstallTarget {
+    PackageTargetId target;
+    String          artifact_name;
+};
+
+struct PackageInstallInput {
+    String                    name;
+    String                    version;
+    PathBuf                   root;
+    PathBuf                   manifest_path;
+    Option<PathBuf>           script;
+    Vec<PackageInstallTarget> binaries;
 };
 
 struct WorkspacePackageDefaults {

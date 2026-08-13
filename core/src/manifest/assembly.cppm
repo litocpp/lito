@@ -145,6 +145,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
 
     auto source_root = resolve_package_source_root(package_value, root.as_path());
     if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
+    auto install_script = discover_install_script(root.as_path());
+    if (install_script.is_err()) return Err(rstd::move(install_script).unwrap_err());
 
     const auto has_library = library.is_some();
     const auto has_bins    = ! bins.is_empty();
@@ -158,10 +160,10 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
     if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
     for (auto& target : *conventional) targets.push(rstd::move(target));
-    if (targets.is_empty() && compile_tests.is_empty()) {
+    if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none()) {
         return failure<ManifestDocument>(
             "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
-            "'compile-test'"_str);
+            "'compile-test', or provide install.lua"_str);
     }
     auto has_benches = false;
     for (const auto& target : targets) {
@@ -170,7 +172,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             break;
         }
     }
-    const auto version_optional = ! has_library && ! has_bins && ! has_benches;
+    const auto version_optional = install_script->is_none() &&
+                                  ! has_library && ! has_bins && ! has_benches;
     auto       version          = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
 
@@ -217,6 +220,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .root                   = root.clone(),
             .source_root            = rstd::move(source_root).unwrap(),
             .manifest_path          = rstd::move(path),
+            .install_script         = rstd::move(install_script).unwrap(),
             .profile                = rstd::move(profile),
             .targets                = rstd::move(targets),
             .target                 = rstd::move(target).unwrap(),

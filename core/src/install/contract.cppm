@@ -11,6 +11,8 @@ import lito.build.error_contract;
 import lito.config.contract;
 import lito.package.identity;
 import lito.workspace;
+import lito.install.script_error_contract;
+import lito.install.materialize_error_contract;
 
 using namespace rstd::prelude;
 
@@ -62,7 +64,10 @@ using InstallStoreResult = rstd::Result<T, InstallStoreError>;
 class InstallError {
     RSTD_ENUM(InstallError,
               (Source, (InstallSourceError source;)),
+              (Selection, (WorkspaceError source;)),
+              (Script, (InstallScriptError source;)),
               (Build, (BuildError source;)),
+              (Materialize, (InstallMaterializeError source;)),
               (Store, (InstallStoreError source;)),
               (Message, (String message;)))
 };
@@ -117,12 +122,36 @@ struct InstallBinary {
     InstallAction   action { InstallAction::Created };
 };
 
+class InstallEntryOrigin {
+    RSTD_ENUM(InstallEntryOrigin,
+              (PackageFile, (String package; PathBuf path;)),
+              (BuildArtifact, (PackageTargetId target;)),
+              (ExternalAsset, (String dependency; String set; PathBuf path;)),
+              (Template, (PathBuf input;)),
+              (Inventory))
+};
+
+class InstallEntryPayload {
+    RSTD_ENUM(InstallEntryPayload,
+              (CopyFile, (PathBuf source;)),
+              (Bytes, (Vec<u8> contents; u32 permissions;)))
+};
+
+struct InstallEntry {
+    InstallEntryOrigin  origin;
+    InstallEntryPayload payload;
+    PathBuf             relative_destination;
+    PathBuf             destination;
+    InstallAction       action { InstallAction::Created };
+};
+
 struct InstallPackageRecord {
     String             name;
     String             version;
     String             profile;
     String             target;
     Vec<InstallBinary> binaries;
+    Vec<InstallEntry>  entries;
 };
 
 struct InstallStoreRequest {
@@ -136,6 +165,7 @@ struct InstallStoreSummary {
     InstallLayout      layout;
     Vec<String>        packages;
     Vec<InstallBinary> binaries;
+    Vec<InstallEntry>  entries;
 };
 
 struct InstallRequest {
@@ -151,6 +181,7 @@ struct InstallSummary {
     InstallRoot        root;
     Vec<String>        packages;
     Vec<InstallBinary> binaries;
+    Vec<InstallEntry>  entries;
 };
 
 } // namespace lito
@@ -297,9 +328,23 @@ struct Impl<convert::From<lito::InstallSourceError>, lito::InstallError> {
 };
 
 template<>
+struct Impl<convert::From<lito::InstallScriptError>, lito::InstallError> {
+    static auto from(lito::InstallScriptError error) -> lito::InstallError {
+        return lito::InstallError::Script(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::BuildError>, lito::InstallError> {
     static auto from(lito::BuildError error) -> lito::InstallError {
         return lito::InstallError::Build(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::InstallMaterializeError>, lito::InstallError> {
+    static auto from(lito::InstallMaterializeError error) -> lito::InstallError {
+        return lito::InstallError::Materialize(rstd::move(error));
     }
 };
 
@@ -318,8 +363,20 @@ struct Impl<fmt::Display, lito::InstallError> : ImplBase<lito::InstallError> {
             return formatter.write_raw("install source resolution failed",
                                        sizeof("install source resolution failed") - 1);
         }
+        if (error.is_Selection()) {
+            return formatter.write_raw("install package selection failed",
+                                       sizeof("install package selection failed") - 1);
+        }
+        if (error.is_Script()) {
+            return formatter.write_raw("install script failed",
+                                       sizeof("install script failed") - 1);
+        }
         if (error.is_Build()) {
             return formatter.write_raw("install build failed", sizeof("install build failed") - 1);
+        }
+        if (error.is_Materialize()) {
+            return formatter.write_raw("install plan materialization failed",
+                                       sizeof("install plan materialization failed") - 1);
         }
         if (error.is_Store()) {
             return formatter.write_raw("install store update failed",
@@ -343,8 +400,17 @@ struct Impl<error::Error, lito::InstallError> : ImplBase<lito::InstallError> {
         if (error.is_Source()) {
             return Some(dyn<error::Error>::from_ref(error.as_Source().source));
         }
+        if (error.is_Selection()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Selection().source));
+        }
+        if (error.is_Script()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Script().source));
+        }
         if (error.is_Build()) {
             return Some(dyn<error::Error>::from_ref(error.as_Build().source));
+        }
+        if (error.is_Materialize()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Materialize().source));
         }
         if (error.is_Store()) {
             return Some(dyn<error::Error>::from_ref(error.as_Store().source));

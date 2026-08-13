@@ -259,8 +259,10 @@ extern "C++" int main() {
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
-        for (const auto& binary : summary.binaries) {
-            rstd::io::println("[install] {}", binary.destination.as_path());
+        for (const auto& entry : summary.entries) {
+            if (entry.origin.is_BuildArtifact()) {
+                rstd::io::println("[install] {}", entry.destination.as_path());
+            }
         }
         auto emitted = lito::timing_output::emit(summary.build, timing);
         if (emitted.is_err()) {
@@ -268,8 +270,9 @@ extern "C++" int main() {
             report_error(error);
             return 1;
         }
-        rstd::io::println("installed {} binaries ({}) to {}",
-                          summary.binaries.len(),
+        rstd::io::println("installed {} entries from {} packages ({}) to {}",
+                          summary.entries.len(),
+                          summary.packages.len(),
                           summary.build.profile.as_str(),
                           summary.root.path.as_path());
         return 0;

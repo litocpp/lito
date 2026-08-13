@@ -228,6 +228,44 @@ struct ResolvedExternalDependency {
     }
 };
 
+struct ExternalAssetEntry {
+    PathBuf logical_path;
+    PathBuf source;
+
+    auto clone() const -> ExternalAssetEntry {
+        return ExternalAssetEntry {
+            .logical_path = logical_path.clone(),
+            .source       = source.clone(),
+        };
+    }
+};
+
+struct ExternalAssetSet {
+    String                  alias;
+    String                  name;
+    Vec<ExternalAssetEntry> entries;
+
+    auto clone() const -> ExternalAssetSet {
+        auto copied = Vec<ExternalAssetEntry>::with_capacity(entries.len());
+        for (const auto& entry : entries) copied.push(entry.clone());
+        return ExternalAssetSet {
+            .alias   = alias.clone(),
+            .name    = name.clone(),
+            .entries = rstd::move(copied),
+        };
+    }
+};
+
+struct ExternalAssetCatalog {
+    Vec<ExternalAssetSet> sets;
+
+    auto clone() const -> ExternalAssetCatalog {
+        auto copied = Vec<ExternalAssetSet>::with_capacity(sets.len());
+        for (const auto& set : sets) copied.push(set.clone());
+        return ExternalAssetCatalog { .sets = rstd::move(copied) };
+    }
+};
+
 enum class IncludeDirectoryRoot
 {
     Package,

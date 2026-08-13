@@ -20,6 +20,7 @@ target_sources(
          src/cpp/source.cppm
          src/cpp/bmi.cppm
          src/error.cppm
+         src/configure_template/mod.cppm
          src/build/profile_contract.cppm
          src/build/profile.cppm
          src/build/identity.cppm
@@ -65,6 +66,11 @@ target_sources(
          src/config/error_contract.cppm
          src/config/mod.cppm
          src/install/contract.cppm
+         src/install/recipe_contract.cppm
+         src/install/script_error_contract.cppm
+         src/install/materialize_error_contract.cppm
+         src/install/script.cppm
+         src/install/plan.cppm
          src/install/source.cppm
          src/install/store.cppm
          src/install/mod.cppm

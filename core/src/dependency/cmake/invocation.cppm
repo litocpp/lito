@@ -255,7 +255,30 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
     -> DependencyResult<String> {
     auto result = String::make("cmake_minimum_required(VERSION 3.29)\n"
                                "project(lito_cmake_probe LANGUAGES CXX)\n"
-                               "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"_str);
+                               "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
+                               "set(_LITO_ASSET_RECEIPT \"${CMAKE_BINARY_DIR}/lito-assets-v1.txt\")\n"
+                               "file(WRITE \"${_LITO_ASSET_RECEIPT}\" \"lito-cmake-assets-v1\\n\")\n"
+                               "function(lito_export_asset_set)\n"
+                               "  cmake_parse_arguments(LITO_ASSET \"\" \"NAME;ROOT\" \"FILES\" ${ARGN})\n"
+                               "  if(NOT LITO_ASSET_NAME OR NOT LITO_ASSET_ROOT)\n"
+                               "    message(FATAL_ERROR \"lito_export_asset_set requires NAME and ROOT\")\n"
+                               "  endif()\n"
+                               "  if(LITO_ASSET_NAME MATCHES \"[\\t\\r\\n]\")\n"
+                               "    message(FATAL_ERROR \"Lito asset set name contains control characters\")\n"
+                               "  endif()\n"
+                               "  foreach(_lito_asset_file IN LISTS LITO_ASSET_FILES)\n"
+                               "    if(IS_ABSOLUTE \"${_lito_asset_file}\" OR "
+                               "_lito_asset_file MATCHES \"(^|/)\\.\\.?(/|$)\" OR "
+                               "_lito_asset_file MATCHES \"[\\t\\r\\n]\")\n"
+                               "      message(FATAL_ERROR \"Lito asset path is not a normal relative path: ${_lito_asset_file}\")\n"
+                               "    endif()\n"
+                               "    cmake_path(ABSOLUTE_PATH _lito_asset_file BASE_DIRECTORY \"${LITO_ASSET_ROOT}\" NORMALIZE OUTPUT_VARIABLE _lito_asset_source)\n"
+                               "    if(NOT EXISTS \"${_lito_asset_source}\" OR IS_DIRECTORY \"${_lito_asset_source}\")\n"
+                               "      message(FATAL_ERROR \"Lito asset source is not a file: ${_lito_asset_source}\")\n"
+                               "    endif()\n"
+                               "    file(APPEND \"${_LITO_ASSET_RECEIPT}\" \"${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
+                               "  endforeach()\n"
+                               "endfunction()\n"_str);
     if (requirement.integration == CMakeIntegration::BuildTree) {
         auto source = path_text(area.source.as_path(), "CMake build-tree source"_str);
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());

@@ -74,6 +74,7 @@ struct BuildExecutionPolicy {
 struct BuildRequest {
     PackageSelection         selection;
     Vec<String>              targets;
+    Vec<PackageTargetId>     exact_targets;
     PathBuf                  output;
     ProcessEnvironmentSpec   environment;
     BuildConfiguration       configuration;
@@ -143,6 +144,7 @@ struct BuildSummary {
     BuildTimingReport               build_timing;
     Vec<CompileTestExecution>       compile_tests;
     BuildScriptReport               script;
+    ExternalAssetCatalog            external_assets;
 };
 
 } // namespace lito

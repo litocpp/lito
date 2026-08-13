@@ -241,7 +241,8 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
 
 auto resolve_source_selection(const PackageMetadata& package,
                               ref<str>               requested_profile,
-                              const Vec<String>&     requested_targets)
+                              const Vec<String>&     requested_targets,
+                              const Vec<PackageTargetId>& exact_targets = {})
     -> PackageResult<SourceTargetSelection> {
     auto profile_name =
         requested_profile.size() == usize {} ? package.default_profile.as_str() : requested_profile;
@@ -258,7 +259,34 @@ auto resolve_source_selection(const PackageMetadata& package,
     }
 
     auto selected_identities = Vec<PackageTargetId>::make();
-    if (requested_targets.is_empty()) {
+    if (! requested_targets.is_empty() && ! exact_targets.is_empty()) {
+        return plan_failure<SourceTargetSelection>(
+            "target selectors and exact target identities cannot be combined"_str);
+    }
+    if (! exact_targets.is_empty()) {
+        selected_identities = Vec<PackageTargetId>::with_capacity(exact_targets.len());
+        for (const auto& exact : exact_targets) {
+            auto found = false;
+            for (const auto& candidate : package.default_targets) {
+                if (candidate == exact) {
+                    found = true;
+                    break;
+                }
+            }
+            if (! found) {
+                return plan_failure<SourceTargetSelection>(
+                    rstd::format("unknown exact target '{}'", package_target_id_text(exact)));
+            }
+            for (const auto& prior : selected_identities) {
+                if (prior == exact) {
+                    return plan_failure<SourceTargetSelection>(rstd::format(
+                        "exact target '{}' was selected more than once",
+                        package_target_id_text(exact)));
+                }
+            }
+            selected_identities.push(exact.clone());
+        }
+    } else if (requested_targets.is_empty()) {
         selected_identities = Vec<PackageTargetId>::with_capacity(package.default_targets.len());
         for (const auto& target : package.default_targets) {
             selected_identities.push(target.clone());

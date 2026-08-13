@@ -57,6 +57,11 @@ struct ExternalUsageCatalog {
     }
 };
 
+struct PreparedExternalCatalog {
+    ExternalUsageCatalog usage;
+    ExternalAssetCatalog assets;
+};
+
 auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                     const Vec<String>&                selected_package_names,
                                     const PkgConfigProviderConfig&    pkg_config,
@@ -70,9 +75,9 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                     usize                             jobs,
                                     const Option<BuildObserver>&      observer,
                                     const PackageSourceConfig&        source_config = {})
-    -> DependencyResult<ExternalUsageCatalog> {
+    -> DependencyResult<PreparedExternalCatalog> {
     if (jobs == usize {}) {
-        return dependency_failure<ExternalUsageCatalog>(
+        return dependency_failure<PreparedExternalCatalog>(
             "external dependency jobs must be greater than zero"_str);
     }
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
@@ -110,7 +115,9 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
             });
         }
     }
-    if (bindings.is_empty()) return Ok(rstd::move(result));
+    if (bindings.is_empty()) {
+        return Ok(PreparedExternalCatalog { .usage = rstd::move(result) });
+    }
     rstd::slice_::sort_unstable_by(bindings.as_mut_slice().as_mut_ref(),
                                    [](const CMakeBinding& left, const CMakeBinding& right) {
                                        if (left.owner != right.owner)
@@ -172,6 +179,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
     }
 
     auto snapshots = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
+    auto assets    = ExternalAssetCatalog {};
     for (auto& binding : bindings) {
         auto plan = plan_cmake_package(binding.requirement,
                                        resolved_cmake,
@@ -183,7 +191,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto key_text = plan->area.query_root.as_path().to_str();
         if (key_text.is_none()) {
-            return dependency_failure<ExternalUsageCatalog>(rstd::format(
+            return dependency_failure<PreparedExternalCatalog>(rstd::format(
                 "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
         }
         auto cached = snapshots.get(*key_text);
@@ -198,8 +206,43 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
         }();
         if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
         result.packages[binding.catalog].dependencies.push(rstd::move(usage).unwrap());
+        auto snapshot = snapshots.get(*key_text);
+        if (snapshot.is_none()) {
+            return dependency_failure<PreparedExternalCatalog>(
+                String::make("CMake usage snapshot was not retained"_str));
+        }
+        for (const auto& set : (**snapshot).assets) {
+            auto copied = set.clone();
+            copied.alias = binding.requirement.alias.clone();
+            auto duplicate = false;
+            for (const auto& prior : assets.sets) {
+                if (prior.alias == copied.alias.as_str() && prior.name == copied.name.as_str()) {
+                    if (prior.entries.len() != copied.entries.len()) {
+                        return dependency_failure<PreparedExternalCatalog>(rstd::format(
+                            "external asset set '{}:{}' has conflicting definitions",
+                            copied.alias.as_str(), copied.name.as_str()));
+                    }
+                    for (usize index {}; index < prior.entries.len(); ++index) {
+                        if (prior.entries[index].logical_path.as_path() !=
+                                copied.entries[index].logical_path.as_path() ||
+                            prior.entries[index].source.as_path() !=
+                                copied.entries[index].source.as_path()) {
+                            return dependency_failure<PreparedExternalCatalog>(rstd::format(
+                                "external asset set '{}:{}' has conflicting definitions",
+                                copied.alias.as_str(), copied.name.as_str()));
+                        }
+                    }
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (! duplicate) assets.sets.push(rstd::move(copied));
+        }
     }
-    return Ok(rstd::move(result));
+    return Ok(PreparedExternalCatalog {
+        .usage  = rstd::move(result),
+        .assets = rstd::move(assets),
+    });
 }
 
 } // namespace lito

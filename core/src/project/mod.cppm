@@ -154,8 +154,14 @@ auto resolve_project_selection(const PackageSelection&           selection,
 }
 
 struct PreparedBuildProject {
-    ClangToolchain  toolchain;
-    PackageMetadata metadata;
+    ClangToolchain       toolchain;
+    PackageMetadata      metadata;
+    ExternalAssetCatalog external_assets;
+};
+
+struct ResolvedProjectMetadata {
+    PackageMetadata      metadata;
+    ExternalAssetCatalog external_assets;
 };
 
 auto resolve_project_metadata(const PackageSelection&           selection,
@@ -173,7 +179,7 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                               usize                        jobs     = usize(1),
                               const Option<BuildObserver>& observer = None(),
                               Option<WorkspaceCatalog>     catalog  = None())
-    -> ProjectResult<PackageMetadata> {
+    -> ProjectResult<ResolvedProjectMetadata> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
     auto host     = rstd_try(detect_host_info());
@@ -212,18 +218,22 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                                                   jobs,
                                                                   observer,
                                                                   sources));
+    auto assets = rstd::move(external_usage.assets);
     auto metadata = adapt_package_graph_metadata(rstd::move(project.graph),
                                                  project.selected_package_names,
                                                  project.selected_targets,
                                                  resolved_configuration,
                                                  rstd::move(resolved_profile),
                                                  platform,
-                                                 rstd::move(external_usage),
+                                                 rstd::move(external_usage.usage),
                                                  toolchain.argument_parser());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
-    return Ok(rstd::move(metadata).unwrap());
+    return Ok(ResolvedProjectMetadata {
+        .metadata        = rstd::move(metadata).unwrap(),
+        .external_assets = rstd::move(assets),
+    });
 }
 
 auto prepare_build_project(const PackageSelection&           selection,
@@ -262,9 +272,11 @@ auto prepare_build_project(const PackageSelection&           selection,
                                               observer,
                                               rstd::move(catalog));
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
+    auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
-        .toolchain = rstd::move(toolchain),
-        .metadata  = rstd::move(metadata).unwrap(),
+        .toolchain       = rstd::move(toolchain),
+        .metadata        = rstd::move(resolved_metadata.metadata),
+        .external_assets = rstd::move(resolved_metadata.external_assets),
     });
 }
 

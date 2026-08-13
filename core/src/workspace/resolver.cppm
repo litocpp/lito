@@ -81,6 +81,9 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
         });
         selected = true;
     }
+    if (purpose == PackageSelectionPurpose::Install && package.install_script.is_some()) {
+        selected = true;
+    }
     return selected;
 }
 

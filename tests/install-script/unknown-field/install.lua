@@ -1,0 +1,3 @@
+lito.install({
+    unsupported = true,
+})

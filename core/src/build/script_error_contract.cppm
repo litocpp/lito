@@ -8,6 +8,7 @@ import rstd.json;
 import luato;
 import lito.error;
 import lito.build.layout_error_contract;
+import lito.configure_template;
 
 export namespace lito
 {
@@ -15,6 +16,7 @@ export namespace lito
 class BuildScriptError {
     RSTD_ENUM(BuildScriptError,
               (Layout, (BuildLayoutError source;)),
+              (Template, (TemplateError source;)),
               (Io,
                (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
@@ -59,12 +61,22 @@ struct Impl<convert::From<lito::BuildLayoutError>, lito::BuildScriptError> {
 };
 
 template<>
+struct Impl<convert::From<lito::TemplateError>, lito::BuildScriptError> {
+    static auto from(lito::TemplateError error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::Template(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Layout()) {
             return formatter.write_raw("build script layout operation failed",
                                        sizeof("build script layout operation failed") - 1);
+        }
+        if (error.is_Template()) {
+            return as<fmt::Display>(error.as_Template().source).fmt(formatter);
         }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
@@ -104,6 +116,9 @@ struct Impl<error::Error, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         const auto& error = this->self();
         if (error.is_Layout()) {
             return Some(dyn<error::Error>::from_ref(error.as_Layout().source));
+        }
+        if (error.is_Template()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Template().source));
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

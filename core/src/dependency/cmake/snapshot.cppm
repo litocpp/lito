@@ -23,7 +23,7 @@ export namespace lito
 {
 
 auto usage_snapshot_path(const CMakeWorkArea& area) -> PathBuf {
-    return area.query_root.join(PathBuf::from("usage-snapshot-v1.json"_str).as_path());
+    return area.query_root.join(PathBuf::from("usage-snapshot-v2.json"_str).as_path());
 }
 
 auto json_strings(const Vec<String>& values) -> Json {
@@ -45,10 +45,27 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
     document.insert(String::make("schema"_str),
-                    Json::String(String::make("lito-cmake-usage-v1"_str)));
+                    Json::String(String::make("lito-cmake-usage-v2"_str)));
     document.insert(String::make("version"_str), Json::String(snapshot.version.clone()));
     document.insert(String::make("targets"_str), Json::Array(rstd::move(targets)));
     document.insert(String::make("combined"_str), snapshot_json(snapshot.combined));
+    auto assets = JsonArray::with_capacity(snapshot.assets.len());
+    for (const auto& set : snapshot.assets) {
+        auto entries = JsonArray::with_capacity(set.entries.len());
+        for (const auto& entry : set.entries) {
+            auto item = JsonMap::make();
+            item.insert(String::make("path"_str),
+                        Json::String(entry.logical_path.as_path().to_string_lossy()));
+            item.insert(String::make("source"_str),
+                        Json::String(entry.source.as_path().to_string_lossy()));
+            entries.push(Json::Object(rstd::move(item)));
+        }
+        auto item = JsonMap::make();
+        item.insert(String::make("name"_str), Json::String(set.name.clone()));
+        item.insert(String::make("entries"_str), Json::Array(rstd::move(entries)));
+        assets.push(Json::Object(rstd::move(item)));
+    }
+    document.insert(String::make("assets"_str), Json::Array(rstd::move(assets)));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
@@ -141,7 +158,7 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
     auto schema = required_json_string(*value, "schema"_str, "CMake usage snapshot"_str);
     if (schema.is_err()) return Err(rstd::move(schema).unwrap_err());
-    if (*schema != "lito-cmake-usage-v1"_str) {
+    if (*schema != "lito-cmake-usage-v2"_str) {
         return cmake_failure<Option<CMakeUsageSnapshot>>(rstd::format(
             "CMake usage snapshot '{}' has unsupported schema '{}'", path.as_path(), *schema));
     }
@@ -166,10 +183,37 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
     if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
     auto parsed_combined = parse_usage_target(**combined, "CMake combined usage"_str);
     if (parsed_combined.is_err()) return Err(rstd::move(parsed_combined).unwrap_err());
+    auto asset_values = required_json_array(*value, "assets"_str, "CMake usage snapshot"_str);
+    if (asset_values.is_err()) return Err(rstd::move(asset_values).unwrap_err());
+    auto assets = Vec<ExternalAssetSet>::make();
+    for (const auto& item : **asset_values) {
+        auto name = required_json_string(item, "name"_str, "CMake asset set"_str);
+        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
+        auto entries = required_json_array(item, "entries"_str, "CMake asset set"_str);
+        if (entries.is_err()) return Err(rstd::move(entries).unwrap_err());
+        auto parsed_entries = Vec<ExternalAssetEntry>::make();
+        for (const auto& entry : **entries) {
+            auto logical = required_json_string(entry, "path"_str, "CMake asset entry"_str);
+            auto source = required_json_string(entry, "source"_str, "CMake asset entry"_str);
+            if (logical.is_err()) return Err(rstd::move(logical).unwrap_err());
+            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+            parsed_entries.push(ExternalAssetEntry {
+                .logical_path = PathBuf::from(*logical),
+                .source       = PathBuf::from(*source),
+            });
+        }
+        assets.push(ExternalAssetSet {
+            .name    = String::make(*name),
+            .entries = rstd::move(parsed_entries),
+        });
+    }
+    auto validated_assets = validate_asset_snapshot(area, requirement, rstd::move(assets));
+    if (validated_assets.is_err()) return Err(rstd::move(validated_assets).unwrap_err());
     return Ok(Some(CMakeUsageSnapshot {
         .version  = String::make(*version),
         .targets  = rstd::move(parsed_targets),
         .combined = rstd::move(parsed_combined).unwrap(),
+        .assets   = rstd::move(validated_assets).unwrap(),
     }));
 }
 

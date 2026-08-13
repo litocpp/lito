@@ -282,7 +282,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
         return Err(rstd::into<DependencyError>(rstd::move(cache).unwrap_err()));
     }
     auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
-    auto query_recipe = String::make("lito-cmake-query-v4\n"_str);
+    auto query_recipe = String::make("lito-cmake-query-v5\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());
     append_identity(query_recipe,

@@ -303,7 +303,144 @@ struct CMakeUsageSnapshot {
     String                        version;
     Vec<CMakeTargetUsageSnapshot> targets;
     CMakeTargetUsageSnapshot      combined;
+    Vec<ExternalAssetSet>         assets;
 };
+
+auto normal_asset_path(ref<str> value) -> bool {
+    auto path = PathBuf::from(value);
+    if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) return false;
+    auto components = path.as_path().components();
+    for (auto component = components.next(); component.is_some(); component = components.next()) {
+        if (! component->is_normal()) return false;
+    }
+    return true;
+}
+
+auto asset_source_allowed(const CMakeWorkArea& area, ref<rstd::path::Path> source) -> bool {
+    return (! area.source.is_empty() && source.strip_prefix(area.source.as_path()).is_some()) ||
+           source.strip_prefix(area.install.as_path()).is_some() ||
+           source.strip_prefix(area.query_build.as_path()).is_some();
+}
+
+auto validate_asset_snapshot(const CMakeWorkArea&                      area,
+                             const ResolvedCMakeDependencyRequirement& requirement,
+                             Vec<ExternalAssetSet>                     sets)
+    -> DependencyResult<Vec<ExternalAssetSet>> {
+    for (usize set_index {}; set_index < sets.len(); ++set_index) {
+        auto& set = sets[set_index];
+        if (set.name.is_empty() || set.name.as_str().contains("\t"_str) ||
+            set.name.as_str().contains("\r"_str) || set.name.as_str().contains("\n"_str)) {
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                String::make("CMake asset set has an invalid name"_str));
+        }
+        for (usize prior {}; prior < set_index; ++prior) {
+            if (sets[prior].name == set.name.as_str()) {
+                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                    "CMake asset set '{}:{}' is declared more than once",
+                    requirement.alias.as_str(), set.name.as_str()));
+            }
+        }
+        set.alias = requirement.alias.clone();
+        for (usize entry_index {}; entry_index < set.entries.len(); ++entry_index) {
+            auto& entry = set.entries[entry_index];
+            auto logical = entry.logical_path.as_path().to_str();
+            if (logical.is_none() || ! normal_asset_path(*logical)) {
+                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                    "CMake asset set '{}:{}' contains invalid path '{}'",
+                    requirement.alias.as_str(), set.name.as_str(), entry.logical_path.as_path()));
+            }
+            for (usize prior {}; prior < entry_index; ++prior) {
+                if (set.entries[prior].logical_path.as_path() == entry.logical_path.as_path()) {
+                    return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                        "CMake asset set '{}:{}' repeats path '{}'",
+                        requirement.alias.as_str(), set.name.as_str(), entry.logical_path.as_path()));
+                }
+            }
+            if (! entry.source.as_path().is_absolute()) {
+                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                    "CMake asset source '{}' is not absolute", entry.source.as_path()));
+            }
+            auto metadata = rstd::fs::symlink_metadata(entry.source.as_path());
+            if (metadata.is_err()) {
+                return cmake_io_failure<Vec<ExternalAssetSet>>(
+                    "inspect CMake asset"_str,
+                    entry.source.as_path(),
+                    rstd::move(metadata).unwrap_err());
+            }
+            if (! metadata->is_file() || metadata->is_symlink()) {
+                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                    "CMake asset '{}' is not a regular non-symlink file",
+                    entry.source.as_path()));
+            }
+            auto canonical = rstd::fs::canonicalize(entry.source.as_path());
+            if (canonical.is_err()) {
+                return cmake_io_failure<Vec<ExternalAssetSet>>(
+                    "resolve CMake asset"_str,
+                    entry.source.as_path(),
+                    rstd::move(canonical).unwrap_err());
+            }
+            if (! asset_source_allowed(area, canonical->as_path())) {
+                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
+                    "CMake asset '{}' is outside dependency-owned roots",
+                    canonical->as_path()));
+            }
+            entry.source = rstd::move(canonical).unwrap();
+        }
+    }
+    return Ok(rstd::move(sets));
+}
+
+auto read_asset_snapshot(const CMakeWorkArea& area,
+                         const ResolvedCMakeDependencyRequirement& requirement)
+    -> DependencyResult<Vec<ExternalAssetSet>> {
+    auto path = area.query_build.join(PathBuf::from("lito-assets-v1.txt"_str).as_path());
+    auto contents = rstd::fs::read_to_string(path.as_path());
+    if (contents.is_err()) {
+        return cmake_io_failure<Vec<ExternalAssetSet>>(
+            "read CMake asset receipt"_str, path.as_path(), rstd::move(contents).unwrap_err());
+    }
+    auto remaining = contents->as_str();
+    auto header = remaining.split_once("\n"_str);
+    if (header.is_none() || header->get<0>() != "lito-cmake-assets-v1"_str) {
+        return cmake_failure<Vec<ExternalAssetSet>>(
+            rstd::format("CMake asset receipt '{}' has an unsupported schema", path.as_path()));
+    }
+    remaining = header->get<1>();
+    auto sets = Vec<ExternalAssetSet>::make();
+    while (! remaining.is_empty()) {
+        auto next = remaining.split_once("\n"_str);
+        auto line = next.is_some() ? next->get<0>() : remaining;
+        remaining = next.is_some() ? next->get<1>() : ""_str;
+        if (line.is_empty()) continue;
+        auto first = line.split_once("\t"_str);
+        if (first.is_none()) {
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+        }
+        auto second = first->get<1>().split_once("\t"_str);
+        if (second.is_none() || second->get<1>().contains("\t"_str)) {
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
+        }
+        auto source = PathBuf::from(second->get<1>());
+        ExternalAssetSet* set = nullptr;
+        for (auto& candidate : sets) {
+            if (candidate.name == first->get<0>()) set = rstd::addressof(candidate);
+        }
+        if (set == nullptr) {
+            sets.push(ExternalAssetSet {
+                .alias = requirement.alias.clone(),
+                .name  = String::make(first->get<0>()),
+            });
+            set = rstd::addressof(sets[sets.len() - usize(1)]);
+        }
+        set->entries.push(ExternalAssetEntry {
+            .logical_path = PathBuf::from(second->get<0>()),
+            .source       = rstd::move(source),
+        });
+    }
+    return validate_asset_snapshot(area, requirement, rstd::move(sets));
+}
 
 auto snapshot_from_targets(const Json& baseline, const Json& dependency)
     -> DependencyResult<CMakeTargetUsageSnapshot> {
@@ -343,6 +480,7 @@ auto read_probe_snapshots(const CMakeWorkArea&                      area,
     return Ok(CMakeUsageSnapshot {
         .targets  = rstd::move(snapshots),
         .combined = rstd::move(combined_snapshot).unwrap(),
+        .assets   = rstd_try(read_asset_snapshot(area, requirement)),
     });
 }
 

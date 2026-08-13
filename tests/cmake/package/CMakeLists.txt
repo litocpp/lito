@@ -31,6 +31,8 @@ install(TARGETS lito_fixture lito_fixture_headers lito_fixture_order
   ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
   INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
 install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES runtime/runtime.bin DESTINATION share/lito-fixture/runtime)
+install(FILES resources/nested/resource.dat DESTINATION share/lito-fixture/resources/nested)
 install(EXPORT LitoFixtureTargets
   FILE LitoFixtureTargets.cmake
   NAMESPACE LitoFixture::

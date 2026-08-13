@@ -210,7 +210,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build_jobs        = build.add_arg(jobs_arg());
 
     auto install = Command::make("install"_str);
-    install.about("Build and install package binaries"_str);
+    install.about("Build and install packages"_str);
     auto install_package = install.add_arg(package_arg());
     auto install_profile = install.add_arg(profile_arg());
     auto install_binary  = install.add_arg(Arg<String>::value("bin"_str, string_parser())
@@ -224,7 +224,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                                .help("Set the installation root"_str));
     auto install_force   = install.add_arg(Arg<bool>::flag("force"_str)
                                                .long_name("force"_str)
-                                               .help("Replace conflicting binaries"_str));
+                                               .help("Replace conflicting files"_str));
     auto install_locked  = install.add_arg(locked_arg());
     auto install_offline    = install.add_arg(offline_arg());
     auto install_frozen     = install.add_arg(frozen_arg());

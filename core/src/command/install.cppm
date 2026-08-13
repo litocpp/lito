@@ -6,11 +6,16 @@ export module lito.command.install;
 import rstd;
 import lito.error;
 import lito.build;
+import lito.build.profile;
+import lito.cpp;
 import lito.install;
 import lito.package.identity;
 import lito.package.target_contract;
 import lito.workspace.contract;
 import lito.build.profile_contract;
+import lito.platform;
+import lito.toolchain;
+import lito.system.environment;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -45,95 +50,103 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         return install_failure<InstallSummary>(
             "install build targets must be selected through install binaries"_str);
     }
-    for (const auto& binary : request.binaries) {
-        if (binary.is_empty()) {
-            return install_failure<InstallSummary>("install binary name must not be empty"_str);
-        }
-        for (const auto& prior : request.build.targets) {
-            if (prior.as_str().strip_prefix("bin:"_str) == Some(binary.as_str())) {
-                return install_failure<InstallSummary>(rstd::format(
-                    "install binary '{}' was selected more than once", binary.as_str()));
-            }
-        }
-        request.build.targets.push(rstd::format("bin:{}", binary.as_str()));
+    auto owners = request.source.project.catalog.install_packages(
+        request.build.selection.packages);
+    if (owners.is_err()) {
+        return Err(InstallError::Selection(rstd::move(owners).unwrap_err()));
     }
-
-    auto requested_packages = Vec<String>::with_capacity(request.build.selection.packages.len());
-    for (const auto& package : request.build.selection.packages) {
-        requested_packages.push(package.clone());
+    auto selected_owners = rstd::move(owners).unwrap();
+    auto environment = ResolvedProcessEnvironment::resolve(request.build.environment);
+    if (environment.is_err()) {
+        return install_failure<InstallSummary>(
+            rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
     }
-    auto summary = rstd_try(
-        build_resolved_project(rstd::move(request.build), rstd::move(request.source.project)));
-    if (summary.selected_targets.is_empty()) {
-        return install_failure<InstallSummary>("install selected no binaries"_str);
+    auto resolver = ToolResolver(*environment);
+    auto toolchain = ClangToolchain::create(
+        request.build.configuration.toolchain, resolver, *environment);
+    if (toolchain.is_err()) {
+        return install_failure<InstallSummary>(
+            rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
     }
-    for (const auto& requested : requested_packages) {
-        auto matched = false;
-        for (const auto& package : summary.selected_packages) {
-            if (package.name == requested.as_str()) {
-                matched = true;
-                break;
-            }
-        }
-        if (! matched) {
+    auto build_arguments = parse_build_arguments(
+        request.build.configuration, toolchain->argument_parser());
+    if (build_arguments.is_err()) {
+        return install_failure<InstallSummary>(rstd::format(
+            "cannot resolve install target: {}", rstd::move(build_arguments).unwrap_err()));
+    }
+    auto host = detect_host_info();
+    if (host.is_err()) {
+        return install_failure<InstallSummary>(rstd::format(
+            "cannot resolve install target: {}", rstd::move(host).unwrap_err()));
+    }
+    auto platform = resolve_build_platform(
+        *host, toolchain->target_info(), explicit_cpp_target(*build_arguments));
+    if (platform.is_err()) {
+        return install_failure<InstallSummary>(rstd::format(
+            "cannot resolve install target: {}", rstd::move(platform).unwrap_err()));
+    }
+    auto effective_target = rstd::move(platform).unwrap().effective_target;
+    auto profile = request.build.profile->as_str();
+    auto recipes = Vec<InstallRecipe>::make();
+    for (const auto& owner : selected_owners) {
+        if (owner.script.is_some() && ! request.binaries.is_empty()) {
             return install_failure<InstallSummary>(rstd::format(
-                "package '{}' has no selected installable binaries", requested.as_str()));
+                "--bin cannot filter install recipe package '{}'", owner.name.as_str()));
         }
-    }
-
-    auto packages = Vec<InstallPackageRecord>::make();
-    for (const auto& package : summary.selected_packages) {
-        if (package.version.is_none()) {
-            return install_failure<InstallSummary>(
-                rstd::format("package '{}' has no installable version", package.name.as_str()));
+        if (owner.script.is_some()) {
+            recipes.push(rstd_try(execute_install_script(
+                owner,
+                InstallScriptContext {
+                    .profile     = String::make(profile),
+                    .target      = effective_target.triple.clone(),
+                    .target_arch = effective_target.architecture.name.clone(),
+                })));
+            continue;
         }
-        auto binaries = Vec<InstallBinary>::make();
-        for (const auto& target : summary.selected_targets) {
-            if (target.package != package.name.as_str()) continue;
-            if (target.kind != PackageTargetKind::Binary) {
-                return install_failure<InstallSummary>(
-                    rstd::format("selected target '{}' is not an installable binary",
-                                 package_target_id_text(target).as_str()));
-            }
-            const BuiltArtifact* matched = nullptr;
-            for (const auto& artifact : summary.artifacts) {
-                if (artifact.target != target) continue;
-                if (matched != nullptr) {
-                    return install_failure<InstallSummary>(
-                        rstd::format("build returned duplicate artifact for '{}'",
-                                     package_target_id_text(target).as_str()));
+        auto recipe = InstallRecipe {
+            .owner   = owner.name.clone(),
+            .version = owner.version.clone(),
+            .root    = owner.root.clone(),
+        };
+        for (const auto& target : owner.binaries) {
+            if (! request.binaries.is_empty()) {
+                auto matched = false;
+                for (const auto& requested : request.binaries) {
+                    if (requested == target.target.name.as_str()) matched = true;
                 }
-                matched = rstd::addressof(artifact);
+                if (! matched) continue;
             }
-            if (matched == nullptr || matched->kind != ArtifactKind::Executable) {
-                return install_failure<InstallSummary>(
-                    rstd::format("build did not return an executable artifact for '{}'",
-                                 package_target_id_text(target).as_str()));
-            }
-            binaries.push(InstallBinary {
-                .target = target.clone(),
-                .source = matched->path.clone(),
+            auto destination = PathBuf::from("bin"_str);
+            destination.push(PathBuf::from(target.artifact_name.as_str()).as_path());
+            recipe.artifacts.push(InstallArtifactRecipe {
+                .target      = target.target.clone(),
+                .destination = rstd::move(destination),
             });
         }
-        if (binaries.is_empty()) {
+        if (recipe.artifacts.is_empty()) {
             return install_failure<InstallSummary>(rstd::format(
-                "package '{}' has no selected installable binaries", package.name.as_str()));
+                "package '{}' has no selected installable binaries", owner.name.as_str()));
         }
-        packages.push(InstallPackageRecord {
-            .name     = package.name.clone(),
-            .version  = package.version->clone(),
-            .profile  = summary.profile.clone(),
-            .target   = summary.target.clone(),
-            .binaries = rstd::move(binaries),
-        });
+        recipes.push(rstd::move(recipe));
     }
-    if (packages.is_empty()) {
-        return install_failure<InstallSummary>("install selected no packages"_str);
+    auto requirements = request.source.project.catalog.install_build_requirements(
+        recipes, effective_target);
+    if (requirements.is_err()) {
+        return Err(InstallError::Selection(rstd::move(requirements).unwrap_err()));
     }
+    auto build_requirements          = rstd::move(requirements).unwrap();
+    request.build.selection.packages = rstd::move(build_requirements.packages);
+    request.build.exact_targets      = rstd::move(build_requirements.targets);
+    auto summary = rstd_try(
+        build_resolved_project(rstd::move(request.build), rstd::move(request.source.project)));
+    auto plan = rstd_try(materialize_install_plan(rstd::move(recipes),
+                                                  summary,
+                                                  summary.profile.as_str(),
+                                                  summary.target.as_str()));
     auto stored = rstd_try(install_artifacts(InstallStoreRequest {
         .root       = InstallRoot { .path = rstd::move(request.root.path) },
         .provenance = rstd::move(request.source.provenance),
-        .packages   = rstd::move(packages),
+        .packages   = rstd::move(plan.packages),
         .force      = request.force,
     }));
     return Ok(InstallSummary {
@@ -141,6 +154,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         .root     = InstallRoot { .path = stored.layout.root.path.clone() },
         .packages = rstd::move(stored.packages),
         .binaries = rstd::move(stored.binaries),
+        .entries  = rstd::move(stored.entries),
     });
 }
 

@@ -172,8 +172,10 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
 
-    auto selected =
-        resolve_source_selection(metadata, metadata.default_profile.as_str(), request.targets);
+    auto selected = resolve_source_selection(metadata,
+                                             metadata.default_profile.as_str(),
+                                             request.targets,
+                                             request.exact_targets);
     if (selected.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(selected).unwrap_err()));
     }
@@ -543,6 +545,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
         .build_timing         = rstd::move(build_timing),
         .compile_tests        = rstd::move(compile_tests),
         .script               = rstd::move(script_report),
+        .external_assets      = rstd::move(project.external_assets),
     });
 }
 
