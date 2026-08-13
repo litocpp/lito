@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "id": "https://raw.githubusercontent.com/litocpp/lito/main/schema/config.schema.json",
+  "title": "Lito project configuration",
+  "description": "Structural contract for .lito/config.toml. Lito remains authoritative for filesystem and tool resolution validation.",
+  "type": "object",
+  "required": [
+    "version"
+  ],
+  "properties": {
+    "version": {
+      "description": "Lito configuration document version.",
+      "type": "integer",
+      "enum": [
+        1
+      ]
+    },
+    "environment": {
+      "$ref": "#/definitions/environment"
+    },
+    "toolchain": {
+      "$ref": "#/definitions/toolchain"
+    },
+    "pkg-config": {
+      "$ref": "#/definitions/pkgConfig"
+    },
+    "cmake": {
+      "$ref": "#/definitions/cmake"
+    },
+    "patch": {
+      "$ref": "#/definitions/patches"
+    },
+    "lock": {
+      "$ref": "#/definitions/lock"
+    },
+    "install": {
+      "$ref": "#/definitions/install"
+    }
+  },
+  "additionalProperties": false,
+  "definitions": {
+    "nonEmptyString": {
+      "type": "string",
+      "minLength": 1
+    },
+    "directoryArray": {
+      "description": "Paths are resolved relative to the project root and must name existing directories.",
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/nonEmptyString"
+      }
+    },
+    "environment": {
+      "type": "object",
+      "properties": {
+        "append-path": {
+          "$ref": "#/definitions/directoryArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "toolchain": {
+      "type": "object",
+      "properties": {
+        "compiler": {
+          "$ref": "#/definitions/tool"
+        },
+        "c-compiler": {
+          "$ref": "#/definitions/tool"
+        },
+        "archiver": {
+          "$ref": "#/definitions/tool"
+        },
+        "formatter": {
+          "$ref": "#/definitions/tool"
+        },
+        "stripper": {
+          "$ref": "#/definitions/tool"
+        }
+      },
+      "additionalProperties": false
+    },
+    "tool": {
+      "description": "An executable name resolved from the effective PATH or an absolute executable path.",
+      "$ref": "#/definitions/nonEmptyString"
+    },
+    "pkgConfig": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "$ref": "#/definitions/tool"
+        },
+        "search-path": {
+          "$ref": "#/definitions/directoryArray"
+        },
+        "library-path": {
+          "$ref": "#/definitions/directoryArray"
+        },
+        "sysroot": {
+          "description": "A path resolved relative to the project root.",
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmake": {
+      "type": "object",
+      "properties": {
+        "executable": {
+          "$ref": "#/definitions/tool"
+        },
+        "generator": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "search-path": {
+          "$ref": "#/definitions/directoryArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "patches": {
+      "description": "Git source URLs map to local replacement directories.",
+      "type": "object",
+      "patternProperties": {
+        "^(?!-)(?!.*#).+$": {
+          "$ref": "#/definitions/patch"
+        }
+      },
+      "additionalProperties": false
+    },
+    "patch": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "A directory resolved relative to the project root.",
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "lock": {
+      "type": "object",
+      "required": [
+        "path"
+      ],
+      "properties": {
+        "path": {
+          "description": "A lock file path resolved relative to the project root.",
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "install": {
+      "type": "object",
+      "required": [
+        "root"
+      ],
+      "properties": {
+        "root": {
+          "description": "The default installation root, resolved relative to the project root.",
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}
