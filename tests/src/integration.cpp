@@ -39,6 +39,24 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
     return Some(count);
 }
 
+struct CompileProgressCapture {
+    Vec<lito::BuildProgress> values;
+    bool                     missing {};
+};
+
+void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
+    if (event.kind != lito::BuildEventKind::Compile) return;
+    auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
+    if (event.progress.is_none()) {
+        capture.missing = true;
+        return;
+    }
+    capture.values.push(lito::BuildProgress {
+        .current = event.progress->current,
+        .total   = event.progress->total,
+    });
+}
+
 } // namespace
 
 TEST(Integration, ScanUsesNativePreprocessorAndDefinitions) {
@@ -823,8 +841,19 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
         build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
     request.execution.scan.jobs    = Some(usize(2));
     request.execution.compile.jobs = Some(usize(2));
+    auto progress                   = CompileProgressCapture {};
+    request.observer                = Some(lito::BuildObserver {
+        .context = rstd::addressof(progress),
+        .notify  = capture_compile_progress,
+    });
     auto summary                   = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
+    EXPECT_FALSE(progress.missing);
+    ASSERT_EQ(progress.values.len(), usize(2));
+    EXPECT_EQ(progress.values[usize {}].current, usize(1));
+    EXPECT_EQ(progress.values[usize(1)].current, usize(2));
+    EXPECT_EQ(progress.values[usize {}].total, usize(2));
+    EXPECT_EQ(progress.values[usize(1)].total, usize(2));
     EXPECT_EQ(summary->toolchain.preprocessor_environment_entries, usize(1));
     EXPECT_EQ(summary->toolchain.preprocessor_environment_queries, usize(1));
     EXPECT_GE(summary->toolchain.preprocessor_environment_hits, usize(1));

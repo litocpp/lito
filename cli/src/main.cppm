@@ -34,9 +34,27 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         return;
     }
     if (context.standard_error) {
-        rstd::io::eprintln("[{}] {} {}", event.kind, event.target, event.path);
+        if (event.progress.is_some()) {
+            rstd::io::eprintln("[{} {}/{}] {} {}",
+                               event.kind,
+                               event.progress->current,
+                               event.progress->total,
+                               event.target,
+                               event.path);
+        } else {
+            rstd::io::eprintln("[{}] {} {}", event.kind, event.target, event.path);
+        }
     } else {
-        rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
+        if (event.progress.is_some()) {
+            rstd::io::println("[{} {}/{}] {} {}",
+                              event.kind,
+                              event.progress->current,
+                              event.progress->total,
+                              event.target,
+                              event.path);
+        } else {
+            rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
+        }
     }
 }
 

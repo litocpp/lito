@@ -47,7 +47,6 @@ struct CompileNodeRuntime {
     CompileNodeStatus            status { CompileNodeStatus::Pending };
     usize                        remaining {};
     Option<CacheDecision>        decision;
-    Option<BuildEventKind>       event;
     Option<CompileTestExecution> compile_test;
 };
 
@@ -110,22 +109,22 @@ auto succeed_node(UnitId                   unit,
     return Ok(empty {});
 }
 
-auto emit_compile_events(const Option<BuildObserver>&   observer,
-                         const PackageSpec&             package,
-                         const Vec<PreparedUnit>&       units,
-                         const Vec<CompileNodeRuntime>& runtime) noexcept -> void {
+auto emit_compile_event(const Option<BuildObserver>& observer,
+                        const PackageSpec&           package,
+                        const Vec<PreparedUnit>&     units,
+                        UnitId                       unit,
+                        BuildEventKind               kind,
+                        Option<BuildProgress>         progress = None()) noexcept -> void {
     if (observer.is_none() || observer->notify == nullptr) return;
-    for (auto unit = UnitId {}; unit < runtime.len(); ++unit) {
-        if (runtime[unit].event.is_none()) continue;
-        const auto target      = units[unit].unit.target;
-        auto       target_name = package_target_id_text(package.targets[target].id);
-        observer->notify(observer->context,
-                         BuildEvent {
-                             .kind   = *runtime[unit].event,
-                             .target = target_name.as_str(),
-                             .path   = units[unit].unit.source.as_path(),
-                         });
-    }
+    const auto target      = units[unit].unit.target;
+    auto       target_name = package_target_id_text(package.targets[target].id);
+    observer->notify(observer->context,
+                     BuildEvent {
+                         .kind     = kind,
+                         .target   = target_name.as_str(),
+                         .path     = units[unit].unit.source.as_path(),
+                         .progress = rstd::move(progress),
+                     });
 }
 
 } // namespace lito
@@ -488,10 +487,6 @@ auto execute_compile_plan(const PackageSpec&           package,
     auto jobs = policy.jobs < plan.nodes.len() ? policy.jobs : plan.nodes.len();
     auto capacity =
         policy.max_in_flight < plan.nodes.len() ? policy.max_in_flight : plan.nodes.len();
-    auto created = CompileExecutor::create(jobs, capacity);
-    if (created.is_err()) return Err(rstd::move(created).unwrap_err());
-    auto executor = rstd::move(created).unwrap();
-
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
     auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
     auto dependents = Vec<Vec<UnitId>>::with_capacity(plan.nodes.len());
@@ -506,8 +501,35 @@ auto execute_compile_plan(const PackageSpec&           package,
     }
 
     auto wall_started = rstd::time::Instant::now();
-    auto terminal     = usize {};
-    auto in_flight    = usize {};
+    auto compile_total = usize {};
+    for (auto unit = UnitId {}; unit < plan.nodes.len(); ++unit) {
+        const auto target          = units[unit].unit.target;
+        auto       started         = rstd::time::Instant::now();
+        auto       target_identity = package_target_id_text(package.targets[target].id);
+        auto decision = cache.evaluate(target_identity.as_str(),
+                                       units[unit],
+                                       units[unit].frontend_analysis->receipt.as_str(),
+                                       *plan.nodes[unit].invocation,
+                                       plan.nodes[unit].dependencies);
+        result.statistics.coordinator_work =
+            result.statistics.coordinator_work.saturating_add(started.elapsed());
+        if (decision.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(decision).unwrap_err()));
+        }
+        const auto* test = units[unit].unit.compile_test;
+        if (! decision->current() ||
+            (test != nullptr && test->outcome != CompileTestOutcome::Success)) {
+            ++compile_total;
+        }
+        runtime[unit].decision = Some(rstd::move(decision).unwrap());
+    }
+
+    auto created = CompileExecutor::create(jobs, capacity);
+    if (created.is_err()) return Err(rstd::move(created).unwrap_err());
+    auto executor          = rstd::move(created).unwrap();
+    auto terminal          = usize {};
+    auto in_flight         = usize {};
+    auto compile_announced = usize {};
     while (terminal < plan.nodes.len()) {
         while (in_flight < capacity) {
             auto selected = next_ready(runtime);
@@ -516,31 +538,12 @@ auto execute_compile_plan(const PackageSpec&           package,
             auto&      node                = plan.nodes[unit];
             const auto target              = units[unit].unit.target;
             auto       coordinator_started = rstd::time::Instant::now();
-            auto       target_identity     = package_target_id_text(package.targets[target].id);
-            auto       decision = cache.evaluate(target_identity.as_str(),
-                                                 units[unit],
-                                                 units[unit].frontend_analysis->receipt.as_str(),
-                                                 *node.invocation,
-                                                 node.dependencies);
-            if (decision.is_err()) {
-                result.statistics.coordinator_work =
-                    result.statistics.coordinator_work.saturating_add(
-                        coordinator_started.elapsed());
-                fail_node(unit,
-                          rstd::into<BuildError>(rstd::move(decision).unwrap_err()),
-                          dependents,
-                          runtime,
-                          errors,
-                          terminal,
-                          result.statistics);
-                continue;
-            }
-            auto        cache_decision = rstd::move(decision).unwrap();
+            auto        cache_decision = rstd::move(runtime[unit].decision).unwrap_unchecked();
             const auto* test           = units[unit].unit.compile_test;
             if (cache_decision.current() && test == nullptr) {
-                runtime[unit].event = Some(BuildEventKind::Reuse);
                 ++result.reused;
                 ++result.statistics.reused;
+                emit_compile_event(observer, package, units, unit, BuildEventKind::Reuse);
                 auto succeeded = succeed_node(unit, dependents, runtime, terminal);
                 result.statistics.coordinator_work =
                     result.statistics.coordinator_work.saturating_add(
@@ -574,9 +577,9 @@ auto execute_compile_plan(const PackageSpec&           package,
                     continue;
                 }
                 runtime[unit].compile_test = Some(rstd::move(execution));
-                runtime[unit].event        = Some(BuildEventKind::Reuse);
                 ++result.reused;
                 ++result.statistics.reused;
+                emit_compile_event(observer, package, units, unit, BuildEventKind::Reuse);
                 auto succeeded = succeed_node(unit, dependents, runtime, terminal);
                 result.statistics.coordinator_work =
                     result.statistics.coordinator_work.saturating_add(
@@ -608,7 +611,6 @@ auto execute_compile_plan(const PackageSpec&           package,
                 continue;
             }
             runtime[unit].status   = CompileNodeStatus::Running;
-            runtime[unit].event    = Some(BuildEventKind::Compile);
             runtime[unit].decision = Some(rstd::move(cache_decision));
             auto invocation        = rstd::move(node.invocation).unwrap_unchecked();
             auto submitted         = executor.submit(
@@ -625,6 +627,13 @@ auto execute_compile_plan(const PackageSpec&           package,
                 executor.finish();
                 return Err(rstd::move(submitted).unwrap_err());
             }
+            ++compile_announced;
+            emit_compile_event(observer,
+                               package,
+                               units,
+                               unit,
+                               BuildEventKind::Compile,
+                               Some(BuildProgress { compile_announced, compile_total }));
             ++in_flight;
         }
 
@@ -761,7 +770,6 @@ auto execute_compile_plan(const PackageSpec&           package,
     executor_statistics.wall             = wall_started.elapsed();
     result.statistics                    = executor_statistics;
 
-    emit_compile_events(observer, package, units, runtime);
     for (auto unit = UnitId {}; unit < runtime.len(); ++unit) {
         if (runtime[unit].compile_test.is_some()) {
             result.compile_tests.push(rstd::move(runtime[unit].compile_test).unwrap_unchecked());

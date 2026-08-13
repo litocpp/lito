@@ -43,12 +43,18 @@ enum class BuildEventKind
     CMakeReuse,
 };
 
+struct BuildProgress {
+    usize current {};
+    usize total {};
+};
+
 struct BuildEvent {
     BuildEventKind        kind { BuildEventKind::Scan };
     ref<str>              target;
     ref<rstd::path::Path> path;
     rstd::time::Duration  elapsed;
     bool                  completed { false };
+    Option<BuildProgress> progress;
 };
 
 struct BuildObserver {
