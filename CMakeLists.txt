@@ -46,7 +46,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG bd5822771ea6e026a214679b78079292644ca0c0)
+  GIT_TAG a97c67ee48364278e26d1fe6d02ce5001eb8446b)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
@@ -55,7 +55,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG dc99fe8b0907f88c760b76c34f7cb0764dba360a)
+  GIT_TAG c09cce8e62c26c824faf913c57e8d174cf0930a9)
 FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)

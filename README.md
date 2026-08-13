@@ -11,11 +11,8 @@ It uses `lito.toml` manifest to build packages.
 ## Bootstrap
 
 ```sh
-cmake -S . -B build/cmake-release \
-  -DCMAKE_BUILD_TYPE=Release \
-  -DCMAKE_C_COMPILER=clang-22 \
-  -DCMAKE_CXX_COMPILER=clang++-22
-cmake --build build/cmake-release --target lito
+cmake --preset release
+cmake --build --preset release
 cmake --install build/cmake-release --prefix build/install
 
 ./build/install/bin/lito
