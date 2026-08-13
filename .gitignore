@@ -1,7 +1,7 @@
 /build/
 /.lito/
 /.tenon/
-/lito.lock
+lito.lock
 /tenon.lock
 demo/**/build/
 tests/**/build/
