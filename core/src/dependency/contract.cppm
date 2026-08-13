@@ -120,6 +120,21 @@ struct CMakeDependencyRequirement {
     Option<PathBuf>             adapter_root;
 };
 
+class ResolvedExternalSource {
+    RSTD_ENUM(ResolvedExternalSource,
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference; String commit;)),
+              (Archive, (String url; String sha256;)))
+};
+
+struct ResolvedExternalSourceRecord {
+    String                 package;
+    String                 alias;
+    String                 provider;
+    Vec<Architecture>      architectures;
+    ResolvedExternalSource source;
+};
+
 struct PkgConfigExternalDependency {
     String                         alias;
     PkgConfigDependencyRequirement requirement;

@@ -404,9 +404,9 @@ auto external_usage_metadata(lito::DependencyVisibility     visibility,
     auto raw       = strings("-DLITO_EXTERNAL_USAGE=1"_str);
     auto arguments = parser.parse(raw, "pkg-config test fixture"_str);
     if (arguments.is_err()) {
-        return Err(lito::PackageError::Message(rstd::format(
-            "pkg-config test fixture compiler arguments are invalid: {}",
-            rstd::move(arguments).unwrap_err())));
+        return Err(lito::PackageError::Message(
+            rstd::format("pkg-config test fixture compiler arguments are invalid: {}",
+                         rstd::move(arguments).unwrap_err())));
     }
     auto external         = Vec<lito::ResolvedExternalDependency>::make();
     auto external_targets = Vec<lito::ResolvedExternalTargetUsage>::make();
@@ -794,8 +794,8 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
     auto planned_error = rstd::move(planned).unwrap_err();
     ASSERT_TRUE(planned_error.is_Cpp());
     ASSERT_TRUE(planned_error.as_Cpp().source.is_Message());
-    EXPECT_TRUE(planned_error.as_Cpp().source.as_Message().message.as_str().contains(
-        "optimization"_str));
+    EXPECT_TRUE(
+        planned_error.as_Cpp().source.as_Message().message.as_str().contains("optimization"_str));
 }
 
 TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
@@ -1403,8 +1403,9 @@ TEST(Contracts, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
                                               *parser);
     ASSERT_TRUE(cross_cmake.is_err());
     auto cross_error = rstd::move(cross_cmake).unwrap_err();
-    EXPECT_TRUE(error_chain_text(cross_error).as_str().contains(
-        "without an explicit CMake toolchain contract"_str));
+    EXPECT_TRUE(error_chain_text(cross_error)
+                    .as_str()
+                    .contains("without an explicit CMake toolchain contract"_str));
 }
 
 TEST(Contracts, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) {
@@ -1454,8 +1455,9 @@ TEST(Contracts, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     auto unintentional_cross = lito::resolve_build_platform(host, *arm_default, None());
     ASSERT_TRUE(unintentional_cross.is_err());
     auto cross_error = rstd::move(unintentional_cross).unwrap_err();
-    EXPECT_TRUE(rstd::format("{}", cross_error).as_str().contains(
-        "declare an explicit target/toolchain contract"_str));
+    EXPECT_TRUE(rstd::format("{}", cross_error)
+                    .as_str()
+                    .contains("declare an explicit target/toolchain contract"_str));
 
     auto explicit_cross =
         lito::resolve_build_platform(host, compiler_default, Some("aarch64-unknown-linux-gnu"_str));
@@ -2261,8 +2263,9 @@ TEST(Contracts, DevelopmentDependenciesHavePrivateDistinctScope) {
         lito::load_package_manifest(root("workspace/dev-dependency-duplicate"_str).as_path());
     ASSERT_TRUE(duplicate.is_err());
     auto duplicate_error = rstd::move(duplicate).unwrap_err();
-    EXPECT_TRUE(error_chain_text(duplicate_error).as_str().contains(
-        "both dependencies and dev-dependencies"_str));
+    EXPECT_TRUE(error_chain_text(duplicate_error)
+                    .as_str()
+                    .contains("both dependencies and dev-dependencies"_str));
 }
 
 TEST(Contracts, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
@@ -2377,7 +2380,329 @@ TEST(Contracts, OnlyCurrentLockVersionIsAcceptedByLockStore) {
     ASSERT_TRUE(old_version.is_err());
     auto version_error = rstd::move(old_version).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 4"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 5"_str));
+}
+
+TEST(Contracts, VersionFourLockRequiresExplicitUnlockedMigration) {
+    auto directory = root("lock/v4-migration"_str);
+    auto migration = lito::load_lock_session(directory.as_path(), false);
+    ASSERT_TRUE(migration.is_ok());
+    auto locked = lito::load_lock_session(directory.as_path(), true);
+    ASSERT_TRUE(locked.is_err());
+    auto error = rstd::move(locked).unwrap_err();
+    ASSERT_TRUE(error.is_Schema());
+    EXPECT_TRUE(error.as_Schema().message.as_str().contains("migrating"_str));
+}
+
+TEST(Contracts, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
+    auto git_url  = "https://example.invalid/shared.git"_str;
+    auto commit   = "0123456789abcdef0123456789abcdef01234567"_str;
+    auto identity = lito::git_fetch_identity(git_url, commit);
+    EXPECT_EQ(lito::fetch_identity_text(identity).as_str(),
+              "lito-fetch-v1\ngit\nhttps://example.invalid/shared.git\n"
+              "0123456789abcdef0123456789abcdef01234567"_str);
+    EXPECT_EQ(lito::fetch_identity_stable_key(identity).len(), usize(64));
+
+    auto project = lito::LockedProject {};
+    project.packages.push(lito::LockedPackage {
+        .name         = String::make("app"_str),
+        .version      = Some(String::make("0.1.0"_str)),
+        .source       = lito::LockedPackageSource::Path(PathBuf::from("."_str)),
+        .manifest     = PathBuf::from("lito.toml"_str),
+        .dependencies = Vec<String>::make(),
+    });
+    auto reference         = lito::GitReference {};
+    auto x86_architectures = Vec<String>::make();
+    x86_architectures.push(String::make("x86_64"_str));
+    project.externals.push(lito::LockedExternal {
+        .package       = String::make("app"_str),
+        .alias         = String::make("shared-x86"_str),
+        .provider      = String::make("cmake"_str),
+        .architectures = rstd::move(x86_architectures),
+        .source        = lito::LockedExternalSource::Git(
+            String::make(git_url), rstd::move(reference), String::make(commit)),
+    });
+    auto arm_architectures = Vec<String>::make();
+    arm_architectures.push(String::make("aarch64"_str));
+    project.externals.push(lito::LockedExternal {
+        .package       = String::make("app"_str),
+        .alias         = String::make("shared-arm"_str),
+        .provider      = String::make("cmake"_str),
+        .architectures = rstd::move(arm_architectures),
+        .source        = lito::LockedExternalSource::Git(
+            String::make(git_url), lito::GitReference {}, String::make(commit)),
+    });
+    project.externals.push(lito::LockedExternal {
+        .package       = String::make("app"_str),
+        .alias         = String::make("archive"_str),
+        .provider      = String::make("cmake"_str),
+        .architectures = Vec<String>::make(),
+        .source        = lito::LockedExternalSource::Archive(
+            String::make("https://example.invalid/archive.tar.gz"_str),
+            String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)),
+    });
+    auto first  = lito::flatpak_sources_json(project);
+    auto second = lito::flatpak_sources_json(project);
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(*first, *second);
+    auto git_source = first->as_str().split_once("\"type\": \"git\""_str);
+    ASSERT_TRUE(git_source.is_some());
+    EXPECT_FALSE(git_source->get<1>().contains("\"type\": \"git\""_str));
+    EXPECT_TRUE(first->as_str().contains("\"type\": \"file\""_str));
+    EXPECT_TRUE(first->as_str().contains("\"only-arches\""_str));
+    EXPECT_TRUE(first->as_str().contains("\"type\": \"inline\""_str));
+}
+
+TEST(Contracts, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
+    auto directory = output_root("fetch-seed-catalog"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto payload = directory.join(PathBuf::from("git/source"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(payload.as_path()).is_ok());
+    auto catalog = directory.join(PathBuf::from("catalog.json"_str).as_path());
+    auto contents =
+        "{\n"
+        "  \"version\": 1,\n"
+        "  \"sources\": [\n"
+        "    {\n"
+        "      \"identity\": \"lito-fetch-v1\\ngit\\nhttps://example.invalid/source.git\\n"
+        "0123456789abcdef0123456789abcdef01234567\",\n"
+        "      \"kind\": \"git\",\n"
+        "      \"path\": \"git/source\"\n"
+        "    }\n"
+        "  ]\n"
+        "}\n"_str;
+    ASSERT_TRUE(rstd::fs::write_atomic(catalog.as_path(), contents.as_bytes()).is_ok());
+    auto identity = lito::git_fetch_identity("https://example.invalid/source.git"_str,
+                                             "0123456789abcdef0123456789abcdef01234567"_str);
+    auto roots    = Vec<PathBuf>::make();
+    roots.push(directory.clone());
+    auto located = lito::locate_fetch_seed(roots, identity);
+    ASSERT_TRUE(located.is_ok());
+    ASSERT_TRUE(located->is_some());
+    EXPECT_EQ((**located).as_path(), payload.as_path());
+
+    auto unsafe = "{\"version\":1,\"sources\":[{\"identity\":\"lito-fetch-v1\\ngit\\n"
+                  "https://example.invalid/source.git\\n0123456789abcdef0123456789abcdef01234567\","
+                  "\"kind\":\"git\",\"path\":\"../source\"}]}"_str;
+    ASSERT_TRUE(rstd::fs::write_atomic(catalog.as_path(), unsafe.as_bytes()).is_ok());
+    EXPECT_TRUE(lito::load_fetch_seed_catalog(directory.as_path()).is_err());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Contracts, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) {
+    auto directory = output_root("offline-git-seed"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto checkout = directory.join(PathBuf::from("git/source"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(checkout.as_path()).is_ok());
+    ASSERT_TRUE(git_succeeds(checkout.as_path(), "init"_str));
+    ASSERT_TRUE(git_succeeds(checkout.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
+    ASSERT_TRUE(git_succeeds(
+        checkout.as_path(), "config"_str, "user.email"_str, "lito@example.invalid"_str));
+    auto content = checkout.join(PathBuf::from("source.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(content.as_path(), "seed\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(git_succeeds(checkout.as_path(), "add"_str, "source.txt"_str));
+    ASSERT_TRUE(git_succeeds(checkout.as_path(),
+                             "-c"_str,
+                             "commit.gpgsign=false"_str,
+                             "commit"_str,
+                             "-m"_str,
+                             "seed"_str));
+    auto commit = git_revision(checkout.as_path(), "HEAD"_str);
+    ASSERT_TRUE(commit.is_some());
+    auto catalog =
+        rstd::format("{{\"version\":1,\"sources\":[{{\"identity\":\"lito-fetch-v1\\ngit\\n"
+                     "https://example.invalid/seed-only.git\\n{}\",\"kind\":\"git\","
+                     "\"path\":\"git/source\"}}]}}",
+                     commit->as_str());
+    auto catalog_path = directory.join(PathBuf::from("catalog.json"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(catalog_path.as_path(), catalog.as_str().as_bytes()).is_ok());
+
+    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver = lito::ToolResolver(*environment);
+    auto pins     = Vec<lito::LockedGitSource>::make();
+    pins.push(lito::LockedGitSource {
+        .git       = String::make("https://example.invalid/seed-only.git"_str),
+        .reference = lito::GitReference {},
+        .commit    = commit->clone(),
+    });
+    auto seeds = Vec<PathBuf>::make();
+    seeds.push(directory.clone());
+    auto events = FetchEventCapture {
+        .expected_url = "https://example.invalid/seed-only.git"_str,
+    };
+    auto manager  = lito::SourceManager(directory.as_path(),
+                                        lito::PackageResolutionOptions {
+                                            .locked      = true,
+                                            .git_sources = rstd::move(pins),
+                                            .sources =
+                                                lito::PackageSourceConfig {
+                                                    .fetch_seeds = rstd::move(seeds),
+                                                    .network     = lito::NetworkPolicy::Offline,
+                                                },
+                                        },
+                                        resolver,
+                                        *environment,
+                                        lito::BuildObserver {
+                                            .context = rstd::addressof(events),
+                                            .notify  = capture_fetch,
+                                        });
+    auto acquired = manager.acquire_external(
+        lito::PackageSourceRequirement::Git(
+            String::make("https://example.invalid/seed-only.git"_str), lito::GitReference {}),
+        directory.as_path());
+    ASSERT_TRUE(acquired.is_ok());
+    EXPECT_EQ(acquired->root.as_path(), checkout.as_path());
+    EXPECT_EQ(
+        acquired->identity.as_str(),
+        lito::git_source_identity("https://example.invalid/seed-only.git"_str, commit->as_str())
+            .as_str());
+    EXPECT_EQ(events.count, usize {});
+
+    auto direct_seeds = Vec<PathBuf>::make();
+    direct_seeds.push(directory.clone());
+    auto direct_manager = lito::SourceManager(directory.as_path(),
+                                              lito::PackageResolutionOptions {
+                                                  .sources =
+                                                      lito::PackageSourceConfig {
+                                                          .fetch_seeds = rstd::move(direct_seeds),
+                                                          .network = lito::NetworkPolicy::Offline,
+                                                      },
+                                              },
+                                              resolver,
+                                              *environment,
+                                              lito::BuildObserver {
+                                                  .context = rstd::addressof(events),
+                                                  .notify  = capture_fetch,
+                                              });
+    auto direct         = direct_manager.acquire_external(
+        lito::PackageSourceRequirement::Git(
+            String::make("https://example.invalid/seed-only.git"_str),
+            lito::GitReference {
+                .kind  = lito::GitReferenceKind::Commit,
+                .value = commit->clone(),
+            }),
+        directory.as_path());
+    ASSERT_TRUE(direct.is_ok());
+    EXPECT_EQ(direct->root.as_path(), checkout.as_path());
+    EXPECT_EQ(events.count, usize {});
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Contracts, GitPatchManifestChangesConfiguredLock) {
+    auto directory = output_root("git-patch-configured-lock"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto upstream = directory.join(PathBuf::from("upstream"_str).as_path());
+    auto patch    = directory.join(PathBuf::from("patch"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(upstream.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(patch.as_path()).is_ok());
+    auto manifest          = "[package]\n"
+                             "name = \"patch-fixture\"\n"
+                             "version = \"0.1.0\"\n"
+                             "\n"
+                             "[lib]\n"
+                             "name = \"patch-fixture\"\n"
+                             "module = \"patch.fixture\"\n"
+                             "archive = \"patch.fixture\"\n"
+                             "sources = [\"source.cppm\"]\n"_str;
+    auto upstream_manifest = upstream.join(PathBuf::from("lito.toml"_str).as_path());
+    auto patch_manifest    = patch.join(PathBuf::from("lito.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write_atomic(upstream_manifest.as_path(), manifest.as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::write_atomic(patch_manifest.as_path(), manifest.as_bytes()).is_ok());
+    auto upstream_source = upstream.join(PathBuf::from("source.cppm"_str).as_path());
+    auto patch_source    = patch.join(PathBuf::from("source.cppm"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write_atomic(upstream_source.as_path(),
+                                       "export module patch.fixture;\n"_str.as_bytes())
+                    .is_ok());
+    ASSERT_TRUE(rstd::fs::write_atomic(patch_source.as_path(),
+                                       "export module patch.fixture;\n"_str.as_bytes())
+                    .is_ok());
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "init"_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
+    ASSERT_TRUE(git_succeeds(
+        upstream.as_path(), "config"_str, "user.email"_str, "lito@example.invalid"_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "add"_str, "lito.toml"_str, "source.cppm"_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(),
+                             "-c"_str,
+                             "commit.gpgsign=false"_str,
+                             "commit"_str,
+                             "-m"_str,
+                             "upstream"_str));
+    auto commit = git_revision(upstream.as_path(), "HEAD"_str);
+    ASSERT_TRUE(commit.is_some());
+    auto url = upstream.as_path().to_str();
+    ASSERT_TRUE(url.is_some());
+
+    auto changed_manifest = rstd::format(
+        "{}\n"
+        "[external-dependencies.cmake.changed]\n"
+        "find-package = \"Changed\"\n"
+        "archive = \"https://example.invalid/changed.tar.gz\"\n"
+        "sha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
+        "integration = \"build-tree\"\n"
+        "targets = [{{ name = \"Changed::changed\", visibility = \"private\" }}]\n",
+        manifest);
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(patch_manifest.as_path(), changed_manifest.as_str().as_bytes())
+            .is_ok());
+
+    auto project = directory.join(PathBuf::from("project"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(project.as_path()).is_ok());
+    auto project_manifest = rstd::format("[package]\n"
+                                         "name = \"patch-consumer\"\n"
+                                         "version = \"0.1.0\"\n"
+                                         "\n"
+                                         "[lib]\n"
+                                         "name = \"patch-consumer\"\n"
+                                         "module = \"patch.consumer\"\n"
+                                         "archive = \"patch.consumer\"\n"
+                                         "sources = [\"source.cppm\"]\n"
+                                         "\n"
+                                         "[dependencies.patch-fixture]\n"
+                                         "git = \"{}\"\n"
+                                         "commit = \"{}\"\n"
+                                         "visibility = \"private\"\n",
+                                         *url,
+                                         commit->as_str());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                               project_manifest.as_str().as_bytes())
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
+                               "export module patch.consumer;\n"_str.as_bytes())
+            .is_ok());
+
+    auto patches = Vec<lito::GitSourcePatch>::make();
+    patches.push(lito::GitSourcePatch {
+        .git  = String::make(*url),
+        .path = patch.clone(),
+    });
+    auto configured_lock = directory.join(PathBuf::from("configured.lock"_str).as_path());
+    auto updated         = lito::update_dependencies(lito::UpdateRequest {
+        .root    = project.clone(),
+        .lock    = lito::LockConfig { .path = configured_lock.clone() },
+        .sources = lito::PackageSourceConfig { .patches = rstd::move(patches) },
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(*updated, lito::LockStatus::Updated);
+
+    auto locked = lito::load_locked_project(project.as_path(),
+                                            lito::LockConfig { .path = configured_lock.clone() });
+    ASSERT_TRUE(locked.is_ok());
+    ASSERT_EQ(locked->externals.len(), usize(1));
+    EXPECT_EQ(locked->externals[usize {}].package.as_str(), "patch-fixture"_str);
+    EXPECT_EQ(locked->externals[usize {}].alias.as_str(), "changed"_str);
+    ASSERT_TRUE(locked->externals[usize {}].source.is_Archive());
+    EXPECT_EQ(locked->externals[usize {}].source.as_Archive().url.as_str(),
+              "https://example.invalid/changed.tar.gz"_str);
+    auto default_lock = project.join(PathBuf::from("lito.lock"_str).as_path());
+    auto exists       = rstd::fs::exists(default_lock.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    EXPECT_FALSE(*exists);
+    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
 TEST(Contracts, BuildResolutionReusesLockedGitSources) {

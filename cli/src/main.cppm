@@ -2,6 +2,7 @@ export module lito.executable;
 
 import rstd;
 import lito;
+import lito.source.contract;
 import :cli;
 import lito.command.reporting;
 
@@ -111,6 +112,20 @@ auto make_timing_output(ref<rstd::path::Path>       root,
     };
 }
 
+void apply_source_options(lito::PackageSourceConfig& sources,
+                          ref<rstd::path::Path>      root,
+                          bool                       offline,
+                          bool                       frozen,
+                          Vec<rstd::path::PathBuf>   seeds) {
+    if (offline || frozen) sources.network = lito::NetworkPolicy::Offline;
+    for (auto& seed : seeds) {
+        if (seed.as_path().is_relative()) {
+            seed = rstd::path::PathBuf::from(root).join(seed.as_path());
+        }
+        sources.fetch_seeds.push(rstd::move(seed));
+    }
+}
+
 template<typename E>
     requires rstd::Impled<E, rstd::error::Error>
 void report_error(const E& error) {
@@ -176,8 +191,34 @@ extern "C++" int main() {
     }
     auto project = rstd::move(loaded_config).unwrap();
 
+    if (invocation.command.is_LockExport()) {
+        auto options = rstd::move(invocation.command).as_LockExport().options;
+        if (options.format.as_str() != "flatpak-sources"_str) {
+            rstd::io::eprintln("lito: unsupported lock export format '{}'",
+                               options.format.as_str());
+            return 1;
+        }
+        auto result = lito::export_flatpak_sources(
+            project.root.as_path(), project.lock, options.output.as_path());
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        auto output = options.output.as_path().is_absolute()
+                          ? rstd::move(options.output)
+                          : project.root.join(options.output.as_path());
+        rstd::io::println("exported Flatpak sources to {}", output.as_path());
+        return 0;
+    }
+
     if (invocation.command.is_Install()) {
         auto options = rstd::move(invocation.command).as_Install().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.fetch_seeds));
         auto root    = lito::resolve_install_root(
             invocation.working_directory.as_path(), rstd::move(options.root), project.install);
         if (root.is_err()) {
@@ -202,7 +243,7 @@ extern "C++" int main() {
         request.build.pkg_config         = rstd::move(project.pkg_config);
         request.build.cmake              = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
-        request.build.locked             = options.locked;
+        request.build.locked             = options.locked || options.frozen;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
@@ -235,6 +276,12 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Update()) {
+        auto options = rstd::move(invocation.command).as_Update().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             false,
+                             rstd::move(options.fetch_seeds));
         auto event_context = EventContext {};
         auto request       = lito::UpdateRequest {
             .root        = rstd::move(project.root),
@@ -296,6 +343,11 @@ extern "C++" int main() {
 
     if (invocation.command.is_Scan()) {
         auto options               = rstd::move(invocation.command).as_Scan().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.fetch_seeds));
         auto request               = lito::ScanRequest {};
         request.selection.root     = rstd::move(project.root);
         request.environment        = rstd::move(project.environment);
@@ -307,7 +359,7 @@ extern "C++" int main() {
         request.selection.packages = rstd::move(options.packages);
         request.targets            = rstd::move(options.targets);
         request.source             = rstd::move(options.source);
-        request.locked             = options.locked;
+        request.locked             = options.locked || options.frozen;
         if (options.profile.is_some()) request.profile = Some(options.profile->clone());
         auto event_context = EventContext { .standard_error = true };
         request.observer   = Some(lito::BuildObserver {
@@ -333,6 +385,11 @@ extern "C++" int main() {
 
     if (invocation.command.is_Test()) {
         auto options                 = rstd::move(invocation.command).as_Test().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.fetch_seeds));
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
@@ -346,7 +403,7 @@ extern "C++" int main() {
         request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.targets            = rstd::move(options.targets);
-        request.build.locked             = options.locked;
+        request.build.locked             = options.locked || options.frozen;
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) {
@@ -450,6 +507,11 @@ extern "C++" int main() {
 
     if (invocation.command.is_Bench()) {
         auto options                 = rstd::move(invocation.command).as_Bench().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.fetch_seeds));
         auto timing                  = make_timing_output(project.root.as_path(),
                                                           rstd::move(options.timing_file),
                                                           options.verbose && ! options.no_timing);
@@ -463,7 +525,7 @@ extern "C++" int main() {
         request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.targets            = rstd::move(options.targets);
-        request.build.locked             = options.locked;
+        request.build.locked             = options.locked || options.frozen;
         request.arguments                = rstd::move(options.arguments);
         request.no_run                   = options.no_run;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
@@ -541,6 +603,11 @@ extern "C++" int main() {
     }
 
     auto options               = rstd::move(invocation.command).as_Build().options;
+    apply_source_options(project.sources,
+                         project.root.as_path(),
+                         options.offline,
+                         options.frozen,
+                         rstd::move(options.fetch_seeds));
     auto timing                = make_timing_output(project.root.as_path(),
                                                     rstd::move(options.timing_file),
                                                     options.verbose && ! options.no_timing);
@@ -554,7 +621,7 @@ extern "C++" int main() {
     request.cmake              = rstd::move(project.cmake);
     request.selection.packages = rstd::move(options.packages);
     request.targets            = rstd::move(options.targets);
-    request.locked             = options.locked;
+    request.locked             = options.locked || options.frozen;
     if (options.profile.is_some()) request.profile = Some(options.profile->clone());
     request.execution.scan.jobs    = options.jobs;
     request.execution.compile.jobs = options.jobs;

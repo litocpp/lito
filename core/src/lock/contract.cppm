@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.lock.contract;
 
 import rstd;
@@ -18,6 +21,40 @@ struct LockedGitSource {
     String       git;
     GitReference reference;
     String       commit;
+};
+
+class LockedPackageSource {
+    RSTD_ENUM(LockedPackageSource,
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference; String commit;)))
+};
+
+class LockedExternalSource {
+    RSTD_ENUM(LockedExternalSource,
+              (Path, (PathBuf path;)),
+              (Git, (String url; GitReference reference; String commit;)),
+              (Archive, (String url; String sha256;)))
+};
+
+struct LockedPackage {
+    String              name;
+    Option<String>      version;
+    LockedPackageSource source;
+    PathBuf             manifest;
+    Vec<String>         dependencies;
+};
+
+struct LockedExternal {
+    String               package;
+    String               alias;
+    String               provider;
+    Vec<String>          architectures;
+    LockedExternalSource source;
+};
+
+struct LockedProject {
+    Vec<LockedPackage>  packages;
+    Vec<LockedExternal> externals;
 };
 
 struct PackageResolutionOptions {

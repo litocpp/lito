@@ -227,6 +227,7 @@ public:
         active_.remove(loaded.package.name.as_str());
         packages_.push(ResolvedPackage {
             .source_identity             = rstd::move(loaded.source_identity),
+            .source                      = rstd::move(loaded.source),
             .source_manifest             = rstd::move(loaded.manifest),
             .manifest                    = rstd::move(loaded.package),
             .dependencies                = rstd::move(dependencies),

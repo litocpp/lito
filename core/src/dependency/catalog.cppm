@@ -12,6 +12,7 @@ import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
 import lito.platform.contract;
+import lito.source.contract;
 import lito.package.graph_contract;
 import lito.system.environment;
 import lito.dependency.cmake;
@@ -67,7 +68,8 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                     ToolResolver&                     tool_resolver,
                                     const ResolvedProcessEnvironment& process_environment,
                                     usize                             jobs,
-                                    const Option<BuildObserver>&      observer)
+                                    const Option<BuildObserver>&      observer,
+                                    const PackageSourceConfig&        source_config = {})
     -> DependencyResult<ExternalUsageCatalog> {
     if (jobs == usize {}) {
         return dependency_failure<ExternalUsageCatalog>(
@@ -148,6 +150,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                                 jobs,
                                                 resolved_cmake.executable.as_path(),
                                                 process_environment,
+                                                source_config,
                                                 fetch_observer);
         if (fetched.is_err()) {
             return Err(rstd::into<DependencyError>(rstd::move(fetched).unwrap_err()));

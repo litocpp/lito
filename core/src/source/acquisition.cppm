@@ -12,6 +12,7 @@ import lito.system.environment;
 import lito.system.storage;
 import lito.system.process;
 import :support;
+import :seed;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -27,12 +28,18 @@ auto git_source_identity(ref<str> url, ref<str> commit) -> String {
     return rstd::format("git+{}#{}", url, commit);
 }
 
+auto git_requirement_identity(ref<str> url, const GitReference& reference) -> String {
+    return rstd::format(
+        "git\n{}\n{}\n{}", url, git_reference_kind_name(reference.kind), reference.value.as_str());
+}
+
 auto archive_source_identity(ref<str> url, ref<str> sha256) -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
 struct SelectedSourcePackage {
     String          source_identity;
+    ResolvedPackageSource source;
     PathBuf         manifest;
     PackageManifest package;
 };
@@ -67,6 +74,7 @@ auto acquire_archive_source(ref<str>                          url,
                             ref<str>                          sha256,
                             ref<rstd::path::Path>             cmake_executable,
                             const ResolvedProcessEnvironment& environment,
+                            const PackageSourceConfig&        source_config = {},
                             BuildObserver observer = {}) -> SourceResult<AcquiredSource> {
     auto executable = cmake_executable.to_str();
     if (executable.is_none()) {
@@ -134,24 +142,42 @@ auto acquire_archive_source(ref<str>                          url,
             rstd::move(created).unwrap_err());
     }
 
-    auto archive     = bucket.join(PathBuf::from("source.archive"_str).as_path());
-    auto script      = bucket.join(PathBuf::from("download-v1.cmake"_str).as_path());
-    auto script_text = "file(DOWNLOAD \"${SOURCE_URL}\" \"${ARCHIVE_FILE}\"\n"
-                       "     EXPECTED_HASH \"SHA256=${SOURCE_SHA256}\"\n"
-                       "     STATUS download_status)\n"
-                       "list(GET download_status 0 download_code)\n"
-                       "list(GET download_status 1 download_message)\n"
-                       "if(NOT download_code EQUAL 0)\n"
-                       "  message(FATAL_ERROR \"archive download failed: ${download_message}\")\n"
-                       "endif()\n"_str;
-    auto written     = rstd::fs::write_atomic(script.as_path(), script_text.as_bytes());
+    auto       archive        = bucket.join(PathBuf::from("source.archive"_str).as_path());
+    auto       source_archive = archive.clone();
+    auto       identity_value = archive_fetch_identity(url, sha256);
+    auto       seeded      = rstd_try(locate_fetch_seed(source_config.fetch_seeds, identity_value));
+    const auto from_seed   = seeded.is_some();
+    auto       script      = bucket.join(PathBuf::from("download-v1.cmake"_str).as_path());
+    auto       script_text = String::make();
+    if (seeded.is_some()) {
+        source_archive = rstd::move(seeded).unwrap();
+        script_text    = String::make("file(SHA256 \"${ARCHIVE_FILE}\" archive_sha256)\n"
+                                      "if(NOT archive_sha256 STREQUAL SOURCE_SHA256)\n"
+                                      "  message(FATAL_ERROR \"archive checksum mismatch\")\n"
+                                      "endif()\n"_str);
+    } else {
+        if (source_config.network == NetworkPolicy::Offline) {
+            return source_failure<AcquiredSource>(rstd::format(
+                "offline source resolution cannot fetch archive source '{}'", identity.as_str()));
+        }
+        script_text =
+            String::make("file(DOWNLOAD \"${SOURCE_URL}\" \"${ARCHIVE_FILE}\"\n"
+                         "     EXPECTED_HASH \"SHA256=${SOURCE_SHA256}\"\n"
+                         "     STATUS download_status)\n"
+                         "list(GET download_status 0 download_code)\n"
+                         "list(GET download_status 1 download_message)\n"
+                         "if(NOT download_code EQUAL 0)\n"
+                         "  message(FATAL_ERROR \"archive download failed: ${download_message}\")\n"
+                         "endif()\n"_str);
+    }
+    auto written = rstd::fs::write_atomic(script.as_path(), script_text.as_str().as_bytes());
     if (written.is_err()) {
         return source_io_failure<AcquiredSource>(
             "write archive download script"_str,
             script.as_path(),
             rstd::move(written).unwrap_err());
     }
-    auto archive_text = archive.as_path().to_str();
+    auto archive_text = source_archive.as_path().to_str();
     auto script_path  = script.as_path().to_str();
     if (archive_text.is_none() || script_path.is_none() || archive_text->contains(";"_str) ||
         script_path->contains(";"_str)) {
@@ -165,7 +191,7 @@ auto acquire_archive_source(ref<str>                          url,
     arguments.push(rstd::format("-DARCHIVE_FILE={}", *archive_text));
     arguments.push(String::make("-P"_str));
     arguments.push(String::make(*script_path));
-    if (observer.notify != nullptr) {
+    if (! from_seed && observer.notify != nullptr) {
         observer.notify(observer.context,
                         BuildEvent { BuildEventKind::Fetch, url, archive.as_path() });
     }
@@ -258,6 +284,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               usize                             jobs,
                               ref<rstd::path::Path>             cmake_executable,
                               const ResolvedProcessEnvironment& environment,
+                              const PackageSourceConfig&        source_config = {},
                               BuildObserver observer = {}) -> SourceResult<Vec<AcquiredSource>> {
     if (jobs == usize {}) {
         return source_failure<Vec<AcquiredSource>>(
@@ -301,16 +328,20 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
         auto request       = rstd::move(unique[index]);
         auto executable    = PathBuf::from(cmake_executable);
         auto task_env      = environment.clone();
+        auto task_sources  = source_config.clone();
         auto task_observer = observer;
-        auto submitted = group.submit([index,
-                                       request    = rstd::move(request),
-                                       executable = rstd::move(executable),
-                                       task_env   = rstd::move(task_env),
-                                       task_observer]() mutable -> SourceResult<FetchedArchiveSource> {
+        auto submitted     = group.submit([index,
+                                           request      = rstd::move(request),
+                                           executable   = rstd::move(executable),
+                                           task_env     = rstd::move(task_env),
+                                           task_sources = rstd::move(task_sources),
+                                           task_observer]() mutable
+                                              -> SourceResult<FetchedArchiveSource> {
             auto acquired = acquire_archive_source(request.url.as_str(),
                                                    request.sha256.as_str(),
                                                    executable.as_path(),
                                                    task_env,
+                                                   task_sources,
                                                    task_observer);
             if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
             return Ok(FetchedArchiveSource {

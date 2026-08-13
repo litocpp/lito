@@ -308,8 +308,8 @@ auto try_containing_workspace(const PackageManifest& manifest)
     while (directory.pop()) {
         auto located = try_locate_manifest(directory.as_path());
         if (located.is_err()) {
-            return Err(WorkspaceError::Manifest(ManifestError::Locate(
-                rstd::move(located).unwrap_err())));
+            return Err(
+                WorkspaceError::Manifest(ManifestError::Locate(rstd::move(located).unwrap_err())));
         }
         if (located->is_none()) continue;
 
@@ -333,7 +333,8 @@ struct ResolvedProjectEntry {
     WorkspaceCatalog catalog;
 };
 
-auto resolve_project_entry(ref<rstd::path::Path> requested_root) -> WorkspaceResult<ResolvedProjectEntry> {
+auto resolve_project_entry(ref<rstd::path::Path> requested_root)
+    -> WorkspaceResult<ResolvedProjectEntry> {
     auto document = rstd_try(load_manifest_document(requested_root));
     if (document.kind == ManifestKind::Workspace && document.workspace.is_some()) {
         auto catalog = rstd_try(load_workspace_catalog(rstd::move(document.workspace).unwrap()));

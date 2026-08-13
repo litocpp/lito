@@ -19,6 +19,7 @@ struct ResolvedDependency {
 
 struct ResolvedPackage {
     String                                  source_identity;
+    ResolvedPackageSource                   source;
     PathBuf                                 source_manifest;
     PackageManifest                         manifest;
     Vec<ResolvedDependency>                 dependencies;
@@ -41,6 +42,7 @@ struct ResolvedPackageGraph {
     ProjectProfile             profile;
     Vec<ResolvedPackageSource> sources;
     Vec<ResolvedPackage>       packages;
+    Vec<ResolvedExternalSourceRecord> externals;
 };
 
 struct ResolvedPackageSelection {

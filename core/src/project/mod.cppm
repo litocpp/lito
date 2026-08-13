@@ -210,7 +210,8 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                                                   tool_resolver,
                                                                   environment,
                                                                   jobs,
-                                                                  observer));
+                                                                  observer,
+                                                                  sources));
     auto metadata = adapt_package_graph_metadata(rstd::move(project.graph),
                                                  project.selected_package_names,
                                                  project.selected_targets,

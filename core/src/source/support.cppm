@@ -138,7 +138,7 @@ auto git_status(Vec<String>                       arguments,
 }
 
 auto same_reference(const GitReference& left, const GitReference& right) -> bool {
-    return left.kind == right.kind && left.value == right.value;
+    return git_references_equal(left, right);
 }
 
 auto load_git_catalog(ref<rstd::path::Path> root) -> SourceResult<WorkspaceCatalog> {

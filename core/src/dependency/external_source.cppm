@@ -25,6 +25,164 @@ using namespace rstd::literals;
 namespace lito
 {
 
+auto append_locked_git_source(PackageResolutionOptions& options,
+                              ref<str>                  url,
+                              const GitReference&       reference,
+                              ref<str>                  commit) -> DependencyResult<empty> {
+    for (const auto& existing : options.git_sources) {
+        if (existing.git.as_str() != url || ! git_references_equal(existing.reference, reference)) {
+            continue;
+        }
+        if (existing.commit.as_str() != commit) {
+            return dependency_failure<empty>(
+                rstd::format("Git requirement '{}#{}' resolves to both '{}' and '{}'",
+                             url,
+                             reference.value.as_str(),
+                             existing.commit.as_str(),
+                             commit));
+        }
+        return Ok(empty {});
+    }
+    options.git_sources.push(LockedGitSource {
+        .git = String::make(url),
+        .reference =
+            GitReference {
+                .kind  = reference.kind,
+                .value = reference.value.clone(),
+            },
+        .commit = String::make(commit),
+    });
+    return Ok(empty {});
+}
+
+auto clone_resolved_package_source(const ResolvedPackageSource& source) -> ResolvedPackageSource {
+    return ResolvedPackageSource {
+        .identity       = source.identity.clone(),
+        .kind           = source.kind,
+        .root_directory = source.root_directory.clone(),
+        .path           = source.path.clone(),
+        .git            = source.git.clone(),
+        .reference =
+            GitReference {
+                .kind  = source.reference.kind,
+                .value = source.reference.value.clone(),
+            },
+        .commit = source.commit.clone(),
+    };
+}
+
+auto collect_external_source_records(ResolvedPackageGraph&             graph,
+                                     PackageResolutionOptions          options,
+                                     ToolResolver&                     resolver,
+                                     const ResolvedProcessEnvironment& environment,
+                                     BuildObserver                     observer)
+    -> DependencyResult<PackageResolutionOptions> {
+    graph.externals.clear();
+    for (const auto& package : graph.packages) {
+        if (package.source.kind != PackageSourceKind::Git || package.source.git.is_empty())
+            continue;
+        rstd_try(append_locked_git_source(options,
+                                          package.source.git.as_str(),
+                                          package.source.reference,
+                                          package.source.commit.as_str()));
+    }
+
+    auto source_manager = SourceManager(
+        graph.root_directory.as_path(), options.clone(), resolver, environment, observer);
+    auto git_sources = Vec<ResolvedPackageSource>::make();
+    auto git_indices = rstd::collections::BTreeMap<String, usize>::make();
+    for (const auto& package : graph.packages) {
+        if (package.source.kind != PackageSourceKind::Git || package.source.git.is_empty())
+            continue;
+        auto key = git_requirement_identity(package.source.git.as_str(), package.source.reference);
+        if (git_indices.contains_key(key.as_str())) continue;
+        git_indices.insert(rstd::move(key), git_sources.len());
+        git_sources.push(clone_resolved_package_source(package.source));
+    }
+    for (const auto& package : graph.packages) {
+        for (const auto& declaration : package.manifest.cmake_external_dependencies) {
+            if (declaration.source.is_Installed()) continue;
+
+            auto make_record = [&](ResolvedExternalSource source,
+                                   Vec<Architecture>      architectures) -> void {
+                graph.externals.push(ResolvedExternalSourceRecord {
+                    .package       = package.manifest.name.clone(),
+                    .alias         = declaration.alias.clone(),
+                    .provider      = String::make("cmake"_str),
+                    .architectures = rstd::move(architectures),
+                    .source        = rstd::move(source),
+                });
+            };
+
+            if (declaration.source.is_Archive()) {
+                make_record(
+                    ResolvedExternalSource::Archive(declaration.source.as_Archive().url.clone(),
+                                                    declaration.source.as_Archive().sha256.clone()),
+                    {});
+                continue;
+            }
+            if (declaration.source.is_ArchitectureArchives()) {
+                for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
+                    auto architectures = Vec<Architecture>::make();
+                    architectures.push(variant.architecture.clone());
+                    make_record(ResolvedExternalSource::Archive(variant.url.clone(),
+                                                                variant.sha256.clone()),
+                                rstd::move(architectures));
+                }
+                continue;
+            }
+
+            auto declaring_root = package.manifest.root.clone();
+            if (declaration.declaration_root.is_some()) {
+                declaring_root = declaration.declaration_root->clone();
+            }
+            if (declaration.source.is_Path()) {
+                auto resolved = source_manager.resolve_external_source(
+                    PackageSourceRequirement::Path(declaration.source.as_Path().path.clone()),
+                    declaring_root.as_path());
+                if (resolved.is_err()) {
+                    return Err(rstd::into<DependencyError>(rstd::move(resolved).unwrap_err()));
+                }
+                make_record(ResolvedExternalSource::Path(rstd::move(resolved).unwrap().path), {});
+                continue;
+            }
+
+            const auto& git      = declaration.source.as_Git();
+            auto        key      = git_requirement_identity(git.url.as_str(), git.reference);
+            auto        existing = git_indices.get(key.as_str());
+            auto        resolved = ResolvedPackageSource {};
+            if (existing.is_some()) {
+                resolved = clone_resolved_package_source(git_sources[**existing]);
+            } else {
+                auto acquired = source_manager.resolve_external_source(
+                    PackageSourceRequirement::Git(git.url.clone(),
+                                                  GitReference {
+                                                      .kind  = git.reference.kind,
+                                                      .value = git.reference.value.clone(),
+                                                  }),
+                    declaring_root.as_path());
+                if (acquired.is_err()) {
+                    return Err(rstd::into<DependencyError>(rstd::move(acquired).unwrap_err()));
+                }
+                resolved = rstd::move(acquired).unwrap();
+                git_indices.insert(rstd::move(key), git_sources.len());
+                git_sources.push(clone_resolved_package_source(resolved));
+            }
+            rstd_try(append_locked_git_source(
+                options, git.url.as_str(), git.reference, resolved.commit.as_str()));
+            make_record(ResolvedExternalSource::Git(git.url.clone(),
+                                                    GitReference {
+                                                        .kind  = git.reference.kind,
+                                                        .value = git.reference.value.clone(),
+                                                    },
+                                                    rstd::move(resolved.commit)),
+                        {});
+        }
+    }
+    options.git = GitResolutionMode::ReuseLocked;
+    return Ok(rstd::move(options));
+}
+
 struct ExternalSourceTask {
     usize                      package {};
     usize                      declaration {};
@@ -155,6 +313,8 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
     if (jobs == usize {}) {
         return dependency_failure<empty>("source fetch jobs must be greater than zero"_str);
     }
+    options             = rstd_try(collect_external_source_records(
+        graph, rstd::move(options), resolver, environment, observer));
     auto tasks          = Vec<ExternalSourceTask>::make();
     auto fetch_requests = Vec<PackageSourceFetchRequest>::make();
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {

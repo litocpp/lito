@@ -10,6 +10,7 @@ export import lito.build.profile;
 export import lito.command.project_contract;
 export import lito.command.scan_contract;
 export import lito.lock.contract;
+export import lito.lock.flatpak;
 export import lito.package.identity;
 export import lito.package.target_contract;
 export import lito.toolchain.spec;

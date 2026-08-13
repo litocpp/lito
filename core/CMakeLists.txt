@@ -89,6 +89,7 @@ target_sources(
          src/source/discovery_contract.cppm
          src/source/support.cppm
          src/source/acquisition.cppm
+         src/source/seed.cppm
          src/source/manager.cppm
          src/source/mod.cppm
          src/package/resolver.cppm
@@ -98,6 +99,7 @@ target_sources(
          src/lock/contract.cppm
          src/lock/error_contract.cppm
          src/lock/mod.cppm
+         src/lock/flatpak.cppm
          src/project/error_contract.cppm
          src/project/mod.cppm
          src/toolchain/command.cppm

@@ -52,6 +52,9 @@ struct CliSchema {
     ArgKey<String>           build_target;
     ArgKey<String>           build_output;
     ArgKey<bool>             build_locked;
+    ArgKey<bool>             build_offline;
+    ArgKey<bool>             build_frozen;
+    ArgKey<String>           build_fetch_seed;
     ArgKey<bool>             build_verbose;
     ArgKey<String>           build_timing_file;
     ArgKey<bool>             build_no_timing;
@@ -62,6 +65,9 @@ struct CliSchema {
     ArgKey<String>           install_root;
     ArgKey<bool>             install_force;
     ArgKey<bool>             install_locked;
+    ArgKey<bool>             install_offline;
+    ArgKey<bool>             install_frozen;
+    ArgKey<String>           install_fetch_seed;
     ArgKey<bool>             install_verbose;
     ArgKey<String>           install_timing_file;
     ArgKey<bool>             install_no_timing;
@@ -71,6 +77,9 @@ struct CliSchema {
     ArgKey<String>           test_target;
     ArgKey<String>           test_output;
     ArgKey<bool>             test_locked;
+    ArgKey<bool>             test_offline;
+    ArgKey<bool>             test_frozen;
+    ArgKey<String>           test_fetch_seed;
     ArgKey<bool>             test_no_run;
     ArgKey<bool>             test_verbose;
     ArgKey<String>           test_timing_file;
@@ -82,6 +91,9 @@ struct CliSchema {
     ArgKey<String>           bench_target;
     ArgKey<String>           bench_output;
     ArgKey<bool>             bench_locked;
+    ArgKey<bool>             bench_offline;
+    ArgKey<bool>             bench_frozen;
+    ArgKey<String>           bench_fetch_seed;
     ArgKey<bool>             bench_no_run;
     ArgKey<bool>             bench_verbose;
     ArgKey<String>           bench_timing_file;
@@ -94,8 +106,15 @@ struct CliSchema {
     ArgKey<String>           scan_target;
     ArgKey<ScanOutputFormat> scan_format;
     ArgKey<bool>             scan_locked;
+    ArgKey<bool>             scan_offline;
+    ArgKey<bool>             scan_frozen;
+    ArgKey<String>           scan_fetch_seed;
     ArgKey<String>           format_package;
     ArgKey<bool>             format_check;
+    ArgKey<bool>             update_offline;
+    ArgKey<String>           update_fetch_seed;
+    ArgKey<String>           lock_export_format;
+    ArgKey<String>           lock_export_output;
     Parser                   parser;
 };
 
@@ -127,6 +146,26 @@ auto locked_arg() -> Arg<bool> {
     return Arg<bool>::flag("locked"_str)
         .long_name("locked"_str)
         .help("Require an unchanged lock file"_str);
+}
+
+auto offline_arg() -> Arg<bool> {
+    return Arg<bool>::flag("offline"_str)
+        .long_name("offline"_str)
+        .help("Forbid network source acquisition"_str);
+}
+
+auto frozen_arg() -> Arg<bool> {
+    return Arg<bool>::flag("frozen"_str)
+        .long_name("frozen"_str)
+        .help("Require an unchanged lock file and forbid network access"_str);
+}
+
+auto fetch_seed_arg() -> Arg<String> {
+    return Arg<String>::value("fetch-seed"_str, string_parser())
+        .long_name("fetch-seed"_str)
+        .value_name("DIRECTORY"_str)
+        .help("Use a read-only fetch seed directory"_str)
+        .append();
 }
 
 auto timing_file_arg() -> Arg<String> {
@@ -161,6 +200,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                            .value_name("DIRECTORY"_str)
                                            .help("Override the build output directory"_str));
     auto build_locked  = build.add_arg(locked_arg());
+    auto build_offline    = build.add_arg(offline_arg());
+    auto build_frozen     = build.add_arg(frozen_arg());
+    auto build_fetch_seed = build.add_arg(fetch_seed_arg());
     auto build_verbose = build.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto build_timing_file = build.add_arg(timing_file_arg());
@@ -184,6 +226,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                                .long_name("force"_str)
                                                .help("Replace conflicting binaries"_str));
     auto install_locked  = install.add_arg(locked_arg());
+    auto install_offline    = install.add_arg(offline_arg());
+    auto install_frozen     = install.add_arg(frozen_arg());
+    auto install_fetch_seed = install.add_arg(fetch_seed_arg());
     auto install_verbose = install.add_arg(
         Arg<bool>::flag("verbose"_str).long_name("verbose"_str).help("Show build events"_str));
     auto install_timing_file = install.add_arg(timing_file_arg());
@@ -200,6 +245,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                          .value_name("DIRECTORY"_str)
                                          .help("Override the build output directory"_str));
     auto test_locked  = test.add_arg(locked_arg());
+    auto test_offline    = test.add_arg(offline_arg());
+    auto test_frozen     = test.add_arg(frozen_arg());
+    auto test_fetch_seed = test.add_arg(fetch_seed_arg());
     auto test_no_run  = test.add_arg(Arg<bool>::flag("no-run"_str)
                                          .long_name("no-run"_str)
                                          .help("Build tests without running"_str));
@@ -223,6 +271,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                            .value_name("DIRECTORY"_str)
                                            .help("Override the build output directory"_str));
     auto bench_locked  = bench.add_arg(locked_arg());
+    auto bench_offline    = bench.add_arg(offline_arg());
+    auto bench_frozen     = bench.add_arg(frozen_arg());
+    auto bench_fetch_seed = bench.add_arg(fetch_seed_arg());
     auto bench_no_run  = bench.add_arg(Arg<bool>::flag("no-run"_str)
                                            .long_name("no-run"_str)
                                            .help("Build benchmarks without running"_str));
@@ -251,6 +302,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                          .value_name("FORMAT"_str)
                          .help("Select the JSON output format"_str));
     auto scan_locked = scan.add_arg(locked_arg());
+    auto scan_offline    = scan.add_arg(offline_arg());
+    auto scan_frozen     = scan.add_arg(frozen_arg());
+    auto scan_fetch_seed = scan.add_arg(fetch_seed_arg());
 
     auto format = Command::make("format"_str);
     format.about("Format package sources"_str);
@@ -261,6 +315,25 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
 
     auto update = Command::make("update"_str);
     update.about("Update lock file"_str);
+    auto update_offline    = update.add_arg(offline_arg());
+    auto update_fetch_seed = update.add_arg(fetch_seed_arg());
+
+    auto lock_export = Command::make("export"_str);
+    lock_export.about("Export locked source inputs"_str);
+    auto lock_export_format = lock_export.add_arg(Arg<String>::value("format"_str, string_parser())
+                                                      .long_name("format"_str)
+                                                      .value_name("FORMAT"_str)
+                                                      .help("Select the exported source format"_str)
+                                                      .required());
+    auto lock_export_output = lock_export.add_arg(Arg<String>::value("output"_str, string_parser())
+                                                      .long_name("output"_str)
+                                                      .value_name("FILE"_str)
+                                                      .help("Write exported sources to a file"_str)
+                                                      .required());
+    auto lock               = Command::make("lock"_str);
+    lock.about("Inspect and export the lock file"_str);
+    lock.require_subcommand();
+    lock.add_subcommand(rstd::move(lock_export));
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
@@ -280,6 +353,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(scan));
     root.add_subcommand(rstd::move(format));
     root.add_subcommand(rstd::move(update));
+    root.add_subcommand(rstd::move(lock));
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
@@ -290,6 +364,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .build_target        = build_target,
         .build_output        = build_output,
         .build_locked        = build_locked,
+        .build_offline       = build_offline,
+        .build_frozen        = build_frozen,
+        .build_fetch_seed    = build_fetch_seed,
         .build_verbose       = build_verbose,
         .build_timing_file   = build_timing_file,
         .build_no_timing     = build_no_timing,
@@ -300,6 +377,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .install_root        = install_root,
         .install_force       = install_force,
         .install_locked      = install_locked,
+        .install_offline     = install_offline,
+        .install_frozen      = install_frozen,
+        .install_fetch_seed  = install_fetch_seed,
         .install_verbose     = install_verbose,
         .install_timing_file = install_timing_file,
         .install_no_timing   = install_no_timing,
@@ -309,6 +389,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .test_target         = test_target,
         .test_output         = test_output,
         .test_locked         = test_locked,
+        .test_offline        = test_offline,
+        .test_frozen         = test_frozen,
+        .test_fetch_seed     = test_fetch_seed,
         .test_no_run         = test_no_run,
         .test_verbose        = test_verbose,
         .test_timing_file    = test_timing_file,
@@ -320,6 +403,9 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .bench_target        = bench_target,
         .bench_output        = bench_output,
         .bench_locked        = bench_locked,
+        .bench_offline       = bench_offline,
+        .bench_frozen        = bench_frozen,
+        .bench_fetch_seed    = bench_fetch_seed,
         .bench_no_run        = bench_no_run,
         .bench_verbose       = bench_verbose,
         .bench_timing_file   = bench_timing_file,
@@ -332,8 +418,15 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .scan_target         = scan_target,
         .scan_format         = scan_format,
         .scan_locked         = scan_locked,
+        .scan_offline        = scan_offline,
+        .scan_frozen         = scan_frozen,
+        .scan_fetch_seed     = scan_fetch_seed,
         .format_package      = format_package,
         .format_check        = format_check,
+        .update_offline      = update_offline,
+        .update_fetch_seed   = update_fetch_seed,
+        .lock_export_format  = lock_export_format,
+        .lock_export_output  = lock_export_output,
         .parser              = rstd::move(parser).unwrap(),
     });
 }
@@ -354,6 +447,13 @@ auto string_values(const Matches& matches, const ArgKey<String>& key) -> Vec<Str
     return result;
 }
 
+auto path_values(const Matches& matches, const ArgKey<String>& key) -> Vec<PathBuf> {
+    auto strings = string_values(matches, key);
+    auto result  = Vec<PathBuf>::with_capacity(strings.len());
+    for (auto& value : strings) result.push(PathBuf::from(rstd::move(value)));
+    return result;
+}
+
 auto flag_value(const Matches& matches, const ArgKey<bool>& key) -> bool {
     auto value = optional_value(matches, key);
     return value.is_some() && **value;
@@ -370,6 +470,9 @@ struct BuildOptions {
     Vec<String>              targets;
     Option<PathBuf>          output;
     bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
     bool                     verbose {};
     Option<PathBuf>          timing_file;
     bool                     no_timing {};
@@ -383,6 +486,9 @@ struct ScanOptions {
     Vec<String>              targets;
     ScanOutputFormat         format { ScanOutputFormat::Lito };
     bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
 };
 
 struct InstallOptions {
@@ -392,6 +498,9 @@ struct InstallOptions {
     Option<PathBuf>          root;
     bool                     force {};
     bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
     bool                     verbose {};
     Option<PathBuf>          timing_file;
     bool                     no_timing {};
@@ -405,6 +514,9 @@ struct TestOptions {
     Option<PathBuf>          output;
     Vec<String>              arguments;
     bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
     bool                     no_run {};
     bool                     verbose {};
     Option<PathBuf>          timing_file;
@@ -419,6 +531,9 @@ struct BenchOptions {
     Option<PathBuf>          output;
     Vec<String>              arguments;
     bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
     bool                     no_run {};
     bool                     verbose {};
     Option<PathBuf>          timing_file;
@@ -431,6 +546,16 @@ struct FormatOptions {
     bool        check {};
 };
 
+struct UpdateOptions {
+    bool         offline {};
+    Vec<PathBuf> fetch_seeds;
+};
+
+struct LockExportOptions {
+    String  format;
+    PathBuf output;
+};
+
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
@@ -439,7 +564,8 @@ class CliCommand {
               (Bench, (BenchOptions options;)),
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
-              (Update))
+              (Update, (UpdateOptions options;)),
+              (LockExport, (LockExportOptions options;)))
 };
 
 class CliOutcome {
@@ -493,7 +619,10 @@ auto parse() -> CliOutcome {
                 .targets = string_values(*child, schema.build_target),
                 .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
                 .locked  = flag_value(*child, schema.build_locked),
-                .verbose = flag_value(*child, schema.build_verbose),
+                .offline = flag_value(*child, schema.build_offline),
+                .frozen  = flag_value(*child, schema.build_frozen),
+                .fetch_seeds = path_values(*child, schema.build_fetch_seed),
+                .verbose     = flag_value(*child, schema.build_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.build_no_timing),
@@ -515,6 +644,9 @@ auto parse() -> CliOutcome {
                 .targets = string_values(*child, schema.scan_target),
                 .format  = format.is_some() ? **format : ScanOutputFormat::Lito,
                 .locked  = flag_value(*child, schema.scan_locked),
+                .offline = flag_value(*child, schema.scan_offline),
+                .frozen  = flag_value(*child, schema.scan_frozen),
+                .fetch_seeds = path_values(*child, schema.scan_fetch_seed),
             }));
     }
     if (subcommand->get<0>() == "install"_str) {
@@ -529,11 +661,14 @@ auto parse() -> CliOutcome {
             CliCommand::Install(InstallOptions {
                 .packages = string_values(*child, schema.install_package),
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
-                .binaries = string_values(*child, schema.install_binary),
-                .root     = root.is_some() ? Some(PathBuf::from((**root).clone())) : None(),
-                .force    = flag_value(*child, schema.install_force),
-                .locked   = flag_value(*child, schema.install_locked),
-                .verbose  = flag_value(*child, schema.install_verbose),
+                .binaries    = string_values(*child, schema.install_binary),
+                .root        = root.is_some() ? Some(PathBuf::from((**root).clone())) : None(),
+                .force       = flag_value(*child, schema.install_force),
+                .locked      = flag_value(*child, schema.install_locked),
+                .offline     = flag_value(*child, schema.install_offline),
+                .frozen      = flag_value(*child, schema.install_frozen),
+                .fetch_seeds = path_values(*child, schema.install_fetch_seed),
+                .verbose     = flag_value(*child, schema.install_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.install_no_timing),
@@ -554,10 +689,13 @@ auto parse() -> CliOutcome {
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
                 .targets = string_values(*child, schema.test_target),
                 .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .arguments = string_values(*child, schema.test_arguments),
-                .locked    = flag_value(*child, schema.test_locked),
-                .no_run    = flag_value(*child, schema.test_no_run),
-                .verbose   = flag_value(*child, schema.test_verbose),
+                .arguments   = string_values(*child, schema.test_arguments),
+                .locked      = flag_value(*child, schema.test_locked),
+                .offline     = flag_value(*child, schema.test_offline),
+                .frozen      = flag_value(*child, schema.test_frozen),
+                .fetch_seeds = path_values(*child, schema.test_fetch_seed),
+                .no_run      = flag_value(*child, schema.test_no_run),
+                .verbose     = flag_value(*child, schema.test_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.test_no_timing),
@@ -578,10 +716,13 @@ auto parse() -> CliOutcome {
                 .profile = profile.is_some() ? Some<BuildProfileName>((**profile).clone()) : None(),
                 .targets = string_values(*child, schema.bench_target),
                 .output  = output.is_some() ? Some(PathBuf::from((**output).clone())) : None(),
-                .arguments = string_values(*child, schema.bench_arguments),
-                .locked    = flag_value(*child, schema.bench_locked),
-                .no_run    = flag_value(*child, schema.bench_no_run),
-                .verbose   = flag_value(*child, schema.bench_verbose),
+                .arguments   = string_values(*child, schema.bench_arguments),
+                .locked      = flag_value(*child, schema.bench_locked),
+                .offline     = flag_value(*child, schema.bench_offline),
+                .frozen      = flag_value(*child, schema.bench_frozen),
+                .fetch_seeds = path_values(*child, schema.bench_fetch_seed),
+                .no_run      = flag_value(*child, schema.bench_no_run),
+                .verbose     = flag_value(*child, schema.bench_verbose),
                 .timing_file =
                     timing_file.is_some() ? Some(PathBuf::from((**timing_file).clone())) : None(),
                 .no_timing = flag_value(*child, schema.bench_no_timing),
@@ -589,7 +730,25 @@ auto parse() -> CliOutcome {
             }));
     }
     if (subcommand->get<0>() == "update"_str) {
-        return CliOutcome::Parsed(rstd::move(working_directory), no_config, CliCommand::Update());
+        auto child = subcommand->get<1>();
+        return CliOutcome::Parsed(rstd::move(working_directory),
+                                  no_config,
+                                  CliCommand::Update(UpdateOptions {
+                                      .offline     = flag_value(*child, schema.update_offline),
+                                      .fetch_seeds = path_values(*child, schema.update_fetch_seed),
+                                  }));
+    }
+    if (subcommand->get<0>() == "lock"_str) {
+        auto lock_command = subcommand->get<1>()->subcommand();
+        auto child        = lock_command->get<1>();
+        auto format       = optional_value(*child, schema.lock_export_format);
+        auto output       = optional_value(*child, schema.lock_export_output);
+        return CliOutcome::Parsed(rstd::move(working_directory),
+                                  no_config,
+                                  CliCommand::LockExport(LockExportOptions {
+                                      .format = (**format).clone(),
+                                      .output = PathBuf::from((**output).clone()),
+                                  }));
     }
     auto child = subcommand->get<1>();
     return CliOutcome::Parsed(rstd::move(working_directory),
