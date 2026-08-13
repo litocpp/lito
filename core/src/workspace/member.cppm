@@ -17,8 +17,8 @@ namespace lito
 {
 
 template<typename T>
-auto workspace_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto workspace_failure(String message) -> WorkspaceResult<T> {
+    return Err(WorkspaceError::Message(rstd::move(message)));
 }
 
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
@@ -32,14 +32,13 @@ export namespace lito
 
 auto workspace_member_directory(const WorkspaceManifest& workspace,
                                 ref<rstd::path::Path>    declared,
-                                ref<str>                 context) -> Result<PathBuf> {
+                                ref<str>                 context) -> WorkspaceResult<PathBuf> {
     auto requested = workspace.root.join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return workspace_failure<PathBuf>(rstd::format("cannot resolve {} directory '{}': {}",
-                                                       context,
-                                                       declared,
-                                                       rstd::move(canonical).unwrap_err()));
+        return Err(WorkspaceError::Io(rstd::format("resolve {} directory", context),
+                                      rstd::move(requested),
+                                      rstd::move(canonical).unwrap_err()));
     }
     auto directory = rstd::move(canonical).unwrap();
     if (directory.as_path().strip_prefix(workspace.root.as_path()).is_none()) {
@@ -50,7 +49,7 @@ auto workspace_member_directory(const WorkspaceManifest& workspace,
 }
 
 auto resolve_workspace_member_version(PackageManifest& manifest, const WorkspaceManifest& workspace)
-    -> Result<empty> {
+    -> WorkspaceResult<empty> {
     if (manifest.version.source != PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
@@ -92,11 +91,11 @@ auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& requirem
 }
 
 auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
-                                           const WorkspaceManifest& workspace) -> Result<empty> {
+                                           const WorkspaceManifest& workspace) -> WorkspaceResult<empty> {
     const auto resolve_package_dependencies =
         [&](const Vec<WorkspaceDependencyReference>& references,
             Vec<DeclaredDependency>&                 dependencies,
-            ref<str>                                 kind) -> Result<empty> {
+            ref<str>                                 kind) -> WorkspaceResult<empty> {
         for (const auto& reference : references) {
             const WorkspaceDependencyDefinition* definition = nullptr;
             for (const auto& candidate : workspace.dependencies) {
@@ -203,12 +202,12 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
 }
 
 auto resolve_workspace_member(PackageManifest& manifest, const WorkspaceManifest& workspace)
-    -> Result<empty> {
+    -> WorkspaceResult<empty> {
     rstd_try(resolve_workspace_member_version(manifest, workspace));
     return resolve_workspace_member_dependencies(manifest, workspace);
 }
 
-auto resolve_containing_workspace_version(PackageManifest& manifest) -> Result<empty> {
+auto resolve_containing_workspace_version(PackageManifest& manifest) -> WorkspaceResult<empty> {
     if (manifest.version.source != PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
@@ -216,11 +215,16 @@ auto resolve_containing_workspace_version(PackageManifest& manifest) -> Result<e
     auto directory = manifest.root.clone();
     while (directory.pop()) {
         auto located = try_locate_manifest(directory.as_path());
-        if (located.is_err()) return Err(rstd::move(located).unwrap_err());
+        if (located.is_err()) {
+            return Err(WorkspaceError::Manifest(ManifestError::Locate(
+                rstd::move(located).unwrap_err())));
+        }
         if (located->is_none()) continue;
 
         auto document = load_manifest_document(directory.as_path());
-        if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+        if (document.is_err()) {
+            return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
+        }
         auto loaded = rstd::move(document).unwrap();
         if (loaded.kind != ManifestKind::Workspace || loaded.workspace.is_none()) continue;
         auto workspace = rstd::move(loaded.workspace).unwrap();

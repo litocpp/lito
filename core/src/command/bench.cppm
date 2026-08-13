@@ -2,6 +2,7 @@ export module lito.command.bench;
 
 import rstd;
 import lito.error;
+import lito.command.error_contract;
 import lito.build.contract;
 import lito.workspace.contract;
 import lito.package.identity;
@@ -49,12 +50,16 @@ struct BenchSummary {
     }
 };
 
-auto bench(BenchRequest request) -> Result<BenchSummary> {
+auto bench(BenchRequest request) -> CommandResult<BenchSummary> {
     request.build.purpose = PackageSelectionPurpose::Benchmark;
     auto environment      = ResolvedProcessEnvironment::resolve(request.build.environment);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
+    }
     auto built = build_with_environment(request.build, *environment);
-    if (built.is_err()) return Err(rstd::move(built).unwrap_err());
+    if (built.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(built).unwrap_err()));
+    }
     auto summary  = rstd::move(built).unwrap();
     auto selected = selected_artifacts(summary, ArtifactKind::BenchmarkExecutable);
 

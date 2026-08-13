@@ -23,7 +23,7 @@ using Table = rstd::toml::Table;
 namespace lito
 {
 
-auto parse_visibility(ref<str> value, ref<str> context) -> Result<DependencyVisibility> {
+auto parse_visibility(ref<str> value, ref<str> context) -> ManifestSchemaResult<DependencyVisibility> {
     if (value == "public"_str) return Ok(DependencyVisibility::Public);
     if (value == "private"_str) return Ok(DependencyVisibility::Private);
     if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
@@ -32,7 +32,7 @@ auto parse_visibility(ref<str> value, ref<str> context) -> Result<DependencyVisi
 }
 
 auto parse_pkg_config_version(ref<str> value, ref<str> context)
-    -> Result<PkgConfigVersionRequirement> {
+    -> ManifestSchemaResult<PkgConfigVersionRequirement> {
     auto text       = value.trim_ascii();
     auto comparison = PkgConfigVersionOperator::Equal;
     auto prefix     = usize {};
@@ -121,7 +121,7 @@ auto cmake_cache_key_is_valid(ref<str> value) -> bool {
     return true;
 }
 
-auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<CMakeCacheEntry>> {
+auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> ManifestSchemaResult<Vec<CMakeCacheEntry>> {
     auto result = Vec<CMakeCacheEntry>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, context);
@@ -154,7 +154,7 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<
     return Ok(rstd::move(result));
 }
 
-auto parse_git_reference(const Toml& specification, ref<str> context) -> Result<GitReference> {
+auto parse_git_reference(const Toml& specification, ref<str> context) -> ManifestSchemaResult<GitReference> {
     auto branch = optional_string(specification, "branch"_str, context);
     auto tag    = optional_string(specification, "tag"_str, context);
     auto rev    = optional_string(specification, "rev"_str, context);
@@ -202,14 +202,14 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Result<
     return Ok(rstd::move(reference));
 }
 
-auto validate_git_url(ref<str> value, ref<str> context) -> Result<empty> {
+auto validate_git_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
     if (value.is_empty() || value.starts_with("-"_str) || value.contains("#"_str)) {
         return failure<empty>(rstd::format("{}.git is not a valid Git source URL", context));
     }
     return Ok(empty {});
 }
 
-auto validate_archive_url(ref<str> value, ref<str> context) -> Result<empty> {
+auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
     if (value.is_empty() || value.starts_with("-"_str) || value.contains("#"_str) ||
         value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
         value.contains("\n"_str) || value.contains("\r"_str)) {
@@ -231,7 +231,7 @@ auto sha256_is_valid(ref<str> value) -> bool {
 }
 
 auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
-    -> Result<Option<Vec<CMakeArchiveVariant>>> {
+    -> ManifestSchemaResult<Option<Vec<CMakeArchiveVariant>>> {
     if (value.is_none()) return Ok(Option<Vec<CMakeArchiveVariant>> {});
     auto variant_context = rstd::format("{}.archives", context);
     auto table           = table_value(**value, variant_context.as_str());
@@ -284,7 +284,7 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
     return Ok(Some(rstd::move(variants)));
 }
 
-auto workspace_reference_enabled(const Toml& specification, ref<str> context) -> Result<bool> {
+auto workspace_reference_enabled(const Toml& specification, ref<str> context) -> ManifestSchemaResult<bool> {
     auto value = member(specification, "workspace"_str);
     if (value.is_none()) return Ok(false);
     auto enabled = (**value).as_bool();
@@ -295,7 +295,7 @@ auto workspace_reference_enabled(const Toml& specification, ref<str> context) ->
 }
 
 auto parse_package_dependency_source(const Toml& specification, ref<str> context)
-    -> Result<PackageSourceRequirement> {
+    -> ManifestSchemaResult<PackageSourceRequirement> {
     auto path = optional_string(specification, "path"_str, context);
     auto git  = optional_string(specification, "git"_str, context);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -328,7 +328,7 @@ struct ParsedDependencies {
 };
 
 auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
-    -> Result<ParsedDependencies> {
+    -> ManifestSchemaResult<ParsedDependencies> {
     auto result = ParsedDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     const auto table_context =
@@ -395,7 +395,7 @@ auto contains_dependency(const ParsedDependencies& dependencies, ref<str> name) 
 }
 
 auto parse_workspace_dependencies(Option<ref<Toml>> value)
-    -> Result<Vec<WorkspaceDependencyDefinition>> {
+    -> ManifestSchemaResult<Vec<WorkspaceDependencyDefinition>> {
     auto result = Vec<WorkspaceDependencyDefinition>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "workspace.dependencies"_str);
@@ -430,7 +430,7 @@ struct ParsedExternalDependencies {
 };
 
 auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
-    -> Result<PkgConfigDependencyRequirement> {
+    -> ManifestSchemaResult<PkgConfigDependencyRequirement> {
     auto module  = required_string(specification, "module"_str, context);
     auto version = optional_string(specification, "version"_str, context);
     if (module.is_err()) return Err(rstd::move(module).unwrap_err());
@@ -469,7 +469,7 @@ struct ParsedPkgConfigExternalDependencies {
 };
 
 auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
-    -> Result<ParsedPkgConfigExternalDependencies> {
+    -> ManifestSchemaResult<ParsedPkgConfigExternalDependencies> {
     auto result = ParsedPkgConfigExternalDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "external-dependencies.pkg-config"_str);
@@ -516,7 +516,7 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
 }
 
 auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
-    -> Result<Vec<WorkspacePkgConfigExternalDependencyDefinition>> {
+    -> ManifestSchemaResult<Vec<WorkspacePkgConfigExternalDependencyDefinition>> {
     auto result = Vec<WorkspacePkgConfigExternalDependencyDefinition>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "workspace.external-dependencies.pkg-config"_str);
@@ -545,7 +545,7 @@ auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
 }
 
 auto parse_cmake_targets(const Toml& specification, ref<str> context)
-    -> Result<Vec<CMakeTargetRequirement>> {
+    -> ManifestSchemaResult<Vec<CMakeTargetRequirement>> {
     auto value = member(specification, "targets"_str);
     if (value.is_none()) {
         return failure<Vec<CMakeTargetRequirement>>(
@@ -589,7 +589,7 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
 auto parse_cmake_external_dependency_definition(const Toml& specification,
                                                 String      alias,
                                                 ref<str>    context)
-    -> Result<WorkspaceCMakeExternalDependencyDefinition> {
+    -> ManifestSchemaResult<WorkspaceCMakeExternalDependencyDefinition> {
     auto package     = required_string(specification, "find-package"_str, context);
     auto path        = optional_string(specification, "path"_str, context);
     auto git         = optional_string(specification, "git"_str, context);
@@ -724,7 +724,7 @@ struct ParsedCMakeExternalDependencies {
 };
 
 auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
-    -> Result<ParsedCMakeExternalDependencies> {
+    -> ManifestSchemaResult<ParsedCMakeExternalDependencies> {
     auto result = ParsedCMakeExternalDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "external-dependencies.cmake"_str);
@@ -773,7 +773,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
 }
 
 auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
-    -> Result<Vec<WorkspaceCMakeExternalDependencyDefinition>> {
+    -> ManifestSchemaResult<Vec<WorkspaceCMakeExternalDependencyDefinition>> {
     auto result = Vec<WorkspaceCMakeExternalDependencyDefinition>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "workspace.external-dependencies.cmake"_str);
@@ -798,7 +798,7 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
     return Ok(rstd::move(result));
 }
 
-auto parse_external_dependencies(Option<ref<Toml>> value) -> Result<ParsedExternalDependencies> {
+auto parse_external_dependencies(Option<ref<Toml>> value) -> ManifestSchemaResult<ParsedExternalDependencies> {
     auto result = ParsedExternalDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "manifest.external-dependencies"_str);
@@ -824,7 +824,7 @@ struct ParsedWorkspaceExternalDependencies {
 };
 
 auto parse_workspace_external_dependencies(Option<ref<Toml>> value)
-    -> Result<ParsedWorkspaceExternalDependencies> {
+    -> ManifestSchemaResult<ParsedWorkspaceExternalDependencies> {
     auto result = ParsedWorkspaceExternalDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "workspace.external-dependencies"_str);

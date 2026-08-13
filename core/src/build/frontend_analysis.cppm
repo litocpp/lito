@@ -6,6 +6,7 @@ import lito.package.identity;
 import lito.package.target_contract;
 import lito.build.plan_contract;
 import lito.build.contract;
+import lito.build.error_contract;
 import lito.toolchain.contract;
 import lito.frontend;
 import lito.toolchain;
@@ -21,7 +22,7 @@ export namespace lito
 {
 
 struct FrontendAnalysisTaskOutcome {
-    Result<frontend::FrontendAnalysis> analysis;
+    BuildResult<frontend::FrontendAnalysis> analysis;
     frontend::FrontendStatistics       statistics;
     ScanTaskProfile                    profile;
 };
@@ -53,29 +54,35 @@ public:
     FrontendAnalysisTask(FrontendAnalysisTask&&) noexcept                    = default;
     auto operator=(FrontendAnalysisTask&&) noexcept -> FrontendAnalysisTask& = default;
 
-    auto run() && -> Result<FrontendAnalysisTaskOutcome> {
+    auto run() && -> BuildResult<FrontendAnalysisTaskOutcome> {
         auto created_profiler = ScanTaskProfiler::create(rstd::move(profile_));
         if (created_profiler.is_err()) {
-            return Err(Error::make(ErrorKind::Artifact,
-                                   rstd::move(created_profiler).unwrap_err_unchecked()));
+            return Err(BuildError::Message(rstd::move(created_profiler).unwrap_err_unchecked()));
         }
         auto profiler = rstd::move(created_profiler).unwrap_unchecked();
         auto observer = FrontendTaskProfileObserver::make(profiler);
         auto frontend_service =
             frontend::FrontendService::with_store(source_store_, Some(observer.observer()));
-        auto analysis = [&]() -> Result<frontend::FrontendAnalysis> {
+        auto analysis = [&]() -> BuildResult<frontend::FrontendAnalysis> {
             auto cached = cache_.lookup();
-            if (cached.is_err()) return Err(rstd::move(cached).unwrap_err());
+            if (cached.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(cached).unwrap_err()));
+            }
             if (cached->hit.is_some()) return Ok(rstd::move(cached->hit).unwrap());
             auto analyzed = toolchain_->preprocess_with_environment(
                 source_.as_path(), environment_, frontend_service, profiler);
-            if (analyzed.is_err()) return Err(rstd::move(analyzed).unwrap_err());
-            return cache_.publish(rstd::move(analyzed).unwrap());
+            if (analyzed.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(analyzed).unwrap_err()));
+            }
+            auto published = cache_.publish(rstd::move(analyzed).unwrap());
+            if (published.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(published).unwrap_err()));
+            }
+            return Ok(rstd::move(published).unwrap());
         }();
         auto finished = profiler.finish();
         if (finished.is_err()) {
-            return Err(
-                Error::make(ErrorKind::Artifact, rstd::move(finished).unwrap_err_unchecked()));
+            return Err(BuildError::Message(rstd::move(finished).unwrap_err_unchecked()));
         }
         return Ok(FrontendAnalysisTaskOutcome {
             .analysis   = rstd::move(analysis),
@@ -102,16 +109,19 @@ public:
                  ref<rstd::path::Path>  source,
                  const CompileContext&  context,
                  ref<rstd::path::Path>  working_directory,
-                 ScanSourceOrigin       origin) -> Result<FrontendAnalysisTask> {
+                 ScanSourceOrigin       origin) -> BuildResult<FrontendAnalysisTask> {
         auto record = layout_.cache_scan(target, relative_source);
-        if (record.is_err()) return Err(rstd::move(record).unwrap_err());
+        if (record.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
+        }
         auto environment = toolchain_.prepare_scan_environment(context, working_directory);
-        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        if (environment.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
+        }
         auto target_identity = package_target_id_text(target);
         auto profile         = profiler_.task(target_identity.as_str(), source, origin);
         if (profile.is_err()) {
-            return Err(
-                Error::make(ErrorKind::Artifact, rstd::move(profile).unwrap_err_unchecked()));
+            return Err(BuildError::Message(rstd::move(profile).unwrap_err_unchecked()));
         }
         auto input = ScanCacheInput {
             .record                   = rstd::move(record).unwrap(),
@@ -130,12 +140,11 @@ public:
                                        rstd::move(profile).unwrap_unchecked()));
     }
 
-    auto commit(FrontendAnalysisTaskOutcome outcome) -> Result<frontend::FrontendAnalysis> {
+    auto commit(FrontendAnalysisTaskOutcome outcome) -> BuildResult<frontend::FrontendAnalysis> {
         statistics_.add(outcome.statistics);
         auto ingested = profiler_.ingest(rstd::move(outcome.profile));
         if (ingested.is_err()) {
-            return Err(
-                Error::make(ErrorKind::Artifact, rstd::move(ingested).unwrap_err_unchecked()));
+            return Err(BuildError::Message(rstd::move(ingested).unwrap_err_unchecked()));
         }
         return rstd::move(outcome.analysis);
     }
@@ -144,7 +153,8 @@ public:
                  ref<rstd::path::Path>  relative_source,
                  ref<rstd::path::Path>  source,
                  const CompileContext&  context,
-                 ref<rstd::path::Path>  working_directory) -> Result<frontend::FrontendAnalysis> {
+                 ref<rstd::path::Path>  working_directory)
+        -> BuildResult<frontend::FrontendAnalysis> {
         auto task = prepare(target,
                             relative_source,
                             source,

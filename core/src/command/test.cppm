@@ -2,6 +2,7 @@ export module lito.command.test;
 
 import rstd;
 import lito.error;
+import lito.command.error_contract;
 import lito.build.contract;
 import lito.workspace.contract;
 import lito.package.identity;
@@ -75,12 +76,16 @@ struct TestSummary {
     }
 };
 
-auto test(TestRequest request) -> Result<TestSummary> {
+auto test(TestRequest request) -> CommandResult<TestSummary> {
     request.build.purpose = PackageSelectionPurpose::Test;
     auto environment      = ResolvedProcessEnvironment::resolve(request.build.environment);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
+    }
     auto built = build_with_environment(request.build, *environment);
-    if (built.is_err()) return Err(rstd::move(built).unwrap_err());
+    if (built.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(built).unwrap_err()));
+    }
     auto summary = rstd::move(built).unwrap();
 
     auto selected = selected_artifacts(summary, ArtifactKind::TestExecutable);

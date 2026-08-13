@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.command.reporting;
 
 import rstd;
@@ -10,6 +13,59 @@ import lito.frontend.preprocessor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+
+export namespace lito::timing_output
+{
+
+class OutputError {
+    RSTD_ENUM(OutputError,
+              (InvalidPath, (PathBuf path;)),
+              (Io,
+               (String operation; PathBuf path; rstd::io::error::Error source;)))
+};
+
+template<typename T>
+using OutputResult = rstd::Result<T, OutputError>;
+
+} // namespace lito::timing_output
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::timing_output::OutputError>
+    : ImplBase<lito::timing_output::OutputError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        const auto& error = this->self();
+        if (error.is_InvalidPath()) {
+            return formatter.write_fmt(fmt::Arguments::make(
+                "timing report path '{}' has no parent", error.as_InvalidPath().path.as_path()));
+        }
+        const auto& value = error.as_Io();
+        return formatter.write_fmt(
+            fmt::Arguments::make("cannot {} '{}'", value.operation, value.path.as_path()));
+    }
+};
+
+template<>
+struct Impl<fmt::Debug, lito::timing_output::OutputError>
+    : ImplBase<lito::timing_output::OutputError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::timing_output::OutputError>
+    : ImplBase<lito::timing_output::OutputError> {
+    auto source() const noexcept -> Option<error::ErrorRef> {
+        const auto& error = this->self();
+        if (! error.is_Io()) return None();
+        return Some(dyn<error::Error>::from_ref(error.as_Io().source));
+    }
+};
+
+} // namespace rstd
 
 namespace lito::timing_output
 {
@@ -340,22 +396,23 @@ void print_summary(const BuildSummary& summary) {
 }
 
 auto write_details(ref<rstd::path::Path> path, const BuildSummary& summary)
-    -> rstd::Result<empty, String> {
+    -> OutputResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
-        return Err(rstd::format("timing report path '{}' has no parent", path));
+        return Err(OutputError::InvalidPath(PathBuf::from(path)));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return Err(rstd::format("cannot create timing report directory '{}': {}",
-                                *parent,
-                                rstd::move(created).unwrap_err()));
+        return Err(OutputError::Io(String::make("create timing report directory"_str),
+                                   PathBuf::from(*parent),
+                                   rstd::move(created).unwrap_err()));
     }
     auto report  = detailed_report(summary);
     auto written = rstd::fs::write_atomic(path, report.as_str().as_bytes());
     if (written.is_err()) {
-        return Err(rstd::format(
-            "cannot write timing report '{}': {}", path, rstd::move(written).unwrap_err()));
+        return Err(OutputError::Io(String::make("write timing report"_str),
+                                   PathBuf::from(path),
+                                   rstd::move(written).unwrap_err()));
     }
     return Ok(empty {});
 }
@@ -371,7 +428,7 @@ struct OutputOptions {
 };
 
 auto emit(const BuildSummary& summary, const OutputOptions& options)
-    -> rstd::Result<empty, String> {
+    -> OutputResult<empty> {
     if (options.standard_output) print_summary(summary);
     if (options.file.is_some()) return write_details(options.file->as_path(), summary);
     return Ok(empty {});

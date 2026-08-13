@@ -14,6 +14,7 @@ import lito.frontend;
 import lito.build.profiling;
 import lito.build.scan_executor;
 import lito.package;
+import lito.build.error_contract;
 import lito.cpp.source;
 
 using namespace rstd::prelude;
@@ -25,11 +26,19 @@ namespace lito
 {
 
 template<typename T>
-auto discovery_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto discovery_failure(String message) -> SourceDiscoveryResult<T> {
+    return Err(SourceDiscoveryError::Message(rstd::move(message)));
 }
 
-auto path_text(ref<rstd::path::Path> path) -> Result<String> {
+template<typename T>
+auto discovery_io_failure(ref<str> operation,
+                          ref<rstd::path::Path> path,
+                          rstd::io::error::Error source) -> SourceDiscoveryResult<T> {
+    return Err(SourceDiscoveryError::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(source)));
+}
+
+auto path_text(ref<rstd::path::Path> path) -> SourceDiscoveryResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return discovery_failure<String>(rstd::format("source path '{}' is not valid UTF-8", path));
@@ -43,14 +52,12 @@ struct SourceEntry {
 };
 
 auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path> declared)
-    -> Result<ResolvedSource> {
+    -> SourceDiscoveryResult<ResolvedSource> {
     auto requested = PathBuf::from(source_root).join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
-        return discovery_failure<ResolvedSource>(
-            rstd::format("cannot resolve declared source '{}': {}",
-                         declared,
-                         rstd::move(canonical).unwrap_err()));
+        return discovery_io_failure<ResolvedSource>(
+            "resolve declared"_str, requested.as_path(), rstd::move(canonical).unwrap_err());
     }
     auto resolved = rstd::move(canonical).unwrap();
     auto relative = resolved.as_path().strip_prefix(source_root);
@@ -62,10 +69,8 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
-        return discovery_failure<ResolvedSource>(
-            rstd::format("cannot inspect declared source '{}': {}",
-                         declared,
-                         rstd::move(metadata).unwrap_err()));
+        return discovery_io_failure<ResolvedSource>(
+            "inspect declared"_str, resolved.as_path(), rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_file()) {
         return discovery_failure<ResolvedSource>(
@@ -84,28 +89,25 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::
 
 auto collect_format_directory(ref<rstd::path::Path> source_root,
                               ref<rstd::path::Path> directory,
-                              Vec<SourceEntry>&     entries) -> Result<empty> {
+                              Vec<SourceEntry>&     entries) -> SourceDiscoveryResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return discovery_failure<empty>(rstd::format("cannot enumerate source directory '{}': {}",
-                                                     directory,
-                                                     rstd::move(opened).unwrap_err()));
+        return discovery_io_failure<empty>(
+            "enumerate"_str, directory, rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto next = stream.next(); next.is_some(); next = stream.next()) {
         auto item = rstd::move(next).unwrap();
         if (item.is_err()) {
-            return discovery_failure<empty>(
-                rstd::format("cannot enumerate source directory '{}': {}",
-                             directory,
-                             rstd::move(item).unwrap_err()));
+            return discovery_io_failure<empty>(
+                "enumerate"_str, directory, rstd::move(item).unwrap_err());
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return discovery_failure<empty>(rstd::format("cannot inspect source entry '{}': {}",
-                                                         entry.path().as_path(),
-                                                         rstd::move(type).unwrap_err()));
+            auto path = entry.path();
+            return discovery_io_failure<empty>(
+                "inspect entry"_str, path.as_path(), rstd::move(type).unwrap_err());
         }
         auto path = entry.path();
         if (type->is_dir()) {
@@ -116,9 +118,8 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
         if (! type->is_file() || ! supported_cpp_source(path.as_path())) continue;
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return discovery_failure<empty>(rstd::format("cannot resolve source candidate '{}': {}",
-                                                         path.as_path(),
-                                                         rstd::move(canonical).unwrap_err()));
+            return discovery_io_failure<empty>(
+                "resolve candidate"_str, path.as_path(), rstd::move(canonical).unwrap_err());
         }
         auto resolved = rstd::move(canonical).unwrap();
         auto relative = resolved.as_path().strip_prefix(source_root);
@@ -141,7 +142,7 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
     return Ok(empty {});
 }
 
-auto sort_sources(Vec<ResolvedSource> sources) -> Result<Vec<ResolvedSource>> {
+auto sort_sources(Vec<ResolvedSource> sources) -> SourceDiscoveryResult<Vec<ResolvedSource>> {
     auto entries = Vec<SourceEntry>::with_capacity(sources.len());
     for (auto& source : sources) {
         auto key = path_text(source.relative_path.as_path());
@@ -167,7 +168,7 @@ struct DiscoveryCandidate {
     bool           expand_imports { true };
 };
 
-auto source_key(ref<rstd::path::Path> path) -> Result<String> {
+auto source_key(ref<rstd::path::Path> path) -> SourceDiscoveryResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return discovery_failure<String>(
@@ -182,7 +183,7 @@ auto enqueue_candidate(TargetId                 target,
                        StringMap&               path_names,
                        StringMap&               name_paths,
                        StringSet&               queued,
-                       Vec<DiscoveryCandidate>& queue) -> Result<empty> {
+                       Vec<DiscoveryCandidate>& queue) -> SourceDiscoveryResult<empty> {
     auto path_result = source_key(source.canonical_path.as_path());
     if (path_result.is_err()) return Err(rstd::move(path_result).unwrap_err());
     auto path = rstd::move(path_result).unwrap();
@@ -221,7 +222,7 @@ auto enqueue_candidate(TargetId                 target,
 auto import_owner(const PackageMetadata&     package,
                   const SourceDiscoveryPlan& plan,
                   TargetId                   importer,
-                  ref<str>                   logical_name) -> Result<Option<TargetId>> {
+                  ref<str>                   logical_name) -> SourceDiscoveryResult<Option<TargetId>> {
     auto owner        = Option<TargetId> {};
     auto owner_length = usize {};
     for (auto visible : plan.visible_targets[importer]) {
@@ -250,10 +251,10 @@ namespace lito
 
 static auto discover_explicit_sources_impl(ref<rstd::path::Path>       source_root,
                                            const TargetSourceManifest& source_manifest)
-    -> Result<ResolvedSourceSet> {
+    -> SourceDiscoveryResult<ResolvedSourceSet> {
     auto       seen    = StringSet::make();
     auto       entries = Vec<SourceEntry>::make();
-    const auto append  = [&](const PathBuf& declared) -> Result<empty> {
+    const auto append  = [&](const PathBuf& declared) -> SourceDiscoveryResult<empty> {
         auto resolved = resolve_declared_source(source_root, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
@@ -292,11 +293,11 @@ static auto discover_explicit_sources_impl(ref<rstd::path::Path>       source_ro
 export namespace lito
 {
 
-auto discover_explicit_sources(const ResolvedTarget& target) -> Result<ResolvedSourceSet> {
+auto discover_explicit_sources(const ResolvedTarget& target) -> SourceDiscoveryResult<ResolvedSourceSet> {
     return discover_explicit_sources_impl(target.source_root.as_path(), target.source);
 }
 
-auto discover_format_sources(const PackageManifest& manifest) -> Result<ResolvedSourceSet> {
+auto discover_format_sources(const PackageManifest& manifest) -> SourceDiscoveryResult<ResolvedSourceSet> {
     auto entries          = Vec<SourceEntry>::make();
     auto module_discovery = false;
     for (const auto& target : manifest.targets) {
@@ -313,7 +314,7 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
     }
     auto seen = StringSet::make();
     for (const auto& entry : entries) seen.insert(entry.key.clone(), empty {});
-    const auto append = [&](const PathBuf& declared) -> Result<empty> {
+    const auto append = [&](const PathBuf& declared) -> SourceDiscoveryResult<empty> {
         auto resolved = resolve_declared_source(manifest.source_root.as_path(), declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         auto source = rstd::move(resolved).unwrap();
@@ -367,7 +368,7 @@ auto discover_format_sources(const PackageManifest& manifest) -> Result<Resolved
 
 auto resolve_source_target(const PackageMetadata&     package,
                            const SourceDiscoveryPlan& discovery,
-                           ref<rstd::path::Path>      source) -> Result<TargetId> {
+                           ref<rstd::path::Path>      source) -> SourceDiscoveryResult<TargetId> {
     auto exact = Option<TargetId> {};
     for (auto target : discovery.target_order) {
         const auto& resolved_target = package.targets[target];
@@ -425,7 +426,7 @@ auto discover_sources(const PackageMetadata&       package,
                       FrontendAnalysisService&     analysis_service,
                       const Option<BuildObserver>& observer,
                       usize                        jobs,
-                      usize max_in_flight) -> Result<Vec<ResolvedTargetSources>> {
+                      usize max_in_flight) -> BuildResult<Vec<ResolvedTargetSources>> {
     auto discovered = Vec<Vec<ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
         discovered.emplace_back();
@@ -439,32 +440,46 @@ auto discover_sources(const PackageMetadata&       package,
         const auto& resolved_target = package.targets[target];
         if (resolved_target.source.discovery == SourceDiscoveryMode::Explicit) {
             auto explicit_sources = discover_explicit_sources(resolved_target);
-            if (explicit_sources.is_err()) return Err(rstd::move(explicit_sources).unwrap_err());
+            if (explicit_sources.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(explicit_sources).unwrap_err()));
+            }
             auto sources = rstd::move(explicit_sources).unwrap().sources;
             for (auto& source : sources) {
                 auto enqueued = enqueue_candidate(
                     target, rstd::move(source), false, path_names, name_paths, queued, queue);
-                if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+                if (enqueued.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                }
             }
             continue;
         }
         auto entry = module_entry_source(resolved_target);
-        if (entry.is_err()) return Err(rstd::move(entry).unwrap_err());
+        if (entry.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(entry).unwrap_err()));
+        }
         auto enqueued = enqueue_candidate(
             target, rstd::move(entry).unwrap(), true, path_names, name_paths, queued, queue);
-        if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+        if (enqueued.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+        }
         for (const auto& declared : resolved_target.source.declared_sources) {
             auto resolved =
                 resolve_declared_source(resolved_target.source_root.as_path(), declared.as_path());
-            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            if (resolved.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+            }
             enqueued = enqueue_candidate(
                 target, rstd::move(resolved).unwrap(), true, path_names, name_paths, queued, queue);
-            if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+            if (enqueued.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+            }
         }
     }
 
     auto executor = FrontendScanExecution::create(jobs, max_in_flight);
-    if (executor.is_err()) return Err(rstd::move(executor).unwrap_err());
+    if (executor.is_err()) {
+        return Err(rstd::move(executor).unwrap_err());
+    }
     auto scan_executor = rstd::move(executor).unwrap();
     while (! queue.is_empty()) {
         rstd::slice_::sort_unstable_by(
@@ -494,14 +509,15 @@ auto discover_sources(const PackageMetadata&       package,
                     }
                 }
                 if (selected == nullptr) {
-                    return discovery_failure<Vec<ResolvedTargetSources>>(
+                    auto failed = discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("compile-test package '{}' has no case for source '{}'",
                                      target.id.package.as_str(),
                                      candidate.source.relative_path.as_path()));
+                    return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
                 auto resolved_context = compile_test_context(*context, *selected);
                 if (resolved_context.is_err()) {
-                    return Err(rstd::move(resolved_context).unwrap_err());
+                    return Err(rstd::into<BuildError>(rstd::move(resolved_context).unwrap_err()));
                 }
                 compile_test_context_value = Some(rstd::move(resolved_context).unwrap());
                 context                    = rstd::addressof(*compile_test_context_value);
@@ -512,11 +528,13 @@ auto discover_sources(const PackageMetadata&       package,
                                                  *context,
                                                  target.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
-            if (task.is_err()) return Err(rstd::move(task).unwrap_err());
+            if (task.is_err()) {
+                return Err(rstd::move(task).unwrap_err());
+            }
             prepared.push(Some(rstd::move(task).unwrap()));
         }
         auto outcomes =
-            Vec<Option<Result<FrontendAnalysisTaskOutcome>>>::with_capacity(queue.len());
+            Vec<Option<BuildResult<FrontendAnalysisTaskOutcome>>>::with_capacity(queue.len());
         for (auto index = usize {}; index < queue.len(); ++index) outcomes.push(None());
         auto submitted = usize {};
         auto completed = usize {};
@@ -553,7 +571,9 @@ auto discover_sources(const PackageMetadata&       package,
                 return Err(rstd::move(task_outcome).unwrap_err());
             }
             auto facts = analysis_service.commit(rstd::move(task_outcome).unwrap());
-            if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
+            if (facts.is_err()) {
+                return Err(rstd::move(facts).unwrap_err());
+            }
             auto frontend_analysis = rstd::move(facts).unwrap();
             auto target_identity   = package_target_id_text(target.id);
             if (observer.is_some() && observer->notify != nullptr) {
@@ -574,18 +594,20 @@ auto discover_sources(const PackageMetadata&       package,
                     auto actual = frontend_result.provided.is_some()
                                       ? frontend_result.provided->logical_name.as_str()
                                       : "<none>"_str;
-                    return discovery_failure<Vec<ResolvedTargetSources>>(
+                    auto failed = discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("module convention expected '{}' to provide '{}', but "
                                      "native preprocessing reported '{}'",
                                      candidate.source.canonical_path.as_path(),
                                      candidate.source.expected_module->as_str(),
                                      actual));
+                    return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
                 if (candidate.source.expected_module->as_str() == target.source.module->as_str() &&
                     ! frontend_result.provided->is_interface) {
-                    return discovery_failure<Vec<ResolvedTargetSources>>(
+                    auto failed = discovery_failure<Vec<ResolvedTargetSources>>(
                         rstd::format("primary module source '{}' is not an interface",
                                      candidate.source.canonical_path.as_path()));
+                    return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
             }
 
@@ -593,7 +615,9 @@ auto discover_sources(const PackageMetadata&       package,
                 for (const auto& imported : frontend_result.imports) {
                     auto owner = import_owner(
                         package, plan, candidate.target, imported.logical_name.as_str());
-                    if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
+                    if (owner.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(owner).unwrap_err()));
+                    }
                     if (owner->is_none()) continue;
                     if (package.targets[**owner].source.discovery ==
                         SourceDiscoveryMode::Explicit) {
@@ -601,7 +625,9 @@ auto discover_sources(const PackageMetadata&       package,
                     }
                     auto nested =
                         module_source(package.targets[**owner], imported.logical_name.as_str());
-                    if (nested.is_err()) return Err(rstd::move(nested).unwrap_err());
+                    if (nested.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(nested).unwrap_err()));
+                    }
                     auto enqueued = enqueue_candidate(**owner,
                                                       rstd::move(nested).unwrap(),
                                                       true,
@@ -609,10 +635,14 @@ auto discover_sources(const PackageMetadata&       package,
                                                       name_paths,
                                                       queued,
                                                       next);
-                    if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+                    if (enqueued.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                    }
                 }
                 auto companion = module_companion_source(target, candidate.source);
-                if (companion.is_err()) return Err(rstd::move(companion).unwrap_err());
+                if (companion.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(companion).unwrap_err()));
+                }
                 if (companion->is_some()) {
                     auto enqueued = enqueue_candidate(candidate.target,
                                                       rstd::move(companion).unwrap().unwrap(),
@@ -621,7 +651,9 @@ auto discover_sources(const PackageMetadata&       package,
                                                       name_paths,
                                                       queued,
                                                       next);
-                    if (enqueued.is_err()) return Err(rstd::move(enqueued).unwrap_err());
+                    if (enqueued.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                    }
                 }
             }
             candidate.source.frontend_analysis = Some(rstd::move(frontend_analysis));
@@ -635,7 +667,9 @@ auto discover_sources(const PackageMetadata&       package,
     auto result = Vec<ResolvedTargetSources>::with_capacity(plan.target_order.len());
     for (auto target : plan.target_order) {
         auto sorted = sort_sources(rstd::move(discovered[target]));
-        if (sorted.is_err()) return Err(rstd::move(sorted).unwrap_err());
+        if (sorted.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(sorted).unwrap_err()));
+        }
         result.push(ResolvedTargetSources {
             .target  = package.targets[target].id.clone(),
             .sources = ResolvedSourceSet { .sources = rstd::move(sorted).unwrap() },
@@ -654,7 +688,7 @@ auto discover_package_sources(const PackageMetadata&       package,
                               FrontendAnalysisService&     analysis_service,
                               const Option<BuildObserver>& observer,
                               usize                        jobs,
-                              usize max_in_flight) -> Result<Vec<ResolvedTargetSources>> {
+                              usize max_in_flight) -> BuildResult<Vec<ResolvedTargetSources>> {
     return discover_sources(package, plan, analysis_service, observer, jobs, max_in_flight);
 }
 

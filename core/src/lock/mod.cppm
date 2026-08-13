@@ -22,13 +22,20 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Lock, rstd::move(message)));
+auto failure(String message) -> LockResult<T> {
+    return Err(LockError::Schema(rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Lock, message));
+auto failure(ref<str> message) -> LockResult<T> {
+    return Err(LockError::Schema(String::make(message)));
+}
+
+template<typename T>
+auto io_failure(ref<str> operation,
+                ref<rstd::path::Path> path,
+                rstd::io::error::Error source) -> LockResult<T> {
+    return Err(LockError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto lock_path(ref<rstd::path::Path> root, const LockConfig& config) -> PathBuf {
@@ -39,7 +46,7 @@ auto lock_path(ref<rstd::path::Path> root, const LockConfig& config) -> PathBuf 
     return PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
 }
 
-auto path_string(ref<rstd::path::Path> path) -> Result<String> {
+auto path_string(ref<rstd::path::Path> path) -> LockResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return failure<String>(rstd::format("lock source path '{}' is not valid UTF-8", path));
@@ -62,7 +69,7 @@ auto reference_kind(GitReferenceKind kind) -> ref<str> {
     return "default"_str;
 }
 
-auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
+auto graph_json(const ResolvedPackageGraph& graph) -> LockResult<Json> {
     auto sources = Array::make();
     for (const auto& source : graph.sources) {
         auto item = Map::make();
@@ -126,7 +133,7 @@ auto graph_json(const ResolvedPackageGraph& graph) -> Result<Json> {
     return Ok(Json::Object(rstd::move(root)));
 }
 
-auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed) -> Result<empty> {
+auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed) -> LockResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) {
         return failure<empty>(rstd::format("{} must be an object", context));
@@ -163,7 +170,7 @@ auto reference_key(ref<str> key) -> bool {
     return key == "kind"_str || key == "value"_str;
 }
 
-auto required_member(const Json& value, ref<str> key, ref<str> context) -> Result<ref<Json>> {
+auto required_member(const Json& value, ref<str> key, ref<str> context) -> LockResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
         return failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
@@ -171,7 +178,7 @@ auto required_member(const Json& value, ref<str> key, ref<str> context) -> Resul
     return Ok(*member);
 }
 
-auto required_string(const Json& value, ref<str> key, ref<str> context) -> Result<ref<str>> {
+auto required_string(const Json& value, ref<str> key, ref<str> context) -> LockResult<ref<str>> {
     auto member = required_member(value, key, context);
     if (member.is_err()) return Err(rstd::move(member).unwrap_err());
     auto text = (**member).as_str();
@@ -191,7 +198,7 @@ auto valid_source_manifest(ref<str> value) -> bool {
     return true;
 }
 
-auto validate_lock(const Json& document) -> Result<empty> {
+auto validate_lock(const Json& document) -> LockResult<empty> {
     auto known = reject_unknown(document, "lock root"_str, root_key);
     if (known.is_err()) return known;
     auto version        = required_member(document, "version"_str, "lock root"_str);
@@ -387,22 +394,19 @@ auto validate_lock(const Json& document) -> Result<empty> {
     return Ok(empty {});
 }
 
-auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
+auto load_existing(ref<rstd::path::Path> path) -> LockResult<Option<Json>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return failure<Option<Json>>(
-            rstd::format("cannot inspect lock '{}': {}", path, rstd::move(exists).unwrap_err()));
+        return io_failure<Option<Json>>("inspect"_str, path, rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(Option<Json> {});
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return failure<Option<Json>>(
-            rstd::format("cannot read lock '{}': {}", path, rstd::move(contents).unwrap_err()));
+        return io_failure<Option<Json>>("read"_str, path, rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return failure<Option<Json>>(
-            rstd::format("cannot parse lock '{}': {}", path, rstd::move(parsed).unwrap_err()));
+        return Err(LockError::Json(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     auto document = rstd::move(parsed).unwrap();
     auto valid    = validate_lock(document);
@@ -410,16 +414,15 @@ auto load_existing(ref<rstd::path::Path> path) -> Result<Option<Json>> {
     return Ok(Some(rstd::move(document)));
 }
 
-auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> Result<empty> {
+auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> LockResult<empty> {
     auto text = rstd::json::to_string(
         desired, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii(u8('\n'));
 
     auto written = rstd::fs::write_atomic(destination, text.as_str().as_bytes());
     if (written.is_err()) {
-        return failure<empty>(rstd::format("cannot atomically write lock '{}': {}",
-                                           destination,
-                                           rstd::move(written).unwrap_err()));
+        return io_failure<empty>(
+            "atomically write"_str, destination, rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
@@ -444,16 +447,16 @@ public:
     friend auto load_lock_session(ref<rstd::path::Path> root,
                                   const LockConfig&     config,
                                   bool                  locked,
-                                  GitResolutionMode     git) -> Result<LockSession>;
+                                  GitResolutionMode     git) -> LockResult<LockSession>;
     friend auto sync_lock(const ResolvedPackageGraph& graph, LockSession session)
-        -> Result<LockStatus>;
+        -> LockResult<LockStatus>;
 };
 
 auto load_lock_session(ref<rstd::path::Path> root,
                        const LockConfig&     config,
                        bool                  locked,
                        GitResolutionMode     git = GitResolutionMode::ReuseLocked)
-    -> Result<LockSession> {
+    -> LockResult<LockSession> {
     if (locked && git == GitResolutionMode::Refresh) {
         return failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
@@ -512,11 +515,11 @@ auto load_lock_session(ref<rstd::path::Path> root,
 auto load_lock_session(ref<rstd::path::Path> root,
                        bool                  locked,
                        GitResolutionMode     git = GitResolutionMode::ReuseLocked)
-    -> Result<LockSession> {
+    -> LockResult<LockSession> {
     return load_lock_session(root, LockConfig {}, locked, git);
 }
 
-auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> Result<LockStatus> {
+auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockResult<LockStatus> {
     auto desired_result = graph_json(graph);
     if (desired_result.is_err()) return Err(rstd::move(desired_result).unwrap_err());
     auto desired           = rstd::move(desired_result).unwrap();

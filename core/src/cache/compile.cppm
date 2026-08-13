@@ -54,20 +54,20 @@ class CompileCacheSession {
     PathBuf owner_root_;
     bool    force_refresh_ { false };
 
-    auto record_current(const PreparedUnit& unit, const Json& complete) const -> Result<bool> {
+    auto record_current(const PreparedUnit& unit, const Json& complete) const -> CacheResult<bool> {
         if (force_refresh_) return Ok(false);
         auto exists = rstd::fs::exists(unit.unit.cache_record.as_path());
         if (exists.is_err()) {
-            return cache_failure<bool>(rstd::format("cannot inspect cache record '{}': {}",
-                                                    unit.unit.cache_record.as_path(),
-                                                    rstd::move(exists).unwrap_err()));
+            return cache_io_failure<bool>("inspect compile record"_str,
+                                          unit.unit.cache_record.as_path(),
+                                          rstd::move(exists).unwrap_err());
         }
         if (! *exists) return Ok(false);
         auto contents = rstd::fs::read_to_string(unit.unit.cache_record.as_path());
         if (contents.is_err()) {
-            return cache_failure<bool>(rstd::format("cannot read cache record '{}': {}",
-                                                    unit.unit.cache_record.as_path(),
-                                                    rstd::move(contents).unwrap_err()));
+            return cache_io_failure<bool>("read compile record"_str,
+                                          unit.unit.cache_record.as_path(),
+                                          rstd::move(contents).unwrap_err());
         }
         auto parsed = rstd::json::from_str(contents->as_str());
         if (parsed.is_err()) return Ok(false);
@@ -113,7 +113,7 @@ public:
                   const PreparedUnit&            unit,
                   ref<str>                       scan_receipt,
                   const CompileInvocation&       invocation,
-                  const Vec<DependencyArtifact>& dependencies) -> Result<CacheDecision> {
+                  const Vec<DependencyArtifact>& dependencies) -> CacheResult<CacheDecision> {
         auto source   = path_string(unit.unit.source.as_path());
         auto relative = path_string(unit.unit.relative_source.as_path());
         auto object   = path_string(unit.unit.object.as_path());
@@ -217,13 +217,13 @@ public:
                                   rstd::move(stale_outputs) });
     }
 
-    auto begin_compile(const CacheDecision& decision) -> Result<empty> {
+    auto begin_compile(const CacheDecision& decision) -> CacheResult<empty> {
         return write_json(decision.record_.as_path(), decision.building_);
     }
 
     auto begin_compile_test(const CacheDecision&   decision,
                             ref<rstd::path::Path>  record,
-                            const CompileTestCase& test) -> Result<empty> {
+                            const CompileTestCase& test) -> CacheResult<empty> {
         auto root = JsonMap::make();
         root.insert(String::make("case"_str), cache_string(test.name.as_str()));
         root.insert(String::make("compile"_str), decision.complete_.clone());
@@ -237,7 +237,7 @@ public:
 
     auto record_compile_test(const CacheDecision&        decision,
                              ref<rstd::path::Path>       record,
-                             const CompileTestExecution& execution) -> Result<empty> {
+                             const CompileTestExecution& execution) -> CacheResult<empty> {
         auto mismatch = Json::Null();
         if (execution.mismatch.is_some()) {
             mismatch = cache_string(execution.mismatch->as_str());
@@ -269,7 +269,7 @@ public:
         return write_json(record, Json::Object(rstd::move(root)));
     }
 
-    auto commit_success(const PreparedUnit& unit, const CacheDecision& decision) -> Result<empty> {
+    auto commit_success(const PreparedUnit& unit, const CacheDecision& decision) -> CacheResult<empty> {
         auto object = output_exists(unit.unit.object.as_path());
         if (object.is_err()) return Err(rstd::move(object).unwrap_err());
         if (! *object) {
@@ -307,13 +307,13 @@ public:
 
     auto finish_target(const BuildLayout&     layout,
                        const PackageTargetId& target,
-                       const Vec<PathBuf>&    current_records) -> Result<empty> {
+                       const Vec<PathBuf>&    current_records) -> CacheResult<empty> {
         auto directory = layout.cache_target_directory(target);
         return finish_directory(directory.as_path(), current_records);
     }
 
     auto finish_directory(ref<rstd::path::Path> directory, const Vec<PathBuf>& current_records)
-        -> Result<empty> {
+        -> CacheResult<empty> {
         auto current = rstd::collections::BTreeMap<String, empty>::make();
         for (const auto& record : current_records) {
             auto path = path_string(record.as_path());

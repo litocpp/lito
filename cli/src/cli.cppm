@@ -22,7 +22,7 @@ public:
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
         auto profile = parse_build_profile(*text);
         if (profile.is_ok()) return Ok(rstd::move(profile).unwrap());
-        return Err(ValueError::Message(rstd::move(profile).unwrap_err().message));
+        return Err(ValueError::Message(rstd::format("{}", rstd::move(profile).unwrap_err())));
     }
 };
 
@@ -33,7 +33,7 @@ public:
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
         auto format = parse_scan_output_format(*text);
         if (format.is_ok()) return Ok(rstd::move(format).unwrap());
-        return Err(ValueError::Message(rstd::move(format).unwrap_err().message));
+        return Err(ValueError::Message(rstd::format("{}", rstd::move(format).unwrap_err())));
     }
 
     auto possible_values() const -> Vec<String> {

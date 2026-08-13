@@ -3,6 +3,7 @@ export module lito.lock.contract;
 import rstd;
 import lito.error;
 import lito.source.contract;
+export import lito.lock.error_contract;
 
 using namespace rstd::prelude;
 

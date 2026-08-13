@@ -207,7 +207,11 @@ TEST(Integration, InstallStoreTracksOwnershipAndProtectsConflicts) {
         .packages   = rstd::move(conflict_packages),
     });
     ASSERT_TRUE(conflict.is_err());
-    EXPECT_TRUE(conflict.unwrap_err().message.as_str().contains("not managed"_str));
+    auto conflict_error = rstd::move(conflict).unwrap_err();
+    ASSERT_TRUE(conflict_error.is_Cause());
+    ASSERT_TRUE(conflict_error.as_Cause().source.is_Message());
+    EXPECT_TRUE(conflict_error.as_Cause().source.as_Message().message.as_str().contains(
+        "not managed"_str));
 
     auto forced_binaries = Vec<lito::InstallBinary>::make();
     auto forced_source   = source_directory.join(PathBuf::from("unmanaged"_str).as_path());
@@ -332,7 +336,11 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
         .force      = true,
     });
     ASSERT_TRUE(conflict.is_err());
-    EXPECT_TRUE(conflict.unwrap_err().message.as_str().contains("more than one binary"_str));
+    auto conflict_error = rstd::move(conflict).unwrap_err();
+    ASSERT_TRUE(conflict_error.is_Cause());
+    ASSERT_TRUE(conflict_error.as_Cause().source.is_Message());
+    EXPECT_TRUE(conflict_error.as_Cause().source.as_Message().message.as_str().contains(
+        "more than one binary"_str));
     auto metadata_after = rstd::fs::read_to_string(installed->layout.metadata.as_path());
     ASSERT_TRUE(metadata_after.is_ok());
     EXPECT_EQ(metadata_after->as_str(), metadata_before->as_str());
@@ -423,8 +431,9 @@ TEST(Integration, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
         };
     };
 
-    auto created = rstd::thread::BlockingTaskGroup<lito::Result<lito::InstallStoreSummary>>::make(
-        usize(2), usize(2));
+    auto created =
+        rstd::thread::BlockingTaskGroup<lito::InstallStoreResult<lito::InstallStoreSummary>>::make(
+            usize(2), usize(2));
     ASSERT_TRUE(created.is_ok());
     auto group = rstd::move(created).unwrap();
     ASSERT_TRUE(group
@@ -485,7 +494,9 @@ TEST(Integration, InstallRequiresEveryExplicitPackageToMatchTheBinaryFilter) {
     request.binaries.push(String::make("tool"_str));
     auto result = lito::install(rstd::move(request));
     ASSERT_TRUE(result.is_err());
-    EXPECT_TRUE(result.unwrap_err().message.as_str().contains(
+    auto error = rstd::move(result).unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains(
         "package 'fixture-multi-consumer' has no selected installable binaries"_str));
     EXPECT_FALSE(rstd::fs::exists(install.as_path()).unwrap());
 
@@ -517,7 +528,11 @@ TEST(Integration, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     ambiguous_request.targets = strings("shared"_str);
     auto ambiguous            = lito::build(rstd::move(ambiguous_request));
     ASSERT_TRUE(ambiguous.is_err());
-    EXPECT_TRUE(ambiguous.unwrap_err().message.as_str().contains("ambiguous"_str));
+    auto ambiguous_error = rstd::move(ambiguous).unwrap_err();
+    ASSERT_TRUE(ambiguous_error.is_Package());
+    ASSERT_TRUE(ambiguous_error.as_Package().source.is_Message());
+    EXPECT_TRUE(ambiguous_error.as_Package().source.as_Message().message.as_str().contains(
+        "ambiguous"_str));
 
     auto typed_request =
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-target"_str));

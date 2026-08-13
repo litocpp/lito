@@ -42,17 +42,13 @@ auto CppArgumentSchema::add_typed(CppCompilerArgument        argument,
 }
 
 auto CppArgumentSchema::build() && -> CppOptionResult<CppArgumentParser> {
-    auto parser = rstd_try(rstd::move(schema_).build(), [](CompilerArgumentError error) {
-        return compiler_argument_error_message(error);
-    });
+    auto parser = rstd_try(rstd::move(schema_).build());
     return Ok(CppArgumentParser(rstd::move(parser), rstd::move(bindings_)));
 }
 
 auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) const
     -> CppOptionResult<CppArgumentLayer> {
-    auto parsed = rstd_try(parser_.parse(arguments), [](CompilerArgumentError error) {
-        return compiler_argument_error_message(error);
-    });
+    auto parsed = rstd_try(parser_.parse(arguments));
     auto result = CppArgumentLayer {};
     for (auto& matched : parsed) {
         auto binding = matched.definition.is_some()

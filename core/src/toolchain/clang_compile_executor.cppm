@@ -26,7 +26,7 @@ public:
     explicit ClangCompileExecutor(const ResolvedProcessEnvironment& environment)
         : environment_(rstd::addressof(environment)) {}
 
-    auto execute(const CompileInvocation& invocation) const -> Result<CompileCommandResult> {
+    auto execute(const CompileInvocation& invocation) const -> ToolchainResult<CompileCommandResult> {
         auto cleared = clear_staged_output(invocation.staged_object.as_path());
         if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
         if (invocation.staged_bmi.is_some()) {
@@ -35,7 +35,9 @@ public:
         }
         auto output = run_command(
             invocation.arguments, *environment_, Some(invocation.working_directory.as_path()));
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code == i32 {}) {
             auto verified = verify_staged_output(invocation.staged_object.as_path());

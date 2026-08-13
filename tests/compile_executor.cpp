@@ -24,7 +24,7 @@ struct CompileGate {
 };
 
 auto wait_for_release(rstd::sync::Arc<CompileGate> gate)
-    -> lito::Result<lito::CompileCommandResult> {
+    -> lito::ToolchainResult<lito::CompileCommandResult> {
     auto fields = gate->fields.lock().unwrap_unchecked();
     ++fields->started;
     gate->changed.notify_all();

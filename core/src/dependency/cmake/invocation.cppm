@@ -9,6 +9,7 @@ import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.cpp;
 import lito.system.process;
 import lito.system.environment;
@@ -24,8 +25,8 @@ auto run_cmake(Vec<String>                       arguments,
                ref<str>                          operation,
                const ResolvedProcessEnvironment& environment,
                Option<ref<rstd::path::Path>>     working_directory = None(),
-               bool                              stream_output     = true) -> Result<empty> {
-    auto output = [&]() -> Result<CommandOutput> {
+               bool                              stream_output     = true) -> DependencyResult<empty> {
+    auto output = [&]() -> SystemResult<CommandOutput> {
         if (! stream_output) return run_command(arguments, environment, working_directory);
         auto observer = rstd::process::OutputObserver {
             .notify =
@@ -37,9 +38,8 @@ auto run_cmake(Vec<String>                       arguments,
         return run_command_observed(arguments, environment, observer, working_directory);
     }();
     if (output.is_err()) {
-        return cmake_failure<empty>(rstd::format("{} could not execute: {}",
-                                                 operation,
-                                                 rstd::move(output).unwrap_err().message.as_str()));
+        return Err(DependencyError::Operation(
+            String::make(operation), rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
         auto diagnostics = output->standard_output.clone();
@@ -58,7 +58,7 @@ auto run_cmake(Vec<String>                       arguments,
 auto push_path_argument(Vec<String>&          arguments,
                         ref<str>              prefix,
                         ref<rstd::path::Path> path,
-                        ref<str>              context) -> Result<empty> {
+                        ref<str>              context) -> DependencyResult<empty> {
     auto text = path_text(path, context);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
     auto argument = String::make(prefix);
@@ -68,7 +68,7 @@ auto push_path_argument(Vec<String>&          arguments,
 }
 
 auto push_cmake_toolchain(Vec<String>& arguments, const BuildConfiguration& configuration)
-    -> Result<empty> {
+    -> DependencyResult<empty> {
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_COMPILER="_str,
                                 configuration.toolchain.c_compiler.as_path(),
@@ -92,7 +92,7 @@ auto push_cmake_toolchain(Vec<String>& arguments, const BuildConfiguration& conf
 }
 
 auto push_cmake_search_path(Vec<String>& arguments, const CMakeProviderConfig& provider)
-    -> Result<empty> {
+    -> DependencyResult<empty> {
     if (provider.search_paths.is_empty()) return Ok(empty {});
     auto value = String::make("-DCMAKE_PREFIX_PATH="_str);
     for (usize index {}; index < provider.search_paths.len(); ++index) {
@@ -130,20 +130,20 @@ auto source_install_receipt(const CMakeWorkArea& area) -> PathBuf {
     return area.root.join(PathBuf::from("install-receipt-v1"_str).as_path());
 }
 
-auto source_install_current(const CMakeWorkArea& area) -> Result<bool> {
+auto source_install_current(const CMakeWorkArea& area) -> DependencyResult<bool> {
     auto marker = source_install_receipt(area);
     auto ready  = rstd::fs::exists(marker.as_path());
     if (ready.is_err()) {
-        return cmake_failure<bool>(rstd::format("cannot inspect CMake install receipt '{}': {}",
-                                                marker.as_path(),
-                                                rstd::move(ready).unwrap_err()));
+        return cmake_io_failure<bool>(
+            "inspect CMake install receipt"_str, marker.as_path(), rstd::move(ready).unwrap_err());
     }
     if (! *ready) return Ok(false);
     auto contents = rstd::fs::read_to_string(marker.as_path());
     if (contents.is_err()) {
-        return cmake_failure<bool>(rstd::format("cannot read CMake install receipt '{}': {}",
-                                                marker.as_path(),
-                                                rstd::move(contents).unwrap_err()));
+        return cmake_io_failure<bool>(
+            "read CMake install receipt"_str,
+            marker.as_path(),
+            rstd::move(contents).unwrap_err());
     }
     if (contents->as_str() != "lito-cmake-install-receipt-v1\n"_str) {
         return cmake_failure<bool>(
@@ -157,7 +157,7 @@ auto configure_source(const ResolvedCMakeDependencyRequirement& requirement,
                       const BuildConfiguration&                 configuration,
                       const ProfileSpec&                        profile,
                       const CMakeWorkArea&                      area,
-                      const ResolvedProcessEnvironment&         environment) -> Result<empty> {
+                      const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -197,7 +197,7 @@ auto build_source(const ResolvedCMakeDependencyRequirement& requirement,
                   const ProfileSpec&                        profile,
                   const CMakeWorkArea&                      area,
                   usize                                     jobs,
-                  const ResolvedProcessEnvironment&         environment) -> Result<empty> {
+                  const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -223,7 +223,7 @@ auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
                     const ProfileSpec&                        profile,
                     const CMakeWorkArea&                      area,
                     bool                                      publish_receipt,
-                    const ResolvedProcessEnvironment&         environment) -> Result<empty> {
+                    const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -243,15 +243,16 @@ auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
     auto marked = rstd::fs::write_atomic(marker.as_path(),
                                          ("lito-cmake-install-receipt-v1\n"_str).as_bytes());
     if (marked.is_err()) {
-        return cmake_failure<empty>(rstd::format("cannot write CMake install receipt '{}': {}",
-                                                 marker.as_path(),
-                                                 rstd::move(marked).unwrap_err()));
+        return cmake_io_failure<empty>(
+            "write CMake install receipt"_str,
+            marker.as_path(),
+            rstd::move(marked).unwrap_err());
     }
     return Ok(empty {});
 }
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
-    -> Result<String> {
+    -> DependencyResult<String> {
     auto result = String::make("cmake_minimum_required(VERSION 3.29)\n"
                                "project(lito_cmake_probe LANGUAGES CXX)\n"
                                "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"_str);
@@ -324,7 +325,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
 }
 
 auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
-                       const CMakeWorkArea&                      area) -> Result<empty> {
+                       const CMakeWorkArea&                      area) -> DependencyResult<empty> {
     auto query =
         area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-lito"_str).as_path());
     auto directories = Vec<PathBuf>::make();
@@ -338,9 +339,10 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     for (const auto& directory : directories) {
         auto created = rstd::fs::create_dir_all(directory.as_path());
         if (created.is_err()) {
-            return cmake_failure<empty>(rstd::format("cannot create CMake directory '{}': {}",
-                                                     directory.as_path(),
-                                                     rstd::move(created).unwrap_err()));
+            return cmake_io_failure<empty>(
+                "create CMake directory"_str,
+                directory.as_path(),
+                rstd::move(created).unwrap_err());
         }
     }
     auto cmake_lists = area.query_source.join(PathBuf::from("CMakeLists.txt"_str).as_path());
@@ -350,21 +352,25 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     if (project.is_err()) return Err(rstd::move(project).unwrap_err());
     auto written = rstd::fs::write_atomic(cmake_lists.as_path(), project->as_str().as_bytes());
     if (written.is_err()) {
-        return cmake_failure<empty>(
-            rstd::format("cannot write CMake probe project: {}", rstd::move(written).unwrap_err()));
+        return cmake_io_failure<empty>(
+            "write CMake probe project"_str,
+            cmake_lists.as_path(),
+            rstd::move(written).unwrap_err());
     }
     written =
         rstd::fs::write_atomic(source.as_path(), ("int main() { return 0; }\n"_str).as_bytes());
     if (written.is_err()) {
-        return cmake_failure<empty>(
-            rstd::format("cannot write CMake probe source: {}", rstd::move(written).unwrap_err()));
+        return cmake_io_failure<empty>(
+            "write CMake probe source"_str, source.as_path(), rstd::move(written).unwrap_err());
     }
     written = rstd::fs::write_atomic(
         query_file.as_path(),
         ("{\"requests\":[{\"kind\":\"codemodel\",\"version\":2}]}\n"_str).as_bytes());
     if (written.is_err()) {
-        return cmake_failure<empty>(rstd::format("cannot write CMake File API query: {}",
-                                                 rstd::move(written).unwrap_err()));
+        return cmake_io_failure<empty>(
+            "write CMake File API query"_str,
+            query_file.as_path(),
+            rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
@@ -374,7 +380,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                      const BuildConfiguration&                 configuration,
                      const ProfileSpec&                        profile,
                      const CMakeWorkArea&                      area,
-                     const ResolvedProcessEnvironment&         environment) -> Result<empty> {
+                     const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -426,7 +432,7 @@ auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
                  const ProfileSpec&                profile,
                  const CMakeWorkArea&              area,
                  usize                             jobs,
-                 const ResolvedProcessEnvironment& environment) -> Result<empty> {
+                 const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());

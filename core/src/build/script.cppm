@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.build.script;
 
 import rstd;
@@ -9,6 +12,7 @@ import lito.build.plan_contract;
 import lito.package.target_contract;
 import lito.dependency.contract;
 import lito.build.layout;
+import lito.build.script_error_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -64,16 +68,24 @@ using ConfigureValues = rstd::collections::BTreeMap<String, ConfigureValue>;
 using Json            = rstd::json::Value;
 
 template<typename T>
-auto script_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Script, rstd::move(message)));
+auto script_failure(String message) -> BuildScriptResult<T> {
+    return Err(BuildScriptError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto script_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Script, message));
+auto script_failure(ref<str> message) -> BuildScriptResult<T> {
+    return Err(BuildScriptError::Message(String::make(message)));
 }
 
-auto normal_relative_path(String text, ref<str> context) -> Result<PathBuf> {
+template<typename T>
+auto script_io_failure(ref<str>                operation,
+                       ref<rstd::path::Path>   path,
+                       rstd::io::error::Error error) -> BuildScriptResult<T> {
+    return Err(BuildScriptError::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(error)));
+}
+
+auto normal_relative_path(String text, ref<str> context) -> BuildScriptResult<PathBuf> {
     auto path = PathBuf::from(rstd::move(text));
     if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) {
         return script_failure<PathBuf>(
@@ -117,7 +129,7 @@ void append_configure_value(String& output, const ConfigureValue& value) {
 }
 
 auto render_template(ref<str> input, const ConfigureValues& values, ref<rstd::path::Path> source)
-    -> Result<String> {
+    -> BuildScriptResult<String> {
     auto output        = String::make();
     auto used          = rstd::collections::BTreeMap<String, empty>::make();
     auto literal_begin = usize();
@@ -210,22 +222,22 @@ auto package_component_is_valid(ref<str> package) noexcept -> bool {
     return ! package.is_empty() && first.is_some() && first->is_normal() && parts.next().is_none();
 }
 
-auto load_receipt(ref<rstd::path::Path> path) -> Result<Vec<OwnedOutput>> {
+auto load_receipt(ref<rstd::path::Path> path) -> BuildScriptResult<Vec<OwnedOutput>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return script_failure<Vec<OwnedOutput>>(rstd::format(
-            "cannot inspect configure receipt '{}': {}", path, rstd::move(exists).unwrap_err()));
+        return script_io_failure<Vec<OwnedOutput>>(
+            "inspect configure receipt"_str, path, rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(Vec<OwnedOutput>::make());
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return script_failure<Vec<OwnedOutput>>(rstd::format(
-            "cannot read configure receipt '{}': {}", path, rstd::move(contents).unwrap_err()));
+        return script_io_failure<Vec<OwnedOutput>>(
+            "read configure receipt"_str, path, rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return script_failure<Vec<OwnedOutput>>(rstd::format(
-            "cannot parse configure receipt '{}': {}", path, rstd::move(parsed).unwrap_err()));
+        return Err(BuildScriptError::Json(PathBuf::from(path),
+                                          rstd::move(parsed).unwrap_err()));
     }
     auto document = rstd::move(parsed).unwrap();
     auto version  = document.get("version"_str);
@@ -301,7 +313,7 @@ class ConfigureSession {
 public:
     static auto create(const PackageMetadata& metadata,
                        const BuildLayout&     layout,
-                       const Vec<String>&     selected_packages) -> Result<ConfigureSession> {
+                       const Vec<String>& selected_packages) -> BuildScriptResult<ConfigureSession> {
         auto packages = Vec<ConfigurePackage>::make();
         for (const auto& name : selected_packages) {
             auto source_root = find_package_root(metadata, name.as_str());
@@ -309,14 +321,11 @@ public:
                 return script_failure<ConfigureSession>(rstd::format(
                     "selected build-script package '{}' has no package root", name.as_str()));
             }
-            auto generated = layout.create_generated_package_directory(name.as_str());
-            if (generated.is_err()) {
-                return script_failure<ConfigureSession>(rstd::move(generated).unwrap_err().message);
-            }
+            auto generated = rstd_try(layout.create_generated_package_directory(name.as_str()));
             packages.push(ConfigurePackage {
                 .name           = name.clone(),
                 .source_root    = PathBuf::from(*source_root),
-                .generated_root = rstd::move(generated).unwrap(),
+                .generated_root = rstd::move(generated),
             });
         }
         auto receipt  = layout.configure_receipt();
@@ -336,7 +345,7 @@ public:
     auto configure(ref<str>               package_name,
                    String                 input_text,
                    String                 output_text,
-                   const ConfigureValues& values) -> Result<ConfigureOutcome> {
+                   const ConfigureValues& values) -> BuildScriptResult<ConfigureOutcome> {
         const ConfigurePackage* owner = nullptr;
         for (const auto& package : packages_) {
             if (package.name == package_name) {
@@ -355,10 +364,10 @@ public:
         auto input_requested = owner->source_root.join(input_relative->as_path());
         auto input           = rstd::fs::canonicalize(input_requested.as_path());
         if (input.is_err()) {
-            return script_failure<ConfigureOutcome>(
-                rstd::format("cannot resolve configure_file input '{}': {}",
-                             input_requested.as_path(),
-                             rstd::move(input).unwrap_err()));
+            return script_io_failure<ConfigureOutcome>(
+                "resolve configure_file input"_str,
+                input_requested.as_path(),
+                rstd::move(input).unwrap_err());
         }
         if (input->as_path().strip_prefix(owner->source_root.as_path()).is_none()) {
             return script_failure<ConfigureOutcome>(
@@ -367,16 +376,22 @@ public:
                              package_name));
         }
         auto input_metadata = rstd::fs::metadata(input->as_path());
-        if (input_metadata.is_err() || ! input_metadata->is_file()) {
+        if (input_metadata.is_err()) {
+            return script_io_failure<ConfigureOutcome>(
+                "inspect configure_file input"_str,
+                input->as_path(),
+                rstd::move(input_metadata).unwrap_err());
+        }
+        if (! input_metadata->is_file()) {
             return script_failure<ConfigureOutcome>(
                 rstd::format("configure_file input '{}' is not a regular file", input->as_path()));
         }
         auto template_text = rstd::fs::read_to_string(input->as_path());
         if (template_text.is_err()) {
-            return script_failure<ConfigureOutcome>(
-                rstd::format("cannot read configure_file input '{}': {}",
-                             input->as_path(),
-                             rstd::move(template_text).unwrap_err()));
+            return script_io_failure<ConfigureOutcome>(
+                "read configure_file input"_str,
+                input->as_path(),
+                rstd::move(template_text).unwrap_err());
         }
         auto rendered = render_template(template_text->as_str(), values, input->as_path());
         if (rendered.is_err()) return Err(rstd::move(rendered).unwrap_err());
@@ -391,14 +406,19 @@ public:
         }
         auto parent_created = rstd::fs::create_dir_all(*parent);
         if (parent_created.is_err()) {
-            return script_failure<ConfigureOutcome>(
-                rstd::format("cannot create configure_file output parent '{}': {}",
-                             *parent,
-                             rstd::move(parent_created).unwrap_err()));
+            return script_io_failure<ConfigureOutcome>(
+                "create configure_file output parent"_str,
+                *parent,
+                rstd::move(parent_created).unwrap_err());
         }
         auto canonical_parent = rstd::fs::canonicalize(*parent);
-        if (canonical_parent.is_err() ||
-            canonical_parent->as_path().strip_prefix(owner->generated_root.as_path()).is_none()) {
+        if (canonical_parent.is_err()) {
+            return script_io_failure<ConfigureOutcome>(
+                "resolve configure_file output parent"_str,
+                *parent,
+                rstd::move(canonical_parent).unwrap_err());
+        }
+        if (canonical_parent->as_path().strip_prefix(owner->generated_root.as_path()).is_none()) {
             return script_failure<ConfigureOutcome>(rstd::format(
                 "configure_file output '{}' escapes generated package root", requested.as_path()));
         }
@@ -416,8 +436,8 @@ public:
             auto error = rstd::move(existing).unwrap_err();
             if (error.kind() !=
                 rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
-                return script_failure<ConfigureOutcome>(rstd::format(
-                    "cannot inspect configure_file output '{}': {}", output.as_path(), error));
+                return script_io_failure<ConfigureOutcome>(
+                    "inspect configure_file output"_str, output.as_path(), rstd::move(error));
             }
         }
         for (const auto& claimed : claimed_) {
@@ -430,10 +450,10 @@ public:
         auto written =
             rstd::fs::write_atomic_if_changed(output.as_path(), rendered->as_str().as_bytes());
         if (written.is_err()) {
-            return script_failure<ConfigureOutcome>(
-                rstd::format("cannot write configure_file output '{}': {}",
-                             output.as_path(),
-                             rstd::move(written).unwrap_err()));
+            return script_io_failure<ConfigureOutcome>(
+                "write configure_file output"_str,
+                output.as_path(),
+                rstd::move(written).unwrap_err());
         }
         claimed_.push(output.clone());
         current_.push(OwnedOutput {
@@ -449,7 +469,7 @@ public:
         return Ok(ConfigureOutcome { rstd::move(output), *written });
     }
 
-    auto finish() -> Result<BuildScriptReport> {
+    auto finish() -> BuildScriptResult<BuildScriptReport> {
         for (const auto& stale : previous_) {
             if (! package_is_selected(packages_, stale.package.as_str()) ||
                 contains_output(current_, stale)) {
@@ -468,8 +488,10 @@ public:
                     rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
                     continue;
                 }
-                return script_failure<BuildScriptReport>(rstd::format(
-                    "cannot inspect stale configure output '{}': {}", requested.as_path(), error));
+                return script_io_failure<BuildScriptReport>(
+                    "inspect stale configure output"_str,
+                    requested.as_path(),
+                    rstd::move(error));
             }
             auto parent = requested.as_path().parent();
             if (parent.is_none()) {
@@ -477,9 +499,15 @@ public:
                     "stale configure output has no parent"_str);
             }
             auto canonical_parent = rstd::fs::canonicalize(*parent);
-            if (canonical_parent.is_err() || canonical_parent->as_path()
-                                                 .strip_prefix(owner->generated_root.as_path())
-                                                 .is_none()) {
+            if (canonical_parent.is_err()) {
+                return script_io_failure<BuildScriptReport>(
+                    "resolve stale configure output parent"_str,
+                    *parent,
+                    rstd::move(canonical_parent).unwrap_err());
+            }
+            if (canonical_parent->as_path()
+                    .strip_prefix(owner->generated_root.as_path())
+                    .is_none()) {
                 return script_failure<BuildScriptReport>(
                     rstd::format("stale configure output '{}' escapes generated package root",
                                  requested.as_path()));
@@ -491,10 +519,10 @@ public:
             }
             auto removed = rstd::fs::remove_file(requested.as_path());
             if (removed.is_err()) {
-                return script_failure<BuildScriptReport>(
-                    rstd::format("cannot remove stale configure output '{}': {}",
-                                 requested.as_path(),
-                                 rstd::move(removed).unwrap_err()));
+                return script_io_failure<BuildScriptReport>(
+                    "remove stale configure output"_str,
+                    requested.as_path(),
+                    rstd::move(removed).unwrap_err());
             }
             auto directory = rstd::move(canonical_parent).unwrap();
             while (directory.as_path() != owner->generated_root.as_path()) {
@@ -526,19 +554,19 @@ public:
         if (parent.is_none()) return script_failure<BuildScriptReport>("receipt has no parent"_str);
         auto created = rstd::fs::create_dir_all(*parent);
         if (created.is_err()) {
-            return script_failure<BuildScriptReport>(
-                rstd::format("cannot create configure receipt directory '{}': {}",
-                             *parent,
-                             rstd::move(created).unwrap_err()));
+            return script_io_failure<BuildScriptReport>(
+                "create configure receipt directory"_str,
+                *parent,
+                rstd::move(created).unwrap_err());
         }
         auto text = encode_receipt(current_);
         auto written =
             rstd::fs::write_atomic_if_changed(receipt_.as_path(), text.as_str().as_bytes());
         if (written.is_err()) {
-            return script_failure<BuildScriptReport>(
-                rstd::format("cannot write configure receipt '{}': {}",
-                             receipt_.as_path(),
-                             rstd::move(written).unwrap_err()));
+            return script_io_failure<BuildScriptReport>(
+                "write configure receipt"_str,
+                receipt_.as_path(),
+                rstd::move(written).unwrap_err());
         }
         return Ok(rstd::move(report_));
     }
@@ -563,8 +591,8 @@ private:
     BuildScriptReport     report_;
 };
 
-auto binding_error(Error error) -> luato::Error {
-    return luato::Error::binding(rstd::move(error.message));
+auto binding_error(BuildScriptError error) -> luato::Error {
+    return luato::Error::binding(rstd::format("{}", error));
 }
 
 auto configure_callback(ConfigureSession& session, luato::CallFrame& frame)
@@ -629,23 +657,22 @@ auto configure_callback(ConfigureSession& session, luato::CallFrame& frame)
 
 auto materialize_generated_includes(PackageMetadata&             metadata,
                                     const BuildLayout&           layout,
-                                    const SourceTargetSelection& selection) -> Result<empty> {
+                                    const SourceTargetSelection& selection)
+    -> BuildScriptResult<empty> {
     for (auto target_id : selection.target_order) {
         auto& target = metadata.targets[target_id];
         for (const auto& requirement : target.usage.private_include_directory_requirements) {
             if (requirement.root != IncludeDirectoryRoot::Generated) continue;
-            auto generated = layout.generated_package_directory(target.id.package.as_str());
-            if (generated.is_err()) {
-                return script_failure<empty>(rstd::move(generated).unwrap_err().message);
-            }
-            auto requested = generated->join(requirement.path.as_path());
+            auto generated = rstd_try(
+                layout.generated_package_directory(target.id.package.as_str()));
+            auto requested = generated.join(requirement.path.as_path());
             auto canonical = rstd::fs::canonicalize(requested.as_path());
             if (canonical.is_err()) {
                 return script_failure<empty>(
                     rstd::format("generated private include directory '{}' does not exist",
                                  requested.as_path()));
             }
-            if (canonical->as_path().strip_prefix(generated->as_path()).is_none()) {
+            if (canonical->as_path().strip_prefix(generated.as_path()).is_none()) {
                 return script_failure<empty>(
                     rstd::format("generated private include directory '{}' escapes package root",
                                  requested.as_path()));
@@ -688,14 +715,13 @@ auto execute_build_script(PackageMetadata&             metadata,
                           ref<str>                     profile,
                           const Vec<String>&           selected_packages,
                           const SourceTargetSelection& selection,
-                          const Option<BuildObserver>& observer) -> Result<BuildScriptReport> {
+                          const Option<BuildObserver>& observer)
+    -> BuildScriptResult<BuildScriptReport> {
     auto script = metadata.root.join(PathBuf::from("build.lua"_str).as_path());
     auto exists = rstd::fs::exists(script.as_path());
     if (exists.is_err()) {
-        return script_failure<BuildScriptReport>(
-            rstd::format("cannot inspect build script '{}': {}",
-                         script.as_path(),
-                         rstd::move(exists).unwrap_err()));
+        return script_io_failure<BuildScriptReport>(
+            "inspect build script"_str, script.as_path(), rstd::move(exists).unwrap_err());
     }
     if (! *exists) {
         if (has_generated_includes(metadata, selection)) {
@@ -706,7 +732,13 @@ auto execute_build_script(PackageMetadata&             metadata,
         return Ok(BuildScriptReport {});
     }
     auto script_metadata = rstd::fs::metadata(script.as_path());
-    if (script_metadata.is_err() || ! script_metadata->is_file()) {
+    if (script_metadata.is_err()) {
+        return script_io_failure<BuildScriptReport>(
+            "inspect build script"_str,
+            script.as_path(),
+            rstd::move(script_metadata).unwrap_err());
+    }
+    if (! script_metadata->is_file()) {
         return script_failure<BuildScriptReport>(
             rstd::format("build script '{}' is not a regular file", script.as_path()));
     }
@@ -716,9 +748,10 @@ auto execute_build_script(PackageMetadata&             metadata,
 
     auto state = luato::State::create(luato::StateOptions::base());
     if (state.is_err()) {
-        auto error = rstd::move(state).unwrap_err_unchecked();
-        return script_failure<BuildScriptReport>(
-            rstd::format("cannot create Lua state: {}", error.message.as_str()));
+        return Err(BuildScriptError::Lua(
+            String::make("create Lua state"_str),
+            None(),
+            rstd::move(state).unwrap_err_unchecked()));
     }
     auto lua    = rstd::move(state).unwrap_unchecked();
     auto module = luato::ModuleSpec(String::make("lito"_str));
@@ -736,20 +769,17 @@ auto execute_build_script(PackageMetadata&             metadata,
         }));
     auto registered = lua.register_module(rstd::move(module));
     if (registered.is_err()) {
-        auto error = rstd::move(registered).unwrap_err_unchecked();
-        return script_failure<BuildScriptReport>(
-            rstd::format("cannot register build script API: {}", error.message.as_str()));
+        return Err(BuildScriptError::Lua(
+            String::make("register build script API"_str),
+            None(),
+            rstd::move(registered).unwrap_err_unchecked()));
     }
     auto executed = lua.execute_file(script.as_path());
     if (executed.is_err()) {
-        auto error = rstd::move(executed).unwrap_err_unchecked();
-        auto message =
-            rstd::format("build script '{}': {}", script.as_path(), error.message.as_str());
-        if (! error.traceback.is_empty()) {
-            message.push_str("\n"_str);
-            message.push_str(error.traceback.as_str());
-        }
-        return script_failure<BuildScriptReport>(rstd::move(message));
+        return Err(BuildScriptError::Lua(
+            String::make("execute build script"_str),
+            Some(script.clone()),
+            rstd::move(executed).unwrap_err_unchecked()));
     }
     configure.report().executed = true;
     configure.report().elapsed  = executed->elapsed;

@@ -16,6 +16,7 @@ import lito.build.configuration;
 import lito.platform.contract;
 import lito.package.graph_contract;
 import lito.package.target_contract;
+import lito.package.error_contract;
 import lito.dependency;
 
 using namespace rstd::prelude;
@@ -25,15 +26,13 @@ namespace lito
 {
 
 template<typename T>
-auto adapter_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto adapter_failure(String message) -> PackageResult<T> {
+    return Err(PackageError::Message(rstd::move(message)));
 }
 
 auto parse_options(const CppArgumentParser& parser, const Vec<String>& options, String source)
-    -> Result<CppArgumentLayer> {
-    auto parsed = rstd_try(parser.parse(options, source.as_str()), [](String error) {
-        return Error::make(ErrorKind::Manifest, rstd::move(error));
-    });
+    -> PackageResult<CppArgumentLayer> {
+    auto parsed = rstd_try(parser.parse(options, source.as_str()));
     return Ok(rstd::move(parsed));
 }
 
@@ -149,7 +148,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                                   const BuildPlatform&        platform,
                                   ExternalUsageCatalog        external_usage,
                                   const CppArgumentParser&    argument_parser)
-    -> Result<PackageMetadata> {
+    -> PackageResult<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
         configuration.toolchain.compiler.is_empty() || configuration.toolchain.linker.is_empty() ||
         configuration.toolchain.archiver.is_empty()) {
@@ -513,7 +512,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
 }
 
 auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> source_sets)
-    -> Result<PackageSpec> {
+    -> PackageResult<PackageSpec> {
     for (usize index {}; index < source_sets.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
             if (source_sets[prior].target == source_sets[index].target) {

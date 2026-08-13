@@ -19,6 +19,18 @@ struct Architecture {
     auto operator==(const Architecture& other) const noexcept -> bool { return name == other.name; }
 };
 
+class PlatformError {
+    rstd::string::String message_;
+
+public:
+    explicit PlatformError(rstd::string::String message): message_(rstd::move(message)) {}
+
+    auto message() const noexcept -> ref<str> { return message_.as_str(); }
+};
+
+template<typename T>
+using PlatformResult = rstd::Result<T, PlatformError>;
+
 enum class TargetFamily
 {
     Unix,
@@ -105,3 +117,25 @@ struct TargetPredicate {
 };
 
 } // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::PlatformError> : ImplBase<lito::PlatformError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return formatter.write_str(this->self().message());
+    }
+};
+
+template<>
+struct Impl<fmt::Debug, lito::PlatformError> : ImplBase<lito::PlatformError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::PlatformError> : DefaultInImpl<error::Error, lito::PlatformError> {};
+
+}

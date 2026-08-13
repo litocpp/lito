@@ -38,6 +38,18 @@ auto clear_output(ref<rstd::path::Path> path) -> bool {
     return ! *exists || rstd::fs::remove_dir_all(path).is_ok();
 }
 
+template<typename Error>
+auto error_chain_text(const Error& error) -> String {
+    auto text   = rstd::format("{}", error);
+    auto source = rstd::as<rstd::error::Error>(error).source();
+    for (auto depth = usize {}; source.is_some() && depth < usize(32); ++depth) {
+        text.push_str("\n"_str);
+        text.push_str(rstd::format("{}", *source).as_str());
+        source = (*source)->source();
+    }
+    return text;
+}
+
 auto build_profile(ref<str> name) -> lito::BuildProfileName {
     return lito::parse_build_profile(name).unwrap();
 }

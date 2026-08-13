@@ -2,6 +2,7 @@ export module lito.dependency:pkg_config_support;
 
 import rstd;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.error;
 import lito.cpp;
 import lito.build.configuration;
@@ -22,13 +23,13 @@ namespace lito
 {
 
 template<typename T>
-auto dependency_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto dependency_failure(String message) -> DependencyResult<T> {
+    return Err(DependencyError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto dependency_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, message));
+auto dependency_failure(ref<str> message) -> DependencyResult<T> {
+    return Err(DependencyError::Message(String::make(message)));
 }
 
 auto version_operator(PkgConfigVersionOperator value) noexcept -> ref<str> {
@@ -53,7 +54,7 @@ auto module_spec(const PkgConfigDependencyRequirement& requirement) -> String {
     return result;
 }
 
-auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target) -> Result<String> {
+auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target) -> DependencyResult<String> {
     auto result    = String::make();
     auto separator = target.family == TargetFamily::Windows ? u8(';') : u8(':');
     for (const auto& path : paths) {
@@ -69,7 +70,7 @@ auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target) -> Result<St
 }
 
 auto provider_environment(const PkgConfigProviderConfig& config, const TargetInfo& target)
-    -> Result<CommandEnvironment> {
+    -> DependencyResult<CommandEnvironment> {
     auto result = CommandEnvironment {};
     if (! config.search_paths.is_empty()) {
         auto value = path_list(config.search_paths, target);
@@ -124,7 +125,7 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
                       ref<str>                              alias,
                       ref<str>                              query,
                       const CommandEnvironment&             overrides,
-                      const ResolvedProcessEnvironment&     environment) -> Result<String> {
+                      const ResolvedProcessEnvironment&     environment) -> DependencyResult<String> {
     auto executable = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return dependency_failure<String>(rstd::format(
@@ -144,12 +145,12 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
                     None(),
                     Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides))));
     if (output.is_err()) {
-        return dependency_failure<String>(
-            rstd::format("pkg-config dependency '{}' module '{}' {} query could not execute: {}",
+        return Err(DependencyError::Operation(
+            rstd::format("pkg-config dependency '{}' module '{}' {} query",
                          alias,
                          requirement.module.as_str(),
-                         query,
-                         rstd::move(output).unwrap_err().message.as_str()));
+                         query),
+            rstd::move(output).unwrap_err()));
     }
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
@@ -167,7 +168,7 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
 auto provider_version(const PkgConfigProviderConfig&     config,
                       const CommandEnvironment&          overrides,
                       const ResolvedProcessEnvironment&  environment,
-                      const PkgConfigExternalDependency& declaration) -> Result<String> {
+                      const PkgConfigExternalDependency& declaration) -> DependencyResult<String> {
     const auto& requirement = declaration.requirement;
     auto        executable  = config.executable.as_path().to_str();
     if (executable.is_none()) {
@@ -185,12 +186,12 @@ auto provider_version(const PkgConfigProviderConfig&     config,
                     None(),
                     Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides))));
     if (output.is_err()) {
-        return dependency_failure<String>(
-            rstd::format("pkg-config dependency '{}' module '{}' cannot execute provider '{}': {}",
+        return Err(DependencyError::Operation(
+            rstd::format("pkg-config dependency '{}' module '{}' provider '{}'",
                          declaration.alias.as_str(),
                          requirement.module.as_str(),
-                         *executable,
-                         rstd::move(output).unwrap_err().message.as_str()));
+                         *executable),
+            rstd::move(output).unwrap_err()));
     }
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
@@ -218,7 +219,7 @@ auto append_identity_value(String& output, ref<str> value) -> void {
 
 auto provider_identity(const PkgConfigProviderConfig& config,
                        ref<str>                       effective_target,
-                       ref<str>                       version) -> Result<String> {
+                       ref<str>                       version) -> DependencyResult<String> {
     auto executable = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return dependency_failure<String>("pkg-config executable path is not valid UTF-8"_str);

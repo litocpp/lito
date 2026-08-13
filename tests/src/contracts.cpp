@@ -254,13 +254,17 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                             const lito::BuildPlatform&                           platform,
                             const lito::CppArgumentParser&                       parser,
                             usize                                                jobs = usize(1))
-    -> lito::Result<Vec<lito::ResolvedExternalDependency>> {
+    -> lito::DependencyResult<Vec<lito::ResolvedExternalDependency>> {
     auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<lito::DependencyError>(rstd::move(environment).unwrap_err()));
+    }
     auto resolver = lito::ToolResolver(*environment);
     auto provider = fixture_cmake();
     auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
-    if (tool.is_err()) return Err(rstd::move(tool).unwrap_err());
+    if (tool.is_err()) {
+        return Err(rstd::into<lito::DependencyError>(rstd::move(tool).unwrap_err()));
+    }
     provider.executable = rstd::move(tool).unwrap().executable;
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
@@ -272,10 +276,10 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
         if (requirement->adapter.is_some() && requirement->adapter_identity.is_empty()) {
             auto contents = rstd::fs::read_to_string(requirement->adapter->as_path());
             if (contents.is_err()) {
-                return Err(lito::Error::make(lito::ErrorKind::Dependency,
-                                             rstd::format("cannot read CMake adapter '{}': {}",
-                                                          requirement->adapter->as_path(),
-                                                          rstd::move(contents).unwrap_err())));
+                return Err(lito::DependencyError::Message(
+                    rstd::format("cannot read CMake adapter '{}': {}",
+                                 requirement->adapter->as_path(),
+                                 rstd::move(contents).unwrap_err())));
             }
             requirement->adapter_identity =
                 rstd::format("{}\n{}", requirement->adapter->as_path(), contents->as_str());
@@ -396,12 +400,13 @@ auto versioned_fixture(ref<str>                       alias,
 
 auto external_usage_metadata(lito::DependencyVisibility     visibility,
                              const lito::CppArgumentParser& parser)
-    -> lito::Result<lito::PackageMetadata> {
+    -> lito::PackageResult<lito::PackageMetadata> {
     auto raw       = strings("-DLITO_EXTERNAL_USAGE=1"_str);
     auto arguments = parser.parse(raw, "pkg-config test fixture"_str);
     if (arguments.is_err()) {
-        return Err(
-            lito::Error::make(lito::ErrorKind::Dependency, rstd::move(arguments).unwrap_err()));
+        return Err(lito::PackageError::Message(rstd::format(
+            "pkg-config test fixture compiler arguments are invalid: {}",
+            rstd::move(arguments).unwrap_err())));
     }
     auto external         = Vec<lito::ResolvedExternalDependency>::make();
     auto external_targets = Vec<lito::ResolvedExternalTargetUsage>::make();
@@ -493,6 +498,55 @@ TEST(Contracts, InvalidManifestDocumentsAreRejectedByManifestOwner) {
         if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
         EXPECT_TRUE(loaded.is_err());
     }
+}
+
+TEST(Contracts, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
+    auto directory = root("manifest/discovery-field"_str);
+    auto loaded    = lito::load_manifest_document(directory.as_path());
+    ASSERT_TRUE(loaded.is_err());
+    auto error = rstd::move(loaded).unwrap_err();
+    ASSERT_TRUE(error.is_File());
+    const auto& file = error.as_File().source;
+    EXPECT_EQ(file.path.as_path(),
+              directory.join(PathBuf::from("lito.toml"_str).as_path()).as_path());
+    ASSERT_TRUE(file.cause.is_Schema());
+    const auto& schema = file.cause.as_Schema().source;
+    ASSERT_TRUE(schema.is_UnknownField());
+    EXPECT_EQ(schema.as_UnknownField().node.value.as_str(), "manifest.lib"_str);
+    EXPECT_EQ(schema.as_UnknownField().field.as_str(), "discovery"_str);
+
+    auto manifest_source = rstd::as<rstd::error::Error>(error).source();
+    ASSERT_TRUE(manifest_source.is_some());
+    EXPECT_TRUE(rstd::error::is<lito::ManifestFileError>(*manifest_source));
+    auto file_source = (*manifest_source)->source();
+    ASSERT_TRUE(file_source.is_some());
+    EXPECT_TRUE(rstd::error::is<lito::ManifestFileCause>(*file_source));
+    auto cause_source = (*file_source)->source();
+    ASSERT_TRUE(cause_source.is_some());
+    EXPECT_TRUE(rstd::error::is<lito::ManifestSchemaError>(*cause_source));
+}
+
+TEST(Contracts, InstallTransactionKeepsPrimaryAndRollbackFailuresDistinct) {
+    auto rollback = Vec<lito::InstallRollbackFailure>::make();
+    rollback.push(lito::InstallRollbackFailure {
+        .operation = String::make("restore binary"_str),
+        .path      = PathBuf::from("/tmp/lito-tool"_str),
+        .source    = rstd::io::error::Error::from_raw_os_error(i32(5)),
+    });
+    auto error = lito::InstallStoreError::Transaction(
+        String::make("install publish"_str),
+        rstd::boxed::Box<lito::InstallStoreError>::make(lito::InstallStoreError::Cause(
+            lito::InstallStoreCause::Message(String::make("primary failure"_str)))),
+        rstd::move(rollback));
+
+    ASSERT_TRUE(error.is_Transaction());
+    ASSERT_EQ(error.as_Transaction().rollback_failures.len(), usize(1));
+    EXPECT_EQ(error.as_Transaction().rollback_failures[usize {}].operation.as_str(),
+              "restore binary"_str);
+    auto source = rstd::as<rstd::error::Error>(error).source();
+    ASSERT_TRUE(source.is_some());
+    EXPECT_TRUE(rstd::error::is<lito::InstallStoreError>(*source));
+    EXPECT_TRUE(rstd::format("{}", error).as_str().contains("rollback cannot restore binary"_str));
 }
 
 TEST(Contracts, PackageManifestOwnsTypedTargetCollection) {
@@ -611,7 +665,9 @@ TEST(Contracts, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
     });
     auto unknown_result = lito::validate_build_profiles(unknown);
     ASSERT_TRUE(unknown_result.is_err());
-    EXPECT_TRUE(unknown_result.unwrap_err().message.as_str().contains("unknown profile"_str));
+    auto unknown_error = rstd::move(unknown_result).unwrap_err();
+    ASSERT_TRUE(unknown_error.is_Message());
+    EXPECT_TRUE(unknown_error.as_Message().message.as_str().contains("unknown profile"_str));
 
     auto cycle = lito::ProjectProfile {};
     cycle.build_profiles.push(lito::BuildProfileDefinition {
@@ -624,7 +680,9 @@ TEST(Contracts, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
     });
     auto cycle_result = lito::validate_build_profiles(cycle);
     ASSERT_TRUE(cycle_result.is_err());
-    EXPECT_TRUE(cycle_result.unwrap_err().message.as_str().contains("inheritance cycle"_str));
+    auto cycle_error = rstd::move(cycle_result).unwrap_err();
+    ASSERT_TRUE(cycle_error.is_Message());
+    EXPECT_TRUE(cycle_error.as_Message().message.as_str().contains("inheritance cycle"_str));
 }
 
 TEST(Contracts, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentities) {
@@ -672,21 +730,27 @@ TEST(Contracts, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto compiler = lito::make_profile_spec(
         compiler_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
     ASSERT_TRUE(compiler.is_err());
-    EXPECT_TRUE(compiler.unwrap_err().message.as_str().contains("selected profile"_str));
+    auto compiler_error = rstd::move(compiler).unwrap_err();
+    ASSERT_TRUE(compiler_error.is_Message());
+    EXPECT_TRUE(compiler_error.as_Message().message.as_str().contains("selected profile"_str));
 
     auto linker_configuration = configuration();
     linker_configuration.linker_options.push(String::make("-Wl,--strip-debug"_str));
     auto linker = lito::make_profile_spec(
         linker_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
     ASSERT_TRUE(linker.is_err());
-    EXPECT_TRUE(linker.unwrap_err().message.as_str().contains("selected profile"_str));
+    auto linker_error = rstd::move(linker).unwrap_err();
+    ASSERT_TRUE(linker_error.is_Message());
+    EXPECT_TRUE(linker_error.as_Message().message.as_str().contains("selected profile"_str));
 
     auto stdlib_configuration = configuration();
     stdlib_configuration.linker_options.push(String::make("-nostdlib++"_str));
     auto stdlib = lito::make_profile_spec(
         stdlib_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
     ASSERT_TRUE(stdlib.is_err());
-    EXPECT_TRUE(stdlib.unwrap_err().message.as_str().contains("Lito-owned setting"_str));
+    auto stdlib_error = rstd::move(stdlib).unwrap_err();
+    ASSERT_TRUE(stdlib_error.is_Message());
+    EXPECT_TRUE(stdlib_error.as_Message().message.as_str().contains("Lito-owned setting"_str));
 }
 
 TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
@@ -701,7 +765,7 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
     targets.push(lito::PackageTargetId {
         .package = String::make("fixture-profile-owned_option"_str),
         .kind    = lito::PackageTargetKind::Binary,
-        .name    = String::make("fixture-profile-owned_option"_str),
+        .name    = String::make("profile-owned-option"_str),
     });
     auto build_configuration = configuration();
     auto build_arguments     = lito::parse_build_arguments(build_configuration, *parser);
@@ -727,7 +791,11 @@ TEST(Contracts, CompilerOptionsAreValidatedAfterToolchainParsing) {
 
     auto planned = lito::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_err());
-    EXPECT_TRUE(planned.unwrap_err().message.as_str().contains("optimization"_str));
+    auto planned_error = rstd::move(planned).unwrap_err();
+    ASSERT_TRUE(planned_error.is_Cpp());
+    ASSERT_TRUE(planned_error.as_Cpp().source.is_Message());
+    EXPECT_TRUE(planned_error.as_Cpp().source.as_Message().message.as_str().contains(
+        "optimization"_str));
 }
 
 TEST(Contracts, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {
@@ -872,7 +940,9 @@ TEST(Contracts, InstallPurposeSelectsWorkspaceBinaries) {
         },
         lito::PackageSelectionPurpose::Install);
     ASSERT_TRUE(library.is_err());
-    EXPECT_TRUE(library.unwrap_err().message.as_str().contains("no install target"_str));
+    auto library_error = rstd::move(library).unwrap_err();
+    ASSERT_TRUE(library_error.is_Message());
+    EXPECT_TRUE(library_error.as_Message().message.as_str().contains("no install target"_str));
 
     auto all = lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
                                                lito::PackageSelectionPurpose::Install);
@@ -909,7 +979,9 @@ TEST(Contracts, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
     auto empty = lito::resolve_install_root(
         directory.as_path(), Some(PathBuf::make()), lito::InstallConfig {});
     ASSERT_TRUE(empty.is_err());
-    EXPECT_TRUE(empty.unwrap_err().message.as_str().contains("must not be empty"_str));
+    auto empty_error = rstd::move(empty).unwrap_err();
+    ASSERT_TRUE(empty_error.is_Message());
+    EXPECT_TRUE(empty_error.as_Message().message.as_str().contains("must not be empty"_str));
 }
 
 TEST(Contracts, WorkspaceAndMemberInstallUseTheSameSource) {
@@ -1066,8 +1138,10 @@ TEST(Contracts, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
                                     "test executable"_str);
     ASSERT_TRUE(missing.is_err());
     auto missing_error = rstd::move(missing).unwrap_err();
-    EXPECT_TRUE(missing_error.message.as_str().contains("lito-missing"_str));
-    EXPECT_TRUE(missing_error.message.as_str().contains(first.as_path().to_str().unwrap()));
+    ASSERT_TRUE(missing_error.is_Environment());
+    EXPECT_TRUE(missing_error.as_Environment().message.as_str().contains("lito-missing"_str));
+    EXPECT_TRUE(missing_error.as_Environment().message.as_str().contains(
+        first.as_path().to_str().unwrap()));
 
     ASSERT_TRUE(rstd::fs::remove_file(inherited_tool.as_path()).is_ok());
     auto cached = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
@@ -1311,7 +1385,9 @@ TEST(Contracts, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto missing = lito::resolve_cmake_requirement_for_platform(
         requirement, explicit_platform("riscv64-unknown-linux-gnu"_str));
     ASSERT_TRUE(missing.is_err());
-    const auto& message = missing.unwrap_err().message;
+    auto missing_error = rstd::move(missing).unwrap_err();
+    ASSERT_TRUE(missing_error.is_Message());
+    const auto& message = missing_error.as_Message().message;
     EXPECT_TRUE(message.as_str().contains("fixture"_str));
     EXPECT_TRUE(message.as_str().contains("riscv64-unknown-linux-gnu"_str));
     EXPECT_TRUE(message.as_str().contains("architecture 'riscv64'"_str));
@@ -1326,7 +1402,8 @@ TEST(Contracts, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
                                               explicit_platform("aarch64-unknown-linux-gnu"_str),
                                               *parser);
     ASSERT_TRUE(cross_cmake.is_err());
-    EXPECT_TRUE(cross_cmake.unwrap_err().message.as_str().contains(
+    auto cross_error = rstd::move(cross_cmake).unwrap_err();
+    EXPECT_TRUE(error_chain_text(cross_error).as_str().contains(
         "without an explicit CMake toolchain contract"_str));
 }
 
@@ -1376,7 +1453,8 @@ TEST(Contracts, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     ASSERT_TRUE(arm_default.is_ok());
     auto unintentional_cross = lito::resolve_build_platform(host, *arm_default, None());
     ASSERT_TRUE(unintentional_cross.is_err());
-    EXPECT_TRUE(unintentional_cross.unwrap_err().message.as_str().contains(
+    auto cross_error = rstd::move(unintentional_cross).unwrap_err();
+    EXPECT_TRUE(rstd::format("{}", cross_error).as_str().contains(
         "declare an explicit target/toolchain contract"_str));
 
     auto explicit_cross =
@@ -1593,7 +1671,7 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
-        rstd::io::eprintln("{}", error.message.as_str());
+        rstd::io::eprintln("{}", error);
         EXPECT_TRUE(false);
         return;
     }
@@ -1689,7 +1767,7 @@ TEST(Contracts, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
-        rstd::io::eprintln("{}", error.message.as_str());
+        rstd::io::eprintln("{}", error);
         EXPECT_TRUE(false);
         return;
     }
@@ -1757,8 +1835,9 @@ TEST(Contracts, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyCon
                                                       *parser);
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
-    EXPECT_TRUE(error.message.as_str().contains("incompatible"_str));
-    EXPECT_TRUE(error.message.as_str().contains("lito-fixture"_str));
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("incompatible"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("lito-fixture"_str));
 }
 
 TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
@@ -1801,8 +1880,8 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                 *parser);
     ASSERT_TRUE(missing_provider.is_err());
     auto provider_error = rstd::move(missing_provider).unwrap_err();
-    EXPECT_TRUE(provider_error.message.as_str().contains("fixture"_str));
-    EXPECT_TRUE(provider_error.message.as_str().contains("lito-fixture"_str));
+    EXPECT_TRUE(error_chain_text(provider_error).as_str().contains("fixture"_str));
+    EXPECT_TRUE(error_chain_text(provider_error).as_str().contains("lito-fixture"_str));
 
     config                                    = fixture_pkg_config();
     declarations[usize {}].alias              = String::make("missing-module"_str);
@@ -1816,8 +1895,10 @@ TEST(Contracts, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               *parser);
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
-    EXPECT_TRUE(module_error.message.as_str().contains("missing-module"_str));
-    EXPECT_TRUE(module_error.message.as_str().contains("lito-module-does-not-exist"_str));
+    ASSERT_TRUE(module_error.is_Message());
+    EXPECT_TRUE(module_error.as_Message().message.as_str().contains("missing-module"_str));
+    EXPECT_TRUE(
+        module_error.as_Message().message.as_str().contains("lito-module-does-not-exist"_str));
 }
 
 TEST(Contracts, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
@@ -2155,11 +2236,13 @@ TEST(Contracts, DependencyTestsAreNotAssociatedWithTheRootProject) {
 TEST(Contracts, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
     auto missing = lito::load_manifest_document(root("workspace/name-missing"_str).as_path());
     ASSERT_TRUE(missing.is_err());
-    EXPECT_TRUE(missing.unwrap_err().message.as_str().contains("missing 'name'"_str));
+    auto missing_error = rstd::move(missing).unwrap_err();
+    EXPECT_TRUE(error_chain_text(missing_error).as_str().contains("missing 'name'"_str));
 
     auto invalid = lito::load_manifest_document(root("workspace/name-invalid"_str).as_path());
     ASSERT_TRUE(invalid.is_err());
-    EXPECT_TRUE(invalid.unwrap_err().message.as_str().contains("workspace.name"_str));
+    auto invalid_error = rstd::move(invalid).unwrap_err();
+    EXPECT_TRUE(error_chain_text(invalid_error).as_str().contains("workspace.name"_str));
 
     auto valid = lito::load_manifest_document(root("../demo/workspace"_str).as_path());
     ASSERT_TRUE(valid.is_ok());
@@ -2171,12 +2254,14 @@ TEST(Contracts, DevelopmentDependenciesHavePrivateDistinctScope) {
     auto visibility =
         lito::load_package_manifest(root("workspace/dev-dependency-visibility"_str).as_path());
     ASSERT_TRUE(visibility.is_err());
-    EXPECT_TRUE(visibility.unwrap_err().message.as_str().contains("visibility"_str));
+    auto visibility_error = rstd::move(visibility).unwrap_err();
+    EXPECT_TRUE(error_chain_text(visibility_error).as_str().contains("visibility"_str));
 
     auto duplicate =
         lito::load_package_manifest(root("workspace/dev-dependency-duplicate"_str).as_path());
     ASSERT_TRUE(duplicate.is_err());
-    EXPECT_TRUE(duplicate.unwrap_err().message.as_str().contains(
+    auto duplicate_error = rstd::move(duplicate).unwrap_err();
+    EXPECT_TRUE(error_chain_text(duplicate_error).as_str().contains(
         "both dependencies and dev-dependencies"_str));
 }
 
@@ -2275,7 +2360,9 @@ TEST(Contracts, TestAttachmentRequiresADirectLibraryDependency) {
         .no_run = true,
     });
     ASSERT_TRUE(tested.is_err());
-    EXPECT_TRUE(tested.unwrap_err().message.as_str().contains("direct dependency"_str));
+    auto tested_error = rstd::move(tested).unwrap_err();
+    ASSERT_TRUE(tested_error.is_Build());
+    EXPECT_TRUE(error_chain_text(tested_error).as_str().contains("direct dependency"_str));
     EXPECT_TRUE(clear_output(output.as_path()));
 }
 
@@ -2288,7 +2375,9 @@ TEST(Contracts, OnlyCurrentLockVersionIsAcceptedByLockStore) {
     }
     auto old_version = lito::load_lock_session(root("lock/v3"_str).as_path(), false);
     ASSERT_TRUE(old_version.is_err());
-    EXPECT_TRUE(old_version.unwrap_err().message.as_str().contains("integer 4"_str));
+    auto version_error = rstd::move(old_version).unwrap_err();
+    ASSERT_TRUE(version_error.is_Schema());
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 4"_str));
 }
 
 TEST(Contracts, BuildResolutionReusesLockedGitSources) {

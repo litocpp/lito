@@ -8,6 +8,7 @@ import lito.package.target_contract;
 import lito.build.identity;
 import lito.build.plan_contract;
 import lito.build.contract;
+import lito.build.error_contract;
 import lito.toolchain.contract;
 import lito.system.process;
 import lito.cache;
@@ -23,13 +24,13 @@ namespace lito
 {
 
 template<typename T>
-auto compile_failure(ErrorKind kind, String message) -> Result<T> {
-    return Err(Error::make(kind, rstd::move(message)));
+auto compile_failure(String message) -> BuildResult<T> {
+    return Err(BuildError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto compile_failure(ErrorKind kind, ref<str> message) -> Result<T> {
-    return Err(Error::make(kind, message));
+auto compile_failure(ref<str> message) -> BuildResult<T> {
+    return Err(BuildError::Message(String::make(message)));
 }
 
 enum class CompileNodeStatus
@@ -75,10 +76,10 @@ auto block_node(UnitId                      unit,
 }
 
 auto fail_node(UnitId                      unit,
-               Error                       error,
+               BuildError                  error,
                const Vec<Vec<UnitId>>&     dependents,
                Vec<CompileNodeRuntime>&    runtime,
-               Vec<Option<Error>>&         errors,
+               Vec<Option<BuildError>>&    errors,
                usize&                      terminal,
                CompileExecutionStatistics& statistics) -> void {
     runtime[unit].status = CompileNodeStatus::Failed;
@@ -93,14 +94,13 @@ auto fail_node(UnitId                      unit,
 auto succeed_node(UnitId                   unit,
                   const Vec<Vec<UnitId>>&  dependents,
                   Vec<CompileNodeRuntime>& runtime,
-                  usize&                   terminal) -> Result<empty> {
+                  usize&                   terminal) -> BuildResult<empty> {
     runtime[unit].status = CompileNodeStatus::Succeeded;
     ++terminal;
     for (auto dependent : dependents[unit]) {
         if (runtime[dependent].status == CompileNodeStatus::Blocked) continue;
         if (runtime[dependent].remaining == usize {}) {
-            return compile_failure<empty>(ErrorKind::Artifact,
-                                          "compile DAG prerequisite underflow"_str);
+            return compile_failure<empty>("compile DAG prerequisite underflow"_str);
         }
         --runtime[dependent].remaining;
         if (runtime[dependent].remaining == usize {}) {
@@ -139,7 +139,7 @@ struct ResolvedCompileExecution {
 };
 
 auto resolve_compile_execution(const CompileExecutionPolicy& policy)
-    -> Result<ResolvedCompileExecution> {
+    -> BuildResult<ResolvedCompileExecution> {
     auto jobs = usize(1);
     if (policy.jobs.is_some()) {
         jobs = *policy.jobs;
@@ -148,13 +148,11 @@ auto resolve_compile_execution(const CompileExecutionPolicy& policy)
         if (available.is_ok()) jobs = available->get();
     }
     if (jobs == usize {}) {
-        return compile_failure<ResolvedCompileExecution>(
-            ErrorKind::InvalidRequest, "compile jobs must be greater than zero"_str);
+        return compile_failure<ResolvedCompileExecution>("compile jobs must be greater than zero"_str);
     }
     auto max_in_flight = policy.max_in_flight.is_some() ? *policy.max_in_flight : jobs;
     if (max_in_flight == usize {}) {
-        return compile_failure<ResolvedCompileExecution>(
-            ErrorKind::InvalidRequest, "compile task capacity must be greater than zero"_str);
+        return compile_failure<ResolvedCompileExecution>("compile task capacity must be greater than zero"_str);
     }
     return Ok(ResolvedCompileExecution {
         .jobs          = jobs,
@@ -164,7 +162,7 @@ auto resolve_compile_execution(const CompileExecutionPolicy& policy)
 
 struct CompileWorkerResult {
     UnitId                       node {};
-    Result<CompileCommandResult> outcome;
+    ToolchainResult<CompileCommandResult> outcome;
 };
 
 class CompileExecutor {
@@ -196,30 +194,28 @@ public:
     CompileExecutor(CompileExecutor&&) noexcept                    = default;
     auto operator=(CompileExecutor&&) noexcept -> CompileExecutor& = delete;
 
-    static auto create(usize jobs, usize max_in_flight) -> Result<CompileExecutor> {
+    static auto create(usize jobs, usize max_in_flight) -> BuildResult<CompileExecutor> {
         if (jobs == usize {} || max_in_flight == usize {}) {
-            return compile_failure<CompileExecutor>(
-                ErrorKind::InvalidRequest,
-                "compile execution requires non-zero jobs and capacity"_str);
+            return compile_failure<CompileExecutor>("compile execution requires non-zero jobs and capacity"_str);
         }
         auto pool = rstd::thread::ThreadPoolBuilder::make()
                         .worker_count(jobs)
                         .thread_name(String::make("lito-compile"_str))
                         .build();
         if (pool.is_err()) {
-            return compile_failure<CompileExecutor>(
-                ErrorKind::Artifact,
-                rstd::format("cannot create compile worker pool: {}",
-                             rstd::move(pool).unwrap_err_unchecked()));
+            return Err(BuildError::System(SystemError::Io(
+                String::make("create compile worker pool"_str),
+                PathBuf::make(),
+                rstd::move(pool).unwrap_err_unchecked())));
         }
         auto value = rstd::move(pool).unwrap_unchecked();
         auto tasks =
             rstd::thread::BlockingTaskSet<CompileWorkerResult>::make(value.handle(), max_in_flight);
         if (tasks.is_err()) {
-            return compile_failure<CompileExecutor>(
-                ErrorKind::Artifact,
-                rstd::format("cannot create compile task set: {}",
-                             rstd::move(tasks).unwrap_err_unchecked()));
+            return Err(BuildError::System(SystemError::Io(
+                String::make("create compile task set"_str),
+                PathBuf::make(),
+                rstd::move(tasks).unwrap_err_unchecked())));
         }
         return Ok(
             CompileExecutor(rstd::move(value),
@@ -228,7 +224,7 @@ public:
     }
 
     template<typename Function>
-    auto submit(UnitId node, Function function) -> Result<empty> {
+    auto submit(UnitId node, Function function) -> BuildResult<empty> {
         auto state        = state_.clone();
         auto submitted_at = rstd::time::Instant::now();
         auto submitted    = tasks_.try_submit([node,
@@ -261,15 +257,15 @@ public:
         if (submitted.is_ok()) return Ok(empty {});
         auto error = rstd::move(submitted).unwrap_err_unchecked();
         if (error == rstd::thread::BlockingTaskSetSubmitError::Full) {
-            return compile_failure<empty>(ErrorKind::Artifact, "compile task set is full"_str);
+            return compile_failure<empty>("compile task set is full"_str);
         }
         if (error == rstd::thread::BlockingTaskSetSubmitError::Cancelled) {
-            return compile_failure<empty>(ErrorKind::Artifact, "compile task set is cancelled"_str);
+            return compile_failure<empty>("compile task set is cancelled"_str);
         }
-        return compile_failure<empty>(ErrorKind::Artifact, "compile task set is closed"_str);
+        return compile_failure<empty>("compile task set is closed"_str);
     }
 
-    auto recv() -> Result<CompileWorkerResult> {
+    auto recv() -> BuildResult<CompileWorkerResult> {
         auto started    = rstd::time::Instant::now();
         auto completion = tasks_.recv();
         {
@@ -278,18 +274,15 @@ public:
                 fields->statistics.completion_wait.saturating_add(started.elapsed());
         }
         if (completion.is_none()) {
-            return compile_failure<CompileWorkerResult>(
-                ErrorKind::Artifact, "compile task set closed before a completion arrived"_str);
+            return compile_failure<CompileWorkerResult>("compile task set closed before a completion arrived"_str);
         }
         auto value = rstd::move(completion).unwrap_unchecked();
         if (value.is_cancelled()) {
-            return compile_failure<CompileWorkerResult>(ErrorKind::Artifact,
-                                                        "compile task was cancelled"_str);
+            return compile_failure<CompileWorkerResult>("compile task was cancelled"_str);
         }
         auto result = rstd::move(value).into_value();
         if (result.is_none()) {
-            return compile_failure<CompileWorkerResult>(
-                ErrorKind::Artifact, "compile task completed without a result"_str);
+            return compile_failure<CompileWorkerResult>("compile task completed without a result"_str);
         }
         return Ok(rstd::move(result).unwrap_unchecked());
     }
@@ -334,12 +327,11 @@ auto materialize_compile_plan(const PackageSpec&     package,
                               const ClangToolchain&  toolchain,
                               Vec<PreparedUnit>&     units,
                               const Vec<ScanResult>& scans,
-                              const ModulePlan&      modules) -> Result<CompilePlan> {
+                              const ModulePlan&      modules) -> BuildResult<CompilePlan> {
     if (scans.len() != units.len() || modules.direct_inputs.len() != units.len() ||
         modules.resolved_inputs.len() != units.len() ||
         modules.compile_order.len() != units.len()) {
-        return compile_failure<CompilePlan>(ErrorKind::Artifact,
-                                            "compile plan inputs have inconsistent lengths"_str);
+        return compile_failure<CompilePlan>("compile plan inputs have inconsistent lengths"_str);
     }
 
     auto invocations  = Vec<Option<CompileInvocation>>::with_capacity(units.len());
@@ -353,8 +345,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
     for (auto consumer = UnitId {}; consumer < units.len(); ++consumer) {
         for (auto provider : modules.direct_inputs[consumer]) {
             if (provider >= units.len()) {
-                return compile_failure<CompilePlan>(ErrorKind::Dependency,
-                                                    "compile DAG contains an invalid provider"_str);
+                return compile_failure<CompilePlan>("compile DAG contains an invalid provider"_str);
             }
             dependents[provider].emplace_back(consumer);
         }
@@ -364,16 +355,13 @@ auto materialize_compile_plan(const PackageSpec&     package,
     auto format_key      = bmi_format_key(toolchain.bmi_format());
     for (auto unit : modules.compile_order) {
         if (unit >= units.len()) {
-            return compile_failure<CompilePlan>(ErrorKind::Dependency,
-                                                "compile order contains an invalid unit"_str);
+            return compile_failure<CompilePlan>("compile order contains an invalid unit"_str);
         }
         auto direct_artifacts    = Vec<DependencyArtifact>::make();
         auto recipe_dependencies = Vec<BmiRecipeDependency>::make();
         for (auto input : modules.direct_inputs[unit]) {
             if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
-                return compile_failure<CompilePlan>(
-                    ErrorKind::Dependency,
-                    rstd::format("module dependency '{}' has no resolved BMI artifact",
+                return compile_failure<CompilePlan>(rstd::format("module dependency '{}' has no resolved BMI artifact",
                                  units[input].unit.source.as_path()));
             }
             const auto& artifact = *units[input].unit.bmi;
@@ -391,8 +379,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
             auto source_identity   = units[unit].unit.source.as_path().to_str();
             auto relative_identity = units[unit].unit.relative_source.as_path().to_str();
             if (source_identity.is_none() || relative_identity.is_none()) {
-                return compile_failure<CompilePlan>(ErrorKind::Artifact,
-                                                    "BMI provider path is not valid UTF-8"_str);
+                return compile_failure<CompilePlan>("BMI provider path is not valid UTF-8"_str);
             }
             const auto target = units[unit].unit.target;
             auto       provider_identity =
@@ -437,9 +424,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
         auto module_dependencies = Vec<ModuleArtifactDependency>::make();
         for (auto input : modules.resolved_inputs[unit]) {
             if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
-                return compile_failure<CompilePlan>(
-                    ErrorKind::Dependency,
-                    rstd::format("module dependency '{}' has no resolved BMI artifact",
+                return compile_failure<CompilePlan>(rstd::format("module dependency '{}' has no resolved BMI artifact",
                                  units[input].unit.source.as_path()));
             }
             const auto& artifact = *units[input].unit.bmi;
@@ -450,7 +435,9 @@ auto materialize_compile_plan(const PackageSpec&     package,
             });
         }
         auto invocation = toolchain.prepare_compile(units[unit], scans[unit], module_dependencies);
-        if (invocation.is_err()) return Err(rstd::move(invocation).unwrap_err());
+        if (invocation.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
+        }
         dependencies[unit] = Some(rstd::move(direct_artifacts));
         invocations[unit]  = Some(rstd::move(invocation).unwrap());
     }
@@ -458,9 +445,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         if (units[unit].unit.compile_test == nullptr) continue;
         if (! dependents[unit].is_empty()) {
-            return compile_failure<CompilePlan>(
-                ErrorKind::Dependency,
-                rstd::format("compile-test source '{}' cannot provide an imported artifact",
+            return compile_failure<CompilePlan>(rstd::format("compile-test source '{}' cannot provide an imported artifact",
                              units[unit].unit.source.as_path()));
         }
     }
@@ -468,8 +453,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
     auto nodes = Vec<CompileNodePlan>::with_capacity(units.len());
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         if (invocations[unit].is_none() || dependencies[unit].is_none()) {
-            return compile_failure<CompilePlan>(ErrorKind::Artifact,
-                                                "compile plan left a unit unmaterialized"_str);
+            return compile_failure<CompilePlan>("compile plan left a unit unmaterialized"_str);
         }
         auto invocation = rstd::move(invocations[unit]).unwrap_unchecked();
         auto command    = command_text(invocation.arguments);
@@ -491,7 +475,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                           CompileCacheSession&         cache,
                           ClangCompileExecutor         compile,
                           const Option<BuildObserver>& observer,
-                          ResolvedCompileExecution     policy) -> Result<CompileExecutionResult> {
+                          ResolvedCompileExecution     policy) -> BuildResult<CompileExecutionResult> {
     auto result = CompileExecutionResult {
         .compile_tests = Vec<CompileTestExecution>::make(),
     };
@@ -509,7 +493,7 @@ auto execute_compile_plan(const PackageSpec&           package,
     auto executor = rstd::move(created).unwrap();
 
     auto runtime    = Vec<CompileNodeRuntime>::with_capacity(plan.nodes.len());
-    auto errors     = Vec<Option<Error>>::with_capacity(plan.nodes.len());
+    auto errors     = Vec<Option<BuildError>>::with_capacity(plan.nodes.len());
     auto dependents = Vec<Vec<UnitId>>::with_capacity(plan.nodes.len());
     for (const auto& node : plan.nodes) {
         const auto remaining = node.prerequisites.len();
@@ -543,7 +527,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                     result.statistics.coordinator_work.saturating_add(
                         coordinator_started.elapsed());
                 fail_node(unit,
-                          rstd::move(decision).unwrap_err(),
+                          rstd::into<BuildError>(rstd::move(decision).unwrap_err()),
                           dependents,
                           runtime,
                           errors,
@@ -581,7 +565,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                         result.statistics.coordinator_work.saturating_add(
                             coordinator_started.elapsed());
                     fail_node(unit,
-                              rstd::move(recorded).unwrap_err(),
+                              rstd::into<BuildError>(rstd::move(recorded).unwrap_err()),
                               dependents,
                               runtime,
                               errors,
@@ -615,7 +599,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                     result.statistics.coordinator_work.saturating_add(
                         coordinator_started.elapsed());
                 fail_node(unit,
-                          rstd::move(begun).unwrap_err(),
+                          rstd::into<BuildError>(rstd::move(begun).unwrap_err()),
                           dependents,
                           runtime,
                           errors,
@@ -630,7 +614,8 @@ auto execute_compile_plan(const PackageSpec&           package,
             auto submitted         = executor.submit(
                 unit,
                 [compile,
-                 invocation = rstd::move(invocation)]() mutable -> Result<CompileCommandResult> {
+                 invocation = rstd::move(invocation)]() mutable
+                    -> ToolchainResult<CompileCommandResult> {
                     return compile.execute(invocation);
                 });
             result.statistics.coordinator_work =
@@ -647,8 +632,7 @@ auto execute_compile_plan(const PackageSpec&           package,
             if (terminal == plan.nodes.len()) break;
             executor.cancel();
             executor.finish();
-            return compile_failure<CompileExecutionResult>(
-                ErrorKind::Artifact, "compile DAG has pending nodes without a ready frontier"_str);
+            return compile_failure<CompileExecutionResult>("compile DAG has pending nodes without a ready frontier"_str);
         }
 
         auto completed = executor.recv();
@@ -664,16 +648,14 @@ auto execute_compile_plan(const PackageSpec&           package,
             runtime[task.node].decision.is_none()) {
             executor.cancel();
             executor.finish();
-            return compile_failure<CompileExecutionResult>(
-                ErrorKind::Artifact, "compile task completion does not match a running node"_str);
+            return compile_failure<CompileExecutionResult>("compile task completion does not match a running node"_str);
         }
 
         const auto unit                = task.node;
-        auto&      node                = plan.nodes[unit];
         auto       coordinator_started = rstd::time::Instant::now();
         if (task.outcome.is_err()) {
             fail_node(unit,
-                      rstd::move(task.outcome).unwrap_err(),
+                      rstd::into<BuildError>(rstd::move(task.outcome).unwrap_err()),
                       dependents,
                       runtime,
                       errors,
@@ -697,7 +679,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                 auto committed = cache.commit_success(units[unit], decision);
                 if (committed.is_err()) {
                     fail_node(unit,
-                              rstd::move(committed).unwrap_err(),
+                              rstd::into<BuildError>(rstd::move(committed).unwrap_err()),
                               dependents,
                               runtime,
                               errors,
@@ -713,7 +695,7 @@ auto execute_compile_plan(const PackageSpec&           package,
                 decision, units[unit].unit.compile_test_record->as_path(), execution);
             if (recorded.is_err()) {
                 fail_node(unit,
-                          rstd::move(recorded).unwrap_err(),
+                          rstd::into<BuildError>(rstd::move(recorded).unwrap_err()),
                           dependents,
                           runtime,
                           errors,
@@ -729,11 +711,11 @@ auto execute_compile_plan(const PackageSpec&           package,
         } else {
             if (output.exit_code != i32 {}) {
                 fail_node(unit,
-                          Error::make(ErrorKind::Toolchain,
-                                      rstd::format("clang++ failed for '{}'\n{}\n{}",
-                                                   units[unit].unit.source.as_path(),
-                                                   node.command.as_str(),
-                                                   output.standard_error.as_str())),
+                          BuildError::Toolchain(ToolchainError::Execution(
+                              rstd::format("compile '{}'", units[unit].unit.source.as_path()),
+                              output.exit_code,
+                              String::make(),
+                              rstd::move(output.standard_error))),
                           dependents,
                           runtime,
                           errors,
@@ -747,7 +729,7 @@ auto execute_compile_plan(const PackageSpec&           package,
             auto committed = cache.commit_success(units[unit], decision);
             if (committed.is_err()) {
                 fail_node(unit,
-                          rstd::move(committed).unwrap_err(),
+                          rstd::into<BuildError>(rstd::move(committed).unwrap_err()),
                           dependents,
                           runtime,
                           errors,

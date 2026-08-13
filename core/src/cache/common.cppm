@@ -12,6 +12,7 @@ import lito.cpp.bmi;
 import lito.frontend;
 import lito.build.layout;
 import :hash;
+import lito.cache.error_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -27,8 +28,15 @@ inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v2"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
 
 template<typename T>
-auto cache_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Artifact, rstd::move(message)));
+auto cache_failure(String message) -> CacheResult<T> {
+    return Err(CacheError::Record(rstd::move(message)));
+}
+
+template<typename T>
+auto cache_io_failure(ref<str> operation,
+                      ref<rstd::path::Path> path,
+                      rstd::io::error::Error source) -> CacheResult<T> {
+    return Err(CacheError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto cache_string(ref<str> value) -> Json {
@@ -49,7 +57,7 @@ auto cache_version(const Json& document) -> Option<u64> {
     return (**version).as_u64();
 }
 
-auto path_string(ref<rstd::path::Path> path) -> Result<String> {
+auto path_string(ref<rstd::path::Path> path) -> CacheResult<String> {
     auto value = path.to_str();
     if (value.is_none()) {
         return cache_failure<String>(rstd::format("cache path '{}' is not valid UTF-8", path));
@@ -57,23 +65,23 @@ auto path_string(ref<rstd::path::Path> path) -> Result<String> {
     return Ok(String::make(*value));
 }
 
-auto write_json(ref<rstd::path::Path> path, const Json& document) -> Result<empty> {
+auto write_json(ref<rstd::path::Path> path, const Json& document) -> CacheResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
         return cache_failure<empty>(rstd::format("cache path '{}' has no parent", path));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return cache_failure<empty>(rstd::format(
-            "cannot create cache directory '{}': {}", *parent, rstd::move(created).unwrap_err()));
+        return cache_io_failure<empty>(
+            "create directory"_str, *parent, rstd::move(created).unwrap_err());
     }
     auto text = rstd::json::to_string(
         document, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii('\n');
     auto written = rstd::fs::write_atomic(path, text.as_str().as_bytes());
     if (written.is_err()) {
-        return cache_failure<empty>(rstd::format(
-            "cannot write cache record '{}': {}", path, rstd::move(written).unwrap_err()));
+        return cache_io_failure<empty>(
+            "write record"_str, path, rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
@@ -92,7 +100,7 @@ struct FileFingerprint {
     }
 };
 
-auto file_json(const FileFingerprint& file) -> Result<Json> {
+auto file_json(const FileFingerprint& file) -> CacheResult<Json> {
     auto path = path_string(file.path.as_path());
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     auto object = JsonMap::make();
@@ -102,20 +110,20 @@ auto file_json(const FileFingerprint& file) -> Result<Json> {
     return Ok(Json::Object(rstd::move(object)));
 }
 
-auto output_exists(ref<rstd::path::Path> path) -> Result<bool> {
+auto output_exists(ref<rstd::path::Path> path) -> CacheResult<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_failure<bool>(rstd::format(
-            "cannot inspect cached output '{}': {}", path, rstd::move(exists).unwrap_err()));
+        return cache_io_failure<bool>(
+            "inspect output"_str, path, rstd::move(exists).unwrap_err());
     }
     return Ok(*exists);
 }
 
-auto output_content_digest(ref<rstd::path::Path> path) -> Result<String> {
+auto output_content_digest(ref<rstd::path::Path> path) -> CacheResult<String> {
     auto contents = rstd::fs::read(path);
     if (contents.is_err()) {
-        return cache_failure<String>(rstd::format(
-            "cannot hash compiler output '{}': {}", path, rstd::move(contents).unwrap_err()));
+        return cache_io_failure<String>(
+            "read compiler output"_str, path, rstd::move(contents).unwrap_err());
     }
     auto hash = cache::FNV_OFFSET;
     cache::add_text(hash, "lito-output-content-v1"_str);
@@ -140,17 +148,15 @@ auto receipt_output_paths(const Json& document) -> Vec<PathBuf> {
     return result;
 }
 
-auto read_receipt_output_paths(ref<rstd::path::Path> path) -> Result<Vec<PathBuf>> {
+auto read_receipt_output_paths(ref<rstd::path::Path> path) -> CacheResult<Vec<PathBuf>> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_failure<Vec<PathBuf>>(
-            rstd::format("cannot inspect cache record '{}': {}", path, exists.unwrap_err()));
+        return cache_io_failure<Vec<PathBuf>>("inspect record"_str, path, exists.unwrap_err());
     }
     if (! *exists) return Ok(Vec<PathBuf>::make());
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return cache_failure<Vec<PathBuf>>(
-            rstd::format("cannot read cache record '{}': {}", path, contents.unwrap_err()));
+        return cache_io_failure<Vec<PathBuf>>("read record"_str, path, contents.unwrap_err());
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(Vec<PathBuf>::make());
@@ -158,54 +164,50 @@ auto read_receipt_output_paths(ref<rstd::path::Path> path) -> Result<Vec<PathBuf
 }
 
 auto remove_owned_output(ref<rstd::path::Path> path, ref<rstd::path::Path> owner_root)
-    -> Result<empty> {
+    -> CacheResult<empty> {
     if (path.strip_prefix(owner_root).is_none()) {
         return cache_failure<empty>(
             rstd::format("cache output '{}' is outside build root '{}'", path, owner_root));
     }
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return cache_failure<empty>(
-            rstd::format("cannot inspect cache output '{}': {}", path, exists.unwrap_err()));
+        return cache_io_failure<empty>("inspect output"_str, path, exists.unwrap_err());
     }
     if (! *exists) return Ok(empty {});
     auto removed = rstd::fs::remove_file(path);
     if (removed.is_err()) {
-        return cache_failure<empty>(
-            rstd::format("cannot remove cache output '{}': {}", path, removed.unwrap_err()));
+        return cache_io_failure<empty>("remove output"_str, path, removed.unwrap_err());
     }
     return Ok(empty {});
 }
 
 auto collect_stale_records(ref<rstd::path::Path>                             directory,
                            const rstd::collections::BTreeMap<String, empty>& current,
-                           ref<rstd::path::Path> owner_root) -> Result<empty> {
+                           ref<rstd::path::Path> owner_root) -> CacheResult<empty> {
     auto exists = rstd::fs::exists(directory);
     if (exists.is_err()) {
-        return cache_failure<empty>(rstd::format(
-            "cannot inspect cache directory '{}': {}", directory, rstd::move(exists).unwrap_err()));
+        return cache_io_failure<empty>(
+            "inspect directory"_str, directory, rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(empty {});
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return cache_failure<empty>(rstd::format("cannot enumerate cache directory '{}': {}",
-                                                 directory,
-                                                 rstd::move(opened).unwrap_err()));
+        return cache_io_failure<empty>(
+            "enumerate directory"_str, directory, rstd::move(opened).unwrap_err());
     }
     auto entries = rstd::move(opened).unwrap();
     for (auto next = entries.next(); next.is_some(); next = entries.next()) {
         auto item = rstd::move(next).unwrap();
         if (item.is_err()) {
-            return cache_failure<empty>(rstd::format("cannot enumerate cache directory '{}': {}",
-                                                     directory,
-                                                     rstd::move(item).unwrap_err()));
+            return cache_io_failure<empty>(
+                "enumerate directory"_str, directory, rstd::move(item).unwrap_err());
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return cache_failure<empty>(rstd::format("cannot inspect cache entry '{}': {}",
-                                                     entry.path().as_path(),
-                                                     rstd::move(type).unwrap_err()));
+            auto path = entry.path();
+            return cache_io_failure<empty>(
+                "inspect entry"_str, path.as_path(), rstd::move(type).unwrap_err());
         }
         auto path = entry.path();
         if (type->is_dir()) {
@@ -232,9 +234,8 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
         }
         auto removed = rstd::fs::remove_file(path.as_path());
         if (removed.is_err()) {
-            return cache_failure<empty>(rstd::format("cannot remove stale cache record '{}': {}",
-                                                     path.as_path(),
-                                                     rstd::move(removed).unwrap_err()));
+            return cache_io_failure<empty>(
+                "remove stale record"_str, path.as_path(), rstd::move(removed).unwrap_err());
         }
     }
     return Ok(empty {});
@@ -262,7 +263,7 @@ public:
     static auto create(const BuildLayout&      layout,
                        ref<rstd::path::Path>   owner_root,
                        ref<str>                profile,
-                       const CompilerIdentity& compiler) -> Result<CacheEnvironment> {
+                       const CompilerIdentity& compiler) -> CacheResult<CacheEnvironment> {
         auto owner         = path_string(owner_root);
         auto compiler_path = path_string(compiler.path.as_path());
         auto resource      = path_string(compiler.resource_directory.as_path());
@@ -347,18 +348,16 @@ public:
         auto refresh = false;
         auto exists  = rstd::fs::exists(path.as_path());
         if (exists.is_err()) {
-            return cache_failure<CacheEnvironment>(
-                rstd::format("cannot inspect cache environment '{}': {}",
-                             path.as_path(),
-                             rstd::move(exists).unwrap_err()));
+            return cache_io_failure<CacheEnvironment>(
+                "inspect environment"_str, path.as_path(), rstd::move(exists).unwrap_err());
         }
         if (*exists) {
             auto contents = rstd::fs::read_to_string(path.as_path());
             if (contents.is_err()) {
-                return cache_failure<CacheEnvironment>(
-                    rstd::format("cannot read cache environment '{}': {}",
-                                 path.as_path(),
-                                 rstd::move(contents).unwrap_err()));
+                return cache_io_failure<CacheEnvironment>(
+                    "read environment"_str,
+                    path.as_path(),
+                    rstd::move(contents).unwrap_err());
             }
             auto parsed = rstd::json::from_str(contents->as_str());
             if (parsed.is_err()) {

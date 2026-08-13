@@ -24,7 +24,7 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
                                               const BuiltinSemanticContext&     semantic_context,
                                               ref<rstd::path::Path>             working_directory,
                                               const ResolvedProcessEnvironment& environment)
-    -> Result<SharedClangBuiltinEnvironmentSnapshot> {
+    -> ToolchainResult<SharedClangBuiltinEnvironmentSnapshot> {
     auto macro_command = clone_command(base_command);
     command::push_option(macro_command, clang_options::DUMP_MACROS);
     command::push_option(macro_command, clang_options::PREPROCESS);
@@ -33,7 +33,9 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
     command::push_option(macro_command, clang_options::STANDARD_INPUT);
     auto macro_output =
         run_command_with_input(macro_command, ""_str, environment, Some(working_directory));
-    if (macro_output.is_err()) return Err(rstd::move(macro_output).unwrap_err());
+    if (macro_output.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(macro_output).unwrap_err()));
+    }
     if (macro_output->exit_code != i32 {}) {
         return environment_failure<SharedClangBuiltinEnvironmentSnapshot>(
             rstd::format("clang++ -dM failed\n{}\n{}",
@@ -76,7 +78,7 @@ struct TextBuiltinValues {
 auto query_text_builtins(const Vec<String>&                base_command,
                          ref<rstd::path::Path>             working_directory,
                          const ResolvedProcessEnvironment& environment)
-    -> Result<TextBuiltinValues> {
+    -> ToolchainResult<TextBuiltinValues> {
     auto command_line = clone_command(base_command);
     command::push_option(command_line, clang_options::PREPROCESS);
     command::push_option(command_line, clang_options::NO_LINE_MARKERS);
@@ -88,14 +90,17 @@ auto query_text_builtins(const Vec<String>&                base_command,
                                "LITO_BUILTIN_DATE __DATE__\nLITO_BUILTIN_TIME __TIME__\n"_str,
                                environment,
                                Some(working_directory));
-    if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+    if (output.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+    }
     if (output->exit_code != i32 {}) {
         return environment_failure<TextBuiltinValues>(
             rstd::format("clang text builtin query failed: {}", output->standard_error.as_str()));
     }
     auto date   = Option<String> {};
     auto time   = Option<String> {};
-    auto parsed = each_line(output->standard_output.as_str(), [&](ref<str> raw) -> Result<empty> {
+    auto parsed = each_line(output->standard_output.as_str(), [&](ref<str> raw)
+                                -> ToolchainResult<empty> {
         auto           line        = raw.trim_ascii();
         auto           value       = Option<ref<str>> {};
         auto           target      = static_cast<Option<String>*>(nullptr);
@@ -142,7 +147,7 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
                                     BuiltinSemanticContext                semantic_context,
                                     const Vec<CppMacroDirective>&         macros,
                                     const ResolvedProcessEnvironment&     environment)
-    -> Result<PreprocessorEnvironment> {
+    -> ToolchainResult<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
     auto native_macros =
         parse_macro_seeds(native_predefined_macro_seeds(semantic_context), "<lito-built-in>"_str);
@@ -160,7 +165,9 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     command::push_option(include_command, clang_options::STANDARD_INPUT);
     auto include_output =
         run_command_with_input(include_command, ""_str, environment, Some(working_directory));
-    if (include_output.is_err()) return Err(rstd::move(include_output).unwrap_err());
+    if (include_output.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(include_output).unwrap_err()));
+    }
     if (include_output->exit_code != i32 {}) {
         return environment_failure<PreprocessorEnvironment>(
             rstd::format("clang++ -E -v failed\n{}\n{}",

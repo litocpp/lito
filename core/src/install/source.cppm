@@ -20,13 +20,13 @@ namespace lito
 {
 
 template<typename T>
-auto install_source_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
+auto install_source_failure(String message) -> InstallSourceResult<T> {
+    return Err(InstallSourceError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto install_source_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, message));
+auto install_source_failure(ref<str> message) -> InstallSourceResult<T> {
+    return Err(InstallSourceError::Message(String::make(message)));
 }
 
 auto absolute_root(ref<rstd::path::Path> base, PathBuf root) -> PathBuf {
@@ -34,7 +34,7 @@ auto absolute_root(ref<rstd::path::Path> base, PathBuf root) -> PathBuf {
     return PathBuf::from(base).join(root.as_path());
 }
 
-auto environment_root(ref<str> variable) -> Result<Option<PathBuf>> {
+auto environment_root(ref<str> variable) -> InstallSourceResult<Option<PathBuf>> {
     auto value = rstd::env::var(variable);
     if (value.is_none() || value->is_empty()) return Ok(Option<PathBuf> {});
     auto path = PathBuf::from(rstd::move(value).unwrap());
@@ -49,7 +49,7 @@ auto install_source_key(ref<str> key) -> bool {
     return key == "identity"_str || key == "kind"_str || key == "path"_str;
 }
 
-auto required_source_string(const Json& source, ref<str> key) -> Result<String> {
+auto required_source_string(const Json& source, ref<str> key) -> InstallSourceResult<String> {
     auto member = source.get(key);
     if (member.is_none()) {
         return install_source_failure<String>(
@@ -68,22 +68,27 @@ auto required_source_string(const Json& source, ref<str> key) -> Result<String> 
 export namespace lito
 {
 
-auto resolve_install_source(InstallSourceRequirement requirement) -> Result<ResolvedInstallSource>;
+auto resolve_install_source(InstallSourceRequirement requirement)
+    -> InstallSourceResult<ResolvedInstallSource>;
 
-auto install_source_identity(const InstallSourceProvenance& provenance) -> Result<String>;
+auto install_source_identity(const InstallSourceProvenance& provenance)
+    -> InstallSourceResult<String>;
 
-auto serialize_install_source_provenance(const InstallSourceProvenance& provenance) -> Result<Json>;
+auto serialize_install_source_provenance(const InstallSourceProvenance& provenance)
+    -> InstallSourceResult<Json>;
 
-auto parse_install_source_provenance(const Json& source) -> Result<InstallSourceProvenance>;
+auto parse_install_source_provenance(const Json& source)
+    -> InstallSourceResult<InstallSourceProvenance>;
 
 auto resolve_install_root(ref<rstd::path::Path> invocation_root,
                           Option<PathBuf>       command_root,
-                          const InstallConfig&  config) -> Result<InstallRoot>;
+                          const InstallConfig&  config) -> InstallSourceResult<InstallRoot>;
 
-auto resolve_install_source(InstallSourceRequirement requirement) -> Result<ResolvedInstallSource> {
+auto resolve_install_source(InstallSourceRequirement requirement)
+    -> InstallSourceResult<ResolvedInstallSource> {
     if (! requirement.is_LocalProject()) {
-        return install_source_failure<ResolvedInstallSource>(
-            "unsupported install source requirement"_str);
+        return Err(InstallSourceError::Message(
+            String::make("unsupported install source requirement"_str)));
     }
     auto project =
         rstd_try(resolve_project_entry(requirement.as_LocalProject().requested_root.as_path()));
@@ -96,7 +101,8 @@ auto resolve_install_source(InstallSourceRequirement requirement) -> Result<Reso
     });
 }
 
-auto install_source_identity(const InstallSourceProvenance& provenance) -> Result<String> {
+auto install_source_identity(const InstallSourceProvenance& provenance)
+    -> InstallSourceResult<String> {
     if (! provenance.is_Local()) {
         return install_source_failure<String>("unsupported install source provenance"_str);
     }
@@ -108,7 +114,7 @@ auto install_source_identity(const InstallSourceProvenance& provenance) -> Resul
 }
 
 auto serialize_install_source_provenance(const InstallSourceProvenance& provenance)
-    -> Result<Json> {
+    -> InstallSourceResult<Json> {
     auto        identity = rstd_try(install_source_identity(provenance));
     const auto& root     = provenance.as_Local().root;
     auto        path     = root.as_path().to_str();
@@ -123,7 +129,8 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
     return Ok(Json::Object(rstd::move(source)));
 }
 
-auto parse_install_source_provenance(const Json& source) -> Result<InstallSourceProvenance> {
+auto parse_install_source_provenance(const Json& source)
+    -> InstallSourceResult<InstallSourceProvenance> {
     auto object = source.as_object();
     if (object.is_none()) {
         return install_source_failure<InstallSourceProvenance>(
@@ -154,7 +161,7 @@ auto parse_install_source_provenance(const Json& source) -> Result<InstallSource
 
 auto resolve_install_root(ref<rstd::path::Path> invocation_root,
                           Option<PathBuf>       command_root,
-                          const InstallConfig&  config) -> Result<InstallRoot> {
+                          const InstallConfig&  config) -> InstallSourceResult<InstallRoot> {
     if (command_root.is_some()) {
         if (command_root->is_empty()) {
             return install_source_failure<InstallRoot>("install root must not be empty"_str);

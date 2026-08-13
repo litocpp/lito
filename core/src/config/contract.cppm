@@ -7,6 +7,7 @@ import lito.toolchain.spec;
 import lito.source.contract;
 import lito.dependency.contract;
 import lito.lock.contract;
+export import lito.config.error_contract;
 
 using namespace rstd::prelude;
 

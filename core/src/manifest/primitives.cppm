@@ -6,6 +6,7 @@ export module lito.manifest:primitives;
 import rstd;
 import rstd.toml;
 import lito.error;
+import lito.manifest.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -17,59 +18,84 @@ namespace lito
 {
 
 template<typename T>
-auto failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, message));
+auto failure(ref<str> message) -> ManifestSchemaResult<T> {
+    return Err(ManifestSchemaError::InvalidValue(
+        ManifestNodePath::make("manifest"_str), String::make(message)));
 }
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto failure(String message) -> ManifestSchemaResult<T> {
+    return Err(ManifestSchemaError::InvalidValue(
+        ManifestNodePath::make("manifest"_str), rstd::move(message)));
+}
+
+template<typename T>
+auto manifest_io_failure(ref<str>                node,
+                         ref<str>                operation,
+                         ref<rstd::path::Path>   path,
+                         rstd::io::error::Error error) -> ManifestSchemaResult<T> {
+    return Err(ManifestSchemaError::Io(ManifestNodePath::make(node),
+                                       String::make(operation),
+                                       PathBuf::from(path),
+                                       rstd::move(error)));
 }
 
 auto member(const Toml& value, ref<str> key) -> Option<ref<Toml>> {
     return value.get(key);
 }
 
-auto canonical_existing(ref<rstd::path::Path> path, ref<str> context) -> Result<PathBuf> {
+auto canonical_existing(ref<rstd::path::Path> path, ref<str> context)
+    -> ManifestSchemaResult<PathBuf> {
     auto canonical = rstd::fs::canonicalize(path);
     if (canonical.is_err()) {
-        return failure<PathBuf>(
-            rstd::format("{} '{}': {}", context, path, rstd::move(canonical).unwrap_err()));
+        return Err(ManifestSchemaError::Io(ManifestNodePath::make(context),
+                                           String::make("resolve"_str),
+                                           PathBuf::from(path),
+                                           rstd::move(canonical).unwrap_err()));
     }
     return Ok(rstd::move(canonical).unwrap());
 }
 
-auto table_value(const Toml& value, ref<str> context) -> Result<ref<Table>> {
+auto table_value(const Toml& value, ref<str> context) -> ManifestSchemaResult<ref<Table>> {
     auto table = value.as_table();
     if (table.is_none()) {
-        return failure<ref<Table>>(rstd::format("{} must be a table", context));
+        return Err(ManifestSchemaError::WrongType(
+            ManifestNodePath::make(context), String::make("a table"_str)));
     }
     return Ok(*table);
 }
 
-auto required_table(const Toml& document, ref<str> key, ref<str> context) -> Result<ref<Table>> {
+auto required_table(const Toml& document, ref<str> key, ref<str> context)
+    -> ManifestSchemaResult<ref<Table>> {
     auto value = member(document, key);
     if (value.is_none()) {
-        return failure<ref<Table>>(rstd::format("{} is missing '{}'", context, key));
+        return Err(ManifestSchemaError::MissingField(
+            ManifestNodePath::make(context), String::make(key)));
     }
     return table_value(**value, rstd::format("{}.{}", context, key).as_str());
 }
 
-auto string_value(const Toml& value, ref<str> context) -> Result<String> {
+auto string_value(const Toml& value, ref<str> context) -> ManifestSchemaResult<String> {
     auto text = value.as_str();
-    if (text.is_none()) return failure<String>(rstd::format("{} must be a string", context));
+    if (text.is_none()) {
+        return Err(ManifestSchemaError::WrongType(
+            ManifestNodePath::make(context), String::make("a string"_str)));
+    }
     return Ok(String::make(*text));
 }
 
-auto required_string(const Toml& table, ref<str> key, ref<str> context) -> Result<String> {
+auto required_string(const Toml& table, ref<str> key, ref<str> context)
+    -> ManifestSchemaResult<String> {
     auto value = member(table, key);
     if (value.is_none()) {
-        return failure<String>(rstd::format("{} is missing '{}'", context, key));
+        return Err(ManifestSchemaError::MissingField(
+            ManifestNodePath::make(context), String::make(key)));
     }
     return string_value(**value, rstd::format("{}.{}", context, key).as_str());
 }
 
-auto optional_string(const Toml& table, ref<str> key, ref<str> context) -> Result<Option<String>> {
+auto optional_string(const Toml& table, ref<str> key, ref<str> context)
+    -> ManifestSchemaResult<Option<String>> {
     auto value = member(table, key);
     if (value.is_none()) return Ok(Option<String> {});
     auto parsed = string_value(**value, rstd::format("{}.{}", context, key).as_str());
@@ -77,11 +103,15 @@ auto optional_string(const Toml& table, ref<str> key, ref<str> context) -> Resul
     return Ok(Some(rstd::move(parsed).unwrap()));
 }
 
-auto string_array(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<String>> {
+auto string_array(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Vec<String>> {
     auto result = Vec<String>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto array = (**value).as_array();
-    if (array.is_none()) return failure<Vec<String>>(rstd::format("{} must be an array", context));
+    if (array.is_none()) {
+        return Err(ManifestSchemaError::WrongType(
+            ManifestNodePath::make(context), String::make("an array"_str)));
+    }
     for (const auto& item : **array) {
         auto text = string_value(item, rstd::format("{} item", context).as_str());
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -90,12 +120,13 @@ auto string_array(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<Strin
     return Ok(rstd::move(result));
 }
 
-auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed) -> Result<empty> {
+auto reject_unknown(const Table& table, ref<str> context, KeyPredicate allowed)
+    -> ManifestSchemaResult<empty> {
     auto keys = table.keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (! allowed((**key).as_str())) {
-            return failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+            return Err(ManifestSchemaError::UnknownField(
+                ManifestNodePath::make(context), String::make((**key).as_str())));
         }
     }
     return Ok(empty {});

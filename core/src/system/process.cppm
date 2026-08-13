@@ -2,6 +2,7 @@ export module lito.system.process;
 
 import rstd;
 import lito.error;
+export import lito.system.error_contract;
 import lito.system.environment_contract;
 import lito.system.environment;
 
@@ -11,11 +12,10 @@ using namespace rstd::literals;
 namespace lito
 {
 
-auto output_text(Vec<u8> bytes, ref<str> context) -> Result<String> {
+auto output_text(Vec<u8> bytes, ref<str> context) -> SystemResult<String> {
     auto decoded = String::from_utf8(rstd::move(bytes));
     if (decoded.is_err()) {
-        return Err(
-            Error::make(ErrorKind::Toolchain, rstd::format("{} is not valid UTF-8", context)));
+        return Err(SystemError::Utf8(String::make(context), rstd::move(decoded).unwrap_err()));
     }
     return Ok(rstd::move(decoded).unwrap());
 }
@@ -27,11 +27,11 @@ enum class FragmentQuote
     Double,
 };
 
-auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context) -> Result<empty> {
+auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context)
+    -> SystemResult<empty> {
     auto word = String::from_utf8(rstd::move(current));
     if (word.is_err()) {
-        return Err(
-            Error::make(ErrorKind::Dependency, rstd::format("{} contains invalid UTF-8", context)));
+        return Err(SystemError::Utf8(String::make(context), rstd::move(word).unwrap_err()));
     }
     output.push(rstd::move(word).unwrap());
     current = Vec<u8>::make();
@@ -75,7 +75,7 @@ auto apply_command_environment(rstd::process::Command&           command,
 }
 
 auto decode_command_output(rstd::process::Output value, rstd::time::Duration elapsed)
-    -> Result<CommandOutput> {
+    -> SystemResult<CommandOutput> {
     auto stdout_text = output_text(rstd::move(value.stdout_buf), "command stdout"_str);
     if (stdout_text.is_err()) return Err(rstd::move(stdout_text).unwrap_err());
     auto stderr_text = output_text(rstd::move(value.stderr_buf), "command stderr"_str);
@@ -93,15 +93,15 @@ auto decode_command_output(rstd::process::Output value, rstd::time::Duration ela
 auto run_command(const Vec<String>&                arguments,
                  const ResolvedProcessEnvironment& environment,
                  Option<ref<rstd::path::Path>>     working_directory = None(),
-                 Option<ref<CommandEnvironment>>   overrides = None()) -> Result<CommandOutput> {
+                 Option<ref<CommandEnvironment>>   overrides = None()) -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(Error::make(ErrorKind::InvalidRequest,
-                               rstd::format("command program '{}' is not an absolute path",
-                                            arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(
+            rstd::format("command program '{}' is not an absolute path",
+                         arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -118,10 +118,9 @@ auto run_command(const Vec<String>&                arguments,
     auto output  = command.output();
     auto elapsed = started.elapsed();
     if (output.is_err()) {
-        return Err(Error::make(ErrorKind::Toolchain,
-                               rstd::format("failed to execute '{}': {}",
-                                            arguments[usize {}].as_str(),
-                                            rstd::move(output).unwrap_err())));
+        return Err(SystemError::Io(String::make("failed to execute"_str),
+                                   rstd::move(program),
+                                   rstd::move(output).unwrap_err()));
     }
 
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
@@ -132,15 +131,15 @@ auto run_command_observed(const Vec<String>&                arguments,
                           rstd::process::OutputObserver     observer,
                           Option<ref<rstd::path::Path>>     working_directory = None(),
                           Option<ref<CommandEnvironment>>   overrides         = None())
-    -> Result<CommandOutput> {
+    -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(Error::make(ErrorKind::InvalidRequest,
-                               rstd::format("command program '{}' is not an absolute path",
-                                            arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(
+            rstd::format("command program '{}' is not an absolute path",
+                         arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -154,10 +153,9 @@ auto run_command_observed(const Vec<String>&                arguments,
     auto output  = command.output(observer);
     auto elapsed = started.elapsed();
     if (output.is_err()) {
-        return Err(Error::make(ErrorKind::Toolchain,
-                               rstd::format("failed to execute '{}': {}",
-                                            arguments[usize {}].as_str(),
-                                            rstd::move(output).unwrap_err())));
+        return Err(SystemError::Io(String::make("failed to execute"_str),
+                                   rstd::move(program),
+                                   rstd::move(output).unwrap_err()));
     }
     return decode_command_output(rstd::move(output).unwrap(), elapsed);
 }
@@ -167,15 +165,15 @@ auto run_command_with_input(const Vec<String>&                arguments,
                             const ResolvedProcessEnvironment& environment,
                             Option<ref<rstd::path::Path>>     working_directory = None(),
                             Option<ref<CommandEnvironment>>   overrides         = None())
-    -> Result<CommandOutput> {
+    -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
-        return Err(Error::make(ErrorKind::InvalidRequest, "empty command"_str));
+        return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(Error::make(ErrorKind::InvalidRequest,
-                               rstd::format("command program '{}' is not an absolute path",
-                                            arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(
+            rstd::format("command program '{}' is not an absolute path",
+                         arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -191,29 +189,29 @@ auto run_command_with_input(const Vec<String>&                arguments,
     auto started = rstd::time::Instant::now();
     auto spawned = command.spawn();
     if (spawned.is_err()) {
-        return Err(Error::make(ErrorKind::Toolchain,
-                               rstd::format("failed to execute '{}': {}",
-                                            arguments[usize {}].as_str(),
-                                            rstd::move(spawned).unwrap_err())));
+        return Err(SystemError::Io(String::make("failed to execute"_str),
+                                   rstd::move(program),
+                                   rstd::move(spawned).unwrap_err()));
     }
     auto child = rstd::move(spawned).unwrap();
     {
         auto input = child.take_stdin();
         if (input.is_none()) {
-            return Err(Error::make(ErrorKind::Toolchain, "command stdin pipe is unavailable"_str));
+            return Err(SystemError::InvalidCommand(
+                String::make("command stdin pipe is unavailable"_str)));
         }
         auto written = rstd::io::write_all(*input, standard_input.as_bytes());
         if (written.is_err()) {
-            return Err(Error::make(ErrorKind::Toolchain,
-                                   rstd::format("failed to write command stdin: {}",
-                                                rstd::move(written).unwrap_err())));
+            return Err(SystemError::Io(String::make("failed to write command stdin"_str),
+                                       PathBuf::make(),
+                                       rstd::move(written).unwrap_err()));
         }
     }
     auto output = child.wait_with_output();
     if (output.is_err()) {
-        return Err(Error::make(
-            ErrorKind::Toolchain,
-            rstd::format("failed to collect command output: {}", rstd::move(output).unwrap_err())));
+        return Err(SystemError::Io(String::make("failed to collect command output"_str),
+                                   PathBuf::make(),
+                                   rstd::move(output).unwrap_err()));
     }
     return decode_command_output(rstd::move(output).unwrap(), started.elapsed());
 }
@@ -240,7 +238,7 @@ auto trim_ascii(String value) -> String {
     return String::make(value.as_str().trim_ascii());
 }
 
-auto tokenize_command_fragments(ref<str> input, ref<str> context) -> Result<Vec<String>> {
+auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResult<Vec<String>> {
     auto result      = Vec<String>::make();
     auto current     = Vec<u8>::make();
     auto quote       = FragmentQuote::None;
@@ -248,8 +246,7 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> Result<Vec<
     auto word_active = false;
     for (auto byte : input.as_bytes()) {
         if (byte == u8()) {
-            return Err(
-                Error::make(ErrorKind::Dependency, rstd::format("{} contains NUL", context)));
+            return Err(SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
         }
         if (escaping) {
             if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
@@ -305,12 +302,12 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> Result<Vec<
         }
     }
     if (escaping) {
-        return Err(
-            Error::make(ErrorKind::Dependency, rstd::format("{} ends with an escape", context)));
+        return Err(SystemError::Fragment(String::make(context),
+                                         String::make("ends with an escape"_str)));
     }
     if (quote != FragmentQuote::None) {
-        return Err(Error::make(ErrorKind::Dependency,
-                               rstd::format("{} contains an unclosed quote", context)));
+        return Err(SystemError::Fragment(String::make(context),
+                                         String::make("contains an unclosed quote"_str)));
     }
     if (word_active) {
         auto pushed = push_fragment_word(result, current, context);

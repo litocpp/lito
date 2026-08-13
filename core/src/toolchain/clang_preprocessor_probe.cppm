@@ -19,13 +19,13 @@ namespace lito::toolchain
 {
 
 template<typename T>
-auto environment_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
+auto environment_failure(String message) -> ToolchainResult<T> {
+    return Err(ToolchainError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto environment_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, message));
+auto environment_failure(ref<str> message) -> ToolchainResult<T> {
+    return Err(ToolchainError::Message(String::make(message)));
 }
 
 auto clone_command(const Vec<String>& source) -> Vec<String> {
@@ -35,7 +35,7 @@ auto clone_command(const Vec<String>& source) -> Vec<String> {
 }
 
 template<typename Callback>
-auto each_line(ref<str> text, Callback&& callback) -> Result<empty> {
+auto each_line(ref<str> text, Callback&& callback) -> ToolchainResult<empty> {
     auto bytes = text.as_bytes();
     auto begin = usize {};
     while (begin <= bytes.len()) {
@@ -55,9 +55,9 @@ auto each_line(ref<str> text, Callback&& callback) -> Result<empty> {
     return Ok(empty {});
 }
 
-auto parse_macro_dump(ref<str> output) -> Result<Vec<preprocessor::MacroSeed>> {
+auto parse_macro_dump(ref<str> output) -> ToolchainResult<Vec<preprocessor::MacroSeed>> {
     auto macros = Vec<preprocessor::MacroSeed>::make();
-    auto parsed = each_line(output, [&macros](ref<str> raw) -> Result<empty> {
+    auto parsed = each_line(output, [&macros](ref<str> raw) -> ToolchainResult<empty> {
         auto line = raw.trim_ascii();
         if (line.is_empty()) return Ok(empty {});
         constexpr auto prefix = "#define "_str;
@@ -82,7 +82,7 @@ struct ParsedMacroSet {
 };
 
 auto parse_macro_seeds(const Vec<preprocessor::MacroSeed>& seeds, ref<str> source_name)
-    -> Result<ParsedMacroSet> {
+    -> ToolchainResult<ParsedMacroSet> {
     auto text = String::make();
     for (const auto& seed : seeds) {
         text.push_str("#define "_str);
@@ -96,7 +96,7 @@ auto parse_macro_seeds(const Vec<preprocessor::MacroSeed>& seeds, ref<str> sourc
     auto source   = lexical::SourceFile { .snapshot = snapshot.clone() };
     auto tokens   = lexical::lex(source, true);
     if (tokens.is_err()) {
-        return environment_failure<ParsedMacroSet>(rstd::move(tokens).unwrap_err().message.clone());
+        return Err(rstd::into<ToolchainError>(rstd::move(tokens).unwrap_err()));
     }
     auto definitions = Vec<preprocessor::SharedMacroDefinition>::make();
     for (auto cursor = usize {}; cursor < tokens->len();) {
@@ -117,8 +117,7 @@ auto parse_macro_seeds(const Vec<preprocessor::MacroSeed>& seeds, ref<str> sourc
             line.push((*tokens)[index].clone());
         auto definition = preprocessor::parse_macro_definition(line);
         if (definition.is_err()) {
-            return environment_failure<ParsedMacroSet>(
-                rstd::move(definition).unwrap_err().message.clone());
+            return Err(rstd::into<ToolchainError>(rstd::move(definition).unwrap_err()));
         }
         definitions.push(preprocessor::share_macro_definition(rstd::move(definition).unwrap()));
         cursor = end < tokens->len() ? end + usize(1) : end;
@@ -187,7 +186,7 @@ struct ParsedCommandLineMacros {
 };
 
 auto parse_command_line_macros(const Vec<CppMacroDirective>& macros)
-    -> Result<ParsedCommandLineMacros> {
+    -> ToolchainResult<ParsedCommandLineMacros> {
     auto states  = command_line_macro_states(macros);
     auto seeds   = Vec<preprocessor::MacroSeed>::make();
     auto entries = Vec<CommandLineMacroEntry>::with_capacity(states.len());
@@ -223,13 +222,13 @@ auto parse_command_line_macros(const Vec<CppMacroDirective>& macros)
     });
 }
 
-auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
+auto parse_include_search(ref<str> output) -> ToolchainResult<Vec<IncludeSearchEntry>> {
     auto entries   = Vec<IncludeSearchEntry>::make();
     auto inside    = false;
     auto saw_start = false;
     auto saw_end   = false;
     auto system    = true;
-    auto parsed    = each_line(output, [&](ref<str> raw) -> Result<empty> {
+    auto parsed    = each_line(output, [&](ref<str> raw) -> ToolchainResult<empty> {
         auto line = raw.trim_ascii();
         if (line == "#include \"...\" search starts here:"_str) {
             inside    = true;
@@ -256,10 +255,9 @@ auto parse_include_search(ref<str> output) -> Result<Vec<IncludeSearchEntry>> {
         auto directory = PathBuf::from(line);
         auto canonical = rstd::fs::canonicalize(directory.as_path());
         if (canonical.is_err()) {
-            return environment_failure<empty>(
-                rstd::format("cannot resolve clang include directory '{}': {}",
-                             directory.as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return Err(ToolchainError::Io(String::make("resolve clang include directory"_str),
+                                          rstd::move(directory),
+                                          rstd::move(canonical).unwrap_err()));
         }
         entries.push(
             IncludeSearchEntry { .directory = rstd::move(canonical).unwrap(), .system = system });
@@ -359,7 +357,7 @@ auto builtin_snapshot_identity(const Vec<preprocessor::MacroSeed>& macros, ref<s
 
 auto environment_identity(ref<str>                       builtin_identity,
                           const Vec<IncludeSearchEntry>& includes,
-                          ref<str>                       context_id) -> Result<String> {
+                          ref<str>                       context_id) -> ToolchainResult<String> {
     constexpr rstd::uint64_t offset = 14695981039346656037ull;
     constexpr rstd::uint64_t prime  = 1099511628211ull;
     auto                     hash   = offset;
@@ -392,10 +390,6 @@ auto environment_identity(ref<str>                       builtin_identity,
     }
     return Ok(String::make(
         ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16))));
-}
-
-auto preprocessor_error(const Error& error) -> preprocessor::Error {
-    return preprocessor::Error::make(error.message.clone());
 }
 
 } // namespace lito::toolchain
@@ -557,7 +551,7 @@ struct QueriedCapabilities {
     usize                                   output_bytes {};
 };
 
-auto parse_capability_value(ref<str> raw) -> Result<i64> {
+auto parse_capability_value(ref<str> raw) -> ToolchainResult<i64> {
     auto value = raw.trim_ascii();
     while (value.len() >= usize(2) && value.as_bytes()[usize {}] == u8('(') &&
            value.as_bytes()[value.len() - usize(1)] == u8(')')) {
@@ -596,7 +590,7 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
                               const BuiltinSemanticContext&     semantic_context,
                               ref<rstd::path::Path>             working_directory,
                               const ResolvedProcessEnvironment& environment)
-    -> Result<QueriedCapabilities> {
+    -> ToolchainResult<QueriedCapabilities> {
     auto catalog      = standard_library_capabilities();
     auto pending      = Vec<preprocessor::BuiltinQueryKey>::make();
     auto source       = String::make();
@@ -637,7 +631,9 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
     command::push_option(command_line, clang_options::STANDARD_INPUT);
     auto output =
         run_command_with_input(command_line, source.as_str(), environment, Some(working_directory));
-    if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+    if (output.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+    }
     if (output->exit_code != i32 {}) {
         return environment_failure<QueriedCapabilities>(
             rstd::format("clang builtin capability query failed\n{}\n{}",
@@ -647,7 +643,7 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
 
     auto values = Vec<i64>::make();
     auto parsed =
-        each_line(output->standard_output.as_str(), [&values](ref<str> raw) -> Result<empty> {
+        each_line(output->standard_output.as_str(), [&values](ref<str> raw) -> ToolchainResult<empty> {
             auto line = raw.trim_ascii();
             if (line.is_empty()) return Ok(empty {});
             constexpr auto prefix = "LITO_BUILTIN_QUERY_"_str;
@@ -676,7 +672,7 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
             }
             auto value = parse_capability_value(*value_text);
             if (value.is_err()) {
-                return environment_failure<empty>(rstd::move(value).unwrap_err().message);
+                return Err(rstd::move(value).unwrap_err());
             }
             values.push(i64(*value));
             return Ok(empty {});

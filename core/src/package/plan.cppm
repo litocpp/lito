@@ -8,6 +8,7 @@ import lito.manifest.contract;
 import lito.dependency.contract;
 import lito.package.identity;
 import lito.package.target_contract;
+import lito.package.error_contract;
 import lito.build.identity;
 import lito.build.plan_contract;
 
@@ -18,13 +19,13 @@ namespace lito
 {
 
 template<typename T>
-auto plan_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto plan_failure(String message) -> PackageResult<T> {
+    return Err(PackageError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto plan_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, message));
+auto plan_failure(ref<str> message) -> PackageResult<T> {
+    return Err(PackageError::Message(String::make(message)));
 }
 
 auto append_unique(Vec<String>& output, const Vec<String>& input) -> void {
@@ -124,7 +125,7 @@ struct PublicUsage {
 auto visit_target(const PackageMetadata& package,
                   TargetId               target,
                   Vec<uint8_t>&          colors,
-                  Vec<TargetId>&         target_order) -> Result<empty> {
+                  Vec<TargetId>&         target_order) -> PackageResult<empty> {
     auto& color = colors[target];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
@@ -185,7 +186,7 @@ auto scan_context_id(const CompileContext& context) -> String {
 
 auto attachment_context(const CompileContext&       library,
                         const CompileContext&       test,
-                        const TestAttachmentTarget& attachment) -> Result<CompileContext> {
+                        const TestAttachmentTarget& attachment) -> PackageResult<CompileContext> {
     if (library.bmi.representation != test.bmi.representation ||
         library.bmi.source_embedding != test.bmi.source_embedding) {
         return plan_failure<CompileContext>(
@@ -199,7 +200,7 @@ auto attachment_context(const CompileContext&       library,
     };
     auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
     if (merged.is_err()) {
-        return plan_failure<CompileContext>(rstd::move(merged).unwrap_err());
+        return Err(PackageError::Cpp(rstd::move(merged).unwrap_err()));
     }
     result.cpp                 = rstd::move(merged).unwrap();
     result.public_requirements = merge_cpp_public_requirements(
@@ -219,7 +220,7 @@ export namespace lito
 {
 
 auto compile_test_context(const CompileContext& base, const CompileTestCase& test)
-    -> Result<CompileContext> {
+    -> PackageResult<CompileContext> {
     auto context = CompileContext {
         .bmi                 = base.bmi,
         .cpp                 = as<rstd::clone::Clone>(base.cpp).clone(),
@@ -230,7 +231,7 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
     layer.arguments = as<rstd::clone::Clone>(test.arguments).clone();
     auto applied    = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(layer));
     if (applied.is_err()) {
-        return plan_failure<CompileContext>(rstd::move(applied).unwrap_err());
+        return Err(PackageError::Cpp(rstd::move(applied).unwrap_err()));
     }
     context.cpp     = rstd::move(applied).unwrap();
     context.id      = context_id(context);
@@ -241,7 +242,7 @@ auto compile_test_context(const CompileContext& base, const CompileTestCase& tes
 auto resolve_source_selection(const PackageMetadata& package,
                               ref<str>               requested_profile,
                               const Vec<String>&     requested_targets)
-    -> Result<SourceTargetSelection> {
+    -> PackageResult<SourceTargetSelection> {
     auto profile_name =
         requested_profile.size() == usize {} ? package.default_profile.as_str() : requested_profile;
     auto profile = Option<usize> {};
@@ -338,7 +339,7 @@ auto resolve_source_selection(const PackageMetadata& package,
 }
 
 auto resolve_build_script_packages(const PackageMetadata&       package,
-                                   const SourceTargetSelection& selection) -> Result<Vec<String>> {
+                                   const SourceTargetSelection& selection) -> PackageResult<Vec<String>> {
     auto result = Vec<String>::make();
     for (auto target : selection.selected_targets) {
         if (target >= package.targets.len()) {
@@ -359,7 +360,7 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
 }
 
 auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelection selection)
-    -> Result<SourceDiscoveryPlan> {
+    -> PackageResult<SourceDiscoveryPlan> {
     if (selection.profile >= package.profiles.len()) {
         return plan_failure<SourceDiscoveryPlan>(
             "source target selection does not match package profile"_str);
@@ -434,7 +435,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto public_cpp = apply_cpp_option_layer(
             as<rstd::clone::Clone>(selected_profile.cpp).clone(), rstd::move(public_layer));
         if (public_cpp.is_err()) {
-            return plan_failure<SourceDiscoveryPlan>(rstd::move(public_cpp).unwrap_err());
+            return Err(PackageError::Cpp(rstd::move(public_cpp).unwrap_err()));
         }
         context.public_requirements = cpp_public_requirements(*public_cpp);
         context.cpp                 = rstd::move(public_cpp).unwrap();
@@ -473,7 +474,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         }
         auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
         if (applied.is_err()) {
-            return plan_failure<SourceDiscoveryPlan>(rstd::move(applied).unwrap_err());
+            return Err(PackageError::Cpp(rstd::move(applied).unwrap_err()));
         }
         context.cpp             = rstd::move(applied).unwrap();
         context.id              = context_id(context);
@@ -560,14 +561,14 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
 
 auto resolve_source_discovery(const PackageMetadata& package,
                               ref<str>               requested_profile,
-                              const Vec<String>& requested_targets) -> Result<SourceDiscoveryPlan> {
+                              const Vec<String>& requested_targets) -> PackageResult<SourceDiscoveryPlan> {
     auto selection = resolve_source_selection(package, requested_profile, requested_targets);
     if (selection.is_err()) return Err(rstd::move(selection).unwrap_err());
     return resolve_source_discovery(package, rstd::move(selection).unwrap());
 }
 
 auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan discovery)
-    -> Result<PackagePlan> {
+    -> PackageResult<PackagePlan> {
     if (discovery.profile >= package.profiles.len() ||
         discovery.target_identities.len() != package.targets.len()) {
         return plan_failure<PackagePlan>(

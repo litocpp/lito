@@ -7,6 +7,7 @@ import rstd;
 import lito.error;
 import lito.cpp;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
@@ -33,7 +34,7 @@ struct ExternalPackageUsage {
 struct ExternalUsageCatalog {
     Vec<ExternalPackageUsage> packages;
 
-    auto take(ref<str> package) -> Result<Vec<ResolvedExternalDependency>> {
+    auto take(ref<str> package) -> DependencyResult<Vec<ResolvedExternalDependency>> {
         for (auto& entry : packages) {
             if (entry.package.as_str() != package) continue;
             if (entry.consumed) {
@@ -67,7 +68,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                     const ResolvedProcessEnvironment& process_environment,
                                     usize                             jobs,
                                     const Option<BuildObserver>&      observer)
-    -> Result<ExternalUsageCatalog> {
+    -> DependencyResult<ExternalUsageCatalog> {
     if (jobs == usize {}) {
         return dependency_failure<ExternalUsageCatalog>(
             "external dependency jobs must be greater than zero"_str);
@@ -121,8 +122,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
     auto resolved_tool =
         tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
     if (resolved_tool.is_err()) {
-        auto error = rstd::move(resolved_tool).unwrap_err();
-        return dependency_failure<ExternalUsageCatalog>(rstd::move(error.message));
+        return Err(rstd::into<DependencyError>(rstd::move(resolved_tool).unwrap_err()));
     }
     auto resolved_cmake       = cmake_config.clone();
     resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
@@ -149,16 +149,18 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                                 resolved_cmake.executable.as_path(),
                                                 process_environment,
                                                 fetch_observer);
-        if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
+        if (fetched.is_err()) {
+            return Err(rstd::into<DependencyError>(rstd::move(fetched).unwrap_err()));
+        }
         for (usize index {}; index < fetched->len(); ++index) {
             auto acquired    = rstd::move((*fetched)[index]);
             auto cmake_lists = acquired.root.join(PathBuf::from("CMakeLists.txt"_str).as_path());
             auto has_project = rstd::fs::exists(cmake_lists.as_path());
             if (has_project.is_err()) {
-                return dependency_failure<ExternalUsageCatalog>(
-                    rstd::format("cannot inspect archive source CMake project '{}': {}",
-                                 cmake_lists.as_path(),
-                                 rstd::move(has_project).unwrap_err()));
+                return Err(DependencyError::Io(
+                    String::make("inspect archive CMake project"_str),
+                    rstd::move(cmake_lists),
+                    rstd::move(has_project).unwrap_err()));
             }
             bindings[archive_bindings[index]].requirement.source =
                 ResolvedCMakeDependencySource::Directory(
@@ -182,7 +184,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                 "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
         }
         auto cached = snapshots.get(*key_text);
-        auto usage  = [&]() -> Result<ResolvedExternalDependency> {
+        auto usage  = [&]() -> DependencyResult<ResolvedExternalDependency> {
             if (cached.is_some()) return materialize_cmake_usage(*plan, **cached, parser);
             auto executed = execute_cmake_package(*plan, process_environment, observer);
             if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());

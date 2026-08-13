@@ -35,8 +35,8 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
+auto failure(String message) -> BuildProfileResult<T> {
+    return Err(BuildProfileError::Message(rstd::move(message)));
 }
 
 auto definition(const ProjectProfile& project, ref<str> name)
@@ -77,7 +77,7 @@ auto apply_definition(ResolvedBuildProfile profile, const BuildProfileDefinition
 }
 
 auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> path)
-    -> Result<ResolvedBuildProfile> {
+    -> BuildProfileResult<ResolvedBuildProfile> {
     auto cycle = inherited_cycle(path, name);
     if (cycle.is_some()) return failure<ResolvedBuildProfile>(rstd::move(cycle).unwrap());
     path.push(String::make(name));
@@ -140,12 +140,11 @@ export namespace rstd
 
 template<>
 struct Impl<convert::TryFrom<ref<str>>, lito::BuildProfileName> {
-    using Error = lito::Error;
+    using Error = lito::BuildProfileError;
 
     static auto try_from(ref<str> name) -> Result<lito::BuildProfileName, Error> {
         if (! lito::valid_build_profile_name(name)) {
-            return Err(lito::Error::make(
-                lito::ErrorKind::InvalidRequest,
+            return Err(lito::BuildProfileError::Message(
                 rstd::format("invalid profile '{}'; expected ASCII letters, digits, '-' or '_'",
                              name)));
         }
@@ -160,7 +159,7 @@ struct Impl<convert::TryFrom<ref<str>>, lito::BuildProfileName> {
 export namespace lito
 {
 
-auto parse_build_profile(ref<str> name) -> Result<BuildProfileName> {
+auto parse_build_profile(ref<str> name) -> BuildProfileResult<BuildProfileName> {
     return rstd::try_from<BuildProfileName>(name);
 }
 
@@ -168,7 +167,7 @@ auto build_profile_name(const BuildProfileName& profile) noexcept -> ref<str> {
     return profile.as_str();
 }
 
-auto validate_build_profiles(const ProjectProfile& project) -> Result<empty> {
+auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResult<empty> {
     for (usize index {}; index < project.build_profiles.len(); ++index) {
         const auto& profile = project.build_profiles[index];
         if (! valid_build_profile_name(profile.name.as_str())) {
@@ -197,7 +196,7 @@ auto validate_build_profiles(const ProjectProfile& project) -> Result<empty> {
 }
 
 auto resolve_build_profile(const ProjectProfile& project, const BuildProfileName& name)
-    -> Result<ResolvedBuildProfile> {
+    -> BuildProfileResult<ResolvedBuildProfile> {
     rstd_try(validate_build_profiles(project));
     return resolve_profile(project, name.as_str(), Vec<String>::make());
 }
@@ -219,16 +218,16 @@ auto is_profile_owned_linker_option(ref<str> option) -> bool {
 }
 
 auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
-    -> Result<CppArgumentLayer> {
-    return parser.parse(configuration.options, "build.options"_str).map_err([](String error) {
-        return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
+    -> BuildProfileResult<CppArgumentLayer> {
+    return parser.parse(configuration.options, "build.options"_str).map_err([](CppOptionError error) {
+        return BuildProfileError::Cpp(rstd::move(error));
     });
 }
 
 auto make_profile_spec(const BuildConfiguration& configuration,
                        const ProjectProfile&     project_profile,
                        const BuildProfileName&   selected_profile,
-                       CppArgumentLayer          arguments) -> Result<ProfileSpec> {
+                       CppArgumentLayer          arguments) -> BuildProfileResult<ProfileSpec> {
     auto selected = rstd_try(resolve_build_profile(project_profile, selected_profile));
     for (const auto& occurrence : arguments.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
@@ -295,16 +294,13 @@ auto make_profile_spec(const BuildConfiguration& configuration,
     if (selected.ndebug) layer.definitions.push(String::make("NDEBUG"_str));
     layer.arguments = rstd::move(arguments);
 
-    auto cpp        = rstd_try(make_cpp_options(configuration.language_standard.as_str(),
-                                                configuration.standard_library,
-                                                project_profile.exceptions,
-                                                project_profile.rtti,
-                                                selected.optimization,
-                                                selected.debug_info,
-                                                rstd::move(layer)),
-                               [](String error) {
-                            return Error::make(ErrorKind::InvalidRequest, rstd::move(error));
-                               });
+    auto cpp = rstd_try(make_cpp_options(configuration.language_standard.as_str(),
+                                         configuration.standard_library,
+                                         project_profile.exceptions,
+                                         project_profile.rtti,
+                                         selected.optimization,
+                                         selected.debug_info,
+                                         rstd::move(layer)));
     cpp.codegen.lto = selected.lto;
 
     return Ok(ProfileSpec {
@@ -324,7 +320,7 @@ auto make_profile_spec(const BuildConfiguration& configuration,
 auto make_profile_spec(const BuildConfiguration& configuration,
                        const ProjectProfile&     project_profile,
                        const BuildProfileName&   selected_profile,
-                       const CppArgumentParser&  parser) -> Result<ProfileSpec> {
+                       const CppArgumentParser&  parser) -> BuildProfileResult<ProfileSpec> {
     auto arguments = rstd_try(parse_build_arguments(configuration, parser));
     return make_profile_spec(
         configuration, project_profile, selected_profile, rstd::move(arguments));

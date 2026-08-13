@@ -111,6 +111,35 @@ auto make_timing_output(ref<rstd::path::Path>       root,
     };
 }
 
+template<typename E>
+    requires rstd::Impled<E, rstd::error::Error>
+void report_error(const E& error) {
+    rstd::io::eprintln("lito: {}", error);
+    const void* seen_data[32] {};
+    const void* seen_metadata[32] {};
+    auto        seen_count = usize {};
+    auto        source     = rstd::as<rstd::error::Error>(error).source();
+    while (source.is_some() && seen_count < usize(32)) {
+        auto address  = source->as_raw_ptr();
+        auto metadata = static_cast<const void*>(source->metadata());
+        auto repeated = false;
+        for (auto index = usize {}; index < seen_count; ++index) {
+            if (seen_data[index.to_primitive()] == address &&
+                seen_metadata[index.to_primitive()] == metadata) {
+                repeated = true;
+                break;
+            }
+        }
+        if (repeated) break;
+        seen_data[seen_count.to_primitive()]     = address;
+        seen_metadata[seen_count.to_primitive()] = metadata;
+        ++seen_count;
+        rstd::io::eprintln("  caused by: {}", *source);
+        auto next = (*source)->source();
+        source    = rstd::move(next);
+    }
+}
+
 } // namespace
 
 extern "C++" int main() {
@@ -130,7 +159,7 @@ extern "C++" int main() {
             lito::InstallSourceRequirement::LocalProject(invocation.working_directory.clone()));
         if (resolved.is_err()) {
             auto error = rstd::move(resolved).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         install_source = Some(rstd::move(resolved).unwrap());
@@ -142,7 +171,7 @@ extern "C++" int main() {
         invocation.no_config ? lito::ConfigLoadMode::Disabled : lito::ConfigLoadMode::Enabled);
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
-        rstd::io::eprintln("lito: {}", error.message.as_str());
+        report_error(error);
         return 1;
     }
     auto project = rstd::move(loaded_config).unwrap();
@@ -153,7 +182,7 @@ extern "C++" int main() {
             invocation.working_directory.as_path(), rstd::move(options.root), project.install);
         if (root.is_err()) {
             auto error = rstd::move(root).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto timing  = make_timing_output(project.root.as_path(),
@@ -185,7 +214,7 @@ extern "C++" int main() {
         auto result                          = lito::install(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
@@ -194,7 +223,8 @@ extern "C++" int main() {
         }
         auto emitted = lito::timing_output::emit(summary.build, timing);
         if (emitted.is_err()) {
-            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+            auto error = rstd::move(emitted).unwrap_err();
+            report_error(error);
             return 1;
         }
         rstd::io::println("installed {} binaries ({}) to {}",
@@ -219,7 +249,7 @@ extern "C++" int main() {
         auto result = lito::update_dependencies(request);
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         if (*result == lito::LockStatus::Updated)
@@ -248,7 +278,7 @@ extern "C++" int main() {
         auto result = lito::format(request);
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
@@ -288,13 +318,13 @@ extern "C++" int main() {
         auto scanned = lito::scan(request);
         if (scanned.is_err()) {
             auto error = rstd::move(scanned).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto json = lito::scan_report_json(*scanned, options.format);
         if (json.is_err()) {
             auto error = rstd::move(json).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         rstd::io::println("{}", json->as_str());
@@ -338,14 +368,15 @@ extern "C++" int main() {
         auto result = lito::test(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
         auto counts  = artifact_counts(summary.build);
         auto emitted = lito::timing_output::emit(summary.build, timing);
         if (emitted.is_err()) {
-            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+            auto error = rstd::move(emitted).unwrap_err();
+            report_error(error);
             return 1;
         }
         if (options.no_run) {
@@ -397,7 +428,7 @@ extern "C++" int main() {
                 rstd::io::eprintln("[fail] {} in {}: {}",
                                    lito::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
-                                   execution.error->as_str());
+                                   *execution.error);
             } else if (execution.status->code().is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: exit code {}",
                                    lito::package_target_id_text(execution.target),
@@ -452,14 +483,15 @@ extern "C++" int main() {
         auto result = lito::bench(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
-            rstd::io::eprintln("lito: {}", error.message.as_str());
+            report_error(error);
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
         auto counts  = artifact_counts(summary.build);
         auto emitted = lito::timing_output::emit(summary.build, timing);
         if (emitted.is_err()) {
-            rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+            auto error = rstd::move(emitted).unwrap_err();
+            report_error(error);
             return 1;
         }
         if (options.no_run) {
@@ -488,7 +520,7 @@ extern "C++" int main() {
                 rstd::io::eprintln("[fail] {} in {}: {}",
                                    lito::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
-                                   execution.error->as_str());
+                                   *execution.error);
             } else if (execution.status->code().is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: exit code {}",
                                    lito::package_target_id_text(execution.target),
@@ -536,7 +568,7 @@ extern "C++" int main() {
     auto result      = lito::build(request);
     if (result.is_err()) {
         auto error = rstd::move(result).unwrap_err();
-        rstd::io::eprintln("lito: {}", error.message.as_str());
+        report_error(error);
         return 1;
     }
 
@@ -555,7 +587,8 @@ extern "C++" int main() {
                       counts.tests + summary.compile_tests.len());
     auto emitted = lito::timing_output::emit(summary, timing);
     if (emitted.is_err()) {
-        rstd::io::eprintln("lito: {}", rstd::move(emitted).unwrap_err().as_str());
+        auto error = rstd::move(emitted).unwrap_err();
+        report_error(error);
         return 1;
     }
     return 0;

@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.error;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.cpp;
 import lito.system.storage;
 import lito.dependency.cmake.model;
@@ -39,7 +40,7 @@ auto snapshot_json(const CMakeTargetUsageSnapshot& snapshot) -> Json {
 }
 
 auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& snapshot)
-    -> Result<empty> {
+    -> DependencyResult<empty> {
     auto targets = JsonArray::with_capacity(snapshot.targets.len());
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
@@ -55,15 +56,14 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
     auto path    = usage_snapshot_path(area);
     auto written = rstd::fs::write_atomic(path.as_path(), text.as_str().as_bytes());
     if (written.is_err()) {
-        return cmake_failure<empty>(rstd::format("cannot write CMake usage snapshot '{}': {}",
-                                                 path.as_path(),
-                                                 rstd::move(written).unwrap_err()));
+        return cmake_io_failure<empty>(
+            "write CMake usage snapshot"_str, path.as_path(), rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
 
 auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
-    -> Result<Vec<String>> {
+    -> DependencyResult<Vec<String>> {
     auto array = required_json_array(value, key, context);
     if (array.is_err()) return Err(rstd::move(array).unwrap_err());
     auto result = Vec<String>::with_capacity((**array).len());
@@ -78,7 +78,7 @@ auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
     return Ok(rstd::move(result));
 }
 
-auto parse_usage_target(const Json& value, ref<str> context) -> Result<CMakeTargetUsageSnapshot> {
+auto parse_usage_target(const Json& value, ref<str> context) -> DependencyResult<CMakeTargetUsageSnapshot> {
     auto compile = parse_snapshot_strings(value, "compile"_str, context);
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
     auto link = parse_snapshot_strings(value, "link"_str, context);
@@ -90,7 +90,7 @@ auto parse_usage_target(const Json& value, ref<str> context) -> Result<CMakeTarg
 }
 
 auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> query_build)
-    -> Result<Vec<String>> {
+    -> DependencyResult<Vec<String>> {
     auto result = Vec<String>::with_capacity(tokens.len());
     auto root   = PathBuf::from(query_build);
     for (const auto& token : tokens) {
@@ -102,10 +102,10 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         auto candidate = root.join(path.as_path());
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return cmake_failure<Vec<String>>(
-                rstd::format("cannot inspect CMake link input '{}': {}",
-                             candidate.as_path(),
-                             rstd::move(exists).unwrap_err()));
+            return cmake_io_failure<Vec<String>>(
+                "inspect CMake link input"_str,
+                candidate.as_path(),
+                rstd::move(exists).unwrap_err());
         }
         if (! *exists) {
             result.push(token.clone());
@@ -113,10 +113,10 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         }
         auto canonical = rstd::fs::canonicalize(candidate.as_path());
         if (canonical.is_err()) {
-            return cmake_failure<Vec<String>>(
-                rstd::format("cannot resolve CMake link input '{}': {}",
-                             candidate.as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return cmake_io_failure<Vec<String>>(
+                "resolve CMake link input"_str,
+                candidate.as_path(),
+                rstd::move(canonical).unwrap_err());
         }
         auto text = path_text(canonical->as_path(), "CMake link input"_str);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -127,14 +127,14 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
 
 auto read_usage_snapshot(const CMakeWorkArea&                      area,
                          const ResolvedCMakeDependencyRequirement& requirement)
-    -> Result<Option<CMakeUsageSnapshot>> {
+    -> DependencyResult<Option<CMakeUsageSnapshot>> {
     auto path   = usage_snapshot_path(area);
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
-        return cmake_failure<Option<CMakeUsageSnapshot>>(
-            rstd::format("cannot inspect CMake usage snapshot '{}': {}",
-                         path.as_path(),
-                         rstd::move(exists).unwrap_err()));
+        return cmake_io_failure<Option<CMakeUsageSnapshot>>(
+            "inspect CMake usage snapshot"_str,
+            path.as_path(),
+            rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(None());
     auto value = read_json(path.as_path(), "CMake usage snapshot"_str);
@@ -178,7 +178,7 @@ auto target_snapshot_identity(const CMakeProviderConfig&                provider
                               ref<str>                                  target,
                               ref<str>                                  version,
                               const CMakeTargetUsageSnapshot&           snapshot,
-                              ref<str> effective_target) -> Result<String> {
+                              ref<str> effective_target) -> DependencyResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-dependency-v1\n"_str);
@@ -199,7 +199,7 @@ auto dependency_identity(const CMakeProviderConfig&                provider,
                          const ResolvedCMakeDependencyRequirement& requirement,
                          ref<str>                                  version,
                          const CMakeUsageSnapshot&                 snapshots,
-                         ref<str> effective_target) -> Result<String> {
+                         ref<str> effective_target) -> DependencyResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-declaration-v1\n"_str);

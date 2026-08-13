@@ -146,7 +146,7 @@ auto workspace_package_key(ref<str> key) -> bool {
     return key == "version"_str;
 }
 
-auto parse_package_version(const Toml& package, bool optional) -> Result<PackageVersion> {
+auto parse_package_version(const Toml& package, bool optional) -> ManifestSchemaResult<PackageVersion> {
     auto declared = member(package, "version"_str);
     if (declared.is_none()) {
         if (optional) return Ok(PackageVersion {});

@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.build.profile_contract;
 
 import rstd;
@@ -22,6 +25,15 @@ struct BuildProfileName {
         return value == other.value;
     }
 };
+
+class BuildProfileError {
+    RSTD_ENUM(BuildProfileError,
+              (Cpp, (CppOptionError source;)),
+              (Message, (String message;)))
+};
+
+template<typename T>
+using BuildProfileResult = rstd::Result<T, BuildProfileError>;
 
 enum class BuildProfileFamily
 {
@@ -93,3 +105,43 @@ struct ProfileSpec {
 };
 
 } // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<convert::From<lito::CppOptionError>, lito::BuildProfileError> {
+    static auto from(lito::CppOptionError error) -> lito::BuildProfileError {
+        return lito::BuildProfileError::Cpp(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<fmt::Display, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        const auto& error = this->self();
+        if (error.is_Cpp()) {
+            return formatter.write_raw("build profile C++ options are invalid",
+                                       sizeof("build profile C++ options are invalid") - 1);
+        }
+        return formatter.write_str(error.as_Message().message.as_str());
+    }
+};
+
+template<>
+struct Impl<fmt::Debug, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+    auto source() const noexcept -> Option<error::ErrorRef> {
+        const auto& error = this->self();
+        if (! error.is_Cpp()) return None();
+        return Some(dyn<error::Error>::from_ref(error.as_Cpp().source));
+    }
+};
+
+}

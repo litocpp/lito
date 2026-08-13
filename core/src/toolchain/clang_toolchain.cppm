@@ -35,19 +35,21 @@ export namespace lito
 
 class ClangToolchain {
 public:
-    static auto create(const ToolchainSpec& specification) -> Result<ClangToolchain> {
+    static auto create(const ToolchainSpec& specification) -> ToolchainResult<ClangToolchain> {
         auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        if (environment.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(environment).unwrap_err()));
+        }
         auto resolver = ToolResolver(*environment);
         return create(specification, resolver, *environment);
     }
 
     static auto create(const ToolchainSpec&              specification,
                        ToolResolver&                     resolver,
-                       const ResolvedProcessEnvironment& environment) -> Result<ClangToolchain> {
+                       const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
-            return failure<ClangToolchain>(rstd::move(argument_parser).unwrap_err());
+            return Err(ToolchainError::Cpp(rstd::move(argument_parser).unwrap_err()));
         }
         auto configured_compiler =
             resolver.resolve(specification.compiler.as_path(), "clang++"_str);
@@ -57,16 +59,16 @@ public:
         auto configured_archiver =
             resolver.resolve(specification.archiver.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
-            return Err(rstd::move(configured_compiler).unwrap_err());
+            return Err(rstd::into<ToolchainError>(rstd::move(configured_compiler).unwrap_err()));
         }
         if (configured_c_compiler.is_err()) {
-            return Err(rstd::move(configured_c_compiler).unwrap_err());
+            return Err(rstd::into<ToolchainError>(rstd::move(configured_c_compiler).unwrap_err()));
         }
         if (configured_linker.is_err()) {
-            return Err(rstd::move(configured_linker).unwrap_err());
+            return Err(rstd::into<ToolchainError>(rstd::move(configured_linker).unwrap_err()));
         }
         if (configured_archiver.is_err()) {
-            return Err(rstd::move(configured_archiver).unwrap_err());
+            return Err(rstd::into<ToolchainError>(rstd::move(configured_archiver).unwrap_err()));
         }
         auto compiler_path   = rstd::move(configured_compiler).unwrap().executable;
         auto c_compiler_path = rstd::move(configured_c_compiler).unwrap().executable;
@@ -130,7 +132,9 @@ public:
             return failure<ClangToolchain>("configured linker is not LLD"_str);
         }
         auto target_info = parse_target_info(target->as_str());
-        if (target_info.is_err()) return Err(rstd::move(target_info).unwrap_err());
+        if (target_info.is_err()) {
+            return Err(ToolchainError::Platform(rstd::move(target_info).unwrap_err()));
+        }
 
         auto resource_path      = PathBuf::from(resource->as_str());
         auto canonical_resource = toolchain::command::resolve_path(resource_path.as_path(),
@@ -142,17 +146,15 @@ public:
         auto resolved_resource = rstd::move(canonical_resource).unwrap();
         auto compiler_metadata = rstd::fs::metadata(compiler_path.as_path());
         if (compiler_metadata.is_err()) {
-            return failure<ClangToolchain>(
-                rstd::format("cannot inspect compiler '{}': {}",
-                             compiler_path.as_path(),
-                             rstd::move(compiler_metadata).unwrap_err()));
+            return Err(ToolchainError::Io(String::make("inspect compiler"_str),
+                                          compiler_path.clone(),
+                                          rstd::move(compiler_metadata).unwrap_err()));
         }
         auto modified = compiler_metadata->modified();
         if (modified.is_err()) {
-            return failure<ClangToolchain>(
-                rstd::format("cannot read compiler modification time '{}': {}",
-                             compiler_path.as_path(),
-                             rstd::move(modified).unwrap_err()));
+            return Err(ToolchainError::Io(String::make("read compiler modification time"_str),
+                                          compiler_path.clone(),
+                                          rstd::move(modified).unwrap_err()));
         }
         auto timestamp     = modified->as_unix_time();
         auto compiler_text = compiler_path.as_path().to_str();
@@ -225,7 +227,8 @@ public:
     auto capabilities() const noexcept -> const CppToolchainCapabilities& { return capabilities_; }
     auto argument_parser() const noexcept -> const CppArgumentParser& { return argument_parser_; }
 
-    auto validate(const CppCompileOptions& cpp, const BmiRequest& bmi) const -> Result<empty> {
+    auto validate(const CppCompileOptions& cpp, const BmiRequest& bmi) const
+        -> ToolchainResult<empty> {
         if (! is_supported_cpp_standard(cpp.language.standard.as_str())) {
             return failure<empty>(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
@@ -242,7 +245,7 @@ public:
         return Ok(empty {});
     }
 
-    auto builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
+    auto builtin_context(const CompileContext& context) const -> ToolchainResult<ClangBuiltinContext> {
         return make_builtin_context(context);
     }
 
@@ -255,7 +258,7 @@ public:
     }
 
     auto prepare(UnitSpec unit, ref<rstd::path::Path> working_directory) const
-        -> Result<PreparedUnit> {
+        -> ToolchainResult<PreparedUnit> {
         auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
         return Ok(PreparedUnit {
@@ -264,7 +267,7 @@ public:
         });
     }
 
-    auto scan(const PreparedUnit& prepared) const -> Result<ScanResult> {
+    auto scan(const PreparedUnit& prepared) const -> ToolchainResult<ScanResult> {
         if (prepared.frontend_analysis.is_none()) {
             return failure<ScanResult>(rstd::format("source '{}' has no frontend analysis",
                                                     prepared.unit.source.as_path()));
@@ -275,7 +278,7 @@ public:
 
     auto preprocessor_environment_identity(const CompileContext& compile_context,
                                            ref<rstd::path::Path> working_directory) const
-        -> Result<String> {
+        -> ToolchainResult<String> {
         auto environment = environment_for(compile_context, working_directory);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         return Ok((*environment)->identity.clone());
@@ -283,7 +286,7 @@ public:
 
     auto prepare_scan_environment(const CompileContext& compile_context,
                                   ref<rstd::path::Path> working_directory) const
-        -> Result<toolchain::SharedPreprocessorEnvironment> {
+        -> ToolchainResult<toolchain::SharedPreprocessorEnvironment> {
         for (const auto& option : compile_context.cpp.vendor) {
             if (option.native_preprocessor_unsupported) {
                 return failure<toolchain::SharedPreprocessorEnvironment>(
@@ -298,7 +301,7 @@ public:
                     const CompileContext&      compile_context,
                     ref<rstd::path::Path>      working_directory,
                     frontend::FrontendService& frontend_service,
-                    ScanProfiler& profiler) const -> Result<frontend::UncachedFrontendAnalysis> {
+                    ScanProfiler& profiler) const -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         auto environment_span     = profiler.span(ScanProbe::Environment);
         auto selected_environment = prepare_scan_environment(compile_context, working_directory);
         if (selected_environment.is_err()) {
@@ -318,7 +321,7 @@ public:
                                      const toolchain::SharedPreprocessorEnvironment& environment,
                                      frontend::FrontendService& frontend_service,
                                      Profiler&                  profiler) const
-        -> Result<frontend::UncachedFrontendAnalysis> {
+        -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         auto frontend_span = profiler.span(ScanProbe::Frontend);
         frontend_service.record_analysis_build();
         auto includes = toolchain::ClangIncludeResolver(*environment);
@@ -351,23 +354,12 @@ public:
         }
         frontend_service.record_preprocessor_statistics(observer.statistics());
         if (translation.is_err()) {
-            auto error = rstd::move(translation).unwrap_err();
-            if (error.path.is_some() && error.location.is_some()) {
-                return failure<frontend::UncachedFrontendAnalysis>(
-                    rstd::format("native preprocessing failed at {}:{}:{}: {}",
-                                 error.path->as_path(),
-                                 error.location->line,
-                                 error.location->column,
-                                 error.message.as_str()));
-            }
-            return failure<frontend::UncachedFrontendAnalysis>(rstd::format(
-                "native preprocessing failed for '{}': {}", source, error.message.as_str()));
+            return Err(rstd::into<ToolchainError>(rstd::move(translation).unwrap_err()));
         }
         translation->header_inputs = events.take_headers();
         auto parsed                = consumer.finish(*translation);
         if (parsed.is_err()) {
-            return failure<frontend::UncachedFrontendAnalysis>(
-                rstd::move(parsed).unwrap_err().message.clone());
+            return Err(rstd::into<ToolchainError>(rstd::move(parsed).unwrap_err()));
         }
         return Ok(frontend::UncachedFrontendAnalysis {
             .result          = rstd::move(parsed).unwrap(),
@@ -378,7 +370,7 @@ public:
     auto prepare_compile(const PreparedUnit&                  prepared,
                          const ScanResult&                    scan_result,
                          const Vec<ModuleArtifactDependency>& module_dependencies) const
-        -> Result<CompileInvocation> {
+        -> ToolchainResult<CompileInvocation> {
         auto valid = validate(prepared.unit.context->cpp, prepared.unit.context->bmi);
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
         auto staged_object = staging_path(prepared.unit.object.as_path());
@@ -442,9 +434,11 @@ public:
     }
 
     auto execute_compile(const CompileInvocation& invocation, ref<rstd::path::Path> source) const
-        -> Result<rstd::time::Duration> {
+        -> ToolchainResult<rstd::time::Duration> {
         auto output = execute_compile_capture(invocation);
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            return Err(rstd::move(output).unwrap_err());
+        }
         if (output->exit_code != i32 {}) {
             return failure<rstd::time::Duration>(
                 rstd::format("clang++ failed for '{}'\n{}\n{}",
@@ -460,29 +454,28 @@ public:
     }
 
     auto execute_compile_capture(const CompileInvocation& invocation) const
-        -> Result<CompileCommandResult> {
+        -> ToolchainResult<CompileCommandResult> {
         return compile_executor().execute(invocation);
     }
 
     auto archive(ref<rstd::path::Path> output_path,
                  const Vec<PathBuf>&   objects,
-                 ref<rstd::path::Path> working_directory) const -> Result<rstd::time::Duration> {
+                 ref<rstd::path::Path> working_directory) const
+        -> ToolchainResult<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto archive_exists = rstd::fs::exists(output_path);
         if (archive_exists.is_err()) {
-            return failure<rstd::time::Duration>(
-                rstd::format("cannot inspect archive '{}': {}",
-                             output_path,
-                             rstd::move(archive_exists).unwrap_err()));
+            return Err(ToolchainError::Io(String::make("inspect archive"_str),
+                                          PathBuf::from(output_path),
+                                          rstd::move(archive_exists).unwrap_err()));
         }
         if (*archive_exists) {
             auto removed = rstd::fs::remove_file(output_path);
             if (removed.is_err()) {
-                return failure<rstd::time::Duration>(
-                    rstd::format("cannot replace archive '{}': {}",
-                                 output_path,
-                                 rstd::move(removed).unwrap_err()));
+                return Err(ToolchainError::Io(String::make("replace archive"_str),
+                                              PathBuf::from(output_path),
+                                              rstd::move(removed).unwrap_err()));
             }
         }
         auto command = Vec<String>::make();
@@ -496,7 +489,9 @@ public:
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         auto output = run_command(command, environment_, Some(working_directory));
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
             return failure<rstd::time::Duration>(
@@ -516,7 +511,7 @@ public:
                          CppLto                        lto,
                          const Vec<String>&            linker_options,
                          ref<rstd::path::Path>         working_directory) const
-        -> Result<rstd::time::Duration> {
+        -> ToolchainResult<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto command = Vec<String>::make();
@@ -581,7 +576,9 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
 
         auto output = run_command(command, environment_, Some(working_directory));
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
             return failure<rstd::time::Duration>(
@@ -597,7 +594,7 @@ public:
                         ref<rstd::path::Path> stripper,
                         StripMode             mode,
                         ref<rstd::path::Path> working_directory) const
-        -> Result<rstd::time::Duration> {
+        -> ToolchainResult<rstd::time::Duration> {
         if (mode == StripMode::None) return Ok(rstd::time::Duration {});
         auto staged = staging_path(output_path);
         if (staged.is_err()) return Err(rstd::move(staged).unwrap_err());
@@ -610,7 +607,9 @@ public:
         rstd_try(toolchain::command::push_path(command, staged->as_path()));
         rstd_try(toolchain::command::push_path(command, output_path));
         auto output = run_command(command, environment_, Some(working_directory));
-        if (output.is_err()) return Err(rstd::move(output).unwrap_err());
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
         auto command_output = rstd::move(output).unwrap();
         if (command_output.exit_code != i32 {}) {
             static_cast<void>(rstd::fs::remove_file(staged->as_path()));
@@ -650,7 +649,7 @@ private:
 
     auto environment_for(const CompileContext& compile_context,
                          ref<rstd::path::Path> working_directory) const
-        -> Result<toolchain::SharedPreprocessorEnvironment> {
+        -> ToolchainResult<toolchain::SharedPreprocessorEnvironment> {
         auto working_text = working_directory.to_str();
         if (working_text.is_none()) {
             return failure<toolchain::SharedPreprocessorEnvironment>(rstd::format(
@@ -721,7 +720,8 @@ private:
         return Ok(rstd::move(environment));
     }
 
-    auto make_builtin_context(const CompileContext& context) const -> Result<ClangBuiltinContext> {
+    auto make_builtin_context(const CompileContext& context) const
+        -> ToolchainResult<ClangBuiltinContext> {
         if (! is_supported_cpp_standard(context.cpp.language.standard.as_str())) {
             return failure<ClangBuiltinContext>(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
@@ -769,7 +769,7 @@ private:
 
     auto append_compile_context(Vec<String>&          command,
                                 const CompileContext& context,
-                                bool                  semantic_only) const -> Result<empty> {
+                                bool                  semantic_only) const -> ToolchainResult<empty> {
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
         toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);

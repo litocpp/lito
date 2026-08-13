@@ -5,6 +5,7 @@ import lito.error;
 import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
+import lito.workspace.resolution_error;
 import lito.workspace;
 import lito.platform.contract;
 import lito.build.contract;
@@ -21,13 +22,13 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto failure(String message) -> WorkspaceResolutionResult<T> {
+    return Err(WorkspaceResolutionError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, message));
+auto failure(ref<str> message) -> WorkspaceResolutionResult<T> {
+    return Err(WorkspaceResolutionError::Message(String::make(message)));
 }
 
 auto copy_strings(const Vec<String>& values) -> Vec<String> {
@@ -86,7 +87,7 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
 auto selected_closure(const ResolvedPackageGraph& graph,
                       const Vec<String>&          selected_roots,
                       const Vec<PackageTargetId>& selected_targets,
-                      const TargetInfo*           target) -> Result<Vec<String>> {
+                      const TargetInfo* target) -> WorkspaceResolutionResult<Vec<String>> {
     auto indices = IndexMap::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
@@ -150,7 +151,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                                                 usize                             jobs = usize(1),
                                                 BuildObserver                     observer = {},
                                                 Option<WorkspaceCatalog>          catalog  = None())
-    -> Result<ResolvedPackageSelection> {
+    -> WorkspaceResolutionResult<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment(selection.root.as_path(),
                                                            rstd::move(options),
                                                            tool_resolver,
@@ -158,7 +159,9 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                                                            jobs,
                                                            observer,
                                                            rstd::move(catalog));
-    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) {
+        return Err(rstd::into<WorkspaceResolutionError>(rstd::move(resolved).unwrap_err()));
+    }
     auto graph      = rstd::move(resolved).unwrap();
     auto root_roles = rstd::collections::BTreeMap<String, ProjectRootRole>::make();
     for (const auto& root : graph.roots) root_roles.insert(root.name.clone(), root.role);
@@ -260,9 +263,11 @@ auto resolve_package_selection(const PackageSelection&  selection,
                                PackageSelectionPurpose  purpose = PackageSelectionPurpose::All,
                                PackageResolutionOptions options = {},
                                const TargetInfo*        target  = nullptr)
-    -> Result<ResolvedPackageSelection> {
+    -> WorkspaceResolutionResult<ResolvedPackageSelection> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<WorkspaceResolutionError>(rstd::move(environment).unwrap_err()));
+    }
     auto resolver = ToolResolver(*environment);
     return resolve_package_selection_with_environment(
         selection, purpose, rstd::move(options), target, resolver, *environment);

@@ -58,7 +58,7 @@ struct ConventionalBenchmark {
 };
 
 auto conventional_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path> path)
-    -> Result<ConventionalSource> {
+    -> ManifestSchemaResult<ConventionalSource> {
     auto relative = path.strip_prefix(source_root);
     if (relative.is_none() || relative->is_empty()) {
         return failure<ConventionalSource>(
@@ -79,33 +79,37 @@ auto conventional_source(ref<rstd::path::Path> source_root, ref<rstd::path::Path
 
 auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
                                   ref<rstd::path::Path>    directory,
-                                  Vec<ConventionalSource>& sources) -> Result<empty> {
+                                  Vec<ConventionalSource>& sources) -> ManifestSchemaResult<empty> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) {
-        return failure<empty>(rstd::format("cannot enumerate benchmark directory '{}': {}",
-                                           directory,
-                                           rstd::move(opened).unwrap_err()));
+        return manifest_io_failure<empty>("conventional benchmark"_str,
+                                          "enumerate directory"_str,
+                                          directory,
+                                          rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto next = stream.next(); next.is_some(); next = stream.next()) {
         auto item = rstd::move(next).unwrap();
         if (item.is_err()) {
-            return failure<empty>(rstd::format("cannot enumerate benchmark directory '{}': {}",
-                                               directory,
-                                               rstd::move(item).unwrap_err()));
+            return manifest_io_failure<empty>("conventional benchmark"_str,
+                                              "enumerate directory"_str,
+                                              directory,
+                                              rstd::move(item).unwrap_err());
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return failure<empty>(rstd::format("cannot inspect benchmark entry '{}': {}",
-                                               entry.path().as_path(),
-                                               rstd::move(type).unwrap_err()));
+            return manifest_io_failure<empty>("conventional benchmark"_str,
+                                              "inspect entry"_str,
+                                              entry.path().as_path(),
+                                              rstd::move(type).unwrap_err());
         }
         auto path = entry.path();
         if (type->is_dir()) {
             auto nested_manifest = try_locate_manifest(path.as_path());
             if (nested_manifest.is_err()) {
-                return Err(rstd::move(nested_manifest).unwrap_err());
+                return Err(rstd::into<ManifestSchemaError>(
+                    rstd::move(nested_manifest).unwrap_err()));
             }
             if (nested_manifest->is_some()) continue;
             rstd_try(collect_conventional_sources(source_root, path.as_path(), sources));
@@ -117,7 +121,7 @@ auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
     return Ok(empty {});
 }
 
-auto path_name(ref<rstd::path::Path> path, ref<str> context) -> Result<String> {
+auto path_name(ref<rstd::path::Path> path, ref<str> context) -> ManifestSchemaResult<String> {
     auto name = path.file_name();
     if (name.is_none()) return failure<String>(rstd::format("{} '{}' has no name", context, path));
     auto text = name->to_str();
@@ -127,7 +131,7 @@ auto path_name(ref<rstd::path::Path> path, ref<str> context) -> Result<String> {
     return Ok(String::make(*text));
 }
 
-auto file_stem(ref<rstd::path::Path> path) -> Result<String> {
+auto file_stem(ref<rstd::path::Path> path) -> ManifestSchemaResult<String> {
     auto name      = rstd_try(path_name(path, "benchmark source"_str));
     auto extension = path.extension();
     if (extension.is_none()) {
@@ -151,57 +155,64 @@ auto explicit_benchmark_name(const Vec<PackageTargetManifest>& targets, ref<str>
 auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_root,
                                       ref<rstd::path::Path>             source_root,
                                       const Vec<PackageTargetManifest>& explicit_targets)
-    -> Result<Vec<PackageTargetManifest>> {
+    -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
     auto result    = Vec<PackageTargetManifest>::make();
     auto directory = PathBuf::from(package_root).join(PathBuf::from("benches"_str).as_path());
     auto exists    = rstd::fs::exists(directory.as_path());
     if (exists.is_err()) {
-        return failure<Vec<PackageTargetManifest>>(
-            rstd::format("cannot inspect benchmark directory '{}': {}",
-                         directory.as_path(),
-                         rstd::move(exists).unwrap_err()));
+        return manifest_io_failure<Vec<PackageTargetManifest>>(
+            "conventional benchmark"_str,
+            "inspect directory"_str,
+            directory.as_path(),
+            rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(rstd::move(result));
 
     auto metadata = rstd::fs::metadata(directory.as_path());
     if (metadata.is_err()) {
-        return failure<Vec<PackageTargetManifest>>(
-            rstd::format("cannot inspect benchmark directory '{}': {}",
-                         directory.as_path(),
-                         rstd::move(metadata).unwrap_err()));
+        return manifest_io_failure<Vec<PackageTargetManifest>>(
+            "conventional benchmark"_str,
+            "inspect directory"_str,
+            directory.as_path(),
+            rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_dir()) {
         return failure<Vec<PackageTargetManifest>>(
             rstd::format("benchmark path '{}' is not a directory", directory.as_path()));
     }
     auto nested_manifest = try_locate_manifest(directory.as_path());
-    if (nested_manifest.is_err()) return Err(rstd::move(nested_manifest).unwrap_err());
+    if (nested_manifest.is_err()) {
+        return Err(rstd::into<ManifestSchemaError>(rstd::move(nested_manifest).unwrap_err()));
+    }
     if (nested_manifest->is_some()) return Ok(rstd::move(result));
 
     auto candidates = Vec<ConventionalBenchmark>::make();
     auto opened     = rstd::fs::read_dir(directory.as_path());
     if (opened.is_err()) {
-        return failure<Vec<PackageTargetManifest>>(
-            rstd::format("cannot enumerate benchmark directory '{}': {}",
-                         directory.as_path(),
-                         rstd::move(opened).unwrap_err()));
+        return manifest_io_failure<Vec<PackageTargetManifest>>(
+            "conventional benchmark"_str,
+            "enumerate directory"_str,
+            directory.as_path(),
+            rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
     for (auto next = stream.next(); next.is_some(); next = stream.next()) {
         auto item = rstd::move(next).unwrap();
         if (item.is_err()) {
-            return failure<Vec<PackageTargetManifest>>(
-                rstd::format("cannot enumerate benchmark directory '{}': {}",
-                             directory.as_path(),
-                             rstd::move(item).unwrap_err()));
+            return manifest_io_failure<Vec<PackageTargetManifest>>(
+                "conventional benchmark"_str,
+                "enumerate directory"_str,
+                directory.as_path(),
+                rstd::move(item).unwrap_err());
         }
         auto entry = rstd::move(item).unwrap();
         auto type  = entry.file_type();
         if (type.is_err()) {
-            return failure<Vec<PackageTargetManifest>>(
-                rstd::format("cannot inspect benchmark entry '{}': {}",
-                             entry.path().as_path(),
-                             rstd::move(type).unwrap_err()));
+            return manifest_io_failure<Vec<PackageTargetManifest>>(
+                "conventional benchmark"_str,
+                "inspect entry"_str,
+                entry.path().as_path(),
+                rstd::move(type).unwrap_err());
         }
         auto path = entry.path();
         if (type->is_file()) {
@@ -224,7 +235,9 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
         }
         if (! type->is_dir()) continue;
         auto child_manifest = try_locate_manifest(path.as_path());
-        if (child_manifest.is_err()) return Err(rstd::move(child_manifest).unwrap_err());
+        if (child_manifest.is_err()) {
+            return Err(rstd::into<ManifestSchemaError>(rstd::move(child_manifest).unwrap_err()));
+        }
         if (child_manifest->is_some()) continue;
 
         auto name = rstd_try(path_name(path.as_path(), "benchmark directory"_str));
@@ -236,10 +249,11 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
         }
         auto child = rstd::fs::read_dir(path.as_path());
         if (child.is_err()) {
-            return failure<Vec<PackageTargetManifest>>(
-                rstd::format("cannot enumerate benchmark directory '{}': {}",
-                             path.as_path(),
-                             rstd::move(child).unwrap_err()));
+            return manifest_io_failure<Vec<PackageTargetManifest>>(
+                "conventional benchmark"_str,
+                "enumerate directory"_str,
+                path.as_path(),
+                rstd::move(child).unwrap_err());
         }
         auto child_stream = rstd::move(child).unwrap();
         auto main_sources = usize {};
@@ -247,18 +261,20 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
              child_next      = child_stream.next()) {
             auto child_item = rstd::move(child_next).unwrap();
             if (child_item.is_err()) {
-                return failure<Vec<PackageTargetManifest>>(
-                    rstd::format("cannot enumerate benchmark directory '{}': {}",
-                                 path.as_path(),
-                                 rstd::move(child_item).unwrap_err()));
+                return manifest_io_failure<Vec<PackageTargetManifest>>(
+                    "conventional benchmark"_str,
+                    "enumerate directory"_str,
+                    path.as_path(),
+                    rstd::move(child_item).unwrap_err());
             }
             auto child_entry = rstd::move(child_item).unwrap();
             auto child_type  = child_entry.file_type();
             if (child_type.is_err()) {
-                return failure<Vec<PackageTargetManifest>>(
-                    rstd::format("cannot inspect benchmark entry '{}': {}",
-                                 child_entry.path().as_path(),
-                                 rstd::move(child_type).unwrap_err()));
+                return manifest_io_failure<Vec<PackageTargetManifest>>(
+                    "conventional benchmark"_str,
+                    "inspect entry"_str,
+                    child_entry.path().as_path(),
+                    rstd::move(child_type).unwrap_err());
             }
             if (! child_type->is_file() || ! runnable_cpp_source(child_entry.path().as_path())) {
                 continue;

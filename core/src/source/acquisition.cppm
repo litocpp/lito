@@ -6,6 +6,7 @@ export module lito.source:acquisition;
 import rstd;
 import lito.error;
 import lito.source.contract;
+import lito.source.error_contract;
 import lito.build.contract;
 import lito.system.environment;
 import lito.system.storage;
@@ -66,7 +67,7 @@ auto acquire_archive_source(ref<str>                          url,
                             ref<str>                          sha256,
                             ref<rstd::path::Path>             cmake_executable,
                             const ResolvedProcessEnvironment& environment,
-                            BuildObserver observer = {}) -> Result<AcquiredSource> {
+                            BuildObserver observer = {}) -> SourceResult<AcquiredSource> {
     auto executable = cmake_executable.to_str();
     if (executable.is_none()) {
         return source_failure<AcquiredSource>(rstd::format(
@@ -75,29 +76,25 @@ auto acquire_archive_source(ref<str>                          url,
     auto identity = archive_source_identity(url, sha256);
     auto cache    = lito_cache_directory(PathBuf::from("sources/archives"_str).as_path(),
                                          "archive sources"_str);
-    if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
+    if (cache.is_err()) {
+        return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
+    }
     auto bucket  = cache->join(PathBuf::from(source_hash(identity.as_str())).as_path());
     auto created = rstd::fs::create_dir_all(bucket.as_path());
     if (created.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot create archive source cache '{}': {}",
-                         bucket.as_path(),
-                         rstd::move(created).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "create archive cache"_str, bucket.as_path(), rstd::move(created).unwrap_err());
     }
     auto lock_path = bucket.join(PathBuf::from("lock"_str).as_path());
     auto lock_file = rstd::fs::File::create(lock_path.as_path());
     if (lock_file.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot open archive source lock '{}': {}",
-                         lock_path.as_path(),
-                         rstd::move(lock_file).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "open archive lock"_str, lock_path.as_path(), rstd::move(lock_file).unwrap_err());
     }
     auto locked = lock_file->lock();
     if (locked.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot lock archive source cache '{}': {}",
-                         bucket.as_path(),
-                         rstd::move(locked).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "lock archive cache"_str, bucket.as_path(), rstd::move(locked).unwrap_err());
     }
 
     auto receipt = bucket.join(PathBuf::from("source-v1"_str).as_path());
@@ -117,26 +114,24 @@ auto acquire_archive_source(ref<str>                          url,
     auto extracted = bucket.join(PathBuf::from("extracted"_str).as_path());
     auto exists    = rstd::fs::exists(extracted.as_path());
     if (exists.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot inspect archive extraction directory '{}': {}",
-                         extracted.as_path(),
-                         rstd::move(exists).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "inspect archive extraction"_str, extracted.as_path(), rstd::move(exists).unwrap_err());
     }
     if (*exists) {
         auto removed = rstd::fs::remove_dir_all(extracted.as_path());
         if (removed.is_err()) {
-            return source_failure<AcquiredSource>(
-                rstd::format("cannot reset archive extraction directory '{}': {}",
-                             extracted.as_path(),
-                             rstd::move(removed).unwrap_err()));
+            return source_io_failure<AcquiredSource>(
+                "reset archive extraction"_str,
+                extracted.as_path(),
+                rstd::move(removed).unwrap_err());
         }
     }
     created = rstd::fs::create_dir_all(extracted.as_path());
     if (created.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot create archive extraction directory '{}': {}",
-                         extracted.as_path(),
-                         rstd::move(created).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "create archive extraction"_str,
+            extracted.as_path(),
+            rstd::move(created).unwrap_err());
     }
 
     auto archive     = bucket.join(PathBuf::from("source.archive"_str).as_path());
@@ -151,10 +146,10 @@ auto acquire_archive_source(ref<str>                          url,
                        "endif()\n"_str;
     auto written     = rstd::fs::write_atomic(script.as_path(), script_text.as_bytes());
     if (written.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot write archive download script '{}': {}",
-                         script.as_path(),
-                         rstd::move(written).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "write archive download script"_str,
+            script.as_path(),
+            rstd::move(written).unwrap_err());
     }
     auto archive_text = archive.as_path().to_str();
     auto script_path  = script.as_path().to_str();
@@ -176,10 +171,8 @@ auto acquire_archive_source(ref<str>                          url,
     }
     auto downloaded = run_command(arguments, environment);
     if (downloaded.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("archive source '{}' download could not execute: {}",
-                         url,
-                         rstd::move(downloaded).unwrap_err().message.as_str()));
+        return Err(SourceError::System(rstd::format("archive source '{}' download", url),
+                                       rstd::move(downloaded).unwrap_err()));
     }
     if (downloaded->exit_code != i32 {}) {
         return source_failure<AcquiredSource>(
@@ -198,10 +191,8 @@ auto acquire_archive_source(ref<str>                          url,
     arguments.push(String::make(*archive_text));
     auto extracted_status = run_command(arguments, environment, Some(extracted.as_path()));
     if (extracted_status.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("archive source '{}' extraction could not execute: {}",
-                         url,
-                         rstd::move(extracted_status).unwrap_err().message.as_str()));
+        return Err(SourceError::System(rstd::format("archive source '{}' extraction", url),
+                                       rstd::move(extracted_status).unwrap_err()));
     }
     if (extracted_status->exit_code != i32 {}) {
         return source_failure<AcquiredSource>(
@@ -214,10 +205,8 @@ auto acquire_archive_source(ref<str>                          url,
 
     auto opened = rstd::fs::read_dir(extracted.as_path());
     if (opened.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot enumerate archive source '{}': {}",
-                         extracted.as_path(),
-                         rstd::move(opened).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "enumerate archive"_str, extracted.as_path(), rstd::move(opened).unwrap_err());
     }
     auto root       = extracted.clone();
     auto only_entry = Option<PathBuf> {};
@@ -225,20 +214,17 @@ auto acquire_archive_source(ref<str>                          url,
     auto entries    = rstd::move(opened).unwrap();
     for (auto next = entries.next(); next.is_some(); next = entries.next()) {
         if (next->is_err()) {
-            return source_failure<AcquiredSource>(
-                rstd::format("cannot enumerate archive source '{}': {}",
-                             extracted.as_path(),
-                             rstd::move(*next).unwrap_err()));
+            return source_io_failure<AcquiredSource>(
+                "enumerate archive"_str, extracted.as_path(), rstd::move(*next).unwrap_err());
         }
         auto entry = rstd::move(*next).unwrap();
         ++count;
         if (count == usize(1)) {
             auto type = entry.file_type();
             if (type.is_err()) {
-                return source_failure<AcquiredSource>(
-                    rstd::format("cannot inspect archive source entry '{}': {}",
-                                 entry.path().as_path(),
-                                 rstd::move(type).unwrap_err()));
+                auto path = entry.path();
+                return source_io_failure<AcquiredSource>(
+                    "inspect archive entry"_str, path.as_path(), rstd::move(type).unwrap_err());
             }
             if (type->is_dir()) only_entry = Some(entry.path());
         }
@@ -246,10 +232,8 @@ auto acquire_archive_source(ref<str>                          url,
     if (count == usize(1) && only_entry.is_some()) root = rstd::move(only_entry).unwrap();
     auto canonical = rstd::fs::canonicalize(root.as_path());
     if (canonical.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot resolve archive source root '{}': {}",
-                         root.as_path(),
-                         rstd::move(canonical).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "resolve archive root"_str, root.as_path(), rstd::move(canonical).unwrap_err());
     }
     auto root_text = canonical->as_path().to_str();
     if (root_text.is_none()) {
@@ -260,10 +244,8 @@ auto acquire_archive_source(ref<str>                          url,
     receipt_text.push('\n');
     written = rstd::fs::write_atomic(receipt.as_path(), receipt_text.as_str().as_bytes());
     if (written.is_err()) {
-        return source_failure<AcquiredSource>(
-            rstd::format("cannot publish archive source receipt '{}': {}",
-                         receipt.as_path(),
-                         rstd::move(written).unwrap_err()));
+        return source_io_failure<AcquiredSource>(
+            "publish archive receipt"_str, receipt.as_path(), rstd::move(written).unwrap_err());
     }
     return Ok(AcquiredSource {
         .root      = rstd::move(canonical).unwrap(),
@@ -276,7 +258,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               usize                             jobs,
                               ref<rstd::path::Path>             cmake_executable,
                               const ResolvedProcessEnvironment& environment,
-                              BuildObserver observer = {}) -> Result<Vec<AcquiredSource>> {
+                              BuildObserver observer = {}) -> SourceResult<Vec<AcquiredSource>> {
     if (jobs == usize {}) {
         return source_failure<Vec<AcquiredSource>>(
             "archive source fetch jobs must be greater than zero"_str);
@@ -305,12 +287,14 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
         AcquiredSource source;
     };
     auto worker_count = jobs < unique.len() ? jobs : unique.len();
-    auto created      = rstd::thread::BlockingTaskGroup<Result<FetchedArchiveSource>>::make(
+    auto created      = rstd::thread::BlockingTaskGroup<SourceResult<FetchedArchiveSource>>::make(
         worker_count, unique.len());
     if (created.is_err()) {
-        return source_failure<Vec<AcquiredSource>>(
-            rstd::format("cannot create archive source fetch executor: {}",
-                         rstd::move(created).unwrap_err_unchecked()));
+        return Err(SourceError::System(
+            String::make("create archive source fetch executor"_str),
+            SystemError::Io(String::make("create archive source fetch executor"_str),
+                            PathBuf::make(),
+                            rstd::move(created).unwrap_err_unchecked())));
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (usize index {}; index < unique.len(); ++index) {
@@ -322,7 +306,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                                        request    = rstd::move(request),
                                        executable = rstd::move(executable),
                                        task_env   = rstd::move(task_env),
-                                       task_observer]() mutable -> Result<FetchedArchiveSource> {
+                                       task_observer]() mutable -> SourceResult<FetchedArchiveSource> {
             auto acquired = acquire_archive_source(request.url.as_str(),
                                                    request.sha256.as_str(),
                                                    executable.as_path(),

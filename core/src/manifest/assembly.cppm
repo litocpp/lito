@@ -30,23 +30,13 @@ auto valid_package_name(ref<str> value) -> bool {
     return package_name_is_valid(value);
 }
 
-auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result<ManifestDocument> {
-    auto located = locate_manifest(requested_directory);
-    if (located.is_err()) return Err(rstd::move(located).unwrap_err());
-    auto location = rstd::move(located).unwrap();
-    auto path     = rstd::move(location.manifest);
-    auto root     = rstd::move(location.directory);
-    auto contents = rstd::fs::read_to_string(path.as_path());
-    if (contents.is_err()) {
-        return failure<ManifestDocument>(rstd::format(
-            "cannot read manifest '{}': {}", path.as_path(), rstd::move(contents).unwrap_err()));
-    }
-    auto parsed = rstd::toml::from_str(contents->as_str());
-    if (parsed.is_err()) {
-        return failure<ManifestDocument>(rstd::format(
-            "cannot parse manifest '{}': {}", path.as_path(), rstd::move(parsed).unwrap_err()));
-    }
-    auto document   = rstd::move(parsed).unwrap();
+} // namespace lito
+
+namespace lito
+{
+
+auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
+    -> ManifestSchemaResult<ManifestDocument> {
     auto root_table = table_value(document, "manifest root"_str);
     if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
 
@@ -247,15 +237,52 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory) -> Result
     });
 }
 
-auto load_package_manifest(ref<rstd::path::Path> requested_directory) -> Result<PackageManifest> {
+} // namespace lito
+
+export namespace lito
+{
+
+auto load_manifest_document(ref<rstd::path::Path> requested_directory)
+    -> ManifestResult<ManifestDocument> {
+    auto located = locate_manifest(requested_directory);
+    if (located.is_err()) return Err(rstd::into<ManifestError>(rstd::move(located).unwrap_err()));
+    auto location = rstd::move(located).unwrap();
+    auto path     = rstd::move(location.manifest);
+    auto root     = rstd::move(location.directory);
+    auto contents = rstd::fs::read_to_string(path.as_path());
+    if (contents.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = path.clone(),
+            .cause = ManifestFileCause::Read(rstd::move(contents).unwrap_err()),
+        }));
+    }
+    auto parsed = rstd::toml::from_str(contents->as_str());
+    if (parsed.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = path.clone(),
+            .cause = ManifestFileCause::Parse(rstd::move(parsed).unwrap_err()),
+        }));
+    }
+    auto assembled = assemble_manifest_document(
+        rstd::move(root), path.clone(), rstd::move(parsed).unwrap());
+    if (assembled.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Schema(rstd::move(assembled).unwrap_err()),
+        }));
+    }
+    return Ok(rstd::move(assembled).unwrap());
+}
+
+auto load_package_manifest(ref<rstd::path::Path> requested_directory)
+    -> ManifestResult<PackageManifest> {
     auto loaded = load_manifest_document(requested_directory);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto document = rstd::move(loaded).unwrap();
     if (document.kind != ManifestKind::Package || document.package.is_none()) {
-        return failure<PackageManifest>(
-            rstd::format("directory '{}' contains a workspace manifest where a "
-                         "package is required",
-                         requested_directory));
+        return Err(ManifestError::Kind(PathBuf::from(requested_directory),
+                                       ManifestKind::Package,
+                                       document.kind));
     }
     return Ok(rstd::move(document.package).unwrap());
 }

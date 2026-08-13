@@ -6,6 +6,7 @@ export module lito.system.environment;
 import rstd;
 export import lito.system.environment_contract;
 import lito.error;
+export import lito.system.error_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -14,8 +15,15 @@ namespace lito
 {
 
 template<typename T>
-auto environment_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
+auto environment_failure(String message) -> SystemResult<T> {
+    return Err(SystemError::Environment(rstd::move(message)));
+}
+
+template<typename T>
+auto environment_io_failure(ref<str> operation,
+                            ref<rstd::path::Path> path,
+                            rstd::io::error::Error source) -> SystemResult<T> {
+    return Err(SystemError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> bool {
@@ -35,19 +43,17 @@ auto append_search_directories(String& output, const Vec<PathBuf>& directories) 
     }
 }
 
-auto executable_candidate(ref<rstd::path::Path> path) -> Result<bool> {
+auto executable_candidate(ref<rstd::path::Path> path) -> SystemResult<bool> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return environment_failure<bool>(rstd::format(
-            "cannot inspect executable candidate '{}': {}", path, rstd::move(exists).unwrap_err()));
+        return environment_io_failure<bool>(
+            "inspect executable candidate"_str, path, rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(false);
     auto metadata = rstd::fs::metadata(path);
     if (metadata.is_err()) {
-        return environment_failure<bool>(
-            rstd::format("cannot inspect executable candidate '{}': {}",
-                         path,
-                         rstd::move(metadata).unwrap_err()));
+        return environment_io_failure<bool>(
+            "inspect executable candidate"_str, path, rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_file()) return Ok(false);
 #if RSTD_OS_UNIX
@@ -65,11 +71,13 @@ export namespace lito
 class ResolvedProcessEnvironment {
 public:
     static auto resolve(const ProcessEnvironmentSpec& specification)
-        -> Result<ResolvedProcessEnvironment> {
+        -> SystemResult<ResolvedProcessEnvironment> {
         auto cwd = rstd::fs::canonicalize(PathBuf::from("."_str).as_path());
         if (cwd.is_err()) {
-            return environment_failure<ResolvedProcessEnvironment>(rstd::format(
-                "cannot resolve Lito invocation directory: {}", rstd::move(cwd).unwrap_err()));
+            return environment_io_failure<ResolvedProcessEnvironment>(
+                "resolve Lito invocation directory"_str,
+                PathBuf::from("."_str).as_path(),
+                rstd::move(cwd).unwrap_err());
         }
         auto inherited  = rstd::env::var_os("PATH"_str);
         auto extensions = rstd::env::var_os("PATHEXT"_str);
@@ -89,13 +97,13 @@ public:
                         Option<ref<rstd::ffi::OsStr>> inherited_path,
                         ref<rstd::path::Path>         invocation_directory,
                         Option<ref<rstd::ffi::OsStr>> executable_extensions = None())
-        -> Result<ResolvedProcessEnvironment> {
+        -> SystemResult<ResolvedProcessEnvironment> {
         auto cwd = rstd::fs::canonicalize(invocation_directory);
         if (cwd.is_err()) {
-            return environment_failure<ResolvedProcessEnvironment>(
-                rstd::format("cannot resolve Lito invocation directory '{}': {}",
-                             invocation_directory,
-                             rstd::move(cwd).unwrap_err()));
+            return environment_io_failure<ResolvedProcessEnvironment>(
+                "resolve Lito invocation directory"_str,
+                invocation_directory,
+                rstd::move(cwd).unwrap_err());
         }
 
         auto directories = Vec<PathBuf>::make();
@@ -116,8 +124,7 @@ public:
 
         auto child_path = rstd::env::join_paths(directories.as_slice());
         if (child_path.is_err()) {
-            return environment_failure<ResolvedProcessEnvironment>(rstd::format(
-                "cannot materialize effective PATH: {}", rstd::move(child_path).unwrap_err()));
+            return Err(SystemError::PathJoin(rstd::move(child_path).unwrap_err()));
         }
         auto extensions = Vec<rstd::ffi::OsString>::make();
 #if RSTD_OS_WINDOWS
@@ -182,7 +189,8 @@ public:
     explicit ToolResolver(const ResolvedProcessEnvironment& environment)
         : environment_(rstd::addressof(environment)) {}
 
-    auto resolve(ref<rstd::path::Path> requested, ref<str> description) -> Result<ResolvedTool> {
+    auto resolve(ref<rstd::path::Path> requested, ref<str> description)
+        -> SystemResult<ResolvedTool> {
         for (const auto& cached : cache_) {
             if (same_path(cached.requested.as_path(), requested)) return Ok(cached.clone());
         }

@@ -20,11 +20,11 @@ namespace lito
 {
 
 template<typename T>
-auto catalog_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Manifest, rstd::move(message)));
+auto catalog_failure(String message) -> WorkspaceResult<T> {
+    return Err(WorkspaceError::Message(rstd::move(message)));
 }
 
-auto path_text(ref<rstd::path::Path> path) -> Result<String> {
+auto path_text(ref<rstd::path::Path> path) -> WorkspaceResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return catalog_failure<String>(
@@ -34,7 +34,7 @@ auto path_text(ref<rstd::path::Path> path) -> Result<String> {
 }
 
 auto workspace_contains(const WorkspaceManifest& workspace, ref<rstd::path::Path> package_root)
-    -> Result<bool> {
+    -> WorkspaceResult<bool> {
     for (const auto& declared : workspace.members) {
         auto member =
             workspace_member_directory(workspace, declared.as_path(), "workspace member"_str);
@@ -82,7 +82,7 @@ class WorkspaceCatalog {
 public:
     WorkspaceCatalog() = default;
 
-    static auto single(PackageManifest manifest) -> Result<WorkspaceCatalog> {
+    static auto single(PackageManifest manifest) -> WorkspaceResult<WorkspaceCatalog> {
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
@@ -110,7 +110,7 @@ public:
     }
 
     static auto associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
-        -> Result<WorkspaceCatalog>;
+        -> WorkspaceResult<WorkspaceCatalog>;
 
     auto name() const noexcept -> ref<str> { return name_.as_str(); }
 
@@ -135,14 +135,14 @@ public:
 
     friend auto load_workspace_catalog(WorkspaceManifest       workspace,
                                        Option<PackageManifest> preloaded)
-        -> Result<WorkspaceCatalog>;
+        -> WorkspaceResult<WorkspaceCatalog>;
     friend auto validate_associated_catalog(const WorkspaceCatalog& primary,
                                             const WorkspaceCatalog& associated,
-                                            ProjectRootRole         role) -> Result<empty>;
+                                            ProjectRootRole         role) -> WorkspaceResult<empty>;
 };
 
 auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest> preloaded = None())
-    -> Result<WorkspaceCatalog> {
+    -> WorkspaceResult<WorkspaceCatalog> {
     auto catalog           = WorkspaceCatalog {};
     catalog.workspace_     = true;
     catalog.name_          = workspace.name.clone();
@@ -170,7 +170,9 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
             manifest = rstd::move(preloaded).unwrap();
         } else {
             auto document = load_manifest_document(directory.as_path());
-            if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+            if (document.is_err()) {
+                return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
+            }
             auto loaded = rstd::move(document).unwrap();
             if (loaded.kind != ManifestKind::Package || loaded.package.is_none()) {
                 return catalog_failure<WorkspaceCatalog>(rstd::format(
@@ -223,7 +225,7 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
 }
 
 auto WorkspaceCatalog::associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
-    -> Result<WorkspaceCatalog> {
+    -> WorkspaceResult<WorkspaceCatalog> {
     if (primary.workspace_manifest_.is_some()) {
         rstd_try(resolve_workspace_member(manifest, *primary.workspace_manifest_));
     }
@@ -232,7 +234,7 @@ auto WorkspaceCatalog::associated_package(PackageManifest manifest, const Worksp
 
 auto validate_associated_catalog(const WorkspaceCatalog& primary,
                                  const WorkspaceCatalog& associated,
-                                 ProjectRootRole         role) -> Result<empty> {
+                                 ProjectRootRole         role) -> WorkspaceResult<empty> {
     if (role != ProjectRootRole::AssociatedTest) {
         return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
     }
@@ -301,15 +303,20 @@ auto validate_associated_catalog(const WorkspaceCatalog& primary,
 }
 
 auto try_containing_workspace(const PackageManifest& manifest)
-    -> Result<Option<WorkspaceManifest>> {
+    -> WorkspaceResult<Option<WorkspaceManifest>> {
     auto directory = manifest.root.clone();
     while (directory.pop()) {
         auto located = try_locate_manifest(directory.as_path());
-        if (located.is_err()) return Err(rstd::move(located).unwrap_err());
+        if (located.is_err()) {
+            return Err(WorkspaceError::Manifest(ManifestError::Locate(
+                rstd::move(located).unwrap_err())));
+        }
         if (located->is_none()) continue;
 
         auto document = load_manifest_document(directory.as_path());
-        if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+        if (document.is_err()) {
+            return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
+        }
         auto loaded = rstd::move(document).unwrap();
         if (loaded.kind != ManifestKind::Workspace || loaded.workspace.is_none()) continue;
         auto workspace = rstd::move(loaded.workspace).unwrap();
@@ -326,7 +333,7 @@ struct ResolvedProjectEntry {
     WorkspaceCatalog catalog;
 };
 
-auto resolve_project_entry(ref<rstd::path::Path> requested_root) -> Result<ResolvedProjectEntry> {
+auto resolve_project_entry(ref<rstd::path::Path> requested_root) -> WorkspaceResult<ResolvedProjectEntry> {
     auto document = rstd_try(load_manifest_document(requested_root));
     if (document.kind == ManifestKind::Workspace && document.workspace.is_some()) {
         auto catalog = rstd_try(load_workspace_catalog(rstd::move(document.workspace).unwrap()));

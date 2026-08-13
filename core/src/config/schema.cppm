@@ -22,20 +22,27 @@ namespace lito
 {
 
 template<typename T>
-auto config_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Config, rstd::move(message)));
+auto config_failure(String message) -> ConfigResult<T> {
+    return Err(ConfigError::Schema(rstd::move(message)));
 }
 
 template<typename T>
-auto config_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Config, message));
+auto config_failure(ref<str> message) -> ConfigResult<T> {
+    return Err(ConfigError::Schema(String::make(message)));
+}
+
+template<typename T>
+auto config_io_failure(ref<str> operation,
+                       ref<rstd::path::Path> path,
+                       rstd::io::error::Error source) -> ConfigResult<T> {
+    return Err(ConfigError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto config_member(const Toml& value, ref<str> key) -> Option<ref<Toml>> {
     return value.get(key);
 }
 
-auto config_table(const Toml& value, ref<str> context) -> Result<ref<Table>> {
+auto config_table(const Toml& value, ref<str> context) -> ConfigResult<ref<Table>> {
     auto table = value.as_table();
     if (table.is_none()) {
         return config_failure<ref<Table>>(rstd::format("{} must be a table", context));
@@ -79,7 +86,7 @@ auto cmake_key(ref<str> key) -> bool {
 }
 
 auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
-    -> Result<empty> {
+    -> ConfigResult<empty> {
     auto keys = table.keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (! allowed((**key).as_str())) {
@@ -91,7 +98,7 @@ auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)
 }
 
 auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback, ref<str> context)
-    -> Result<PathBuf> {
+    -> ConfigResult<PathBuf> {
     auto value = config_member(toolchain_value, key);
     if (value.is_none()) return Ok(PathBuf::from(fallback));
     auto text = (**value).as_str();
@@ -113,7 +120,7 @@ auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallbac
 auto configured_directories(const Toml&           table,
                             ref<str>              key,
                             ref<str>              context,
-                            ref<rstd::path::Path> project_root) -> Result<Vec<PathBuf>> {
+                            ref<rstd::path::Path> project_root) -> ConfigResult<Vec<PathBuf>> {
     auto result = Vec<PathBuf>::make();
     auto value  = config_member(table, key);
     if (value.is_none()) return Ok(rstd::move(result));
@@ -131,19 +138,17 @@ auto configured_directories(const Toml&           table,
         if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return config_failure<Vec<PathBuf>>(rstd::format("cannot resolve {}.{} path '{}': {}",
-                                                             context,
-                                                             key,
-                                                             path.as_path(),
-                                                             rstd::move(canonical).unwrap_err()));
+            return config_io_failure<Vec<PathBuf>>(
+                rstd::format("resolve {}.{} path", context, key).as_str(),
+                path.as_path(),
+                rstd::move(canonical).unwrap_err());
         }
         auto metadata = rstd::fs::metadata(canonical->as_path());
         if (metadata.is_err()) {
-            return config_failure<Vec<PathBuf>>(rstd::format("cannot inspect {}.{} path '{}': {}",
-                                                             context,
-                                                             key,
-                                                             canonical->as_path(),
-                                                             rstd::move(metadata).unwrap_err()));
+            return config_io_failure<Vec<PathBuf>>(
+                rstd::format("inspect {}.{} path", context, key).as_str(),
+                canonical->as_path(),
+                rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_dir()) {
             return config_failure<Vec<PathBuf>>(rstd::format(
@@ -155,7 +160,7 @@ auto configured_directories(const Toml&           table,
 }
 
 auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<PkgConfigProviderConfig> {
+    -> ConfigResult<PkgConfigProviderConfig> {
     auto result = PkgConfigProviderConfig {
         .executable = PathBuf::from("pkg-config"_str),
     };
@@ -182,10 +187,10 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
         if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return config_failure<PkgConfigProviderConfig>(
-                rstd::format("cannot resolve config.pkg-config.sysroot '{}': {}",
-                             path.as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return config_io_failure<PkgConfigProviderConfig>(
+                "resolve config.pkg-config.sysroot"_str,
+                path.as_path(),
+                rstd::move(canonical).unwrap_err());
         }
         result.sysroot = Some(rstd::move(canonical).unwrap());
     }
@@ -195,7 +200,7 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
 }
 
 auto configured_environment(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<ProcessEnvironmentSpec> {
+    -> ConfigResult<ProcessEnvironmentSpec> {
     auto value = config_member(document, "environment"_str);
     if (value.is_none()) return Ok(ProcessEnvironmentSpec {});
     auto table = config_table(**value, "config.environment"_str);
@@ -211,7 +216,7 @@ auto configured_environment(const Toml& document, ref<rstd::path::Path> project_
 }
 
 auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<CMakeProviderConfig> {
+    -> ConfigResult<CMakeProviderConfig> {
     auto result = CMakeProviderConfig {
         .executable = PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
@@ -256,7 +261,7 @@ auto default_lock_config(ref<rstd::path::Path> project_root) -> LockConfig {
 }
 
 auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<LockConfig> {
+    -> ConfigResult<LockConfig> {
     auto value = config_member(document, "lock"_str);
     if (value.is_none()) return Ok(default_lock_config(project_root));
     auto table = config_table(**value, "config.lock"_str);
@@ -283,25 +288,24 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
     }
     auto canonical_parent = rstd::fs::canonicalize(*parent);
     if (canonical_parent.is_err()) {
-        return config_failure<LockConfig>(
-            rstd::format("cannot resolve config.lock.path parent '{}': {}",
-                         *parent,
-                         rstd::move(canonical_parent).unwrap_err()));
+        return config_io_failure<LockConfig>(
+            "resolve config.lock.path parent"_str,
+            *parent,
+            rstd::move(canonical_parent).unwrap_err());
     }
     auto path   = canonical_parent->join(PathBuf::from(*name).as_path());
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
-        return config_failure<LockConfig>(rstd::format("cannot inspect config.lock.path '{}': {}",
-                                                       path.as_path(),
-                                                       rstd::move(exists).unwrap_err()));
+        return config_io_failure<LockConfig>(
+            "inspect config.lock.path"_str, path.as_path(), rstd::move(exists).unwrap_err());
     }
     if (*exists) {
         auto metadata = rstd::fs::metadata(path.as_path());
         if (metadata.is_err()) {
-            return config_failure<LockConfig>(
-                rstd::format("cannot inspect config.lock.path '{}': {}",
-                             path.as_path(),
-                             rstd::move(metadata).unwrap_err()));
+            return config_io_failure<LockConfig>(
+                "inspect config.lock.path"_str,
+                path.as_path(),
+                rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_file()) {
             return config_failure<LockConfig>(
@@ -312,7 +316,7 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
 }
 
 auto configured_install(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<InstallConfig> {
+    -> ConfigResult<InstallConfig> {
     auto value = config_member(document, "install"_str);
     if (value.is_none()) return Ok(InstallConfig {});
     auto table = config_table(**value, "config.install"_str);
@@ -333,7 +337,7 @@ auto configured_install(const Toml& document, ref<rstd::path::Path> project_root
 }
 
 auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root)
-    -> Result<PackageSourceConfig> {
+    -> ConfigResult<PackageSourceConfig> {
     auto patches     = Vec<GitSourcePatch>::make();
     auto patch_value = config_member(document, "patch"_str);
     if (patch_value.is_none()) {
@@ -385,20 +389,18 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
         }
         auto canonical = rstd::fs::canonicalize(requested.as_path());
         if (canonical.is_err()) {
-            return config_failure<PackageSourceConfig>(
-                rstd::format("cannot resolve {}.path '{}': {}",
-                             context.as_str(),
-                             requested.as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return config_io_failure<PackageSourceConfig>(
+                rstd::format("resolve {}.path", context.as_str()).as_str(),
+                requested.as_path(),
+                rstd::move(canonical).unwrap_err());
         }
         auto resolved = rstd::move(canonical).unwrap();
         auto metadata = rstd::fs::metadata(resolved.as_path());
         if (metadata.is_err()) {
-            return config_failure<PackageSourceConfig>(
-                rstd::format("cannot inspect {}.path '{}': {}",
-                             context.as_str(),
-                             resolved.as_path(),
-                             rstd::move(metadata).unwrap_err()));
+            return config_io_failure<PackageSourceConfig>(
+                rstd::format("inspect {}.path", context.as_str()).as_str(),
+                resolved.as_path(),
+                rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_dir()) {
             return config_failure<PackageSourceConfig>(rstd::format(
@@ -418,19 +420,17 @@ export namespace lito
 {
 
 auto load_project_config(ref<rstd::path::Path> requested_root,
-                         ConfigLoadMode mode = ConfigLoadMode::Enabled) -> Result<ProjectConfig> {
+                         ConfigLoadMode mode = ConfigLoadMode::Enabled) -> ConfigResult<ProjectConfig> {
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
-        return config_failure<ProjectConfig>(rstd::format("cannot resolve project root '{}': {}",
-                                                          requested_root,
-                                                          rstd::move(canonical).unwrap_err()));
+        return config_io_failure<ProjectConfig>(
+            "resolve project root"_str, requested_root, rstd::move(canonical).unwrap_err());
     }
     auto root     = rstd::move(canonical).unwrap();
     auto metadata = rstd::fs::metadata(root.as_path());
     if (metadata.is_err()) {
-        return config_failure<ProjectConfig>(rstd::format("cannot inspect project root '{}': {}",
-                                                          root.as_path(),
-                                                          rstd::move(metadata).unwrap_err()));
+        return config_io_failure<ProjectConfig>(
+            "inspect project root"_str, root.as_path(), rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_dir()) {
         return config_failure<ProjectConfig>(
@@ -459,23 +459,21 @@ auto load_project_config(ref<rstd::path::Path> requested_root,
     auto config_path = root.join(PathBuf::from(".lito/config.toml"_str).as_path());
     auto exists      = rstd::fs::exists(config_path.as_path());
     if (exists.is_err()) {
-        return config_failure<ProjectConfig>(rstd::format("cannot inspect config '{}': {}",
-                                                          config_path.as_path(),
-                                                          rstd::move(exists).unwrap_err()));
+        return config_io_failure<ProjectConfig>(
+            "inspect configuration"_str, config_path.as_path(), rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(make_default());
 
     auto contents = rstd::fs::read_to_string(config_path.as_path());
     if (contents.is_err()) {
-        return config_failure<ProjectConfig>(rstd::format("cannot read config '{}': {}",
-                                                          config_path.as_path(),
-                                                          rstd::move(contents).unwrap_err()));
+        return config_io_failure<ProjectConfig>(
+            "read configuration"_str,
+            config_path.as_path(),
+            rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return config_failure<ProjectConfig>(rstd::format("cannot parse config '{}': {}",
-                                                          config_path.as_path(),
-                                                          rstd::move(parsed).unwrap_err()));
+        return Err(ConfigError::Parse(config_path.clone(), rstd::move(parsed).unwrap_err()));
     }
     auto document   = rstd::move(parsed).unwrap();
     auto root_table = config_table(document, "config root"_str);

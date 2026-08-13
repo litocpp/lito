@@ -10,6 +10,7 @@ import lito.build.profile_contract;
 import lito.build.contract;
 import lito.platform.contract;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.cpp;
 import lito.system.process;
 import lito.system.environment;
@@ -30,7 +31,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
                         const ProfileSpec&                        profile,
                         const TargetInfo&                         default_target,
                         ref<str>                                  effective_target,
-                        usize jobs = usize(1)) -> Result<CMakePackagePlan> {
+                        usize jobs = usize(1)) -> DependencyResult<CMakePackagePlan> {
     if (jobs == usize {}) {
         return cmake_failure<CMakePackagePlan>("CMake build jobs must be greater than zero"_str);
     }
@@ -73,7 +74,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
 
 auto identify_cmake_provider(CMakeProviderConfig               provider,
                              const ResolvedProcessEnvironment& environment)
-    -> Result<CMakeProviderConfig> {
+    -> DependencyResult<CMakeProviderConfig> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto arguments = Vec<String>::make();
@@ -81,9 +82,8 @@ auto identify_cmake_provider(CMakeProviderConfig               provider,
     arguments.push(String::make("--version"_str));
     auto output = run_command(arguments, environment);
     if (output.is_err()) {
-        return cmake_failure<CMakeProviderConfig>(
-            rstd::format("CMake provider identity could not execute: {}",
-                         rstd::move(output).unwrap_err().message.as_str()));
+        return Err(DependencyError::Operation(String::make("CMake provider identity"_str),
+                                              rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
         return cmake_failure<CMakeProviderConfig>(
@@ -102,7 +102,7 @@ auto identify_cmake_provider(CMakeProviderConfig               provider,
 auto execute_cmake_package(const CMakePackagePlan&           plan,
                            const ResolvedProcessEnvironment& environment,
                            const Option<BuildObserver>&      observer = None())
-    -> Result<CMakeUsageSnapshot> {
+    -> DependencyResult<CMakeUsageSnapshot> {
     const auto& requirement   = plan.requirement;
     const auto& provider      = plan.provider;
     const auto& configuration = plan.configuration;
@@ -110,25 +110,25 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     const auto& area          = plan.area;
     auto        created       = rstd::fs::create_dir_all(area.root.as_path());
     if (created.is_err()) {
-        return cmake_failure<CMakeUsageSnapshot>(
-            rstd::format("cannot create CMake work directory '{}': {}",
-                         area.root.as_path(),
-                         rstd::move(created).unwrap_err()));
+        return cmake_io_failure<CMakeUsageSnapshot>(
+            "create CMake work directory"_str,
+            area.root.as_path(),
+            rstd::move(created).unwrap_err());
     }
     auto lock_path = area.root.join(PathBuf::from("lock"_str).as_path());
     auto lock_file = rstd::fs::File::create(lock_path.as_path());
     if (lock_file.is_err()) {
-        return cmake_failure<CMakeUsageSnapshot>(
-            rstd::format("cannot open CMake dependency lock '{}': {}",
-                         lock_path.as_path(),
-                         rstd::move(lock_file).unwrap_err()));
+        return cmake_io_failure<CMakeUsageSnapshot>(
+            "open CMake dependency lock"_str,
+            lock_path.as_path(),
+            rstd::move(lock_file).unwrap_err());
     }
     auto locked = lock_file->lock();
     if (locked.is_err()) {
-        return cmake_failure<CMakeUsageSnapshot>(
-            rstd::format("cannot lock CMake dependency '{}': {}",
-                         requirement.alias.as_str(),
-                         rstd::move(locked).unwrap_err()));
+        return cmake_io_failure<CMakeUsageSnapshot>(
+            rstd::format("lock CMake dependency '{}'", requirement.alias.as_str()).as_str(),
+            lock_path.as_path(),
+            rstd::move(locked).unwrap_err());
     }
     auto cacheable =
         requirement.source.is_Directory() && requirement.source.as_Directory().cacheable;
@@ -257,10 +257,10 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
         area.query_build.join(PathBuf::from("lito-package-version.txt"_str).as_path());
     auto version = rstd::fs::read_to_string(version_path.as_path());
     if (version.is_err()) {
-        return cmake_failure<CMakeUsageSnapshot>(
-            rstd::format("cannot read CMake package '{}' version: {}",
-                         requirement.package.as_str(),
-                         rstd::move(version).unwrap_err()));
+        return cmake_io_failure<CMakeUsageSnapshot>(
+            rstd::format("read CMake package '{}' version", requirement.package.as_str()).as_str(),
+            version_path.as_path(),
+            rstd::move(version).unwrap_err());
     }
     auto normalized_version = String::make(version->as_str().trim_ascii());
     if (normalized_version.is_empty()) normalized_version = String::make("unknown"_str);
@@ -272,7 +272,7 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
 auto materialize_cmake_usage(const CMakePackagePlan&   plan,
                              const CMakeUsageSnapshot& snapshots,
                              const CppArgumentParser&  parser)
-    -> Result<ResolvedExternalDependency> {
+    -> DependencyResult<ResolvedExternalDependency> {
     const auto& requirement        = plan.requirement;
     const auto& provider           = plan.provider;
     const auto& effective_target   = plan.effective_target;
@@ -294,10 +294,8 @@ auto materialize_cmake_usage(const CMakePackagePlan&   plan,
                                             target.name.as_str());
         auto        compile  = parser.parse(snapshot.compile, source.as_str());
         if (compile.is_err()) {
-            return cmake_failure<ResolvedExternalDependency>(
-                rstd::format("{} has invalid compile requirements: {}",
-                             source.as_str(),
-                             rstd::move(compile).unwrap_err()));
+            return Err(DependencyError::Cpp(
+                source.clone(), rstd::move(compile).unwrap_err()));
         }
         auto identity = target_snapshot_identity(provider,
                                                  requirement,

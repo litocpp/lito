@@ -37,7 +37,7 @@ auto valid_artifact_name(ref<str> value) -> bool {
     return true;
 }
 
-auto relative_path(String text, ref<str> context) -> Result<PathBuf> {
+auto relative_path(String text, ref<str> context) -> ManifestSchemaResult<PathBuf> {
     if (text.is_empty()) return failure<PathBuf>(rstd::format("{} must not be empty", context));
     auto path = PathBuf::from(rstd::move(text));
     if (! path.as_path().is_relative()) {
@@ -47,7 +47,7 @@ auto relative_path(String text, ref<str> context) -> Result<PathBuf> {
 }
 
 auto resolve_package_source_root(const Toml& package, ref<rstd::path::Path> root)
-    -> Result<PathBuf> {
+    -> ManifestSchemaResult<PathBuf> {
     auto declared = optional_string(package, "source-root"_str, "package"_str);
     if (declared.is_err()) return Err(rstd::move(declared).unwrap_err());
     if (declared->is_none()) return Ok(PathBuf::from(root));
@@ -61,9 +61,10 @@ auto resolve_package_source_root(const Toml& package, ref<rstd::path::Path> root
     if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
     auto metadata = rstd::fs::metadata(source_root->as_path());
     if (metadata.is_err()) {
-        return failure<PathBuf>(rstd::format("cannot inspect package.source-root '{}': {}",
-                                             source_root->as_path(),
-                                             rstd::move(metadata).unwrap_err()));
+        return manifest_io_failure<PathBuf>("package.source-root"_str,
+                                            "inspect"_str,
+                                            source_root->as_path(),
+                                            rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_dir()) {
         return failure<PathBuf>(
@@ -78,7 +79,7 @@ auto resolve_package_source_root(const Toml& package, ref<rstd::path::Path> root
     return source_root;
 }
 
-auto install_relative_path(String text, ref<str> context) -> Result<PathBuf> {
+auto install_relative_path(String text, ref<str> context) -> ManifestSchemaResult<PathBuf> {
     auto path = relative_path(rstd::move(text), context);
     if (path.is_err()) return path;
     auto components = path->as_path().components();
@@ -97,7 +98,7 @@ auto install_relative_path(String text, ref<str> context) -> Result<PathBuf> {
 }
 
 auto declared_paths(Option<ref<Toml>> value, ref<str> context, bool required)
-    -> Result<Vec<PathBuf>> {
+    -> ManifestSchemaResult<Vec<PathBuf>> {
     if (required && value.is_none()) {
         return failure<Vec<PathBuf>>(rstd::format("{} is required", context));
     }
@@ -116,7 +117,7 @@ auto declared_paths(Option<ref<Toml>> value, ref<str> context, bool required)
     return Ok(rstd::move(result));
 }
 
-auto predicate_values(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<String>> {
+auto predicate_values(Option<ref<Toml>> value, ref<str> context) -> ManifestSchemaResult<Vec<String>> {
     auto result = Vec<String>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto single = (**value).as_str();
@@ -141,7 +142,7 @@ auto predicate_values(Option<ref<Toml>> value, ref<str> context) -> Result<Vec<S
     return Ok(rstd::move(result));
 }
 
-auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context) -> Result<TargetPredicate> {
+auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context) -> ManifestSchemaResult<TargetPredicate> {
     if (value.is_none()) return Ok(TargetPredicate {});
     auto table = table_value(**value, context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
@@ -206,7 +207,7 @@ auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context) -> Result
 }
 
 auto parse_source_groups(Option<ref<Toml>> value, ref<str> context)
-    -> Result<Vec<ConditionalSourceGroup>> {
+    -> ManifestSchemaResult<Vec<ConditionalSourceGroup>> {
     auto result = Vec<ConditionalSourceGroup>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto groups = (**value).as_array();
@@ -243,7 +244,7 @@ auto path_repeated(const Vec<PathBuf>& paths, ref<rstd::path::Path> candidate) -
 }
 
 auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source, ref<str> context)
-    -> Result<empty> {
+    -> ManifestSchemaResult<empty> {
     if (path_repeated(attachment.sources, source.as_path())) {
         return failure<empty>(rstd::format("{} repeats source '{}'", context, source.as_path()));
     }
@@ -253,7 +254,7 @@ auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source
 
 auto append_attachment_group(TestAttachmentManifest& attachment,
                              ConditionalSourceGroup  group,
-                             ref<str>                context) -> Result<empty> {
+                             ref<str>                context) -> ManifestSchemaResult<empty> {
     for (usize index {}; index < group.sources.len(); ++index) {
         for (usize prior {}; prior < index; ++prior) {
             if (group.sources[prior].as_path() == group.sources[index].as_path()) {
@@ -267,7 +268,7 @@ auto append_attachment_group(TestAttachmentManifest& attachment,
 }
 
 auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
-    -> Result<Vec<TestAttachmentManifest>> {
+    -> ManifestSchemaResult<Vec<TestAttachmentManifest>> {
     auto result = Vec<TestAttachmentManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
@@ -331,7 +332,7 @@ auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
 }
 
 auto parse_target_source(const Toml& value, ref<str> context, bool module_required)
-    -> Result<TargetSourceManifest> {
+    -> ManifestSchemaResult<TargetSourceManifest> {
     auto module = rstd_try(optional_string(value, "module"_str, context));
     if (module.is_some() && ! valid_module_name(module->as_str())) {
         return failure<TargetSourceManifest>(
@@ -359,7 +360,7 @@ auto parse_target_source(const Toml& value, ref<str> context, bool module_requir
     });
 }
 
-auto parse_library_target(Option<ref<Toml>> value) -> Result<Option<PackageTargetManifest>> {
+auto parse_library_target(Option<ref<Toml>> value) -> ManifestSchemaResult<Option<PackageTargetManifest>> {
     if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
     auto table = rstd_try(table_value(**value, "manifest.lib"_str));
     rstd_try(reject_unknown(*table, "manifest.lib"_str, library_key));
@@ -379,7 +380,7 @@ auto parse_library_target(Option<ref<Toml>> value) -> Result<Option<PackageTarge
 }
 
 auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref<str> key)
-    -> Result<Vec<PackageTargetManifest>> {
+    -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
     auto result = Vec<PackageTargetManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
@@ -441,7 +442,7 @@ struct ResolvedIncludeDirectories {
 };
 
 auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root, ref<str> context)
-    -> Result<PathBuf> {
+    -> ManifestSchemaResult<PathBuf> {
     auto requested = PathBuf::from(root).join(path.as_path());
     auto canonical =
         canonical_existing(requested.as_path(), "cannot resolve include directory"_str);
@@ -453,9 +454,10 @@ auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root,
     }
     auto metadata = rstd::fs::metadata(resolved.as_path());
     if (metadata.is_err()) {
-        return failure<PathBuf>(rstd::format("cannot inspect include directory '{}': {}",
-                                             resolved.as_path(),
-                                             rstd::move(metadata).unwrap_err()));
+        return manifest_io_failure<PathBuf>(context,
+                                            "inspect include directory"_str,
+                                            resolved.as_path(),
+                                            rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_dir()) {
         return failure<PathBuf>(
@@ -467,7 +469,7 @@ auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root,
 auto resolve_include_directories(Option<ref<Toml>>     value,
                                  ref<rstd::path::Path> root,
                                  ref<str>              context,
-                                 bool allow_generated) -> Result<ResolvedIncludeDirectories> {
+                                 bool allow_generated) -> ManifestSchemaResult<ResolvedIncludeDirectories> {
     auto result = ResolvedIncludeDirectories {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
@@ -525,7 +527,7 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
     return Ok(rstd::move(result));
 }
 
-auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>> {
+auto parse_compile_tests(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<CompileTestCase>> {
     auto result = Vec<CompileTestCase>::make();
     if (value.is_none()) {
         return failure<Vec<CompileTestCase>>("compile-test.cases is required"_str);
@@ -612,7 +614,7 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> Result<Vec<CompileTestCase>
     return Ok(rstd::move(result));
 }
 
-auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> Result<empty> {
+auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> ManifestSchemaResult<empty> {
     for (const auto& definition : definitions) {
         if (is_profile_owned_definition(definition.as_str())) {
             return failure<empty>(rstd::format(
@@ -622,7 +624,7 @@ auto validate_definitions(const Vec<String>& definitions, ref<str> context) -> R
     return Ok(empty {});
 }
 
-auto validate_linker_options(const Vec<String>& options, ref<str> context) -> Result<empty> {
+auto validate_linker_options(const Vec<String>& options, ref<str> context) -> ManifestSchemaResult<empty> {
     for (const auto& option : options) {
         if (option.as_str().starts_with("-stdlib="_str) || option.as_str() == "-nostdlib++"_str ||
             is_profile_owned_linker_option(option.as_str())) {
@@ -633,7 +635,7 @@ auto validate_linker_options(const Vec<String>& options, ref<str> context) -> Re
     return Ok(empty {});
 }
 
-auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> Result<UsageRequirements> {
+auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root) -> ManifestSchemaResult<UsageRequirements> {
     if (value.is_none()) return Ok(UsageRequirements {});
     auto table = table_value(**value, "manifest.usage"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());

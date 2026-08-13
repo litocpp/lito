@@ -54,13 +54,29 @@ struct PendingBinary {
 };
 
 template<typename T>
-auto store_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Filesystem, rstd::move(message)));
+auto store_failure(String message) -> InstallStoreResult<T> {
+    return Err(InstallStoreError::Cause(InstallStoreCause::Message(rstd::move(message))));
 }
 
 template<typename T>
-auto store_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Filesystem, message));
+auto store_failure(ref<str> message) -> InstallStoreResult<T> {
+    return Err(
+        InstallStoreError::Cause(InstallStoreCause::Message(String::make(message))));
+}
+
+template<typename T>
+auto store_io_failure(ref<str>                operation,
+                      ref<rstd::path::Path>   path,
+                      rstd::io::error::Error error) -> InstallStoreResult<T> {
+    return Err(InstallStoreError::Cause(InstallStoreCause::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(error))));
+}
+
+template<typename T>
+auto store_json_failure(ref<rstd::path::Path> path, rstd::json::Error error)
+    -> InstallStoreResult<T> {
+    return Err(InstallStoreError::Cause(
+        InstallStoreCause::Json(PathBuf::from(path), rstd::move(error))));
 }
 
 auto json_string(ref<str> value) -> Json {
@@ -84,7 +100,7 @@ auto target_json(const PackageTargetId& target) -> Json {
     return Json::Object(rstd::move(object));
 }
 
-auto package_json(const StoredPackage& package) -> Result<Json> {
+auto package_json(const StoredPackage& package) -> InstallStoreResult<Json> {
     auto binaries = JsonArray::make();
     for (const auto& binary : package.binaries) {
         auto item = JsonMap::make();
@@ -104,7 +120,7 @@ auto package_json(const StoredPackage& package) -> Result<Json> {
     return Ok(Json::Object(rstd::move(object)));
 }
 
-auto document_json(const InstalledDocument& document) -> Result<Json> {
+auto document_json(const InstalledDocument& document) -> InstallStoreResult<Json> {
     auto packages = JsonArray::make();
     for (const auto& package : document.packages) {
         packages.push(rstd_try(package_json(package)));
@@ -118,7 +134,7 @@ auto document_json(const InstalledDocument& document) -> Result<Json> {
 
 using KeyPredicate = bool (*)(ref<str>);
 
-auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed) -> Result<empty> {
+auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed) -> InstallStoreResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) {
         return store_failure<empty>(rstd::format("{} must be an object", context));
@@ -150,7 +166,7 @@ auto target_key(ref<str> key) -> bool {
     return key == "kind"_str || key == "name"_str || key == "package"_str;
 }
 
-auto required_member(const Json& value, ref<str> key, ref<str> context) -> Result<ref<Json>> {
+auto required_member(const Json& value, ref<str> key, ref<str> context) -> InstallStoreResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
         return store_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
@@ -158,7 +174,7 @@ auto required_member(const Json& value, ref<str> key, ref<str> context) -> Resul
     return Ok(*member);
 }
 
-auto required_string(const Json& value, ref<str> key, ref<str> context) -> Result<String> {
+auto required_string(const Json& value, ref<str> key, ref<str> context) -> InstallStoreResult<String> {
     auto member = rstd_try(required_member(value, key, context));
     auto text   = member->as_str();
     if (text.is_none() || text->is_empty()) {
@@ -168,7 +184,7 @@ auto required_string(const Json& value, ref<str> key, ref<str> context) -> Resul
     return Ok(String::make(*text));
 }
 
-auto parse_target(const Json& value) -> Result<PackageTargetId> {
+auto parse_target(const Json& value) -> InstallStoreResult<PackageTargetId> {
     rstd_try(reject_unknown(value, "installed target"_str, target_key));
     auto kind = rstd_try(required_string(value, "kind"_str, "installed target"_str));
     if (kind != "bin"_str) {
@@ -187,7 +203,7 @@ auto parse_target(const Json& value) -> Result<PackageTargetId> {
     });
 }
 
-auto parse_binary(const Json& value) -> Result<StoredBinary> {
+auto parse_binary(const Json& value) -> InstallStoreResult<StoredBinary> {
     rstd_try(reject_unknown(value, "installed binary"_str, binary_key));
     auto name = rstd_try(required_string(value, "name"_str, "installed binary"_str));
     if (! safe_binary_name(name.as_str())) {
@@ -201,7 +217,7 @@ auto parse_binary(const Json& value) -> Result<StoredBinary> {
     });
 }
 
-auto parse_package(const Json& value) -> Result<StoredPackage> {
+auto parse_package(const Json& value) -> InstallStoreResult<StoredPackage> {
     rstd_try(reject_unknown(value, "installed package"_str, package_key));
     auto name = rstd_try(required_string(value, "name"_str, "installed package"_str));
     if (! valid_package_name(name.as_str())) {
@@ -248,7 +264,7 @@ auto parse_package(const Json& value) -> Result<StoredPackage> {
     });
 }
 
-auto parse_document(const Json& value) -> Result<InstalledDocument> {
+auto parse_document(const Json& value) -> InstallStoreResult<InstalledDocument> {
     rstd_try(reject_unknown(value, "installed document"_str, root_key));
     auto version = rstd_try(required_member(value, "version"_str, "installed document"_str));
     auto number  = version->as_u64();
@@ -290,15 +306,15 @@ auto parse_document(const Json& value) -> Result<InstalledDocument> {
     return Ok(InstalledDocument { .packages = rstd::move(packages) });
 }
 
-auto load_document(ref<rstd::path::Path> path) -> Result<InstalledDocument> {
+auto load_document(ref<rstd::path::Path> path) -> InstallStoreResult<InstalledDocument> {
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_err()) {
         auto error = rstd::move(metadata).unwrap_err();
         if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
             return Ok(InstalledDocument {});
         }
-        return store_failure<InstalledDocument>(
-            rstd::format("cannot inspect install metadata '{}': {}", path, error));
+        return store_io_failure<InstalledDocument>(
+            "inspect install metadata"_str, path, rstd::move(error));
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
         return store_failure<InstalledDocument>(
@@ -306,27 +322,26 @@ auto load_document(ref<rstd::path::Path> path) -> Result<InstalledDocument> {
     }
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return store_failure<InstalledDocument>(
-            rstd::format("cannot read install metadata '{}': {}", path, contents.unwrap_err()));
+        return store_io_failure<InstalledDocument>(
+            "read install metadata"_str, path, rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return store_failure<InstalledDocument>(
-            rstd::format("cannot parse install metadata '{}': {}", path, parsed.unwrap_err()));
+        return store_json_failure<InstalledDocument>(path, rstd::move(parsed).unwrap_err());
     }
     return parse_document(*parsed);
 }
 
 auto write_document(ref<rstd::path::Path> path, const InstalledDocument& document)
-    -> Result<empty> {
+    -> InstallStoreResult<empty> {
     auto value = rstd_try(document_json(document));
     auto text  = rstd::json::to_string(
         value, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
     text.push_ascii('\n');
     auto written = rstd::fs::write_atomic(path, text.as_str().as_bytes());
     if (written.is_err()) {
-        return store_failure<empty>(rstd::format(
-            "cannot atomically write install metadata '{}': {}", path, written.unwrap_err()));
+        return store_io_failure<empty>(
+            "atomically write install metadata"_str, path, rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
@@ -344,27 +359,27 @@ auto binary_owner(const InstalledDocument& document, ref<str> name) -> Option<us
     return None();
 }
 
-auto path_metadata(ref<rstd::path::Path> path) -> Result<Option<rstd::fs::Metadata>> {
+auto path_metadata(ref<rstd::path::Path> path) -> InstallStoreResult<Option<rstd::fs::Metadata>> {
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_ok()) return Ok(Some(rstd::move(metadata).unwrap()));
     auto error = rstd::move(metadata).unwrap_err();
     if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
         return Ok(Option<rstd::fs::Metadata> {});
     }
-    return store_failure<Option<rstd::fs::Metadata>>(
-        rstd::format("cannot inspect install destination '{}': {}", path, error));
+    return store_io_failure<Option<rstd::fs::Metadata>>(
+        "inspect install destination"_str, path, rstd::move(error));
 }
 
-auto same_install_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> Result<bool> {
+auto same_install_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right) -> InstallStoreResult<bool> {
     auto left_metadata = rstd::fs::metadata(left);
     if (left_metadata.is_err()) {
-        return store_failure<bool>(rstd::format(
-            "cannot inspect install artifact '{}': {}", left, left_metadata.unwrap_err()));
+        return store_io_failure<bool>(
+            "inspect install artifact"_str, left, rstd::move(left_metadata).unwrap_err());
     }
     auto right_metadata = rstd::fs::metadata(right);
     if (right_metadata.is_err()) {
-        return store_failure<bool>(rstd::format(
-            "cannot inspect install destination '{}': {}", right, right_metadata.unwrap_err()));
+        return store_io_failure<bool>(
+            "inspect install destination"_str, right, rstd::move(right_metadata).unwrap_err());
     }
     if (left_metadata->len() != right_metadata->len() ||
         left_metadata->permissions().mode() != right_metadata->permissions().mode()) {
@@ -372,13 +387,13 @@ auto same_install_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right) 
     }
     auto left_contents = rstd::fs::read(left);
     if (left_contents.is_err()) {
-        return store_failure<bool>(rstd::format(
-            "cannot read install artifact '{}': {}", left, left_contents.unwrap_err()));
+        return store_io_failure<bool>(
+            "read install artifact"_str, left, rstd::move(left_contents).unwrap_err());
     }
     auto right_contents = rstd::fs::read(right);
     if (right_contents.is_err()) {
-        return store_failure<bool>(rstd::format(
-            "cannot read install destination '{}': {}", right, right_contents.unwrap_err()));
+        return store_io_failure<bool>(
+            "read install destination"_str, right, rstd::move(right_contents).unwrap_err());
     }
     if (left_contents->len() != right_contents->len()) return Ok(false);
     auto left_slice  = left_contents->as_slice();
@@ -389,11 +404,13 @@ auto same_install_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right) 
     return Ok(true);
 }
 
-auto validate_store_directory(ref<rstd::path::Path> path, ref<str> role) -> Result<empty> {
+auto validate_store_directory(ref<rstd::path::Path> path, ref<str> role) -> InstallStoreResult<empty> {
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_err()) {
-        return store_failure<empty>(rstd::format(
-            "cannot inspect {} directory '{}': {}", role, path, metadata.unwrap_err()));
+        return store_io_failure<empty>(
+            rstd::format("inspect {} directory", role).as_str(),
+            path,
+            rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_dir() || metadata->is_symlink()) {
         return store_failure<empty>(
@@ -419,49 +436,56 @@ auto remove_binary(StoredPackage& package, ref<str> name) -> void {
 }
 
 auto rollback_install(const Vec<PathBuf>& published, const Vec<BackupEntry>& backups)
-    -> Option<String> {
-    auto error = Option<String> {};
+    -> Vec<InstallRollbackFailure> {
+    auto failures = Vec<InstallRollbackFailure>::make();
     for (const auto& path : published) {
         auto exists = rstd::fs::exists(path.as_path());
-        if (exists.is_ok() && *exists) {
-            auto removed = rstd::fs::remove_file(path.as_path());
-            if (removed.is_err() && error.is_none()) {
-                error = Some(rstd::format("cannot remove published binary '{}': {}",
-                                          path.as_path(),
-                                          removed.unwrap_err()));
-            }
+        if (exists.is_err()) {
+            failures.push(InstallRollbackFailure {
+                .operation = String::make("inspect published binary"_str),
+                .path      = path.clone(),
+                .source    = rstd::move(exists).unwrap_err(),
+            });
+            continue;
+        }
+        if (! *exists) continue;
+        auto removed = rstd::fs::remove_file(path.as_path());
+        if (removed.is_err()) {
+            failures.push(InstallRollbackFailure {
+                .operation = String::make("remove published binary"_str),
+                .path      = path.clone(),
+                .source    = rstd::move(removed).unwrap_err(),
+            });
         }
     }
     for (const auto& entry : backups) {
         auto restored = rstd::fs::rename(entry.backup.as_path(), entry.destination.as_path());
-        if (restored.is_err() && error.is_none()) {
-            error = Some(rstd::format("cannot restore binary '{}': {}",
-                                      entry.destination.as_path(),
-                                      restored.unwrap_err()));
+        if (restored.is_err()) {
+            failures.push(InstallRollbackFailure {
+                .operation = String::make("restore binary"_str),
+                .path      = entry.destination.clone(),
+                .source    = rstd::move(restored).unwrap_err(),
+            });
         }
     }
-    return error;
+    return failures;
 }
 
 auto transaction_failure(ref<str>                operation,
-                         const Error&            error,
+                         InstallStoreError       error,
                          const Vec<PathBuf>&     published,
-                         const Vec<BackupEntry>& backups) -> Error {
-    auto rollback = rollback_install(published, backups);
-    if (rollback.is_some()) {
-        return Error::make(ErrorKind::Filesystem,
-                           rstd::format("{} failed: {}; rollback failed: {}",
-                                        operation,
-                                        error.message.as_str(),
-                                        rollback->as_str()));
-    }
-    return Error::make(ErrorKind::Filesystem,
-                       rstd::format("{} failed: {}", operation, error.message.as_str()));
+                         const Vec<BackupEntry>& backups) -> InstallStoreError {
+    return InstallStoreError::Transaction(
+        String::make(operation),
+        rstd::boxed::Box<InstallStoreError>::make(rstd::move(error)),
+        rollback_install(published, backups));
 }
 
-auto fs_failure(ref<str> operation, ref<rstd::path::Path> path, const auto& error) -> Error {
-    return Error::make(ErrorKind::Filesystem,
-                       rstd::format("cannot {} '{}': {}", operation, path, error));
+auto fs_failure(ref<str>                operation,
+                ref<rstd::path::Path>   path,
+                rstd::io::error::Error error) -> InstallStoreError {
+    return InstallStoreError::Cause(InstallStoreCause::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(error)));
 }
 
 } // namespace lito
@@ -469,23 +493,23 @@ auto fs_failure(ref<str> operation, ref<rstd::path::Path> path, const auto& erro
 export namespace lito
 {
 
-auto create_install_layout(InstallRoot root) -> Result<InstallLayout>;
+auto create_install_layout(InstallRoot root) -> InstallStoreResult<InstallLayout>;
 
-auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummary>;
+auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<InstallStoreSummary>;
 
-auto create_install_layout(InstallRoot root) -> Result<InstallLayout> {
+auto create_install_layout(InstallRoot root) -> InstallStoreResult<InstallLayout> {
     if (root.path.is_empty()) {
         return store_failure<InstallLayout>("install root is required"_str);
     }
     auto created = rstd::fs::create_dir_all(root.path.as_path());
     if (created.is_err()) {
-        return store_failure<InstallLayout>(rstd::format(
-            "cannot create install root '{}': {}", root.path.as_path(), created.unwrap_err()));
+        return store_io_failure<InstallLayout>(
+            "create install root"_str, root.path.as_path(), rstd::move(created).unwrap_err());
     }
     auto canonical = rstd::fs::canonicalize(root.path.as_path());
     if (canonical.is_err()) {
-        return store_failure<InstallLayout>(rstd::format(
-            "cannot resolve install root '{}': {}", root.path.as_path(), canonical.unwrap_err()));
+        return store_io_failure<InstallLayout>(
+            "resolve install root"_str, root.path.as_path(), rstd::move(canonical).unwrap_err());
     }
     root.path            = rstd::move(canonical).unwrap();
     auto state_directory = root.path.join(PathBuf::from(".lito"_str).as_path());
@@ -499,7 +523,7 @@ auto create_install_layout(InstallRoot root) -> Result<InstallLayout> {
     });
 }
 
-auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummary> {
+auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<InstallStoreSummary> {
     if (request.packages.is_empty()) {
         return store_failure<InstallStoreSummary>("install request has no packages"_str);
     }
@@ -554,14 +578,14 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
     auto lock =
         rstd::fs::File::options().read(true).write(true).create(true).open(layout.lock.as_path());
     if (lock.is_err()) {
-        return store_failure<InstallStoreSummary>(rstd::format(
-            "cannot open install lock '{}': {}", layout.lock.as_path(), lock.unwrap_err()));
+        return store_io_failure<InstallStoreSummary>(
+            "open install lock"_str, layout.lock.as_path(), rstd::move(lock).unwrap_err());
     }
     auto lock_file = rstd::move(lock).unwrap();
     auto locked    = lock_file.lock();
     if (locked.is_err()) {
-        return store_failure<InstallStoreSummary>(rstd::format(
-            "cannot lock install store '{}': {}", layout.lock.as_path(), locked.unwrap_err()));
+        return store_io_failure<InstallStoreSummary>(
+            "lock install store"_str, layout.lock.as_path(), rstd::move(locked).unwrap_err());
     }
 
     auto document = rstd_try(load_document(layout.metadata.as_path()));
@@ -677,10 +701,10 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
         }
         auto removed = rstd::fs::remove_dir_all(transaction.as_path());
         if (removed.is_err()) {
-            return store_failure<InstallStoreSummary>(
-                rstd::format("cannot remove stale install transaction '{}': {}",
-                             transaction.as_path(),
-                             removed.unwrap_err()));
+            return store_io_failure<InstallStoreSummary>(
+                "remove stale install transaction"_str,
+                transaction.as_path(),
+                rstd::move(removed).unwrap_err());
         }
     }
     auto staging         = transaction.join(PathBuf::from("new"_str).as_path());
@@ -706,40 +730,42 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
         auto        copied = rstd::fs::copy(binary.source.as_path(), staged.as_path());
         if (copied.is_err()) {
             (void)rstd::fs::remove_dir_all(transaction.as_path());
-            return store_failure<InstallStoreSummary>(
-                rstd::format("cannot stage install artifact '{}': {}",
-                             binary.source.as_path(),
-                             copied.unwrap_err()));
+            return store_io_failure<InstallStoreSummary>(
+                "stage install artifact"_str,
+                binary.source.as_path(),
+                rstd::move(copied).unwrap_err());
         }
         auto source_metadata = rstd::fs::metadata(binary.source.as_path());
         if (source_metadata.is_err()) {
             (void)rstd::fs::remove_dir_all(transaction.as_path());
-            return store_failure<InstallStoreSummary>(
-                rstd::format("cannot inspect staged install artifact '{}': {}",
-                             binary.source.as_path(),
-                             source_metadata.unwrap_err()));
+            return store_io_failure<InstallStoreSummary>(
+                "inspect staged install artifact"_str,
+                binary.source.as_path(),
+                rstd::move(source_metadata).unwrap_err());
         }
         auto permissions =
             rstd::fs::set_permissions(staged.as_path(), source_metadata->permissions());
         if (permissions.is_err()) {
             (void)rstd::fs::remove_dir_all(transaction.as_path());
-            return store_failure<InstallStoreSummary>(
-                rstd::format("cannot preserve install artifact permissions '{}': {}",
-                             binary.source.as_path(),
-                             permissions.unwrap_err()));
+            return store_io_failure<InstallStoreSummary>(
+                "preserve install artifact permissions"_str,
+                binary.source.as_path(),
+                rstd::move(permissions).unwrap_err());
         }
     }
 
     auto backups            = Vec<BackupEntry>::make();
     auto backup_destination = [&](ref<rstd::path::Path> destination,
-                                  ref<str>              name) -> Result<empty> {
+                                  ref<str>              name) -> InstallStoreResult<empty> {
         auto metadata = rstd_try(path_metadata(destination));
         if (metadata.is_none()) return Ok(empty {});
         auto backup_path = backup.join(PathBuf::from(name).as_path());
         auto renamed     = rstd::fs::rename(destination, backup_path.as_path());
         if (renamed.is_err()) {
-            return store_failure<empty>(rstd::format(
-                "cannot back up install destination '{}': {}", destination, renamed.unwrap_err()));
+            return store_io_failure<empty>(
+                "back up install destination"_str,
+                destination,
+                rstd::move(renamed).unwrap_err());
         }
         backups.push(BackupEntry {
             .destination = PathBuf::from(destination),
@@ -752,22 +778,22 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
         const auto& binary = request.packages[item.package].binaries[item.binary];
         auto        backed = backup_destination(binary.destination.as_path(), item.name.as_str());
         if (backed.is_err()) {
-            auto error    = rstd::move(backed).unwrap_err();
-            auto rollback = rollback_install(Vec<PathBuf>::make(), backups);
+            auto error  = rstd::move(backed).unwrap_err();
+            auto result = transaction_failure(
+                "install backup"_str, rstd::move(error), Vec<PathBuf>::make(), backups);
             (void)rstd::fs::remove_dir_all(transaction.as_path());
-            if (rollback.is_some()) error.message.push_str(rollback->as_str());
-            return Err(rstd::move(error));
+            return Err(rstd::move(result));
         }
     }
     for (const auto& name : orphan_names) {
         auto destination = layout.bin_directory.join(PathBuf::from(name.as_str()).as_path());
         auto backed      = backup_destination(destination.as_path(), name.as_str());
         if (backed.is_err()) {
-            auto error    = rstd::move(backed).unwrap_err();
-            auto rollback = rollback_install(Vec<PathBuf>::make(), backups);
+            auto error  = rstd::move(backed).unwrap_err();
+            auto result = transaction_failure(
+                "install backup"_str, rstd::move(error), Vec<PathBuf>::make(), backups);
             (void)rstd::fs::remove_dir_all(transaction.as_path());
-            if (rollback.is_some()) error.message.push_str(rollback->as_str());
-            return Err(rstd::move(error));
+            return Err(rstd::move(result));
         }
     }
 
@@ -780,7 +806,8 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
         if (moved.is_err()) {
             auto error = fs_failure(
                 "publish installed binary"_str, binary.destination.as_path(), moved.unwrap_err());
-            auto result = transaction_failure("install publish"_str, error, published, backups);
+            auto result = transaction_failure(
+                "install publish"_str, rstd::move(error), published, backups);
             (void)rstd::fs::remove_dir_all(transaction.as_path());
             return Err(rstd::move(result));
         }
@@ -853,7 +880,8 @@ auto install_artifacts(InstallStoreRequest request) -> Result<InstallStoreSummar
     auto written = write_document(layout.metadata.as_path(), document);
     if (written.is_err()) {
         auto error  = rstd::move(written).unwrap_err();
-        auto result = transaction_failure("install metadata commit"_str, error, published, backups);
+        auto result = transaction_failure(
+            "install metadata commit"_str, rstd::move(error), published, backups);
         (void)rstd::fs::remove_dir_all(transaction.as_path());
         return Err(rstd::move(result));
     }

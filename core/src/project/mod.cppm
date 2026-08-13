@@ -5,6 +5,7 @@ export module lito.project;
 
 import rstd;
 import lito.error;
+import lito.project.error_contract;
 import lito.cpp;
 import lito.command.project_contract;
 import lito.source.contract;
@@ -63,7 +64,7 @@ auto start_project_resolution(const PackageSelection&           selection,
                               usize                             jobs     = usize(1),
                               BuildObserver                     observer = {},
                               Option<WorkspaceCatalog>          catalog  = None())
-    -> Result<StartedProjectResolution> {
+    -> ProjectResult<StartedProjectResolution> {
     auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), lock, locked, git));
     auto resolution    = lock_session.take_resolution_options();
     resolution.sources = sources.clone();
@@ -95,7 +96,7 @@ auto resolve_project(const PackageSelection&           selection,
                      const ResolvedProcessEnvironment& environment,
                      usize                             jobs     = usize(1),
                      BuildObserver                     observer = {},
-                     Option<WorkspaceCatalog> catalog = None()) -> Result<ProjectResolution> {
+                     Option<WorkspaceCatalog> catalog = None()) -> ProjectResult<ProjectResolution> {
     auto started = rstd_try(start_project_resolution(selection,
                                                      purpose,
                                                      sources,
@@ -136,7 +137,7 @@ auto resolve_project_selection(const PackageSelection&           selection,
                                const ResolvedProcessEnvironment& environment,
                                usize                             jobs     = usize(1),
                                const Option<BuildObserver>&      observer = None())
-    -> Result<ResolvedPackageSelection> {
+    -> ProjectResult<ResolvedPackageSelection> {
     auto started = start_project_resolution(selection,
                                             purpose,
                                             sources,
@@ -172,7 +173,7 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                               usize                        jobs     = usize(1),
                               const Option<BuildObserver>& observer = None(),
                               Option<WorkspaceCatalog>     catalog  = None())
-    -> Result<PackageMetadata> {
+    -> ProjectResult<PackageMetadata> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
     auto host     = rstd_try(detect_host_info());
@@ -210,14 +211,18 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                                                   environment,
                                                                   jobs,
                                                                   observer));
-    return adapt_package_graph_metadata(rstd::move(project.graph),
-                                        project.selected_package_names,
-                                        project.selected_targets,
-                                        resolved_configuration,
-                                        rstd::move(resolved_profile),
-                                        platform,
-                                        rstd::move(external_usage),
-                                        toolchain.argument_parser());
+    auto metadata = adapt_package_graph_metadata(rstd::move(project.graph),
+                                                 project.selected_package_names,
+                                                 project.selected_targets,
+                                                 resolved_configuration,
+                                                 rstd::move(resolved_profile),
+                                                 platform,
+                                                 rstd::move(external_usage),
+                                                 toolchain.argument_parser());
+    if (metadata.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
+    }
+    return Ok(rstd::move(metadata).unwrap());
 }
 
 auto prepare_build_project(const PackageSelection&           selection,
@@ -234,9 +239,11 @@ auto prepare_build_project(const PackageSelection&           selection,
                            usize                             jobs    = usize(1),
                            const Option<BuildObserver>&      observer = None(),
                            Option<WorkspaceCatalog>          catalog  = None())
-    -> Result<PreparedBuildProject> {
+    -> ProjectResult<PreparedBuildProject> {
     auto created = ClangToolchain::create(configuration.toolchain, tool_resolver, environment);
-    if (created.is_err()) return Err(rstd::move(created).unwrap_err());
+    if (created.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
+    }
     auto toolchain = rstd::move(created).unwrap();
     auto metadata  = resolve_project_metadata(selection,
                                               configuration,
@@ -260,9 +267,9 @@ auto prepare_build_project(const PackageSelection&           selection,
     });
 }
 
-auto update_project_dependencies(const UpdateRequest& request) -> Result<LockStatus> {
+auto update_project_dependencies(const UpdateRequest& request) -> ProjectResult<LockStatus> {
     if (request.root.is_empty()) {
-        return Err(Error::make(ErrorKind::InvalidRequest, "update directory is required"_str));
+        return Err(ProjectError::Message(String::make("update directory is required"_str)));
     }
     auto selection = PackageSelection {
         .root = request.root.clone(),

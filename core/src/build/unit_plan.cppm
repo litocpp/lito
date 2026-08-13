@@ -7,6 +7,7 @@ import lito.build.identity;
 import lito.build.plan_contract;
 import lito.package.target_contract;
 import lito.package;
+import lito.build.error_contract;
 import lito.toolchain;
 import lito.build.layout;
 import lito.build.compile_test;
@@ -26,7 +27,7 @@ struct PreparedBuildUnits {
 auto prepare_build_units(const PackageSpec&    package,
                          const PackagePlan&    package_plan,
                          const BuildLayout&    layout,
-                         const ClangToolchain& toolchain) -> Result<PreparedBuildUnits> {
+                         const ClangToolchain& toolchain) -> BuildResult<PreparedBuildUnits> {
     auto result = PreparedBuildUnits {
         .target_units   = Vec<Vec<UnitId>>::with_capacity(package.targets.len()),
         .owned_contexts = Vec<Box<CompileContext>>::make(),
@@ -44,8 +45,7 @@ auto prepare_build_units(const PackageSpec&    package,
                 auto selected =
                     compile_test_for_source(target_spec, source.relative_path.as_path());
                 if (selected.is_none()) {
-                    return Err(Error::make(
-                        ErrorKind::Manifest,
+                    return Err(BuildError::Message(
                         rstd::format("compile-test package '{}' has no case for source '{}'",
                                      target_spec.id.package.as_str(),
                                      source.relative_path.as_path())));
@@ -54,7 +54,7 @@ auto prepare_build_units(const PackageSpec&    package,
                 auto selected_context =
                     compile_test_context(package_plan.contexts[target], *compile_test);
                 if (selected_context.is_err()) {
-                    return Err(rstd::move(selected_context).unwrap_err());
+                    return Err(rstd::into<BuildError>(rstd::move(selected_context).unwrap_err()));
                 }
                 result.owned_contexts.push(
                     Box<CompileContext>::make(rstd::move(selected_context).unwrap()));
@@ -62,13 +62,19 @@ auto prepare_build_units(const PackageSpec&    package,
             }
             auto object       = layout.object(target_spec.id, source.relative_path.as_path());
             auto cache_record = layout.cache_unit(target_spec.id, source.relative_path.as_path());
-            if (object.is_err()) return Err(rstd::move(object).unwrap_err());
-            if (cache_record.is_err()) return Err(rstd::move(cache_record).unwrap_err());
+            if (object.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(object).unwrap_err()));
+            }
+            if (cache_record.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(cache_record).unwrap_err()));
+            }
             auto compile_test_record = Option<PathBuf> {};
             if (compile_test != nullptr) {
                 auto record =
                     layout.cache_compile_test(target_spec.id, source.relative_path.as_path());
-                if (record.is_err()) return Err(rstd::move(record).unwrap_err());
+                if (record.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
+                }
                 compile_test_record = Some(rstd::move(record).unwrap());
             }
 
@@ -86,7 +92,9 @@ auto prepare_build_units(const PackageSpec&    package,
                     .compile_test        = compile_test,
                 },
                 target_spec.source_root.as_path());
-            if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+            if (prepared.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
+            }
             auto unit = rstd::move(prepared).unwrap();
             if (source.frontend_analysis.is_some() &&
                 source.frontend_analysis->context_identity.as_str() == context->scan_id.as_str()) {

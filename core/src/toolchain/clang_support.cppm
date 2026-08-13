@@ -36,13 +36,20 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
+auto failure(String message) -> ToolchainResult<T> {
+    return Err(ToolchainError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, message));
+auto failure(ref<str> message) -> ToolchainResult<T> {
+    return Err(ToolchainError::Message(String::make(message)));
+}
+
+template<typename T>
+auto io_failure(ref<str> operation,
+                ref<rstd::path::Path> path,
+                rstd::io::error::Error source) -> ToolchainResult<T> {
+    return Err(ToolchainError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto preprocessor_probe(preprocessor::PreprocessorActivity activity) noexcept -> ScanProbe {
@@ -115,20 +122,19 @@ private:
     Option<String>                       error_;
 };
 
-auto create_parent(ref<rstd::path::Path> path) -> Result<empty> {
+auto create_parent(ref<rstd::path::Path> path) -> ToolchainResult<empty> {
     auto parent = path.parent();
     if (parent.is_none()) {
         return failure<empty>(rstd::format("output path '{}' has no parent", path));
     }
     auto created = rstd::fs::create_dir_all(*parent);
     if (created.is_err()) {
-        return failure<empty>(rstd::format(
-            "cannot create directory '{}': {}", *parent, rstd::move(created).unwrap_err()));
+        return io_failure<empty>("create directory"_str, *parent, rstd::move(created).unwrap_err());
     }
     return Ok(empty {});
 }
 
-auto staging_path(ref<rstd::path::Path> output) -> Result<PathBuf> {
+auto staging_path(ref<rstd::path::Path> output) -> ToolchainResult<PathBuf> {
     auto text = output.to_str();
     if (text.is_none()) {
         return failure<PathBuf>(rstd::format("output path '{}' is not valid UTF-8", output));
@@ -138,45 +144,41 @@ auto staging_path(ref<rstd::path::Path> output) -> Result<PathBuf> {
     return Ok(PathBuf::from(rstd::move(value)));
 }
 
-auto clear_staged_output(ref<rstd::path::Path> path) -> Result<empty> {
+auto clear_staged_output(ref<rstd::path::Path> path) -> ToolchainResult<empty> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return failure<empty>(
-            rstd::format("cannot inspect staged output '{}': {}", path, exists.unwrap_err()));
+        return io_failure<empty>("inspect staged output"_str, path, exists.unwrap_err());
     }
     if (! *exists) return Ok(empty {});
     auto removed = rstd::fs::remove_file(path);
     if (removed.is_err()) {
-        return failure<empty>(
-            rstd::format("cannot remove stale staged output '{}': {}", path, removed.unwrap_err()));
+        return io_failure<empty>("remove stale staged output"_str, path, removed.unwrap_err());
     }
     return Ok(empty {});
 }
 
-auto publish_output(ref<rstd::path::Path> staged, ref<rstd::path::Path> final) -> Result<empty> {
+auto publish_output(ref<rstd::path::Path> staged, ref<rstd::path::Path> final)
+    -> ToolchainResult<empty> {
     auto exists = rstd::fs::exists(staged);
     if (exists.is_err()) {
-        return failure<empty>(
-            rstd::format("cannot inspect staged output '{}': {}", staged, exists.unwrap_err()));
+        return io_failure<empty>("inspect staged output"_str, staged, exists.unwrap_err());
     }
     if (! *exists) {
         return failure<empty>(rstd::format("compiler did not produce staged output '{}'", staged));
     }
     auto published = rstd::fs::rename(staged, final);
     if (published.is_err()) {
-        return failure<empty>(rstd::format("cannot publish compiler output '{}' as '{}': {}",
-                                           staged,
-                                           final,
-                                           published.unwrap_err()));
+        return io_failure<empty>(rstd::format("publish compiler output as '{}'", final).as_str(),
+                                 staged,
+                                 published.unwrap_err());
     }
     return Ok(empty {});
 }
 
-auto verify_staged_output(ref<rstd::path::Path> path) -> Result<empty> {
+auto verify_staged_output(ref<rstd::path::Path> path) -> ToolchainResult<empty> {
     auto exists = rstd::fs::exists(path);
     if (exists.is_err()) {
-        return failure<empty>(
-            rstd::format("cannot inspect staged output '{}': {}", path, exists.unwrap_err()));
+        return io_failure<empty>("inspect staged output"_str, path, exists.unwrap_err());
     }
     if (! *exists) {
         return failure<empty>(rstd::format("compiler did not produce staged output '{}'", path));
@@ -185,7 +187,7 @@ auto verify_staged_output(ref<rstd::path::Path> path) -> Result<empty> {
 }
 
 auto invocation_identity(const Vec<String>& arguments, ref<rstd::path::Path> working_directory)
-    -> Result<String> {
+    -> ToolchainResult<String> {
     auto working = working_directory.to_str();
     if (working.is_none()) {
         return failure<String>(

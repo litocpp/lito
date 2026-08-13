@@ -94,13 +94,13 @@ auto parse_include_kind(ref<str> value) -> Option<frontend::IncludeLookupKind> {
     return None();
 }
 
-auto path_json(ref<rstd::path::Path> path) -> Result<Json> {
+auto path_json(ref<rstd::path::Path> path) -> CacheResult<Json> {
     auto text = path_string(path);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
     return Ok(cache_string(text->as_str()));
 }
 
-auto include_lookup_json(const frontend::IncludeLookupDependency& lookup) -> Result<Json> {
+auto include_lookup_json(const frontend::IncludeLookupDependency& lookup) -> CacheResult<Json> {
     auto including = path_string(lookup.including_path.as_path());
     if (including.is_err()) return Err(rstd::move(including).unwrap_err());
     auto missing = JsonArray::make();
@@ -184,7 +184,7 @@ auto parse_include_lookup(ref<Json> value) -> Option<frontend::IncludeLookupDepe
     });
 }
 
-auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> Result<Json> {
+auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Json> {
     auto source = path_string(snapshot.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto provided = Json::Null();
@@ -307,7 +307,7 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
 class ScanCacheTransaction;
 
 class ScanCacheSession {
-    using SharedFingerprintError = rstd::sync::Arc<Error>;
+    using SharedFingerprintError = rstd::sync::Arc<CacheError>;
     using FingerprintResult      = rstd::Result<FileFingerprint, SharedFingerprintError>;
     using FingerprintCell        = rstd::sync::OnceLock<FingerprintResult>;
     using SharedFingerprintCell  = rstd::sync::Arc<FingerprintCell>;
@@ -336,12 +336,15 @@ class ScanCacheSession {
 
     explicit ScanCacheSession(rstd::sync::Arc<State> state): state_(rstd::move(state)) {}
 
-    static auto clone_error(const SharedFingerprintError& error) -> Error {
-        return Error::make(error->kind, error->message.clone());
+    static auto clone_error(const SharedFingerprintError& error) -> CacheError {
+        if (error->is_Record()) return CacheError::Record(error->as_Record().message.clone());
+        const auto& value = error->as_SharedIo();
+        return CacheError::SharedIo(
+            value.operation.clone(), value.path.clone(), value.source.clone());
     }
 
     static auto clone_fingerprint_result(const FingerprintResult& value)
-        -> Result<FileFingerprint> {
+        -> CacheResult<FileFingerprint> {
         auto borrowed = value.as_ref();
         if (borrowed.is_err()) return Err(clone_error(borrowed.unwrap_err_unchecked()));
         return Ok(borrowed.unwrap_unchecked().clone());
@@ -366,12 +369,12 @@ class ScanCacheSession {
         }
     }
 
-    auto miss(ScanCacheMissReason reason) -> Result<ScanCacheLookup> {
+    auto miss(ScanCacheMissReason reason) -> CacheResult<ScanCacheLookup> {
         record_miss(reason);
         return Ok(ScanCacheLookup { .reason = reason });
     }
 
-    auto file_fingerprint(ref<rstd::path::Path> path) -> Result<FileFingerprint> {
+    auto file_fingerprint(ref<rstd::path::Path> path) -> CacheResult<FileFingerprint> {
         auto text = path_string(path);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
         auto key = rstd::move(text).unwrap();
@@ -394,24 +397,23 @@ class ScanCacheSession {
             initialized   = true;
             auto metadata = rstd::fs::metadata(path);
             if (metadata.is_err()) {
-                return Err(rstd::sync::Arc<Error>::make(
-                    Error::make(ErrorKind::Filesystem,
-                                rstd::format("cannot inspect scan cache input '{}': {}",
-                                             path,
-                                             rstd::move(metadata).unwrap_err()))));
+                return Err(rstd::sync::Arc<CacheError>::make(CacheError::SharedIo(
+                    String::make("inspect scan cache input"_str),
+                    PathBuf::from(path),
+                    rstd::sync::Arc<rstd::io::error::Error>::make(
+                        rstd::move(metadata).unwrap_err()))));
             }
             if (! metadata->is_file()) {
-                return Err(rstd::sync::Arc<Error>::make(
-                    Error::make(ErrorKind::Filesystem,
-                                rstd::format("scan cache input '{}' is not a file", path))));
+                return Err(rstd::sync::Arc<CacheError>::make(CacheError::Record(
+                    rstd::format("scan cache input '{}' is not a file", path))));
             }
             auto contents = rstd::fs::read(path);
             if (contents.is_err()) {
-                return Err(rstd::sync::Arc<Error>::make(
-                    Error::make(ErrorKind::Filesystem,
-                                rstd::format("cannot hash scan cache input '{}': {}",
-                                             path,
-                                             rstd::move(contents).unwrap_err()))));
+                return Err(rstd::sync::Arc<CacheError>::make(CacheError::SharedIo(
+                    String::make("hash scan cache input"_str),
+                    PathBuf::from(path),
+                    rstd::sync::Arc<rstd::io::error::Error>::make(
+                        rstd::move(contents).unwrap_err()))));
             }
             auto hash = cache::FNV_OFFSET;
             cache::add_text(hash, "lito-file-content-v1"_str);
@@ -447,7 +449,7 @@ class ScanCacheSession {
                  const FileFingerprint&                                      source,
                  const rstd::collections::BTreeMap<String, FileFingerprint>& files,
                  const Vec<frontend::IncludeLookupDependency>&               lookups,
-                 const frontend::FrontendResult& result) const -> Result<String> {
+                 const frontend::FrontendResult& result) const -> CacheResult<String> {
         auto source_path = path_string(input.source.as_path());
         auto relative    = path_string(input.relative_source.as_path());
         auto working     = path_string(input.working_directory.as_path());
@@ -505,7 +507,7 @@ class ScanCacheSession {
 public:
     static auto create(const CacheEnvironment& environment) -> ScanCacheSession {
         return ScanCacheSession { rstd::sync::Arc<State>::make(environment.scan_key_.clone(),
-                                                               false) };
+                                                               environment.force_refresh_) };
     }
 
     auto clone() const -> ScanCacheSession { return ScanCacheSession { state_.clone() }; }
@@ -519,24 +521,24 @@ public:
 private:
     friend class ScanCacheTransaction;
 
-    auto lookup(const ScanCacheInput& input) -> Result<ScanCacheLookup> {
+    auto lookup(const ScanCacheInput& input) -> CacheResult<ScanCacheLookup> {
         if (state_->force_refresh) {
             return miss(ScanCacheMissReason::Refresh);
         }
         auto exists = rstd::fs::exists(input.record.as_path());
         if (exists.is_err()) {
-            return cache_failure<ScanCacheLookup>(
-                rstd::format("cannot inspect scan cache record '{}': {}",
-                             input.record.as_path(),
-                             rstd::move(exists).unwrap_err()));
+            return cache_io_failure<ScanCacheLookup>(
+                "inspect scan record"_str,
+                input.record.as_path(),
+                rstd::move(exists).unwrap_err());
         }
         if (! *exists) return miss(ScanCacheMissReason::Absent);
         auto contents = rstd::fs::read_to_string(input.record.as_path());
         if (contents.is_err()) {
-            return cache_failure<ScanCacheLookup>(
-                rstd::format("cannot read scan cache record '{}': {}",
-                             input.record.as_path(),
-                             rstd::move(contents).unwrap_err()));
+            return cache_io_failure<ScanCacheLookup>(
+                "read scan record"_str,
+                input.record.as_path(),
+                rstd::move(contents).unwrap_err());
         }
         auto parsed = rstd::json::from_str(contents->as_str());
         if (parsed.is_err() || ! parsed->is_object()) {
@@ -604,18 +606,18 @@ private:
             }
             auto exists = rstd::fs::exists(PathBuf::from(*path).as_path());
             if (exists.is_err()) {
-                return cache_failure<ScanCacheLookup>(
-                    rstd::format("cannot inspect scan cache input '{}': {}",
-                                 *path,
-                                 rstd::move(exists).unwrap_err()));
+                return cache_io_failure<ScanCacheLookup>(
+                    "inspect scan input"_str,
+                    PathBuf::from(*path).as_path(),
+                    rstd::move(exists).unwrap_err());
             }
             if (! *exists) return miss(ScanCacheMissReason::FileDependency);
             auto metadata = rstd::fs::metadata(PathBuf::from(*path).as_path());
             if (metadata.is_err()) {
-                return cache_failure<ScanCacheLookup>(
-                    rstd::format("cannot inspect scan cache input '{}': {}",
-                                 *path,
-                                 rstd::move(metadata).unwrap_err()));
+                return cache_io_failure<ScanCacheLookup>(
+                    "inspect scan input"_str,
+                    PathBuf::from(*path).as_path(),
+                    rstd::move(metadata).unwrap_err());
             }
             if (! metadata->is_file()) return miss(ScanCacheMissReason::FileDependency);
             auto current = file_fingerprint(PathBuf::from(*path).as_path());
@@ -684,7 +686,7 @@ private:
     }
 
     auto publish(const ScanCacheInput& input, frontend::UncachedFrontendAnalysis value)
-        -> Result<frontend::FrontendAnalysis> {
+        -> CacheResult<frontend::FrontendAnalysis> {
         auto source_file = file_fingerprint(input.source.as_path());
         if (source_file.is_err()) return Err(rstd::move(source_file).unwrap_err());
         auto files = rstd::collections::BTreeMap<String, FileFingerprint>::make();
@@ -772,9 +774,9 @@ public:
     ScanCacheTransaction(ScanCacheTransaction&&) noexcept                    = default;
     auto operator=(ScanCacheTransaction&&) noexcept -> ScanCacheTransaction& = default;
 
-    auto lookup() -> Result<ScanCacheLookup> { return session_.lookup(input_); }
+    auto lookup() -> CacheResult<ScanCacheLookup> { return session_.lookup(input_); }
 
-    auto publish(frontend::UncachedFrontendAnalysis value) -> Result<frontend::FrontendAnalysis> {
+    auto publish(frontend::UncachedFrontendAnalysis value) -> CacheResult<frontend::FrontendAnalysis> {
         return session_.publish(input_, rstd::move(value));
     }
 };

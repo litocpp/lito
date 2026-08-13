@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.build;
 
 import rstd;
@@ -13,6 +16,7 @@ import lito.package.target_contract;
 import lito.toolchain.contract;
 import lito.build.discovery;
 import lito.project;
+import lito.build.error_contract;
 import lito.package;
 import lito.toolchain;
 import lito.modules;
@@ -35,13 +39,13 @@ namespace lito
 {
 
 template<typename T>
-auto failure(ErrorKind kind, String message) -> Result<T> {
-    return Err(Error::make(kind, rstd::move(message)));
+auto failure(String message) -> BuildResult<T> {
+    return Err(BuildError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto failure(ErrorKind kind, ref<str> message) -> Result<T> {
-    return Err(Error::make(kind, message));
+auto failure(ref<str> message) -> BuildResult<T> {
+    return Err(BuildError::Message(String::make(message)));
 }
 
 auto emit(const BuildRequest&   request,
@@ -88,7 +92,7 @@ void observe_preparation(void* raw_context, const BuildEvent& event) noexcept {
     if (observer.notify != nullptr) observer.notify(observer.context, event);
 }
 
-auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<ResolvedScanExecution> {
+auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> BuildResult<ResolvedScanExecution> {
     auto jobs = usize(1);
     if (policy.jobs.is_some()) {
         jobs = *policy.jobs;
@@ -97,13 +101,11 @@ auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> Result<Resolve
         if (available.is_ok()) jobs = available->get();
     }
     if (jobs == usize {}) {
-        return failure<ResolvedScanExecution>(ErrorKind::InvalidRequest,
-                                              "scan jobs must be greater than zero"_str);
+        return failure<ResolvedScanExecution>("scan jobs must be greater than zero"_str);
     }
     auto max_in_flight = policy.max_in_flight.is_some() ? *policy.max_in_flight : jobs;
     if (max_in_flight == usize {}) {
-        return failure<ResolvedScanExecution>(ErrorKind::InvalidRequest,
-                                              "scan task capacity must be greater than zero"_str);
+        return failure<ResolvedScanExecution>("scan task capacity must be greater than zero"_str);
     }
     return Ok(ResolvedScanExecution {
         .jobs          = jobs,
@@ -118,9 +120,9 @@ namespace lito
 
 auto build_with_environment_impl(const BuildRequest&               request,
                                  const ResolvedProcessEnvironment& process_environment,
-                                 Option<WorkspaceCatalog> catalog) -> Result<BuildSummary> {
+                                 Option<WorkspaceCatalog> catalog) -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
-        return failure<BuildSummary>(ErrorKind::InvalidRequest, "build directory is required"_str);
+        return failure<BuildSummary>("build directory is required"_str);
     }
     auto tool_resolver = ToolResolver(process_environment);
     auto profile =
@@ -156,14 +158,15 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                                       execution->jobs,
                                                       preparation_observer,
                                                       rstd::move(catalog));
-    if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+    if (prepared.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
+    }
     auto  project          = rstd::move(prepared).unwrap();
     auto& toolchain        = project.toolchain;
     auto& metadata         = project.metadata;
     auto  created_profiler = ScanProfiler::create();
     if (created_profiler.is_err()) {
-        return failure<BuildSummary>(ErrorKind::Artifact,
-                                     rstd::move(created_profiler).unwrap_err_unchecked());
+        return failure<BuildSummary>(rstd::move(created_profiler).unwrap_err_unchecked());
     }
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
@@ -171,7 +174,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
 
     auto selected =
         resolve_source_selection(metadata, metadata.default_profile.as_str(), request.targets);
-    if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+    if (selected.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(selected).unwrap_err()));
+    }
     auto selected_targets = Vec<PackageTargetId>::with_capacity(selected->selected_targets.len());
     for (auto target : selected->selected_targets) {
         selected_targets.push(metadata.targets[target].id.clone());
@@ -196,39 +201,42 @@ auto build_with_environment_impl(const BuildRequest&               request,
         });
     }
     auto script_packages = resolve_build_script_packages(metadata, *selected);
-    if (script_packages.is_err()) return Err(rstd::move(script_packages).unwrap_err());
+    if (script_packages.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(script_packages).unwrap_err()));
+    }
 
-    auto selected_layout = BuildLayout::create(
-        metadata.root.as_path(), request.output.as_path(), metadata.default_profile.as_str());
-    if (selected_layout.is_err()) return Err(rstd::move(selected_layout).unwrap_err());
-    auto layout          = rstd::move(selected_layout).unwrap();
-    auto executed_script = execute_build_script(metadata,
-                                                layout,
-                                                metadata.default_profile.as_str(),
-                                                *script_packages,
-                                                *selected,
-                                                request.observer);
-    if (executed_script.is_err()) return Err(rstd::move(executed_script).unwrap_err());
-    auto script_report = rstd::move(executed_script).unwrap();
+    auto layout = rstd_try(BuildLayout::create(metadata.root.as_path(),
+                                               request.output.as_path(),
+                                               metadata.default_profile.as_str()));
+    auto script_report = rstd_try(execute_build_script(metadata,
+                                                       layout,
+                                                       metadata.default_profile.as_str(),
+                                                       *script_packages,
+                                                       *selected,
+                                                       request.observer));
 
     auto scan_span = profiler.span(ScanProbe::Total);
 
     auto resolved = profiler.measure(ScanProbe::Plan, [&] {
         return resolve_source_discovery(metadata, rstd::move(selected).unwrap());
     });
-    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+    }
     auto discovery_plan = rstd::move(resolved).unwrap();
     auto stripper       = Option<PathBuf> {};
     if (metadata.profiles[discovery_plan.profile].strip != StripMode::None) {
         auto resolved_stripper = tool_resolver.resolve(
             request.configuration.toolchain.stripper.as_path(), "LLVM strip executable"_str);
         if (resolved_stripper.is_err()) {
-            return Err(rstd::move(resolved_stripper).unwrap_err());
+            return Err(rstd::into<BuildError>(rstd::move(resolved_stripper).unwrap_err()));
         }
         stripper = Some(rstd::move(resolved_stripper).unwrap().executable);
     }
     auto compile_execution = resolve_compile_execution(request.execution.compile);
-    if (compile_execution.is_err()) return Err(rstd::move(compile_execution).unwrap_err());
+    if (compile_execution.is_err()) {
+        return Err(rstd::move(compile_execution).unwrap_err());
+    }
 
     auto created_environment =
         CacheEnvironment::create(layout,
@@ -236,7 +244,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                  metadata.profiles[discovery_plan.profile].name.as_str(),
                                  toolchain.compiler_identity());
     if (created_environment.is_err()) {
-        return Err(rstd::move(created_environment).unwrap_err());
+        return Err(rstd::into<BuildError>(rstd::move(created_environment).unwrap_err()));
     }
     auto cache_environment = rstd::move(created_environment).unwrap();
     auto scan_cache        = ScanCacheSession::create(cache_environment);
@@ -254,10 +262,14 @@ auto build_with_environment_impl(const BuildRequest&               request,
     if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
     auto source_sets = rstd::move(discovered).unwrap();
     auto finalized   = finalize_package(rstd::move(metadata), rstd::move(source_sets));
-    if (finalized.is_err()) return Err(rstd::move(finalized).unwrap_err());
+    if (finalized.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(finalized).unwrap_err()));
+    }
     auto package          = rstd::move(finalized).unwrap();
     auto resolved_package = finalize_package_plan(package, rstd::move(discovery_plan));
-    if (resolved_package.is_err()) return Err(rstd::move(resolved_package).unwrap_err());
+    if (resolved_package.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(resolved_package).unwrap_err()));
+    }
     auto package_plan = rstd::move(resolved_package).unwrap();
 
     auto prepare_span   = profiler.span(ScanProbe::PrepareUnits);
@@ -268,8 +280,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto& units                = prepared_build.units;
     auto  preparation_finished = profiler.complete(prepare_span);
     if (preparation_finished.is_err()) {
-        return failure<BuildSummary>(ErrorKind::Artifact,
-                                     rstd::move(preparation_finished).unwrap_err_unchecked());
+        return failure<BuildSummary>(rstd::move(preparation_finished).unwrap_err_unchecked());
     }
 
     auto scans         = Vec<ScanResult>::with_capacity(units.len());
@@ -277,45 +288,43 @@ auto build_with_environment_impl(const BuildRequest&               request,
     for (auto unit = UnitId {}; unit < units.len(); ++unit) {
         if (units[unit].frontend_analysis.is_none()) {
             return failure<BuildSummary>(
-                ErrorKind::Artifact,
                 rstd::format("source '{}' reached classification without frontend analysis",
                              units[unit].unit.source.as_path()));
         }
         analysis_service.record_in_build_reuse();
         auto scanned = toolchain.scan(units[unit]);
-        if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
+        if (scanned.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(scanned).unwrap_err()));
+        }
         auto result = rstd::move(scanned).unwrap();
         scans.push(rstd::move(result));
     }
     auto classified_units = profiler.complete(classify_span);
     if (classified_units.is_err()) {
-        return failure<BuildSummary>(ErrorKind::Artifact,
-                                     rstd::move(classified_units).unwrap_err_unchecked());
+        return failure<BuildSummary>(rstd::move(classified_units).unwrap_err_unchecked());
     }
 
     auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
         return validate_module_conventions(package, units, scans);
     });
     if (convention_valid.is_err()) {
-        return Err(rstd::move(convention_valid).unwrap_err());
+        return Err(rstd::into<BuildError>(rstd::move(convention_valid).unwrap_err()));
     }
 
     auto resolved_modules = profiler.measure(ScanProbe::ModuleGraph, [&] {
         return resolve_modules(package_plan, units, scans, toolchain.bmi_format());
     });
     if (resolved_modules.is_err()) {
-        return Err(rstd::move(resolved_modules).unwrap_err());
+        return Err(rstd::into<BuildError>(rstd::move(resolved_modules).unwrap_err()));
     }
     auto module_plan    = rstd::move(resolved_modules).unwrap();
     auto completed_scan = profiler.complete(scan_span);
     if (completed_scan.is_err()) {
-        return failure<BuildSummary>(ErrorKind::Artifact,
-                                     rstd::move(completed_scan).unwrap_err_unchecked());
+        return failure<BuildSummary>(rstd::move(completed_scan).unwrap_err_unchecked());
     }
     auto finished_profile = profiler.finish();
     if (finished_profile.is_err()) {
-        return failure<BuildSummary>(ErrorKind::Artifact,
-                                     rstd::move(finished_profile).unwrap_err_unchecked());
+        return failure<BuildSummary>(rstd::move(finished_profile).unwrap_err_unchecked());
     }
     auto scan_profile                          = rstd::move(finished_profile).unwrap_unchecked();
     auto frontend_statistics                   = analysis_service.statistics();
@@ -345,7 +354,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto cache = CompileCacheSession::create(cache_environment, layout.output());
     auto materialized =
         materialize_compile_plan(package, layout, toolchain, units, scans, module_plan);
-    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+    if (materialized.is_err()) {
+        return Err(rstd::move(materialized).unwrap_err());
+    }
     auto executed = execute_compile_plan(package,
                                          units,
                                          rstd::move(materialized).unwrap(),
@@ -353,7 +364,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                          toolchain.compile_executor(),
                                          request.observer,
                                          *compile_execution);
-    if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
+    if (executed.is_err()) {
+        return Err(rstd::move(executed).unwrap_err());
+    }
     auto compile_result     = rstd::move(executed).unwrap();
     auto compiled           = compile_result.compiled;
     auto reused             = compile_result.reused;
@@ -373,7 +386,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
             }
         }
         auto finished = cache.finish_target(layout, package.targets[target].id, records);
-        if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
+        if (finished.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(finished).unwrap_err()));
+        }
     }
 
     auto artifacts     = Vec<BuiltArtifact>::make();
@@ -398,7 +413,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
         emit(request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
         auto archived =
             toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
-        if (archived.is_err()) return Err(rstd::move(archived).unwrap_err());
+        if (archived.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
+        }
         build_timing.record(BuildOperation::Archive, *archived);
         archive_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
@@ -428,7 +445,6 @@ auto build_with_environment_impl(const BuildRequest&               request,
                 }
                 if (archive_paths[candidate].is_none()) {
                     return failure<BuildSummary>(
-                        ErrorKind::Artifact,
                         rstd::format(
                             "test target '{}' has no attachment archive for '{}'",
                             package_target_id_text(target_spec.id).as_str(),
@@ -452,7 +468,6 @@ auto build_with_environment_impl(const BuildRequest&               request,
             if (dependency_spec.artifact_kind != ArtifactKind::StaticLibrary ||
                 archive_paths[dependency].is_none()) {
                 return failure<BuildSummary>(
-                    ErrorKind::Artifact,
                     rstd::format("executable target '{}' depends on unavailable "
                                  "library target '{}'",
                                  package_target_id_text(target_spec.id).as_str(),
@@ -480,12 +495,13 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                                 package_plan.profile->cpp.codegen.lto,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
-        if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
+        if (linked.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
+        }
         build_timing.record(BuildOperation::Link, *linked);
         if (package_plan.profile->strip != StripMode::None) {
             if (stripper.is_none()) {
-                return failure<BuildSummary>(ErrorKind::Toolchain,
-                                             "strip tool was not resolved"_str);
+                return failure<BuildSummary>("strip tool was not resolved"_str);
             }
             emit(request,
                  BuildEventKind::Strip,
@@ -495,7 +511,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                                      stripper->as_path(),
                                                      package_plan.profile->strip,
                                                      target_spec.root.as_path());
-            if (stripped.is_err()) return Err(rstd::move(stripped).unwrap_err());
+            if (stripped.is_err()) {
+                return Err(rstd::into<BuildError>(rstd::move(stripped).unwrap_err()));
+            }
             build_timing.record(BuildOperation::Strip, *stripped);
         }
         artifacts.push(BuiltArtifact {
@@ -535,21 +553,25 @@ export namespace lito
 
 auto build_with_environment(const BuildRequest&               request,
                             const ResolvedProcessEnvironment& process_environment)
-    -> Result<BuildSummary> {
+    -> BuildResult<BuildSummary> {
     return build_with_environment_impl(request, process_environment, None());
 }
 
 auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
-    -> Result<BuildSummary> {
+    -> BuildResult<BuildSummary> {
     request.selection.root = rstd::move(project.root);
     auto environment       = ResolvedProcessEnvironment::resolve(request.environment);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
+    }
     return build_with_environment_impl(request, *environment, Some(rstd::move(project.catalog)));
 }
 
-auto build(const BuildRequest& request) -> Result<BuildSummary> {
+auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
+    }
     return build_with_environment_impl(request, *environment, None());
 }
 

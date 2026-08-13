@@ -22,7 +22,7 @@ auto build_profile_key(ref<str> key) -> bool {
            key == "strip"_str || key == "lto"_str;
 }
 
-auto parse_profile_optimization(const Toml& value, ref<str> context) -> Result<CppOptimization> {
+auto parse_profile_optimization(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppOptimization> {
     auto integer = value.as_integer();
     if (integer.is_some()) {
         switch (integer->to_primitive()) {
@@ -39,7 +39,7 @@ auto parse_profile_optimization(const Toml& value, ref<str> context) -> Result<C
     return failure<CppOptimization>(rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
 }
 
-auto parse_profile_debug(const Toml& value, ref<str> context) -> Result<CppDebugInfo> {
+auto parse_profile_debug(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppDebugInfo> {
     auto boolean = value.as_bool();
     if (boolean.is_some()) return Ok(*boolean ? CppDebugInfo::Full : CppDebugInfo::None);
     auto integer = value.as_integer();
@@ -67,7 +67,7 @@ auto parse_profile_debug(const Toml& value, ref<str> context) -> Result<CppDebug
                      context));
 }
 
-auto parse_profile_strip(const Toml& value, ref<str> context) -> Result<StripMode> {
+auto parse_profile_strip(const Toml& value, ref<str> context) -> ManifestSchemaResult<StripMode> {
     auto boolean = value.as_bool();
     if (boolean.is_some()) return Ok(*boolean ? StripMode::Symbols : StripMode::None);
     auto text = value.as_str();
@@ -78,7 +78,7 @@ auto parse_profile_strip(const Toml& value, ref<str> context) -> Result<StripMod
         rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context));
 }
 
-auto parse_profile_lto(const Toml& value, ref<str> context) -> Result<CppLto> {
+auto parse_profile_lto(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppLto> {
     auto boolean = value.as_bool();
     if (boolean.is_some()) return Ok(*boolean ? CppLto::Fat : CppLto::Off);
     auto text = value.as_str();
@@ -89,7 +89,7 @@ auto parse_profile_lto(const Toml& value, ref<str> context) -> Result<CppLto> {
         rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context));
 }
 
-auto parse_build_profile(ref<str> name, const Toml& value) -> Result<BuildProfileDefinition> {
+auto parse_build_profile(ref<str> name, const Toml& value) -> ManifestSchemaResult<BuildProfileDefinition> {
     auto context = rstd::format("manifest.profile.{}", name);
     if (! valid_build_profile_name(name)) {
         return failure<BuildProfileDefinition>(
@@ -138,7 +138,7 @@ auto parse_build_profile(ref<str> name, const Toml& value) -> Result<BuildProfil
     return Ok(rstd::move(result));
 }
 
-auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProfile>> {
+auto parse_project_profile(Option<ref<Toml>> value) -> ManifestSchemaResult<Option<ProjectProfile>> {
     if (value.is_none()) return Ok(Option<ProjectProfile> {});
     auto table = table_value(**value, "manifest.profile"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
@@ -167,10 +167,7 @@ auto parse_project_profile(Option<ref<Toml>> value) -> Result<Option<ProjectProf
         auto item = (**table).get((**key).as_str());
         profile.build_profiles.push(rstd_try(parse_build_profile((**key).as_str(), **item)));
     }
-    auto valid = validate_build_profiles(profile);
-    if (valid.is_err()) {
-        return failure<Option<ProjectProfile>>(rstd::move(valid).unwrap_err().message);
-    }
+    rstd_try(validate_build_profiles(profile));
     return Ok(Some<ProjectProfile>(rstd::move(profile)));
 }
 

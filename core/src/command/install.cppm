@@ -19,13 +19,13 @@ namespace lito
 {
 
 template<typename T>
-auto install_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
+auto install_failure(String message) -> InstallResult<T> {
+    return Err(InstallError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto install_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, message));
+auto install_failure(ref<str> message) -> InstallResult<T> {
+    return Err(InstallError::Message(String::make(message)));
 }
 
 } // namespace lito
@@ -33,9 +33,9 @@ auto install_failure(ref<str> message) -> Result<T> {
 export namespace lito
 {
 
-auto install(InstallRequest request) -> Result<InstallSummary>;
+auto install(InstallRequest request) -> InstallResult<InstallSummary>;
 
-auto install(InstallRequest request) -> Result<InstallSummary> {
+auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     request.build.selection.root = request.source.project.root.clone();
     request.build.purpose        = PackageSelectionPurpose::Install;
     if (request.build.profile.is_none()) {

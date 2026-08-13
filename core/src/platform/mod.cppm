@@ -18,16 +18,16 @@ namespace lito
 {
 
 template<typename T>
-auto platform_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, rstd::move(message)));
+auto platform_failure(String message) -> PlatformResult<T> {
+    return Err(PlatformError(rstd::move(message)));
 }
 
 template<typename T>
-auto platform_failure(ref<str> message) -> Result<T> {
+auto platform_failure(ref<str> message) -> PlatformResult<T> {
     return platform_failure<T>(String::make(message));
 }
 
-auto host_os(ref<str> name) -> Result<String> {
+auto host_os(ref<str> name) -> PlatformResult<String> {
     if (name == "Linux"_str) return Ok(String::make("linux"_str));
     if (name == "Darwin"_str) return Ok(String::make("macos"_str));
     if (name == "FreeBSD"_str) return Ok(String::make("freebsd"_str));
@@ -37,7 +37,7 @@ auto host_os(ref<str> name) -> Result<String> {
 }
 
 #if ! defined(_WIN32)
-auto c_string(const char* value, ref<str> context) -> Result<String> {
+auto c_string(const char* value, ref<str> context) -> PlatformResult<String> {
     auto text = rstd::ffi::CStr::from_ptr(value).to_str();
     if (text.is_err()) {
         return platform_failure<String>(rstd::format("{} is not valid UTF-8", context));
@@ -51,7 +51,7 @@ auto c_string(const char* value, ref<str> context) -> Result<String> {
 export namespace lito
 {
 
-auto canonical_architecture(ref<str> value) -> Result<Architecture> {
+auto canonical_architecture(ref<str> value) -> PlatformResult<Architecture> {
     if (value.is_empty()) return platform_failure<Architecture>("architecture is empty"_str);
     for (const auto byte : value.as_bytes()) {
         if ((byte >= u8('a') && byte <= u8('z')) || (byte >= u8('A') && byte <= u8('Z')) ||
@@ -73,7 +73,7 @@ auto canonical_architecture(ref<str> value) -> Result<Architecture> {
     return Ok(Architecture { .name = rstd::move(canonical) });
 }
 
-auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
+auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
     if (triple.is_empty()) return platform_failure<TargetInfo>("target triple is empty"_str);
     auto arch_end = usize {};
     while (arch_end < triple.len() && triple.as_bytes()[arch_end] != u8('-')) ++arch_end;
@@ -118,7 +118,7 @@ auto parse_target_info(ref<str> triple) -> Result<TargetInfo> {
     });
 }
 
-auto detect_host_info() -> Result<HostInfo> {
+auto detect_host_info() -> PlatformResult<HostInfo> {
 #if defined(_WIN32)
     auto information = SYSTEM_INFO {};
     ::GetNativeSystemInfo(&information);
@@ -158,7 +158,7 @@ auto detect_host_info() -> Result<HostInfo> {
 
 auto resolve_build_platform(const HostInfo&   host,
                             const TargetInfo& compiler_default,
-                            Option<ref<str>>  explicit_target) -> Result<BuildPlatform> {
+                            Option<ref<str>>  explicit_target) -> PlatformResult<BuildPlatform> {
     auto effective = compiler_default.clone();
     auto intent    = BuildTargetIntent::Native;
     if (explicit_target.is_some()) {

@@ -19,7 +19,7 @@ struct ArtifactExecution {
     PathBuf                           executable;
     PathBuf                           working_directory;
     Option<rstd::process::ExitStatus> status;
-    Option<String>                    error;
+    Option<SystemError>               error;
     rstd::time::Duration              elapsed;
 
     auto success() const noexcept -> bool {
@@ -63,8 +63,10 @@ auto execute_artifact(const BuiltArtifact&              artifact,
             .target            = artifact.target.clone(),
             .executable        = artifact.path.clone(),
             .working_directory = artifact.package_root.clone(),
-            .error             = Some(rstd::format(
-                "failed to execute {}: {}", description, rstd::move(status).unwrap_err())),
+            .error             = Some(SystemError::Io(
+                rstd::format("execute {}", description),
+                artifact.path.clone(),
+                rstd::move(status).unwrap_err())),
             .elapsed           = elapsed,
         };
     }

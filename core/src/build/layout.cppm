@@ -3,6 +3,7 @@ export module lito.build.layout;
 import rstd;
 import lito.error;
 import lito.build.identity;
+import lito.build.layout_error_contract;
 import lito.package.identity;
 import lito.package.target_contract;
 
@@ -13,15 +14,23 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Artifact, rstd::move(message)));
+auto failure(String message) -> BuildLayoutResult<T> {
+    return Err(BuildLayoutError::Message(rstd::move(message)));
+}
+
+template<typename T>
+auto io_failure(ref<str> operation,
+                ref<rstd::path::Path> path,
+                rstd::io::error::Error error) -> BuildLayoutResult<T> {
+    return Err(BuildLayoutError::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(error)));
 }
 
 auto join(ref<rstd::path::Path> base, ref<str> component) -> PathBuf {
     return PathBuf::from(base).join(PathBuf::from(component).as_path());
 }
 
-auto validated_relative_text(ref<rstd::path::Path> relative) -> Result<String> {
+auto validated_relative_text(ref<rstd::path::Path> relative) -> BuildLayoutResult<String> {
     if (relative.is_empty() || relative.is_absolute() || relative.has_root()) {
         return failure<String>(rstd::format("source artifact path '{}' is not relative", relative));
     }
@@ -66,7 +75,7 @@ class BuildLayout {
 
     auto relative_source_path(ref<rstd::path::Path> directory,
                               ref<rstd::path::Path> relative_source,
-                              ref<str>              suffix) const -> Result<PathBuf> {
+                              ref<str>              suffix) const -> BuildLayoutResult<PathBuf> {
         auto relative = validated_relative_text(relative_source);
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         relative->push_str(suffix);
@@ -77,7 +86,7 @@ class BuildLayout {
     auto source_path(ref<rstd::path::Path>  root,
                      const PackageTargetId& target,
                      ref<rstd::path::Path>  relative_source,
-                     ref<str>               suffix) const -> Result<PathBuf> {
+                     ref<str>               suffix) const -> BuildLayoutResult<PathBuf> {
         auto directory = target_directory(root, target);
         return relative_source_path(directory.as_path(), relative_source, suffix);
     }
@@ -121,31 +130,35 @@ public:
 
     static auto create(ref<rstd::path::Path> owner_root,
                        ref<rstd::path::Path> requested_output,
-                       ref<str>              profile) -> Result<BuildLayout> {
+                       ref<str>              profile) -> BuildLayoutResult<BuildLayout> {
         auto layout  = resolve(owner_root, requested_output, profile);
         auto created = rstd::fs::create_dir_all(layout.output());
         if (created.is_err()) {
-            return failure<BuildLayout>(rstd::format("cannot create output directory '{}': {}",
-                                                     layout.output(),
-                                                     rstd::move(created).unwrap_err()));
+            return io_failure<BuildLayout>(
+                "create output directory"_str,
+                layout.output(),
+                rstd::move(created).unwrap_err());
         }
         auto canonical = rstd::fs::canonicalize(layout.output());
         if (canonical.is_err()) {
-            return failure<BuildLayout>(rstd::format("cannot resolve output directory '{}': {}",
-                                                     layout.output(),
-                                                     rstd::move(canonical).unwrap_err()));
+            return io_failure<BuildLayout>(
+                "resolve output directory"_str,
+                layout.output(),
+                rstd::move(canonical).unwrap_err());
         }
         auto scan_created = rstd::fs::create_dir_all(layout.scan_cache_.as_path());
         if (scan_created.is_err()) {
-            return failure<BuildLayout>(rstd::format("cannot create scan cache directory '{}': {}",
-                                                     layout.scan_cache_.as_path(),
-                                                     rstd::move(scan_created).unwrap_err()));
+            return io_failure<BuildLayout>(
+                "create scan cache directory"_str,
+                layout.scan_cache_.as_path(),
+                rstd::move(scan_created).unwrap_err());
         }
         auto canonical_scan = rstd::fs::canonicalize(layout.scan_cache_.as_path());
         if (canonical_scan.is_err()) {
-            return failure<BuildLayout>(rstd::format("cannot resolve scan cache directory '{}': {}",
-                                                     layout.scan_cache_.as_path(),
-                                                     rstd::move(canonical_scan).unwrap_err()));
+            return io_failure<BuildLayout>(
+                "resolve scan cache directory"_str,
+                layout.scan_cache_.as_path(),
+                rstd::move(canonical_scan).unwrap_err());
         }
         return Ok(BuildLayout(rstd::move(canonical).unwrap(), rstd::move(canonical_scan).unwrap()));
     }
@@ -154,7 +167,7 @@ public:
 
     auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }
 
-    auto generated_package_directory(ref<str> package) const -> Result<PathBuf> {
+    auto generated_package_directory(ref<str> package) const -> BuildLayoutResult<PathBuf> {
         auto component = PathBuf::from(package);
         auto parts     = component.as_path().components();
         auto first     = parts.next();
@@ -167,22 +180,20 @@ public:
         return Ok(join(root.as_path(), package));
     }
 
-    auto create_generated_package_directory(ref<str> package) const -> Result<PathBuf> {
+    auto create_generated_package_directory(ref<str> package) const -> BuildLayoutResult<PathBuf> {
         auto requested = generated_package_directory(package);
         if (requested.is_err()) return Err(rstd::move(requested).unwrap_err());
         auto created = rstd::fs::create_dir_all(requested->as_path());
         if (created.is_err()) {
-            return failure<PathBuf>(
-                rstd::format("cannot create generated package directory '{}': {}",
-                             requested->as_path(),
-                             rstd::move(created).unwrap_err()));
+            return io_failure<PathBuf>("create generated package directory"_str,
+                                       requested->as_path(),
+                                       rstd::move(created).unwrap_err());
         }
         auto canonical = rstd::fs::canonicalize(requested->as_path());
         if (canonical.is_err()) {
-            return failure<PathBuf>(
-                rstd::format("cannot resolve generated package directory '{}': {}",
-                             requested->as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return io_failure<PathBuf>("resolve generated package directory"_str,
+                                       requested->as_path(),
+                                       rstd::move(canonical).unwrap_err());
         }
         return Ok(rstd::move(canonical).unwrap());
     }
@@ -193,7 +204,7 @@ public:
     }
 
     auto object(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
+        -> BuildLayoutResult<PathBuf> {
         return source_path(
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
@@ -215,18 +226,19 @@ public:
     }
 
     auto cache_scan(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
+        -> BuildLayoutResult<PathBuf> {
         return source_path(scan_cache_.as_path(), target, relative_source, ".json"_str);
     }
 
     auto cache_unit(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> Result<PathBuf> {
+        -> BuildLayoutResult<PathBuf> {
         auto directory = cache_target_directory(target);
         return relative_source_path(directory.as_path(), relative_source, ".json"_str);
     }
 
     auto cache_compile_test(const PackageTargetId& target,
-                            ref<rstd::path::Path>  relative_source) const -> Result<PathBuf> {
+                            ref<rstd::path::Path>  relative_source) const
+        -> BuildLayoutResult<PathBuf> {
         auto directory = cache_target_directory(target);
         return relative_source_path(directory.as_path(), relative_source, ".test.json"_str);
     }

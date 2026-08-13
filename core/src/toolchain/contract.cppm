@@ -4,6 +4,7 @@ module;
 export module lito.toolchain.contract;
 
 import rstd;
+export import lito.toolchain.error_contract;
 import lito.error;
 import lito.dependency.contract;
 

@@ -2,6 +2,7 @@ export module lito.toolchain:clang_format;
 
 import rstd;
 import lito.error;
+import lito.toolchain.error_contract;
 import lito.toolchain.spec;
 import lito.system.environment;
 import :clang_format_options;
@@ -14,8 +15,8 @@ namespace lito::toolchain
 {
 
 template<typename T>
-auto clang_format_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Toolchain, message));
+auto clang_format_failure(ref<str> message) -> ToolchainResult<T> {
+    return Err(ToolchainError::Message(String::make(message)));
 }
 
 } // namespace lito::toolchain
@@ -27,9 +28,11 @@ class ClangFormat {
 public:
     static auto create(ref<rstd::path::Path>             formatter_path,
                        ToolResolver&                     resolver,
-                       const ResolvedProcessEnvironment& environment) -> Result<ClangFormat> {
+                       const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangFormat> {
         auto resolved = resolver.resolve(formatter_path, "clang-format"_str);
-        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        if (resolved.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(resolved).unwrap_err()));
+        }
         auto path = rstd::move(resolved).unwrap().executable;
 
         auto arguments = Vec<String>::make();
@@ -54,13 +57,12 @@ public:
     auto path() const -> ref<rstd::path::Path> { return path_.as_path(); }
     auto version() const -> ref<str> { return version_.as_str(); }
 
-    auto is_formatted(ref<rstd::path::Path> source) const -> Result<bool> {
+    auto is_formatted(ref<rstd::path::Path> source) const -> ToolchainResult<bool> {
         auto contents = rstd::fs::read_to_string(source);
         if (contents.is_err()) {
-            return Err(Error::make(ErrorKind::Toolchain,
-                                   rstd::format("cannot read format source '{}': {}",
-                                                source,
-                                                rstd::move(contents).unwrap_err())));
+            return Err(ToolchainError::Io(String::make("cannot read format source"_str),
+                                          PathBuf::from(source),
+                                          rstd::move(contents).unwrap_err()));
         }
 
         auto arguments = Vec<String>::make();
@@ -74,7 +76,7 @@ public:
         return Ok(contents->as_str() == output->as_str());
     }
 
-    auto format(ref<rstd::path::Path> source) const -> Result<empty> {
+    auto format(ref<rstd::path::Path> source) const -> ToolchainResult<empty> {
         auto arguments = Vec<String>::make();
         auto pushed    = command::push_path(arguments, path_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());

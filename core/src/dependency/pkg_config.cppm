@@ -7,6 +7,7 @@ import rstd;
 import lito.error;
 import lito.cpp;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
@@ -29,7 +30,7 @@ auto resolve_pkg_config_dependencies(
     const CppArgumentParser&                parser,
     ToolResolver&                           tool_resolver,
     const ResolvedProcessEnvironment&       process_environment)
-    -> Result<Vec<ResolvedExternalDependency>> {
+    -> DependencyResult<Vec<ResolvedExternalDependency>> {
     auto result              = Vec<ResolvedExternalDependency>::make();
     auto environment         = CommandEnvironment {};
     auto provider_id         = String::make();
@@ -45,8 +46,13 @@ auto resolve_pkg_config_dependencies(
         auto resolved =
             tool_resolver.resolve(pkg_config.executable.as_path(), "pkg-config executable"_str);
         if (resolved.is_err()) {
-            auto error = rstd::move(resolved).unwrap_err();
-            return dependency_failure<Vec<ResolvedExternalDependency>>(rstd::move(error.message));
+            const auto& declaration = pkg_config_declarations[usize {}];
+            return Err(DependencyError::Operation(
+                rstd::format("pkg-config dependency '{}' module '{}' provider '{}' resolution",
+                             declaration.alias.as_str(),
+                             declaration.requirement.module.as_str(),
+                             pkg_config.executable.as_path()),
+                rstd::move(resolved).unwrap_err()));
         }
         resolved_pkg_config.executable = rstd::move(resolved).unwrap().executable;
         auto configured_environment =
@@ -114,10 +120,8 @@ auto resolve_pkg_config_dependencies(
                                         requirement.module.as_str());
             auto compile = parser.parse(*compile_tokens, source.as_str());
             if (compile.is_err()) {
-                return dependency_failure<Vec<ResolvedExternalDependency>>(
-                    rstd::format("{} has invalid Cflags: {}",
-                                 source.as_str(),
-                                 rstd::move(compile).unwrap_err()));
+                return Err(DependencyError::Cpp(
+                    source.clone(), rstd::move(compile).unwrap_err()));
             }
             auto identity = snapshot_identity(provider_id.as_str(),
                                               requirement,
@@ -166,7 +170,7 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const CppArgumentParser&          parser,
                                    ToolResolver&                     tool_resolver,
                                    const ResolvedProcessEnvironment& process_environment)
-    -> Result<Vec<ResolvedExternalDependency>> {
+    -> DependencyResult<Vec<ResolvedExternalDependency>> {
     return resolve_pkg_config_dependencies(
         declarations, pkg_config, platform, parser, tool_resolver, process_environment);
 }
@@ -178,9 +182,11 @@ auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& decla
                                    const ProfileSpec&                      profile,
                                    const BuildPlatform&                    platform,
                                    const CppArgumentParser&                parser)
-    -> Result<Vec<ResolvedExternalDependency>> {
+    -> DependencyResult<Vec<ResolvedExternalDependency>> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<DependencyError>(rstd::move(environment).unwrap_err()));
+    }
     auto resolver = ToolResolver(*environment);
     return resolve_external_dependencies(declarations,
                                          pkg_config,

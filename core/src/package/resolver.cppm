@@ -11,6 +11,7 @@ import lito.build.profile_contract;
 import lito.build.contract;
 import lito.lock.contract;
 import lito.package.graph_contract;
+import lito.package.error_contract;
 import lito.workspace.contract;
 import lito.workspace;
 import lito.source;
@@ -24,8 +25,8 @@ namespace lito
 {
 
 template<typename T>
-auto failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto failure(String message) -> PackageResult<T> {
+    return Err(PackageError::Message(rstd::move(message)));
 }
 
 auto clone_dependency_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
@@ -47,7 +48,7 @@ struct PackageCoordinate {
 
 using CoordinateMap = rstd::collections::BTreeMap<String, PackageCoordinate>;
 
-auto package_coordinate(const SelectedSourcePackage& selected) -> Result<PackageCoordinate> {
+auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<PackageCoordinate> {
     if (selected.package.version.source == PackageVersionSource::Workspace &&
         selected.package.version.value.is_none()) {
         return failure<PackageCoordinate>(rstd::format(
@@ -75,12 +76,11 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> Result<Package
 
 auto package_conflict(ref<str>                 name,
                       const PackageCoordinate& existing,
-                      const PackageCoordinate& candidate) -> Error {
+                      const PackageCoordinate& candidate) -> PackageError {
     auto existing_version = existing.version.is_some() ? existing.version->as_str() : "<none>"_str;
     auto candidate_version =
         candidate.version.is_some() ? candidate.version->as_str() : "<none>"_str;
-    return Error::make(
-        ErrorKind::Dependency,
+    return PackageError::Message(
         rstd::format("package conflict for '{}': version '{}' at '{}' from source '{}' conflicts "
                      "with version '{}' at '{}' from source '{}'",
                      name,
@@ -112,8 +112,12 @@ public:
           jobs_(jobs) {}
 
     auto acquire_root(ref<rstd::path::Path> root, Option<WorkspaceCatalog> catalog)
-        -> Result<AcquiredProjectSources> {
-        return sources_.acquire_root(root, rstd::move(catalog));
+        -> PackageResult<AcquiredProjectSources> {
+        auto acquired = sources_.acquire_root(root, rstd::move(catalog));
+        if (acquired.is_err()) {
+            return Err(rstd::into<PackageError>(rstd::move(acquired).unwrap_err()));
+        }
+        return Ok(rstd::move(acquired).unwrap());
     }
 
     auto package_names(usize source) const -> Vec<String> { return sources_.package_names(source); }
@@ -136,7 +140,7 @@ public:
         return sources_.source_profile(source);
     }
 
-    auto resolve(usize source, ref<str> expected_name) -> Result<String> {
+    auto resolve(usize source, ref<str> expected_name) -> PackageResult<String> {
         auto source_identity = String::make(sources_.source_identity(source));
         auto existing        = coordinates_.get(expected_name);
         if (existing.is_some() && (**existing).source_identity == source_identity) {
@@ -150,7 +154,9 @@ public:
         }
 
         auto selected = sources_.take_package(source, expected_name);
-        if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+        if (selected.is_err()) {
+            return Err(rstd::into<PackageError>(rstd::move(selected).unwrap_err()));
+        }
         auto loaded = rstd::move(selected).unwrap();
         if (loaded.package.name.as_str() != expected_name) {
             return failure<String>(
@@ -195,7 +201,7 @@ public:
             rstd_try(sources_.acquire_frontier(rstd::move(fetch_requests), jobs_));
         auto       source_offset = usize {};
         const auto resolve_dependencies =
-            [&](const Vec<DeclaredDependency>& declarations) -> Result<Vec<ResolvedDependency>> {
+            [&](const Vec<DeclaredDependency>& declarations) -> PackageResult<Vec<ResolvedDependency>> {
             auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
             for (const auto& dependency : declarations) {
                 auto dependency_name =
@@ -270,17 +276,17 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                                             usize                             jobs     = usize(1),
                                             BuildObserver                     observer = {},
                                             Option<WorkspaceCatalog>          catalog  = None())
-    -> Result<ResolvedPackageGraph> {
+    -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return failure<ResolvedPackageGraph>(
             String::make("source fetch jobs must be greater than zero"_str));
     }
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
-        return failure<ResolvedPackageGraph>(
-            rstd::format("cannot resolve graph root directory '{}': {}",
-                         requested_root,
-                         rstd::move(canonical).unwrap_err()));
+        return Err(PackageError::System(SystemError::Io(
+            String::make("resolve package graph root"_str),
+            PathBuf::from(requested_root),
+            rstd::move(canonical).unwrap_err())));
     }
     auto root = rstd::move(canonical).unwrap();
     auto resolver =
@@ -294,7 +300,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
     auto root_is_workspace = resolver.source_is_workspace(root_source);
     auto profile           = resolver.source_profile(root_source);
     auto roots             = Vec<ResolvedProjectRoot>::make();
-    auto resolve_roots     = [&](usize source_index, ProjectRootRole role) -> Result<empty> {
+    auto resolve_roots = [&](usize source_index, ProjectRootRole role) -> PackageResult<empty> {
         auto names = resolver.package_names(source_index);
         for (const auto& name : names) {
             auto resolved_name = resolver.resolve(source_index, name.as_str());
@@ -324,9 +330,11 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
 }
 
 auto resolve_package_graph(ref<rstd::path::Path>    requested_root,
-                           PackageResolutionOptions options = {}) -> Result<ResolvedPackageGraph> {
+                           PackageResolutionOptions options = {}) -> PackageResult<ResolvedPackageGraph> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<PackageError>(rstd::move(environment).unwrap_err()));
+    }
     auto resolver = ToolResolver(*environment);
     return resolve_package_graph_with_environment(
         requested_root, rstd::move(options), resolver, *environment);

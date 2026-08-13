@@ -26,13 +26,18 @@ target_sources(
          src/build/configuration.cppm
          src/build/plan_contract.cppm
          src/build/contract.cppm
+         src/build/layout_error_contract.cppm
+         src/build/script_error_contract.cppm
+         src/build/error_contract.cppm
          src/platform/contract.cppm
          src/platform/mod.cppm
-         src/system/environment_contract.cppm
+        src/system/environment_contract.cppm
+        src/system/error_contract.cppm
          src/system/environment.cppm
          src/system/process.cppm
          src/system/storage.cppm
          src/dependency/contract.cppm
+         src/dependency/error_contract.cppm
          src/dependency/cmake/model.cppm
          src/dependency/cmake/invocation.cppm
          src/dependency/cmake/file_api.cppm
@@ -57,12 +62,14 @@ target_sources(
          src/manifest/mod.cppm
          src/config/schema.cppm
          src/config/contract.cppm
+         src/config/error_contract.cppm
          src/config/mod.cppm
          src/install/contract.cppm
          src/install/source.cppm
          src/install/store.cppm
          src/install/mod.cppm
          src/modules/convention.cppm
+         src/modules/error_contract.cppm
          src/modules/graph.cppm
          src/modules/frontend.cppm
          src/modules/mod.cppm
@@ -75,8 +82,10 @@ target_sources(
          src/package/identity.cppm
          src/package/graph_contract.cppm
          src/package/target_contract.cppm
+         src/package/error_contract.cppm
          src/package/adapter.cppm
          src/source/contract.cppm
+         src/source/error_contract.cppm
          src/source/discovery_contract.cppm
          src/source/support.cppm
          src/source/acquisition.cppm
@@ -84,13 +93,17 @@ target_sources(
          src/source/mod.cppm
          src/package/resolver.cppm
          src/package/mod.cppm
+         src/workspace/resolution_error.cppm
          src/workspace/resolver.cppm
          src/lock/contract.cppm
+         src/lock/error_contract.cppm
          src/lock/mod.cppm
+         src/project/error_contract.cppm
          src/project/mod.cppm
          src/toolchain/command.cppm
          src/toolchain/spec.cppm
-         src/toolchain/contract.cppm
+        src/toolchain/contract.cppm
+        src/toolchain/error_contract.cppm
          src/toolchain/clang_arguments.cppm
          src/toolchain/clang_options.cppm
          src/toolchain/clang_format_options.cppm
@@ -109,6 +122,7 @@ target_sources(
          src/build/script.cppm
          src/build/profiling.cppm
          src/cache/hash.cppm
+         src/cache/error_contract.cppm
          src/cache/common.cppm
          src/cache/scan.cppm
          src/cache/compile.cppm
@@ -128,7 +142,8 @@ target_sources(
          src/command/update.cppm
          src/command/install.cppm
          src/command/scan_contract.cppm
-         src/command/project_contract.cppm
+        src/command/project_contract.cppm
+        src/command/error_contract.cppm
          src/command/reporting.cppm
          src/lib.cppm)
 target_link_libraries(

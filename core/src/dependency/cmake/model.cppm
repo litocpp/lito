@@ -11,6 +11,7 @@ import lito.build.profile_contract;
 import lito.build.contract;
 import lito.platform.contract;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.cpp;
 import lito.system.process;
 import lito.system.environment;
@@ -26,13 +27,20 @@ export namespace lito
 {
 
 template<typename T>
-auto cmake_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto cmake_failure(String message) -> DependencyResult<T> {
+    return Err(DependencyError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto cmake_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, message));
+auto cmake_failure(ref<str> message) -> DependencyResult<T> {
+    return Err(DependencyError::Message(String::make(message)));
+}
+
+template<typename T>
+auto cmake_io_failure(ref<str> operation,
+                      ref<rstd::path::Path> path,
+                      rstd::io::error::Error source) -> DependencyResult<T> {
+    return Err(DependencyError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto emit_cmake(const Option<BuildObserver>& observer,
@@ -58,7 +66,7 @@ auto execute_observed(const Option<BuildObserver>& observer,
     return result;
 }
 
-auto path_text(ref<rstd::path::Path> path, ref<str> context) -> Result<String> {
+auto path_text(ref<rstd::path::Path> path, ref<str> context) -> DependencyResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return cmake_failure<String>(
@@ -79,7 +87,7 @@ auto cmake_build_type(const ProfileSpec& profile) -> ref<str> {
 }
 
 auto append_search_path_identity(String& output, const CMakeProviderConfig& provider)
-    -> Result<empty> {
+    -> DependencyResult<empty> {
     for (const auto& path : provider.search_paths) {
         auto value = path_text(path.as_path(), "CMake search path"_str);
         if (value.is_err()) return Err(rstd::move(value).unwrap_err());
@@ -116,7 +124,7 @@ auto source_identity(const ResolvedCMakeDependencyRequirement& requirement) -> S
     return String::make("installed"_str);
 }
 
-auto cmake_quoted(ref<str> value, ref<str> context) -> Result<String> {
+auto cmake_quoted(ref<str> value, ref<str> context) -> DependencyResult<String> {
     if (value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
         value.contains("\n"_str) || value.contains("\r"_str)) {
         return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
@@ -157,16 +165,16 @@ struct CMakePackagePlan {
 };
 
 template<typename T>
-auto with_operation_context(Result<T>               result,
+auto with_operation_context(DependencyResult<T>               result,
                             const CMakePackagePlan& plan,
-                            CMakePackageOperation   operation) -> Result<T> {
+                            CMakePackageOperation   operation) -> DependencyResult<T> {
     if (result.is_ok()) return result;
     auto error = rstd::move(result).unwrap_err();
-    return cmake_failure<T>(rstd::format("CMake dependency '{}' {} failed in '{}': {}",
-                                         plan.requirement.alias.as_str(),
-                                         operation,
-                                         plan.area.root.as_path(),
-                                         error.message.as_str()));
+    return Err(DependencyError::CMakeOperation(
+        plan.requirement.alias.clone(),
+        rstd::format("{}", operation),
+        plan.area.root.clone(),
+        rstd::boxed::Box<DependencyError>::make(rstd::move(error))));
 }
 
 auto clone_cmake_source(const ResolvedCMakeDependencySource& source)
@@ -231,7 +239,7 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const CMakeProviderConfig&                provider,
                const BuildConfiguration&                 build,
                const ProfileSpec&                        profile,
-               ref<str> effective_target) -> Result<CMakeWorkArea> {
+               ref<str> effective_target) -> DependencyResult<CMakeWorkArea> {
     auto recipe = String::make("lito-cmake-install-v4\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -270,7 +278,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     }
     auto cache =
         lito_cache_directory(PathBuf::from("cmake"_str).as_path(), "CMake dependencies"_str);
-    if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
+    if (cache.is_err()) {
+        return Err(rstd::into<DependencyError>(rstd::move(cache).unwrap_err()));
+    }
     auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
     auto query_recipe = String::make("lito-cmake-query-v4\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());

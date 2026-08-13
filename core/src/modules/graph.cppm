@@ -5,6 +5,7 @@ import lito.error;
 import lito.cpp.bmi;
 import lito.build.plan_contract;
 import :convention;
+import lito.modules.error_contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -15,13 +16,13 @@ namespace lito
 {
 
 template<typename T>
-auto graph_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto graph_failure(String message) -> ModuleResult<T> {
+    return Err(ModuleError::Graph(rstd::move(message)));
 }
 
 template<typename T>
-auto graph_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, message));
+auto graph_failure(ref<str> message) -> ModuleResult<T> {
+    return Err(ModuleError::Graph(String::make(message)));
 }
 
 auto contains_target(const Vec<TargetId>& values, TargetId value) -> bool {
@@ -42,7 +43,7 @@ auto visit(UnitId                   unit,
            const Vec<PreparedUnit>& units,
            const Vec<Vec<UnitId>>&  direct_inputs,
            Vec<uint8_t>&            colors,
-           Vec<UnitId>&             compile_order) -> Result<empty> {
+           Vec<UnitId>&             compile_order) -> ModuleResult<empty> {
     auto& color = colors[unit];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
@@ -68,7 +69,7 @@ export namespace lito
 auto resolve_modules(const PackagePlan&       package,
                      const Vec<PreparedUnit>& units,
                      const Vec<ScanResult>&   scans,
-                     const BmiFormatIdentity& format) -> Result<ModulePlan> {
+                     const BmiFormatIdentity& format) -> ModuleResult<ModulePlan> {
     if (units.len() != scans.len()) {
         return graph_failure<ModulePlan>("module graph received mismatched units and scans"_str);
     }

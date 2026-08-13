@@ -85,9 +85,30 @@ private:
     Vec<CompilerArgumentDefinition> definitions_;
 };
 
-auto compiler_argument_error_message(const CompilerArgumentError& error) -> String;
-
 } // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::CompilerArgumentError>
+    : ImplBase<lito::CompilerArgumentError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool;
+};
+
+template<>
+struct Impl<fmt::Debug, lito::CompilerArgumentError>
+    : ImplBase<lito::CompilerArgumentError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::CompilerArgumentError>
+    : DefaultInImpl<error::Error, lito::CompilerArgumentError> {};
+
+} // namespace rstd
 
 namespace lito
 {
@@ -268,26 +289,32 @@ auto CompilerArgumentParser::parse(const Vec<String>& arguments) const
     return Ok(rstd::move(result));
 }
 
-auto compiler_argument_error_message(const CompilerArgumentError& error) -> String {
+} // namespace lito
+
+export namespace rstd
+{
+
+auto Impl<fmt::Display, lito::CompilerArgumentError>::fmt(fmt::Formatter& formatter) const -> bool {
+    const auto& error = this->self();
     RSTD_MATCH(error) {
         RSTD_CASE(InvalidDefinition, name, reason) {
-            return rstd::format(
-                "compiler argument definition '{}': {}", name.as_str(), reason.as_str());
+            return formatter.write_fmt(fmt::Arguments::make(
+                "compiler argument definition '{}': {}", name, reason));
         }
         RSTD_CASE(DuplicateSpelling, spelling) {
-            return rstd::format("compiler argument spelling '{}' is defined more than once",
-                                spelling.as_str());
+            return formatter.write_fmt(fmt::Arguments::make(
+                "compiler argument spelling '{}' is defined more than once", spelling));
         }
         RSTD_CASE(MissingValue, index, spelling) {
-            return rstd::format(
-                "compiler option '{}' at argument {} requires a value", spelling.as_str(), index);
+            return formatter.write_fmt(fmt::Arguments::make(
+                "compiler option '{}' at argument {} requires a value", spelling, index));
         }
         RSTD_CASE(EmptyValue, index, spelling) {
-            return rstd::format(
-                "compiler option '{}' at argument {} has an empty value", spelling.as_str(), index);
+            return formatter.write_fmt(fmt::Arguments::make(
+                "compiler option '{}' at argument {} has an empty value", spelling, index));
         }
     }
     rstd::unreachable();
 }
 
-} // namespace lito
+} // namespace rstd

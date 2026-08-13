@@ -5,6 +5,7 @@ export module lito.source:support;
 
 import rstd;
 import lito.source.contract;
+import lito.source.error_contract;
 import lito.error;
 import lito.lock.contract;
 import lito.package.graph_contract;
@@ -24,16 +25,23 @@ namespace lito
 {
 
 template<typename T>
-auto source_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, rstd::move(message)));
+auto source_failure(String message) -> SourceResult<T> {
+    return Err(SourceError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto source_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::Dependency, message));
+auto source_failure(ref<str> message) -> SourceResult<T> {
+    return Err(SourceError::Message(String::make(message)));
 }
 
-auto path_components(ref<rstd::path::Path> path) -> Result<Vec<String>> {
+template<typename T>
+auto source_io_failure(ref<str> operation,
+                       ref<rstd::path::Path> path,
+                       rstd::io::error::Error source) -> SourceResult<T> {
+    return Err(SourceError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
+}
+
+auto path_components(ref<rstd::path::Path> path) -> SourceResult<Vec<String>> {
     auto result     = Vec<String>::make();
     auto components = path.components();
     for (auto component = components.next(); component.is_some(); component = components.next()) {
@@ -52,7 +60,7 @@ auto path_components(ref<rstd::path::Path> path) -> Result<Vec<String>> {
     return Ok(rstd::move(result));
 }
 
-auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target) -> Result<PathBuf> {
+auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target) -> SourceResult<PathBuf> {
     auto root_components   = path_components(root);
     auto target_components = path_components(target);
     if (root_components.is_err()) return Err(rstd::move(root_components).unwrap_err());
@@ -94,7 +102,7 @@ auto source_hash(ref<str> value) -> String {
         ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
 }
 
-auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Result<empty> {
+auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> SourceResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
         return source_failure<empty>(rstd::format("Git cache path '{}' is not valid UTF-8", path));
@@ -105,11 +113,11 @@ auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Result<emp
 
 auto git_output(Vec<String>                       arguments,
                 ref<str>                          operation,
-                const ResolvedProcessEnvironment& environment) -> Result<String> {
+                const ResolvedProcessEnvironment& environment) -> SourceResult<String> {
     auto output = run_command(arguments, environment);
     if (output.is_err()) {
-        auto error = rstd::move(output).unwrap_err();
-        return source_failure<String>(rstd::format("{}: {}", operation, error.message.as_str()));
+        return Err(SourceError::System(String::make(operation),
+                                       rstd::move(output).unwrap_err()));
     }
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {
@@ -123,7 +131,7 @@ auto git_output(Vec<String>                       arguments,
 
 auto git_status(Vec<String>                       arguments,
                 ref<str>                          operation,
-                const ResolvedProcessEnvironment& environment) -> Result<empty> {
+                const ResolvedProcessEnvironment& environment) -> SourceResult<empty> {
     auto output = git_output(rstd::move(arguments), operation, environment);
     if (output.is_err()) return Err(rstd::move(output).unwrap_err());
     return Ok(empty {});
@@ -133,15 +141,25 @@ auto same_reference(const GitReference& left, const GitReference& right) -> bool
     return left.kind == right.kind && left.value == right.value;
 }
 
-auto load_git_catalog(ref<rstd::path::Path> root) -> Result<WorkspaceCatalog> {
+auto load_git_catalog(ref<rstd::path::Path> root) -> SourceResult<WorkspaceCatalog> {
     auto document = load_manifest_document(root);
-    if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+    if (document.is_err()) {
+        return Err(rstd::into<SourceError>(rstd::move(document).unwrap_err()));
+    }
     auto loaded = rstd::move(document).unwrap();
     if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
-        return load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
+        auto catalog = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
+        if (catalog.is_err()) {
+            return Err(rstd::into<SourceError>(rstd::move(catalog).unwrap_err()));
+        }
+        return Ok(rstd::move(catalog).unwrap());
     }
     if (loaded.kind == ManifestKind::Package && loaded.package.is_some()) {
-        return WorkspaceCatalog::single(rstd::move(loaded.package).unwrap());
+        auto catalog = WorkspaceCatalog::single(rstd::move(loaded.package).unwrap());
+        if (catalog.is_err()) {
+            return Err(rstd::into<SourceError>(rstd::move(catalog).unwrap_err()));
+        }
+        return Ok(rstd::move(catalog).unwrap());
     }
     return source_failure<WorkspaceCatalog>(
         "Git source root manifest has no package or workspace"_str);

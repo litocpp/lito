@@ -245,7 +245,9 @@ TEST(CppContract, RejectsRawOverridesOfTypedSettings) {
     EXPECT_TRUE(standard.is_err());
     EXPECT_TRUE(optimization.is_err());
     EXPECT_TRUE(rtti.is_err());
-    EXPECT_TRUE(optimization.unwrap_err().as_str().contains("optimization"_str));
+    auto optimization_error = rstd::move(optimization).unwrap_err();
+    ASSERT_TRUE(optimization_error.is_Message());
+    EXPECT_TRUE(optimization_error.as_Message().message.as_str().contains("optimization"_str));
 }
 
 TEST(CompilerArgumentContract, PreservesTokenRangesAndDoesNotGuessUnknownArity) {
@@ -304,8 +306,12 @@ TEST(CompilerArgumentContract, ReportsMissingAndEmptyValuesAtTheParserBoundary) 
     auto empty   = parser->parse(strings("--target="_str), "contract.options"_str);
     ASSERT_TRUE(missing.is_err());
     ASSERT_TRUE(empty.is_err());
-    EXPECT_TRUE(missing.unwrap_err().as_str().contains("requires a value"_str));
-    EXPECT_TRUE(empty.unwrap_err().as_str().contains("empty value"_str));
+    auto missing_error = rstd::move(missing).unwrap_err();
+    auto empty_error   = rstd::move(empty).unwrap_err();
+    ASSERT_TRUE(missing_error.is_Argument());
+    ASSERT_TRUE(empty_error.is_Argument());
+    EXPECT_TRUE(missing_error.as_Argument().source.is_MissingValue());
+    EXPECT_TRUE(empty_error.as_Argument().source.is_EmptyValue());
 }
 
 TEST(CompilerArgumentContract, CarriesTypedNativePreprocessorEffects) {
@@ -566,7 +572,9 @@ TEST(ClangContract, RejectsNonLldLinkers) {
         .archiver = PathBuf::from("llvm-ar"_str),
     });
     ASSERT_TRUE(created.is_err());
-    EXPECT_TRUE(created.unwrap_err().message.as_str().contains("not LLD"_str));
+    auto error = rstd::move(created).unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("not LLD"_str));
 }
 
 TEST(ClangContract, DoesNotPublishOneOutputWhenAnotherIsMissing) {

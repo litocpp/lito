@@ -4,6 +4,7 @@ import rstd;
 import rstd.json;
 import lito.error;
 export import lito.command.scan_contract;
+export import lito.command.error_contract;
 import lito.workspace.contract;
 import lito.build.profile_contract;
 import lito.package.target_contract;
@@ -27,16 +28,16 @@ namespace lito
 {
 
 template<typename T>
-auto scan_failure(String message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, rstd::move(message)));
+auto scan_failure(String message) -> CommandResult<T> {
+    return Err(CommandError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto scan_failure(ref<str> message) -> Result<T> {
-    return Err(Error::make(ErrorKind::InvalidRequest, message));
+auto scan_failure(ref<str> message) -> CommandResult<T> {
+    return Err(CommandError::Message(String::make(message)));
 }
 
-auto scan_path(ref<rstd::path::Path> path) -> Result<String> {
+auto scan_path(ref<rstd::path::Path> path) -> CommandResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return scan_failure<String>(rstd::format("scan path '{}' is not valid UTF-8", path));
@@ -48,7 +49,7 @@ auto json_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto json_path(ref<rstd::path::Path> path) -> Result<Json> {
+auto json_path(ref<rstd::path::Path> path) -> CommandResult<Json> {
     auto text = scan_path(path);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
     return Ok(Json::String(rstd::move(text).unwrap()));
@@ -78,14 +79,14 @@ auto scan_output_format_name(ScanOutputFormat format) -> ref<str> {
     return "lito"_str;
 }
 
-auto parse_scan_output_format(ref<str> name) -> Result<ScanOutputFormat> {
+auto parse_scan_output_format(ref<str> name) -> CommandResult<ScanOutputFormat> {
     if (name == "lito"_str) return Ok(ScanOutputFormat::Lito);
     if (name == "p1689"_str) return Ok(ScanOutputFormat::P1689);
     return scan_failure<ScanOutputFormat>(
         rstd::format("unknown scan output format '{}'; expected lito or p1689", name));
 }
 
-auto scan(const ScanRequest& request) -> Result<ScanReport> {
+auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (request.selection.root.is_empty()) {
         return scan_failure<ScanReport>("scan directory is required"_str);
     }
@@ -98,14 +99,17 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                 : request.selection.root.join(request.source.as_path());
     auto canonical_source = rstd::fs::canonicalize(requested_source.as_path());
     if (canonical_source.is_err()) {
-        return scan_failure<ScanReport>(rstd::format("cannot resolve scan source '{}': {}",
-                                                     requested_source.as_path(),
-                                                     rstd::move(canonical_source).unwrap_err()));
+        return Err(CommandError::System(SystemError::Io(
+            String::make("resolve scan source"_str),
+            requested_source.clone(),
+            rstd::move(canonical_source).unwrap_err())));
     }
     auto source = rstd::move(canonical_source).unwrap();
 
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
+    }
     auto tool_resolver = ToolResolver(*environment);
     auto profile       = request.profile.is_some() ? request.profile->clone() : BuildProfileName {};
     auto jobs          = usize(1);
@@ -124,16 +128,22 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                           PackageSelectionPurpose::All,
                                           jobs,
                                           request.observer);
-    if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+    if (prepared.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(prepared).unwrap_err()));
+    }
     auto  project   = rstd::move(prepared).unwrap();
     auto& toolchain = project.toolchain;
     auto& metadata  = project.metadata;
     auto  resolved =
         resolve_source_discovery(metadata, metadata.default_profile.as_str(), request.targets);
-    if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+    if (resolved.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(resolved).unwrap_err()));
+    }
     auto discovery = rstd::move(resolved).unwrap();
     auto selected  = resolve_source_target(metadata, discovery, source.as_path());
-    if (selected.is_err()) return Err(rstd::move(selected).unwrap_err());
+    if (selected.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(selected).unwrap_err()));
+    }
     auto source_target = *selected;
 
     const auto& target          = metadata.targets[source_target];
@@ -149,12 +159,13 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                                requested_output.as_path(),
                                                metadata.profiles[discovery.profile].name.as_str());
     auto primary_output = layout.object(target.id, *relative_source);
-    if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
+    if (primary_output.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(primary_output).unwrap_err()));
+    }
 
     auto created_profiler = ScanProfiler::create();
     if (created_profiler.is_err()) {
-        return Err(
-            Error::make(ErrorKind::Artifact, rstd::move(created_profiler).unwrap_err_unchecked()));
+        return Err(CommandError::Message(rstd::move(created_profiler).unwrap_err_unchecked()));
     }
     auto profiler          = rstd::move(created_profiler).unwrap_unchecked();
     auto frontend_observer = FrontendProfileObserver::make(profiler);
@@ -164,7 +175,9 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
                                       metadata.targets[source_target].source_root.as_path(),
                                       frontend_service,
                                       profiler);
-    if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
+    if (facts.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(facts).unwrap_err()));
+    }
 
     return Ok(ScanReport {
         .target         = package_target_id_text(target.id),
@@ -174,7 +187,7 @@ auto scan(const ScanRequest& request) -> Result<ScanReport> {
     });
 }
 
-auto lito_scan_report_json(const ScanReport& report) -> Result<String> {
+auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     auto source = scan_path(report.result.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
 
@@ -233,7 +246,7 @@ auto lito_scan_report_json(const ScanReport& report) -> Result<String> {
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
 }
 
-auto p1689_scan_report_json(const ScanReport& report) -> Result<String> {
+auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     auto primary_output = json_path(report.primary_output.as_path());
     if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
     auto source = json_path(report.result.source.as_path());
@@ -292,7 +305,7 @@ auto p1689_scan_report_json(const ScanReport& report) -> Result<String> {
 }
 
 auto scan_report_json(const ScanReport& report, ScanOutputFormat format = ScanOutputFormat::Lito)
-    -> Result<String> {
+    -> CommandResult<String> {
     switch (format) {
     case ScanOutputFormat::Lito: return lito_scan_report_json(report);
     case ScanOutputFormat::P1689: return p1689_scan_report_json(report);

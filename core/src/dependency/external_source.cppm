@@ -7,6 +7,7 @@ import rstd;
 import lito.error;
 import lito.cpp;
 import lito.dependency.contract;
+import lito.dependency.error_contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
@@ -39,7 +40,7 @@ struct PreparedExternalSourceTask {
     PreparedCMakeDependencyRequirement requirement;
 };
 
-auto prepare_external_source_task(ExternalSourceTask task) -> Result<PreparedExternalSourceTask> {
+auto prepare_external_source_task(ExternalSourceTask task) -> DependencyResult<PreparedExternalSourceTask> {
     auto        source      = PreparedCMakeDependencySource::Installed();
     const auto& declaration = task.requirement;
     if (declaration.source.is_Archive()) {
@@ -94,10 +95,9 @@ auto prepare_external_source_task(ExternalSourceTask task) -> Result<PreparedExt
         auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return dependency_failure<PreparedExternalSourceTask>(
-                rstd::format("cannot resolve CMake adapter '{}': {}",
-                             path.as_path(),
-                             rstd::move(canonical).unwrap_err()));
+            return Err(DependencyError::Io(String::make("resolve CMake adapter"_str),
+                                           rstd::move(path),
+                                           rstd::move(canonical).unwrap_err()));
         }
         if (! canonical->as_path().starts_with(adapter_root)) {
             return dependency_failure<PreparedExternalSourceTask>(
@@ -107,10 +107,9 @@ auto prepare_external_source_task(ExternalSourceTask task) -> Result<PreparedExt
         }
         auto contents = rstd::fs::read_to_string(canonical->as_path());
         if (contents.is_err()) {
-            return dependency_failure<PreparedExternalSourceTask>(
-                rstd::format("cannot read CMake adapter '{}': {}",
-                             canonical->as_path(),
-                             rstd::move(contents).unwrap_err()));
+            return Err(DependencyError::Io(String::make("read CMake adapter"_str),
+                                           canonical->clone(),
+                                           rstd::move(contents).unwrap_err()));
         }
         adapter_identity = rstd::format("{}\n{}", canonical->as_path(), contents->as_str());
         adapter          = Some(rstd::move(canonical).unwrap());
@@ -138,8 +137,12 @@ auto prepare_external_source_task(ExternalSourceTask task) -> Result<PreparedExt
 export namespace lito
 {
 
-auto tokenize_pkg_config_fragments(ref<str> input) -> Result<Vec<String>> {
-    return tokenize_command_fragments(input, "pkg-config output"_str);
+auto tokenize_pkg_config_fragments(ref<str> input) -> DependencyResult<Vec<String>> {
+    auto tokens = tokenize_command_fragments(input, "pkg-config output"_str);
+    if (tokens.is_err()) {
+        return Err(rstd::into<DependencyError>(rstd::move(tokens).unwrap_err()));
+    }
+    return Ok(rstd::move(tokens).unwrap());
 }
 
 auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph,
@@ -148,7 +151,7 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
                                          ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment& environment,
                                          usize                             jobs = usize(1),
-                                         BuildObserver observer = {}) -> Result<empty> {
+                                         BuildObserver observer = {}) -> DependencyResult<empty> {
     if (jobs == usize {}) {
         return dependency_failure<empty>("source fetch jobs must be greater than zero"_str);
     }
@@ -205,7 +208,9 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
         graph.root_directory.as_path(), rstd::move(options), resolver, environment, observer);
     auto fetched_result =
         source_manager.acquire_external_frontier(rstd::move(fetch_requests), jobs);
-    if (fetched_result.is_err()) return Err(rstd::move(fetched_result).unwrap_err());
+    if (fetched_result.is_err()) {
+        return Err(rstd::into<DependencyError>(rstd::move(fetched_result).unwrap_err()));
+    }
     auto fetched = rstd::move(fetched_result).unwrap();
     for (auto& task : tasks) {
         if (task.source_fetch.is_none()) continue;
@@ -226,12 +231,13 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
     }
 
     auto worker_count = jobs < tasks.len() ? jobs : tasks.len();
-    auto created      = rstd::thread::BlockingTaskGroup<Result<PreparedExternalSourceTask>>::make(
+    auto created      = rstd::thread::BlockingTaskGroup<DependencyResult<PreparedExternalSourceTask>>::make(
         worker_count, tasks.len());
     if (created.is_err()) {
-        return dependency_failure<empty>(
-            rstd::format("cannot create external source fetch executor: {}",
-                         rstd::move(created).unwrap_err_unchecked()));
+        return Err(DependencyError::System(SystemError::Io(
+            String::make("create external source fetch executor"_str),
+            PathBuf::make(),
+            rstd::move(created).unwrap_err_unchecked())));
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (auto& task : tasks) {
@@ -280,7 +286,7 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
                                          ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment& environment,
                                          usize                             jobs = usize(1),
-                                         BuildObserver observer = {}) -> Result<empty> {
+                                         BuildObserver observer = {}) -> DependencyResult<empty> {
     auto selected = Vec<String>::with_capacity(graph.packages.len());
     for (const auto& package : graph.packages) {
         selected.push(package.manifest.name.clone());
@@ -292,9 +298,11 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
 auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
                                          PackageResolutionOptions options,
                                          usize                    jobs     = usize(1),
-                                         BuildObserver            observer = {}) -> Result<empty> {
+                                         BuildObserver            observer = {}) -> DependencyResult<empty> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
-    if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+    if (environment.is_err()) {
+        return Err(rstd::into<DependencyError>(rstd::move(environment).unwrap_err()));
+    }
     auto resolver = ToolResolver(*environment);
     return prepare_external_dependency_sources(
         graph, rstd::move(options), resolver, *environment, jobs, observer);
@@ -302,7 +310,7 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
 
 auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
                                             const BuildPlatform&                      platform)
-    -> Result<ResolvedCMakeDependencyRequirement> {
+    -> DependencyResult<ResolvedCMakeDependencyRequirement> {
     auto source = ResolvedCMakeDependencySource::Installed();
     if (requirement.source.is_Directory()) {
         source = ResolvedCMakeDependencySource::Directory(

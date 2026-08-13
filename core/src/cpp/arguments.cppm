@@ -16,7 +16,7 @@ export namespace rstd
 
 template<>
 struct Impl<convert::TryFrom<lito::CppCompilerArgumentOccurrence>, lito::CppOptionDelta> {
-    using Error = String;
+    using Error = lito::CppOptionError;
 
     static auto try_from(lito::CppCompilerArgumentOccurrence occurrence)
         -> Result<lito::CppOptionDelta, Error> {
@@ -35,13 +35,13 @@ struct Impl<convert::TryFrom<lito::CppCompilerArgumentOccurrence>, lito::CppOpti
             auto spelling = occurrence.raw_tokens.is_empty()
                                 ? String::make("<structured compiler option>"_str)
                                 : occurrence.raw_tokens[usize {}].clone();
-            return Err(
+            return Err(lito::CppOptionError::Message(
                 rstd::format("{} arguments {}..{}: compiler option '{}' overrides Lito-owned {}",
                              occurrence.source.as_str(),
                              occurrence.range.begin,
                              occurrence.range.end,
                              spelling.as_str(),
-                             field));
+                             field)));
         }
         return Ok(lito::CppOptionDelta {
             .argument   = rstd::move(occurrence.argument),
@@ -61,11 +61,11 @@ template<typename Key, typename Value>
 using BTreeMap = rstd::collections::BTreeMap<Key, Value>;
 
 auto option_error(ref<str> message) -> CppOptionResult<CppCompileOptions> {
-    return Err(String::make(message));
+    return Err(CppOptionError::Message(String::make(message)));
 }
 
 auto option_error(String message) -> CppOptionResult<CppCompileOptions> {
-    return Err(rstd::move(message));
+    return Err(CppOptionError::Message(rstd::move(message)));
 }
 
 auto append_unique(Vec<String>& output, String value) -> void {
