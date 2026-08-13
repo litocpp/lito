@@ -9,7 +9,6 @@ local rendered = lito.render_template({
 lito.install({
     artifacts = {
         {
-            package = "fixture-producer",
             target = { kind = "bin", name = "producer" },
             destination = "bin/producer",
         },

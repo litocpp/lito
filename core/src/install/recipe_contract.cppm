@@ -5,11 +5,30 @@ import lito.error;
 import lito.manifest.contract;
 import lito.package.identity;
 import lito.configure_template;
+import lito.source.contract;
+import lito.install.package_contract;
 
 using namespace rstd::prelude;
 
 export namespace lito
 {
+
+struct PackageInstallTarget {
+    PackageTargetId target;
+    String          artifact_name;
+};
+
+struct PackageInstallInput {
+    String                        name;
+    String                        version;
+    PathBuf                       root;
+    PathBuf                       manifest_path;
+    Option<PathBuf>               script;
+    Vec<PackageInstallTarget>     binaries;
+    ResolvedPackageSource         source;
+    Vec<InstallRuntimeDependency> runtime_dependencies;
+    bool                          direct { false };
+};
 
 struct InstallArtifactRecipe {
     PackageTargetId target;
@@ -47,10 +66,11 @@ struct InstallRecipe {
     Vec<InstallFileRecipe>          files;
     Vec<InstallTemplateRecipe>      templates;
     Vec<InstallInventoryRecipe>     inventories;
+    ResolvedPackageSource           source;
+    Vec<InstallRuntimeDependency>   runtime_dependencies;
 };
 
 struct InstallBuildRequirements {
-    Vec<String>          packages;
     Vec<PackageTargetId> targets;
 };
 

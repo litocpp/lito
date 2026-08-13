@@ -30,6 +30,10 @@ enum class GitReferenceKind
 struct GitReference {
     GitReferenceKind kind { GitReferenceKind::DefaultBranch };
     String           value;
+
+    auto clone() const -> GitReference {
+        return GitReference { .kind = kind, .value = value.clone() };
+    }
 };
 
 auto git_reference_kind_name(GitReferenceKind kind) noexcept -> ref<str> {
@@ -143,6 +147,18 @@ struct ResolvedPackageSource {
     String            git;
     GitReference      reference;
     String            commit;
+
+    auto clone() const -> ResolvedPackageSource {
+        return ResolvedPackageSource {
+            .identity       = identity.clone(),
+            .kind           = kind,
+            .root_directory = root_directory.clone(),
+            .path           = path.clone(),
+            .git            = git.clone(),
+            .reference      = reference.clone(),
+            .commit         = commit.clone(),
+        };
+    }
 };
 
 } // namespace lito

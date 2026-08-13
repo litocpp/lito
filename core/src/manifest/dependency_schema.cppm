@@ -394,6 +394,47 @@ auto contains_dependency(const ParsedDependencies& dependencies, ref<str> name) 
     return false;
 }
 
+struct ParsedRuntimeDependencies {
+    Vec<DeclaredRuntimeDependency>           explicit_dependencies;
+    Vec<WorkspaceRuntimeDependencyReference> workspace_dependencies;
+};
+
+auto parse_runtime_dependencies(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<ParsedRuntimeDependencies> {
+    auto result = ParsedRuntimeDependencies {};
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = table_value(**value, "manifest.runtime-dependencies"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto keys = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name = **key;
+        auto context = rstd::format("runtime dependency '{}'", name.as_str());
+        if (! package_name_is_valid(name.as_str())) {
+            return failure<ParsedRuntimeDependencies>(rstd::format(
+                "runtime dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
+                name.as_str()));
+        }
+        auto specification = (**table).get(name.as_str());
+        auto fields = table_value(**specification, context.as_str());
+        if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
+        rstd_try(reject_unknown(**fields, context.as_str(), runtime_dependency_key));
+        auto inherited = rstd_try(workspace_reference_enabled(**specification, context.as_str()));
+        if (inherited) {
+            rstd_try(reject_unknown(
+                **fields, context.as_str(), workspace_runtime_dependency_reference_key));
+            result.workspace_dependencies.push(
+                WorkspaceRuntimeDependencyReference { .name = name.clone() });
+            continue;
+        }
+        auto source = rstd_try(parse_package_dependency_source(**specification, context.as_str()));
+        result.explicit_dependencies.push(DeclaredRuntimeDependency {
+            .name   = name.clone(),
+            .source = rstd::move(source),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_workspace_dependencies(Option<ref<Toml>> value)
     -> ManifestSchemaResult<Vec<WorkspaceDependencyDefinition>> {
     auto result = Vec<WorkspaceDependencyDefinition>::make();

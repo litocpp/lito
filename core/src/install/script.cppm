@@ -11,6 +11,7 @@ import lito.configure_template;
 import lito.manifest.contract;
 import lito.package.identity;
 import lito.install.recipe_contract;
+import lito.install.package_contract;
 import lito.install.script_error_contract;
 
 using namespace rstd::prelude;
@@ -113,10 +114,16 @@ public:
             .owner   = package_.name.clone(),
             .version = package_.version.clone(),
             .root    = package_.root.clone(),
+            .source  = package_.source.clone(),
         };
+        for (const auto& dependency : package_.runtime_dependencies) {
+            recipe.runtime_dependencies.push(InstallRuntimeDependency {
+                .name            = dependency.name.clone(),
+                .source_identity = dependency.source_identity.clone(),
+            });
+        }
         rstd_try(parse_array(table, "artifacts"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
-            rstd_try(known_fields(item, { "package"_str, "target"_str, "destination"_str }));
-            auto package = rstd_try(item.required<String>("package"_str));
+            rstd_try(known_fields(item, { "target"_str, "destination"_str }));
             auto target = rstd_try(item.required<luato::Table>("target"_str));
             rstd_try(known_fields(target, { "kind"_str, "name"_str }));
             auto kind = rstd_try(target.required<String>("kind"_str));
@@ -130,7 +137,7 @@ public:
                 "install artifact destination"_str));
             recipe.artifacts.push(InstallArtifactRecipe {
                 .target = PackageTargetId {
-                    .package = rstd::move(package),
+                    .package = package_.name.clone(),
                     .kind    = PackageTargetKind::Binary,
                     .name    = rstd::move(name),
                 },

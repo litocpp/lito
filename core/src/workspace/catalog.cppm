@@ -9,8 +9,6 @@ import lito.workspace.contract;
 import lito.package.identity;
 import lito.build.profile_contract;
 import lito.manifest;
-import lito.install.recipe_contract;
-import lito.platform.contract;
 import :member;
 
 using namespace rstd::prelude;
@@ -87,6 +85,7 @@ public:
     static auto single(PackageManifest manifest) -> WorkspaceResult<WorkspaceCatalog> {
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
+            ! manifest.workspace_runtime_dependencies.is_empty() ||
             ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
             ! manifest.workspace_cmake_external_dependencies.is_empty()) {
             return catalog_failure<WorkspaceCatalog>(rstd::format(
@@ -130,13 +129,6 @@ public:
 
     auto take_package(ref<str> name) -> Option<PackageManifest> { return packages_.remove(name); }
 
-    auto install_packages(const Vec<String>& requested) const
-        -> WorkspaceResult<Vec<PackageInstallInput>>;
-
-    auto install_build_requirements(const Vec<InstallRecipe>& recipes,
-                                    const TargetInfo&         target) const
-        -> WorkspaceResult<InstallBuildRequirements>;
-
     auto contains_package_root(ref<rstd::path::Path> root) const -> bool {
         auto text = root.to_str();
         return text.is_some() && member_roots_.contains_key(*text);
@@ -149,141 +141,6 @@ public:
                                             const WorkspaceCatalog& associated,
                                             ProjectRootRole         role) -> WorkspaceResult<empty>;
 };
-
-auto WorkspaceCatalog::install_packages(const Vec<String>& requested) const
-    -> WorkspaceResult<Vec<PackageInstallInput>> {
-    auto selected = StringSet::make();
-    for (const auto& name : requested) {
-        if (selected.contains_key(name.as_str())) {
-            return catalog_failure<Vec<PackageInstallInput>>(
-                rstd::format("project package '{}' was selected more than once", name.as_str()));
-        }
-        if (! packages_.contains_key(name.as_str())) {
-            return catalog_failure<Vec<PackageInstallInput>>(
-                rstd::format("project has no root package named '{}'", name.as_str()));
-        }
-        selected.insert(name.clone(), empty {});
-    }
-
-    auto result = Vec<PackageInstallInput>::make();
-    for (const auto& name : names_) {
-        if (! requested.is_empty() && ! selected.contains_key(name.as_str())) continue;
-        auto package = packages_.get(name.as_str());
-        if (package.is_none()) {
-            return catalog_failure<Vec<PackageInstallInput>>(
-                rstd::format("workspace catalog is missing package '{}'", name.as_str()));
-        }
-        auto binaries = Vec<PackageInstallTarget>::make();
-        for (const auto& target : (**package).targets) {
-            if (package_target_kind(target) != PackageTargetKind::Binary) continue;
-            binaries.push(PackageInstallTarget {
-                .target = PackageTargetId {
-                    .package = (**package).name.clone(),
-                    .kind    = PackageTargetKind::Binary,
-                    .name    = String::make(package_target_name(target)),
-                },
-                .artifact_name = String::make(package_target_artifact_name(target)),
-            });
-        }
-        if ((**package).install_script.is_none() && binaries.is_empty()) {
-            if (! requested.is_empty()) {
-                return catalog_failure<Vec<PackageInstallInput>>(
-                    rstd::format("project package '{}' has no install target", name.as_str()));
-            }
-            continue;
-        }
-        if ((**package).version.value.is_none()) {
-            return catalog_failure<Vec<PackageInstallInput>>(
-                rstd::format("package '{}' has no installable version", name.as_str()));
-        }
-        auto script = Option<PathBuf> {};
-        if ((**package).install_script.is_some()) {
-            script = Some((**package).install_script->clone());
-        }
-        result.push(PackageInstallInput {
-            .name          = (**package).name.clone(),
-            .version       = (**package).version.value->clone(),
-            .root          = (**package).root.clone(),
-            .manifest_path = (**package).manifest_path.clone(),
-            .script        = rstd::move(script),
-            .binaries      = rstd::move(binaries),
-        });
-    }
-    if (result.is_empty()) {
-        return catalog_failure<Vec<PackageInstallInput>>(
-            String::make("project has no selected install package"_str));
-    }
-    return Ok(rstd::move(result));
-}
-
-auto WorkspaceCatalog::install_build_requirements(const Vec<InstallRecipe>& recipes,
-                                                   const TargetInfo&         target) const
-    -> WorkspaceResult<InstallBuildRequirements> {
-    auto requirements = InstallBuildRequirements {};
-    auto packages     = StringSet::make();
-    const auto append_package = [&](ref<str> name) {
-        if (packages.contains_key(name)) return;
-        packages.insert(String::make(name), empty {});
-        requirements.packages.push(String::make(name));
-    };
-    for (const auto& recipe : recipes) {
-        auto owner = packages_.get(recipe.owner.as_str());
-        if (owner.is_none()) {
-            return catalog_failure<InstallBuildRequirements>(rstd::format(
-                "install recipe owner '{}' is not a root project package", recipe.owner.as_str()));
-        }
-        if (! (**owner).target.matches(target)) {
-            return catalog_failure<InstallBuildRequirements>(rstd::format(
-                "install recipe owner '{}' does not support target '{}'",
-                recipe.owner.as_str(), target.triple.as_str()));
-        }
-        append_package(recipe.owner.as_str());
-        for (usize artifact_index {}; artifact_index < recipe.artifacts.len(); ++artifact_index) {
-            const auto& artifact = recipe.artifacts[artifact_index];
-            for (usize prior {}; prior < artifact_index; ++prior) {
-                if (recipe.artifacts[prior].target == artifact.target) {
-                    return catalog_failure<InstallBuildRequirements>(rstd::format(
-                        "install recipe '{}' repeats artifact target '{}'",
-                        recipe.owner.as_str(), package_target_id_text(artifact.target)));
-                }
-            }
-            auto package = packages_.get(artifact.target.package.as_str());
-            if (package.is_none()) {
-                return catalog_failure<InstallBuildRequirements>(rstd::format(
-                    "install artifact target '{}' is not owned by a root project package",
-                    package_target_id_text(artifact.target)));
-            }
-            if (! (**package).target.matches(target)) {
-                return catalog_failure<InstallBuildRequirements>(rstd::format(
-                    "install artifact target '{}' does not support target '{}'",
-                    package_target_id_text(artifact.target), target.triple.as_str()));
-            }
-            auto found = false;
-            for (const auto& candidate : (**package).targets) {
-                if (package_target_kind(candidate) == artifact.target.kind &&
-                    package_target_name(candidate) == artifact.target.name.as_str()) {
-                    found = true;
-                    break;
-                }
-            }
-            if (! found) {
-                return catalog_failure<InstallBuildRequirements>(rstd::format(
-                    "unknown install artifact target '{}'",
-                    package_target_id_text(artifact.target)));
-            }
-            auto duplicate = false;
-            for (const auto& selected : requirements.targets) {
-                if (selected == artifact.target) {
-                    duplicate = true;
-                    break;
-                }
-            }
-            if (! duplicate) requirements.targets.push(artifact.target.clone());
-            append_package(artifact.target.package.as_str());
-        }
-    }
-    return Ok(rstd::move(requirements));
-}
 
 auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest> preloaded = None())
     -> WorkspaceResult<WorkspaceCatalog> {

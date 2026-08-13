@@ -48,6 +48,16 @@ struct WorkspaceDependencyReference {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct DeclaredRuntimeDependency {
+    String                   name;
+    PackageSourceRequirement source;
+    Option<PathBuf>          declaration_root;
+};
+
+struct WorkspaceRuntimeDependencyReference {
+    String name;
+};
+
 struct WorkspacePkgConfigExternalDependencyReference {
     String               alias;
     DependencyVisibility visibility { DependencyVisibility::Private };
@@ -164,26 +174,14 @@ struct PackageManifest {
     UsageRequirements                                  usage;
     Vec<DeclaredDependency>                            dependencies;
     Vec<DeclaredDependency>                            dev_dependencies;
+    Vec<DeclaredRuntimeDependency>                     runtime_dependencies;
     Vec<WorkspaceDependencyReference>                  workspace_dependencies;
     Vec<WorkspaceDependencyReference>                  workspace_dev_dependencies;
+    Vec<WorkspaceRuntimeDependencyReference>           workspace_runtime_dependencies;
     Vec<PkgConfigExternalDependency>                   pkg_config_external_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
     Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
-};
-
-struct PackageInstallTarget {
-    PackageTargetId target;
-    String          artifact_name;
-};
-
-struct PackageInstallInput {
-    String                    name;
-    String                    version;
-    PathBuf                   root;
-    PathBuf                   manifest_path;
-    Option<PathBuf>           script;
-    Vec<PackageInstallTarget> binaries;
 };
 
 struct WorkspacePackageDefaults {

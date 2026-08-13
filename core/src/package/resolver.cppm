@@ -98,6 +98,8 @@ class Resolver {
     Vec<ResolvedPackage> packages_;
     CoordinateMap        coordinates_ { CoordinateMap::make() };
     StringSet            active_ { StringSet::make() };
+    Vec<String>          active_path_;
+    Vec<PackageDependencyKind> active_kinds_;
     usize                jobs_ { usize(1) };
 
 public:
@@ -140,15 +142,34 @@ public:
         return sources_.source_profile(source);
     }
 
-    auto resolve(usize source, ref<str> expected_name) -> PackageResult<String> {
+    auto resolve(usize source,
+                 ref<str> expected_name,
+                 PackageDependencyKind incoming = PackageDependencyKind::Normal)
+        -> PackageResult<String> {
         auto source_identity = String::make(sources_.source_identity(source));
         auto existing        = coordinates_.get(expected_name);
         if (existing.is_some() && (**existing).source_identity == source_identity) {
             if (active_.contains_key(expected_name)) {
-                return failure<String>(
-                    rstd::format("dependency cycle reaches package '{}' from source '{}'",
-                                 expected_name,
-                                 source_identity.as_str()));
+                auto cycle = PackageDependencyCycleError {};
+                auto start = usize {};
+                while (start < active_path_.len() && active_path_[start] != expected_name) ++start;
+                for (auto index = start; index < active_path_.len(); ++index) {
+                    cycle.packages.push(active_path_[index].clone());
+                    if (index + usize(1) < active_path_.len()) {
+                        cycle.edges.push(PackageDependencyCycleEdge {
+                            .package    = active_path_[index].clone(),
+                            .dependency = active_path_[index + usize(1)].clone(),
+                            .kind       = active_kinds_[index + usize(1)],
+                        });
+                    }
+                }
+                cycle.packages.push(String::make(expected_name));
+                cycle.edges.push(PackageDependencyCycleEdge {
+                    .package    = active_path_[active_path_.len() - usize(1)].clone(),
+                    .dependency = String::make(expected_name),
+                    .kind       = incoming,
+                });
+                return Err(PackageError::Cycle(rstd::move(cycle)));
             }
             return Ok(String::make(expected_name));
         }
@@ -179,9 +200,12 @@ public:
                                 .manifest        = candidate.manifest.clone(),
                             });
         active_.insert(loaded.package.name.clone(), empty {});
+        active_path_.push(loaded.package.name.clone());
+        active_kinds_.push(rstd::move(incoming));
 
         auto fetch_requests = Vec<PackageSourceFetchRequest>::with_capacity(
-            loaded.package.dependencies.len() + loaded.package.dev_dependencies.len());
+            loaded.package.dependencies.len() + loaded.package.dev_dependencies.len() +
+            loaded.package.runtime_dependencies.len());
         const auto append_fetch_requests =
             [&](const Vec<DeclaredDependency>& declarations) -> void {
             for (const auto& dependency : declarations) {
@@ -197,15 +221,26 @@ public:
         };
         append_fetch_requests(loaded.package.dependencies);
         append_fetch_requests(loaded.package.dev_dependencies);
+        for (const auto& dependency : loaded.package.runtime_dependencies) {
+            auto declaring_root = loaded.package.root.clone();
+            if (dependency.declaration_root.is_some()) {
+                declaring_root = dependency.declaration_root->clone();
+            }
+            fetch_requests.push(PackageSourceFetchRequest {
+                .source         = clone_dependency_source(dependency.source),
+                .declaring_root = rstd::move(declaring_root),
+            });
+        }
         auto fetched_sources =
             rstd_try(sources_.acquire_frontier(rstd::move(fetch_requests), jobs_));
         auto       source_offset = usize {};
         const auto resolve_dependencies =
-            [&](const Vec<DeclaredDependency>& declarations) -> PackageResult<Vec<ResolvedDependency>> {
+            [&](const Vec<DeclaredDependency>& declarations,
+                PackageDependencyKind kind) -> PackageResult<Vec<ResolvedDependency>> {
             auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
             for (const auto& dependency : declarations) {
                 auto dependency_name =
-                    resolve(fetched_sources[source_offset++], dependency.name.as_str());
+                    resolve(fetched_sources[source_offset++], dependency.name.as_str(), kind);
                 if (dependency_name.is_err()) {
                     return Err(rstd::move(dependency_name).unwrap_err());
                 }
@@ -221,10 +256,32 @@ public:
                 });
             return Ok(rstd::move(dependencies));
         };
-        auto dependencies     = rstd_try(resolve_dependencies(loaded.package.dependencies));
-        auto dev_dependencies = rstd_try(resolve_dependencies(loaded.package.dev_dependencies));
+        auto dependencies = rstd_try(resolve_dependencies(
+            loaded.package.dependencies, PackageDependencyKind::Normal));
+        auto dev_dependencies = rstd_try(resolve_dependencies(
+            loaded.package.dev_dependencies, PackageDependencyKind::Development));
+        auto runtime_dependencies = Vec<ResolvedRuntimeDependency>::with_capacity(
+            loaded.package.runtime_dependencies.len());
+        for (const auto& dependency : loaded.package.runtime_dependencies) {
+            auto dependency_name = resolve(fetched_sources[source_offset++],
+                                           dependency.name.as_str(),
+                                           PackageDependencyKind::Runtime);
+            if (dependency_name.is_err()) {
+                return Err(rstd::move(dependency_name).unwrap_err());
+            }
+            runtime_dependencies.push(ResolvedRuntimeDependency {
+                .name = rstd::move(dependency_name).unwrap(),
+            });
+        }
+        rstd::slice_::sort_unstable_by(
+            runtime_dependencies.as_mut_slice().as_mut_ref(),
+            [](const ResolvedRuntimeDependency& left, const ResolvedRuntimeDependency& right) {
+                return left.name < right.name;
+            });
 
         active_.remove(loaded.package.name.as_str());
+        active_path_.pop();
+        active_kinds_.pop();
         packages_.push(ResolvedPackage {
             .source_identity             = rstd::move(loaded.source_identity),
             .source                      = rstd::move(loaded.source),
@@ -232,6 +289,7 @@ public:
             .manifest                    = rstd::move(loaded.package),
             .dependencies                = rstd::move(dependencies),
             .dev_dependencies            = rstd::move(dev_dependencies),
+            .runtime_dependencies        = rstd::move(runtime_dependencies),
             .cmake_external_dependencies = {},
         });
         return Ok(String::make(expected_name));

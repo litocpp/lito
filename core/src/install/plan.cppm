@@ -9,11 +9,13 @@ import lito.configure_template;
 import lito.install.contract;
 import lito.install.materialize_error_contract;
 import lito.install.recipe_contract;
+import lito.install.package_contract;
 import lito.build.contract;
 import lito.dependency.contract;
 import lito.manifest.contract;
 import lito.package.identity;
 import lito.package.target_contract;
+import lito.install.source;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -240,12 +242,20 @@ auto materialize_install_plan(Vec<InstallRecipe> recipes,
             }));
         }
         sort_entries(entries);
+        auto provenance = install_source_provenance(recipe.source);
+        if (provenance.is_err()) {
+            return materialize_failure<InstallPlan>(rstd::format(
+                "package '{}' install source is invalid: {}",
+                recipe.owner.as_str(), rstd::move(provenance).unwrap_err()));
+        }
         plan.packages.push(InstallPackageRecord {
             .name    = rstd::move(recipe.owner),
             .version = rstd::move(recipe.version),
             .profile = String::make(profile),
             .target  = String::make(target),
             .entries = rstd::move(entries),
+            .provenance = rstd::move(provenance).unwrap(),
+            .runtime_dependencies = rstd::move(recipe.runtime_dependencies),
         });
     }
     return Ok(rstd::move(plan));

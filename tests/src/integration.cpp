@@ -17,6 +17,11 @@ using namespace lito_test;
 namespace
 {
 
+auto local_provenance(ref<rstd::path::Path> root) -> lito::InstallSourceProvenance {
+    return lito::InstallSourceProvenance::Local(
+        PathBuf::from(root), lito::path_source_identity(root));
+}
+
 auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
     auto opened = rstd::fs::read_dir(directory);
     if (opened.is_err()) return None();
@@ -164,12 +169,12 @@ TEST(Integration, InstallStoreTracksOwnershipAndProtectsConflicts) {
                 .profile  = String::make("release"_str),
                 .target   = String::make("x86_64-test"_str),
                 .binaries = rstd::move(binaries),
+                .provenance = local_provenance(source_directory.as_path()),
             });
             return lito::install_artifacts(lito::InstallStoreRequest {
-                .root       = lito::InstallRoot { .path = root_directory.clone() },
-                .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-                .packages   = rstd::move(packages),
-                .force      = force,
+                .root     = lito::InstallRoot { .path = root_directory.clone() },
+                .packages = rstd::move(packages),
+                .force    = force,
             });
         };
 
@@ -220,11 +225,11 @@ TEST(Integration, InstallStoreTracksOwnershipAndProtectsConflicts) {
         .profile  = String::make("release"_str),
         .target   = String::make("x86_64-test"_str),
         .binaries = rstd::move(binaries),
+        .provenance = local_provenance(source_directory.as_path()),
     });
     auto conflict = lito::install_artifacts(lito::InstallStoreRequest {
-        .root       = lito::InstallRoot { .path = root_directory.clone() },
-        .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-        .packages   = rstd::move(conflict_packages),
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(conflict_packages),
     });
     ASSERT_TRUE(conflict.is_err());
     auto conflict_error = rstd::move(conflict).unwrap_err();
@@ -251,12 +256,12 @@ TEST(Integration, InstallStoreTracksOwnershipAndProtectsConflicts) {
         .profile  = String::make("release"_str),
         .target   = String::make("x86_64-test"_str),
         .binaries = rstd::move(forced_binaries),
+        .provenance = local_provenance(source_directory.as_path()),
     });
     auto forced = lito::install_artifacts(lito::InstallStoreRequest {
-        .root       = lito::InstallRoot { .path = root_directory.clone() },
-        .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-        .packages   = rstd::move(forced_packages),
-        .force      = true,
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(forced_packages),
+        .force    = true,
     });
     ASSERT_TRUE(forced.is_ok());
     auto forced_contents = rstd::fs::read_to_string(unmanaged.as_path());
@@ -293,6 +298,7 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
             .profile  = String::make("release"_str),
             .target   = String::make("x86_64-test"_str),
             .binaries = rstd::move(binaries),
+            .provenance = local_provenance(source_directory.as_path()),
         };
     };
 
@@ -300,9 +306,8 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
     packages.push(package("fixture-one"_str, "one"_str, "first"_str));
     packages.push(package("fixture-two"_str, "two"_str, "second"_str));
     auto installed = lito::install_artifacts(lito::InstallStoreRequest {
-        .root       = lito::InstallRoot { .path = root_directory.clone() },
-        .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-        .packages   = rstd::move(packages),
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(packages),
     });
     ASSERT_TRUE(installed.is_ok());
     EXPECT_EQ(installed->packages.len(), usize(2));
@@ -327,7 +332,7 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
     auto right_source = right_directory.join(PathBuf::from("collision"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(left_source.as_path(), "left"_str.as_bytes()).is_ok());
     ASSERT_TRUE(rstd::fs::write(right_source.as_path(), "right"_str.as_bytes()).is_ok());
-    const auto collision_package = [](ref<str> name, PathBuf source) {
+    const auto collision_package = [&](ref<str> name, PathBuf source) {
         auto binaries = Vec<lito::InstallBinary>::make();
         binaries.push(lito::InstallBinary {
             .target =
@@ -344,16 +349,16 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
             .profile  = String::make("release"_str),
             .target   = String::make("x86_64-test"_str),
             .binaries = rstd::move(binaries),
+            .provenance = local_provenance(source_directory.as_path()),
         };
     };
     auto collisions = Vec<lito::InstallPackageRecord>::make();
     collisions.push(collision_package("fixture-left"_str, rstd::move(left_source)));
     collisions.push(collision_package("fixture-right"_str, rstd::move(right_source)));
     auto conflict = lito::install_artifacts(lito::InstallStoreRequest {
-        .root       = lito::InstallRoot { .path = root_directory.clone() },
-        .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-        .packages   = rstd::move(collisions),
-        .force      = true,
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(collisions),
+        .force    = true,
     });
     ASSERT_TRUE(conflict.is_err());
     auto conflict_error = rstd::move(conflict).unwrap_err();
@@ -380,6 +385,73 @@ TEST(Integration, InstallStoreCommitsMultiplePackagesTogether) {
                      installed->layout.bin_directory.join(PathBuf::from("collision"_str).as_path())
                          .as_path())
                      .unwrap());
+
+    EXPECT_TRUE(clear_output(root_directory.as_path()));
+    EXPECT_TRUE(clear_output(source_directory.as_path()));
+}
+
+TEST(Integration, InstallStoreRollsBackWhenForceWouldBreakRuntimeDependencies) {
+    auto root_directory   = output_root("install-store-runtime-rollback"_str);
+    auto source_directory = output_root("install-store-runtime-rollback-source"_str);
+    ASSERT_TRUE(clear_output(root_directory.as_path()));
+    ASSERT_TRUE(clear_output(source_directory.as_path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
+
+    const auto package = [&](ref<str> name, ref<str> destination, ref<str> contents) {
+        auto source = source_directory.join(PathBuf::from(name).as_path());
+        EXPECT_TRUE(rstd::fs::write(source.as_path(), contents.as_bytes()).is_ok());
+        auto entries = Vec<lito::InstallEntry>::make();
+        entries.push(lito::InstallEntry {
+            .origin = lito::InstallEntryOrigin::PackageFile(
+                String::make(name), PathBuf::from(name)),
+            .payload = lito::InstallEntryPayload::CopyFile(rstd::move(source)),
+            .relative_destination = PathBuf::from(destination),
+        });
+        return lito::InstallPackageRecord {
+            .name       = String::make(name),
+            .version    = String::make("1.0.0"_str),
+            .profile    = String::make("release"_str),
+            .target     = String::make("x86_64-test"_str),
+            .entries    = rstd::move(entries),
+            .provenance = local_provenance(source_directory.as_path()),
+        };
+    };
+
+    auto runtime = package("fixture-runtime"_str, "bin/shared"_str, "runtime"_str);
+    auto app     = package("fixture-app"_str, "bin/app"_str, "app"_str);
+    app.runtime_dependencies.push(lito::InstallRuntimeDependency {
+        .name            = String::make("fixture-runtime"_str),
+        .source_identity = lito::path_source_identity(source_directory.as_path()),
+    });
+    auto initial = Vec<lito::InstallPackageRecord>::make();
+    initial.push(rstd::move(runtime));
+    initial.push(rstd::move(app));
+    auto installed = lito::install_artifacts(lito::InstallStoreRequest {
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(initial),
+    });
+    ASSERT_TRUE(installed.is_ok());
+    auto metadata_before = rstd::fs::read_to_string(installed->layout.metadata.as_path());
+    ASSERT_TRUE(metadata_before.is_ok());
+
+    auto replacement =
+        package("fixture-replacement"_str, "bin/shared"_str, "replacement"_str);
+    auto replacing = Vec<lito::InstallPackageRecord>::make();
+    replacing.push(rstd::move(replacement));
+    auto rejected = lito::install_artifacts(lito::InstallStoreRequest {
+        .root     = lito::InstallRoot { .path = root_directory.clone() },
+        .packages = rstd::move(replacing),
+        .force    = true,
+    });
+    ASSERT_TRUE(rejected.is_err());
+    ASSERT_TRUE(rejected.unwrap_err().is_Transaction());
+    EXPECT_EQ(rstd::fs::read_to_string(installed->layout.metadata.as_path()).unwrap().as_str(),
+              metadata_before->as_str());
+    EXPECT_EQ(rstd::fs::read_to_string(
+                  installed->layout.bin_directory.join(PathBuf::from("shared"_str).as_path()).as_path())
+                  .unwrap()
+                  .as_str(),
+              "runtime"_str);
 
     EXPECT_TRUE(clear_output(root_directory.as_path()));
     EXPECT_TRUE(clear_output(source_directory.as_path()));
@@ -416,11 +488,11 @@ TEST(Integration, InstallStorePublishesNestedGenericEntries) {
             .profile  = String::make("release"_str),
             .target   = String::make("x86_64-test"_str),
             .entries  = rstd::move(entries),
+            .provenance = local_provenance(source_directory.as_path()),
         });
         return lito::install_artifacts(lito::InstallStoreRequest {
-            .root       = lito::InstallRoot { .path = root_directory.clone() },
-            .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-            .packages   = rstd::move(packages),
+            .root     = lito::InstallRoot { .path = root_directory.clone() },
+            .packages = rstd::move(packages),
         });
     };
     auto first = install();
@@ -447,7 +519,7 @@ TEST(Integration, InstallStorePublishesNestedGenericEntries) {
     }
     auto metadata = rstd::fs::read_to_string(second->layout.metadata.as_path());
     ASSERT_TRUE(metadata.is_ok());
-    EXPECT_TRUE(metadata->as_str().contains("\"version\": 2"_str));
+    EXPECT_TRUE(metadata->as_str().contains("\"version\": 3"_str));
     EXPECT_TRUE(metadata->as_str().contains("lib/runtime/nested/runtime.so"_str));
     EXPECT_TRUE(clear_output(root_directory.as_path()));
     EXPECT_TRUE(clear_output(source_directory.as_path()));
@@ -550,11 +622,11 @@ TEST(Integration, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
             .profile  = String::make("release"_str),
             .target   = String::make("x86_64-test"_str),
             .binaries = rstd::move(binaries),
+            .provenance = local_provenance(source_directory.as_path()),
         });
         return lito::InstallStoreRequest {
-            .root       = lito::InstallRoot { .path = root_directory.clone() },
-            .provenance = lito::InstallSourceProvenance::Local(source_directory.clone()),
-            .packages   = rstd::move(packages),
+            .root     = lito::InstallRoot { .path = root_directory.clone() },
+            .packages = rstd::move(packages),
         };
     };
 

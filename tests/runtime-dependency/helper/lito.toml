@@ -1,0 +1,10 @@
+[package]
+name = "helper"
+version.workspace = true
+
+[[bin]]
+name = "runtime-helper"
+sources = ["main.cpp"]
+
+[runtime-dependencies.leaf]
+workspace = true

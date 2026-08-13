@@ -44,6 +44,10 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/profile/nested"_str,
     "manifest/profile/type"_str,
     "manifest/public-usage-without-lib"_str,
+    "manifest/runtime/path-and-git"_str,
+    "manifest/runtime/unknown-field"_str,
+    "manifest/runtime/visibility"_str,
+    "manifest/runtime/workspace-and-path"_str,
     "manifest/source-root-descendant"_str,
     "manifest/target-link-stdlib-type"_str,
     "manifest/test-attach-unknown-key"_str,
@@ -103,12 +107,14 @@ inline constexpr ref<str> INVALID_GRAPHS[] = {
     "resolver/cycle/a"_str,
     "resolver/missing"_str,
     "resolver/name-mismatch/root"_str,
+    "resolver/runtime-cycle"_str,
     "resolver/same-name/root"_str,
     "workspace/default-not-member"_str,
     "workspace/duplicate-name"_str,
     "workspace/duplicate"_str,
     "workspace/inherited-dependency-missing"_str,
     "workspace/inherited-dependency-outside"_str,
+    "workspace/inherited-runtime-dependency-missing"_str,
     "workspace/inherited-version-missing"_str,
     "workspace/member-profile"_str,
     "workspace/missing-member"_str,
@@ -381,6 +387,24 @@ auto write_executable(ref<rstd::path::Path> path) -> bool {
 #else
     return true;
 #endif
+}
+
+auto install_script_input(const lito::PackageManifest& manifest) -> lito::PackageInstallInput {
+    auto root = manifest.root.clone();
+    return lito::PackageInstallInput {
+        .name          = manifest.name.clone(),
+        .version       = manifest.version.value->clone(),
+        .root          = manifest.root.clone(),
+        .manifest_path = manifest.manifest_path.clone(),
+        .script        = Some(manifest.install_script->clone()),
+        .source        = lito::ResolvedPackageSource {
+            .identity       = lito::path_source_identity(root.as_path()),
+            .kind           = lito::PackageSourceKind::Path,
+            .root_directory = rstd::move(root),
+            .path           = PathBuf::from("."_str),
+        },
+        .direct = true,
+    };
 }
 
 auto versioned_fixture(ref<str>                       alias,
@@ -954,6 +978,55 @@ TEST(Contracts, InstallPurposeSelectsWorkspaceBinaries) {
     ASSERT_EQ(all->selected_root_names.len(), usize(3));
 }
 
+TEST(Contracts, RuntimeDependenciesAreInstallOnlyAndDependencyFirst) {
+    auto explicit_manifest = lito::load_package_manifest(
+        root("manifest/runtime/explicit"_str).as_path());
+    ASSERT_TRUE(explicit_manifest.is_ok());
+    ASSERT_EQ(explicit_manifest->runtime_dependencies.len(), usize(2));
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(),
+              "git-helper"_str);
+    ASSERT_TRUE(explicit_manifest->runtime_dependencies[usize {}].source.is_Git());
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}]
+                  .source.as_Git().reference.kind,
+              lito::GitReferenceKind::Commit);
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(),
+              "path-helper"_str);
+    EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.is_Path());
+
+    auto directory = root("runtime-dependency"_str);
+    auto build = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = directory.clone(),
+            .packages = strings("fixture-runtime-app"_str),
+        },
+        lito::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(build.is_ok());
+    ASSERT_EQ(build->graph.packages.len(), usize(3));
+    ASSERT_EQ(build->selected_package_names.len(), usize(1));
+    EXPECT_EQ(build->selected_package_names[usize {}].as_str(), "fixture-runtime-app"_str);
+
+    auto install = lito::resolve_package_selection(
+        lito::PackageSelection {
+            .root     = rstd::move(directory),
+            .packages = strings("fixture-runtime-app"_str),
+        },
+        lito::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(install.is_ok());
+    ASSERT_EQ(install->install_package_names.len(), usize(3));
+    EXPECT_EQ(install->install_package_names[usize {}].as_str(), "leaf"_str);
+    EXPECT_EQ(install->install_package_names[usize(1)].as_str(), "helper"_str);
+    EXPECT_EQ(install->install_package_names[usize(2)].as_str(), "fixture-runtime-app"_str);
+    ASSERT_EQ(install->selected_targets.len(), usize(3));
+
+    auto packages = lito::resolve_install_packages(*install, pkg_config_target());
+    ASSERT_TRUE(packages.is_ok());
+    ASSERT_EQ(packages->len(), usize(3));
+    EXPECT_FALSE((*packages)[usize {}].direct);
+    EXPECT_FALSE((*packages)[usize(1)].direct);
+    EXPECT_TRUE((*packages)[usize(2)].direct);
+    ASSERT_EQ((*packages)[usize(2)].runtime_dependencies.len(), usize(2));
+}
+
 TEST(Contracts, InstallOnlyManifestOwnsItsConventionalScript) {
     auto directory = root("manifest/install-only"_str);
     auto loaded    = lito::load_package_manifest(directory.as_path());
@@ -976,13 +1049,7 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
     auto recipe = lito::execute_install_script(
-        lito::PackageInstallInput {
-            .name          = manifest->name.clone(),
-            .version       = manifest->version.value->clone(),
-            .root          = manifest->root.clone(),
-            .manifest_path = manifest->manifest_path.clone(),
-            .script        = Some(manifest->install_script->clone()),
-        },
+        install_script_input(*manifest),
         lito::InstallScriptContext {
             .profile     = String::make("release"_str),
             .target      = String::make("x86_64-test-linux"_str),
@@ -991,7 +1058,8 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     ASSERT_TRUE(recipe.is_ok());
     EXPECT_EQ(recipe->owner.as_str(), "fixture-install-script"_str);
     ASSERT_EQ(recipe->artifacts.len(), usize(1));
-    EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(), "fixture-producer"_str);
+    EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(),
+              "fixture-install-script"_str);
     EXPECT_EQ(recipe->artifacts[usize {}].destination.as_path(),
               PathBuf::from("bin/producer"_str).as_path());
     ASSERT_EQ(recipe->external_assets.len(), usize(1));
@@ -1003,6 +1071,7 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     EXPECT_EQ((**fragment).string(), "fixture-install-script 2.4.6\n"_str);
 
     constexpr ref<str> binding_errors[] = {
+        "install-script/cross-package"_str,
         "install-script/duplicate"_str,
         "install-script/unknown-field"_str,
         "install-script/wrong-type"_str,
@@ -1011,13 +1080,7 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
         auto invalid = lito::load_package_manifest(root(fixture).as_path());
         ASSERT_TRUE(invalid.is_ok());
         auto executed = lito::execute_install_script(
-            lito::PackageInstallInput {
-                .name          = invalid->name.clone(),
-                .version       = invalid->version.value->clone(),
-                .root          = invalid->root.clone(),
-                .manifest_path = invalid->manifest_path.clone(),
-                .script        = Some(invalid->install_script->clone()),
-            },
+            install_script_input(*invalid),
             lito::InstallScriptContext {
                 .profile     = String::make("release"_str),
                 .target      = String::make("x86_64-test-linux"_str),
@@ -1030,13 +1093,7 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     auto missing = lito::load_package_manifest(root("install-script/missing"_str).as_path());
     ASSERT_TRUE(missing.is_ok());
     auto unregistered = lito::execute_install_script(
-        lito::PackageInstallInput {
-            .name          = missing->name.clone(),
-            .version       = missing->version.value->clone(),
-            .root          = missing->root.clone(),
-            .manifest_path = missing->manifest_path.clone(),
-            .script        = Some(missing->install_script->clone()),
-        },
+        install_script_input(*missing),
         lito::InstallScriptContext {
             .profile     = String::make("release"_str),
             .target      = String::make("x86_64-test-linux"_str),
@@ -1044,36 +1101,6 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
         });
     ASSERT_TRUE(unregistered.is_err());
     EXPECT_TRUE(unregistered.unwrap_err().is_Message());
-}
-
-TEST(Contracts, InstallBuildRequirementsValidateExactArtifactTargets) {
-    auto source = lito::resolve_install_source(
-        lito::InstallSourceRequirement::LocalProject(project_root()));
-    ASSERT_TRUE(source.is_ok());
-    auto recipe = lito::InstallRecipe {
-        .owner   = String::make("fixture-multi-target"_str),
-        .version = String::make("1.0.0"_str),
-        .root    = project_root(),
-    };
-    auto target = lito::PackageTargetId {
-        .package = String::make("fixture-multi-target"_str),
-        .kind    = lito::PackageTargetKind::Binary,
-        .name    = String::make("tool"_str),
-    };
-    recipe.artifacts.push(lito::InstallArtifactRecipe {
-        .target      = target.clone(),
-        .destination = PathBuf::from("bin/tool"_str),
-    });
-    recipe.artifacts.push(lito::InstallArtifactRecipe {
-        .target      = rstd::move(target),
-        .destination = PathBuf::from("bin/tool-copy"_str),
-    });
-    auto recipes = Vec<lito::InstallRecipe>::make();
-    recipes.push(rstd::move(recipe));
-    auto duplicate = source->project.catalog.install_build_requirements(
-        recipes, pkg_config_target());
-    ASSERT_TRUE(duplicate.is_err());
-    EXPECT_TRUE(rstd::format("{}", duplicate.unwrap_err()).as_str().contains("repeats"_str));
 }
 
 TEST(Contracts, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
@@ -2539,18 +2566,21 @@ TEST(Contracts, OnlyCurrentLockVersionIsAcceptedByLockStore) {
     ASSERT_TRUE(old_version.is_err());
     auto version_error = rstd::move(old_version).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 5"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 6"_str));
 }
 
-TEST(Contracts, VersionFourLockRequiresExplicitUnlockedMigration) {
+TEST(Contracts, OldLockRequiresUpdateMode) {
     auto directory = root("lock/v4-migration"_str);
     auto migration = lito::load_lock_session(directory.as_path(), false);
-    ASSERT_TRUE(migration.is_ok());
+    ASSERT_TRUE(migration.is_err());
+    auto update = lito::load_lock_session(
+        directory.as_path(), lito::LockConfig {}, false, lito::GitResolutionMode::Refresh);
+    ASSERT_TRUE(update.is_ok());
     auto locked = lito::load_lock_session(directory.as_path(), true);
     ASSERT_TRUE(locked.is_err());
     auto error = rstd::move(locked).unwrap_err();
     ASSERT_TRUE(error.is_Schema());
-    EXPECT_TRUE(error.as_Schema().message.as_str().contains("migrating"_str));
+    EXPECT_TRUE(error.as_Schema().message.as_str().contains("integer 6"_str));
 }
 
 TEST(Contracts, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {

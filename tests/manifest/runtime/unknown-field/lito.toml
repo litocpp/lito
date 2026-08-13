@@ -1,0 +1,7 @@
+[package]
+name = "fixture-runtime-unknown-field"
+version = "0.1.0"
+
+[runtime-dependencies.helper]
+path = "../../install-only"
+unknown = true

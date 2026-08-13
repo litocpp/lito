@@ -120,7 +120,9 @@ namespace lito
 
 auto build_with_environment_impl(const BuildRequest&               request,
                                  const ResolvedProcessEnvironment& process_environment,
-                                 Option<WorkspaceCatalog> catalog) -> BuildResult<BuildSummary> {
+                                 Option<WorkspaceCatalog>          catalog,
+                                 Option<PreparedBuildProject> prepared = None())
+    -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>("build directory is required"_str);
     }
@@ -144,24 +146,29 @@ auto build_with_environment_impl(const BuildRequest&               request,
         .context = rstd::addressof(preparation_context),
         .notify  = observe_preparation,
     });
-    auto prepared             = prepare_build_project(request.selection,
-                                                      request.configuration,
-                                                      profile,
-                                                      request.sources,
-                                                      request.lock,
-                                                      request.pkg_config,
-                                                      request.cmake,
-                                                      tool_resolver,
-                                                      process_environment,
-                                                      request.locked,
-                                                      request.purpose,
-                                                      execution->jobs,
-                                                      preparation_observer,
-                                                      rstd::move(catalog));
-    if (prepared.is_err()) {
-        return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
-    }
-    auto  project          = rstd::move(prepared).unwrap();
+    auto resolved_project = [&]() -> BuildResult<PreparedBuildProject> {
+        if (prepared.is_some()) return Ok(rstd::move(prepared).unwrap());
+        auto project = prepare_build_project(request.selection,
+                                             request.configuration,
+                                             profile,
+                                             request.sources,
+                                             request.lock,
+                                             request.pkg_config,
+                                             request.cmake,
+                                             tool_resolver,
+                                             process_environment,
+                                             request.locked,
+                                             request.purpose,
+                                             execution->jobs,
+                                             preparation_observer,
+                                             rstd::move(catalog));
+        if (project.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
+        }
+        return Ok(rstd::move(project).unwrap());
+    }();
+    if (resolved_project.is_err()) return Err(rstd::move(resolved_project).unwrap_err());
+    auto  project          = rstd::move(resolved_project).unwrap();
     auto& toolchain        = project.toolchain;
     auto& metadata         = project.metadata;
     auto  created_profiler = ScanProfiler::create();
@@ -557,7 +564,7 @@ export namespace lito
 auto build_with_environment(const BuildRequest&               request,
                             const ResolvedProcessEnvironment& process_environment)
     -> BuildResult<BuildSummary> {
-    return build_with_environment_impl(request, process_environment, None());
+    return build_with_environment_impl(request, process_environment, None(), None());
 }
 
 auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
@@ -567,7 +574,16 @@ auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
     if (environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
-    return build_with_environment_impl(request, *environment, Some(rstd::move(project.catalog)));
+    return build_with_environment_impl(
+        request, *environment, Some(rstd::move(project.catalog)), None());
+}
+
+auto build_prepared_project(const BuildRequest&               request,
+                            const ResolvedProcessEnvironment& environment,
+                            PreparedBuildProject              project)
+    -> BuildResult<BuildSummary> {
+    return build_with_environment_impl(
+        request, environment, None(), Some(rstd::move(project)));
 }
 
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
@@ -575,7 +591,7 @@ auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
     if (environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
-    return build_with_environment_impl(request, *environment, None());
+    return build_with_environment_impl(request, *environment, None(), None());
 }
 
 } // namespace lito

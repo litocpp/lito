@@ -128,6 +128,29 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
     manifest.workspace_dependencies.clear();
     manifest.workspace_dev_dependencies.clear();
 
+    for (const auto& reference : manifest.workspace_runtime_dependencies) {
+        const WorkspaceDependencyDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.dependencies) {
+            if (candidate.name == reference.name) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' inherits runtime dependency '{}' but "
+                "workspace.dependencies has no matching definition",
+                manifest.name.as_str(),
+                reference.name.as_str()));
+        }
+        manifest.runtime_dependencies.push(DeclaredRuntimeDependency {
+            .name             = reference.name.clone(),
+            .source           = clone_package_source(definition->source),
+            .declaration_root = Some(workspace.root.clone()),
+        });
+    }
+    manifest.workspace_runtime_dependencies.clear();
+
     for (const auto& reference : manifest.workspace_pkg_config_external_dependencies) {
         const WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;
         for (const auto& candidate : workspace.pkg_config_external_dependencies) {

@@ -1,0 +1,7 @@
+[package]
+name = "leaf"
+version.workspace = true
+
+[[bin]]
+name = "runtime-leaf"
+sources = ["main.cpp"]

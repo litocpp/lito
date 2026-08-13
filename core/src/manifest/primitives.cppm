@@ -136,7 +136,8 @@ auto package_root_key(ref<str> key) -> bool {
     return key == "package"_str || key == "lib"_str || key == "bin"_str || key == "test"_str ||
            key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
            key == "dependencies"_str || key == "dev-dependencies"_str ||
-           key == "external-dependencies"_str || key == "profile"_str;
+           key == "runtime-dependencies"_str || key == "external-dependencies"_str ||
+           key == "profile"_str;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {

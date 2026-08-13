@@ -10,6 +10,8 @@ import lito.build.contract;
 import lito.build.error_contract;
 import lito.config.contract;
 import lito.package.identity;
+import lito.source.contract;
+import lito.install.package_contract;
 import lito.workspace;
 import lito.install.script_error_contract;
 import lito.install.materialize_error_contract;
@@ -79,15 +81,6 @@ class InstallSourceRequirement {
     RSTD_ENUM(InstallSourceRequirement, (LocalProject, (PathBuf requested_root;)))
 };
 
-class InstallSourceProvenance {
-    RSTD_ENUM(InstallSourceProvenance, (Local, (PathBuf root;)))
-
-public:
-    auto clone() const -> InstallSourceProvenance {
-        return InstallSourceProvenance::Local(as_Local().root.clone());
-    }
-};
-
 struct ResolvedInstallSource {
     ResolvedProjectEntry    project;
     InstallSourceProvenance provenance;
@@ -152,11 +145,12 @@ struct InstallPackageRecord {
     String             target;
     Vec<InstallBinary> binaries;
     Vec<InstallEntry>  entries;
+    InstallSourceProvenance         provenance;
+    Vec<InstallRuntimeDependency>   runtime_dependencies;
 };
 
 struct InstallStoreRequest {
     InstallRoot               root;
-    InstallSourceProvenance   provenance;
     Vec<InstallPackageRecord> packages;
     bool                      force { false };
 };
@@ -314,7 +308,7 @@ struct Impl<error::Error, lito::InstallStoreError> : ImplBase<lito::InstallStore
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Cause()) {
-            return Some(dyn<error::Error>::from_ref(error.as_Cause().source));
+            return as<error::Error>(error.as_Cause().source).source();
         }
         return Some(dyn<error::Error>::from_ref(*error.as_Transaction().source));
     }

@@ -17,6 +17,10 @@ struct ResolvedDependency {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct ResolvedRuntimeDependency {
+    String name;
+};
+
 struct ResolvedPackage {
     String                                  source_identity;
     ResolvedPackageSource                   source;
@@ -24,6 +28,7 @@ struct ResolvedPackage {
     PackageManifest                         manifest;
     Vec<ResolvedDependency>                 dependencies;
     Vec<ResolvedDependency>                 dev_dependencies;
+    Vec<ResolvedRuntimeDependency>          runtime_dependencies;
     Vec<PreparedCMakeDependencyRequirement> cmake_external_dependencies;
 };
 
@@ -48,6 +53,7 @@ struct ResolvedPackageGraph {
 struct ResolvedPackageSelection {
     ResolvedPackageGraph graph;
     Vec<String>          selected_root_names;
+    Vec<String>          install_package_names;
     Vec<String>          selected_package_names;
     Vec<PackageTargetId> selected_targets;
 };

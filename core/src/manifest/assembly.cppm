@@ -180,11 +180,16 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
     auto dependencies     = parse_dependencies(member(document, "dependencies"_str));
     auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);
+    auto runtime_dependencies =
+        parse_runtime_dependencies(member(document, "runtime-dependencies"_str));
     auto external = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
     if (dev_dependencies.is_err()) return Err(rstd::move(dev_dependencies).unwrap_err());
+    if (runtime_dependencies.is_err()) {
+        return Err(rstd::move(runtime_dependencies).unwrap_err());
+    }
     if (external.is_err()) return Err(rstd::move(external).unwrap_err());
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_usage = rstd::move(usage).unwrap();
@@ -195,6 +200,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     }
     auto parsed_dependencies     = rstd::move(dependencies).unwrap();
     auto parsed_dev_dependencies = rstd::move(dev_dependencies).unwrap();
+    auto parsed_runtime_dependencies = rstd::move(runtime_dependencies).unwrap();
     for (const auto& dependency : parsed_dev_dependencies.explicit_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
             return failure<ManifestDocument>(rstd::format(
@@ -228,9 +234,13 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .usage                  = rstd::move(parsed_usage),
             .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
             .dev_dependencies       = rstd::move(parsed_dev_dependencies.explicit_dependencies),
+            .runtime_dependencies =
+                rstd::move(parsed_runtime_dependencies.explicit_dependencies),
             .workspace_dependencies = rstd::move(parsed_dependencies.workspace_dependencies),
             .workspace_dev_dependencies =
                 rstd::move(parsed_dev_dependencies.workspace_dependencies),
+            .workspace_runtime_dependencies =
+                rstd::move(parsed_runtime_dependencies.workspace_dependencies),
             .pkg_config_external_dependencies = rstd::move(external_dependencies.pkg_config),
             .workspace_pkg_config_external_dependencies =
                 rstd::move(external_dependencies.workspace_pkg_config),

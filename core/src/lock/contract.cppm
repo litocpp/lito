@@ -42,6 +42,7 @@ struct LockedPackage {
     LockedPackageSource source;
     PathBuf             manifest;
     Vec<String>         dependencies;
+    Vec<String>         runtime_dependencies;
 };
 
 struct LockedExternal {

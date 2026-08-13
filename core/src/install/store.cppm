@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.error;
 import lito.install.contract;
+import lito.install.package_contract;
 import lito.install.source;
 import lito.package.identity;
 import lito.manifest;
@@ -20,7 +21,7 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-inline constexpr auto INSTALL_DOCUMENT_VERSION = u64(2);
+inline constexpr auto INSTALL_DOCUMENT_VERSION = u64(3);
 
 struct StoredEntry {
     PathBuf destination;
@@ -35,6 +36,7 @@ struct StoredPackage {
     String                  profile;
     String                  target;
     Vec<StoredEntry>        entries;
+    Vec<InstallRuntimeDependency> runtime_dependencies;
 };
 
 struct InstalledDocument {
@@ -176,6 +178,16 @@ auto document_json(const InstalledDocument& document) -> InstallStoreResult<Json
         item.insert(String::make("profile"_str), json_string(package.profile.as_str()));
         item.insert(String::make("source"_str),
                     rstd_try(serialize_install_source_provenance(package.provenance)));
+        auto runtime_dependencies = JsonArray::make();
+        for (const auto& dependency : package.runtime_dependencies) {
+            auto runtime = JsonMap::make();
+            runtime.insert(String::make("name"_str), json_string(dependency.name.as_str()));
+            runtime.insert(String::make("source"_str),
+                           json_string(dependency.source_identity.as_str()));
+            runtime_dependencies.push(Json::Object(rstd::move(runtime)));
+        }
+        item.insert(String::make("runtime-dependencies"_str),
+                    Json::Array(rstd::move(runtime_dependencies)));
         item.insert(String::make("target"_str), json_string(package.target.as_str()));
         item.insert(String::make("version"_str), json_string(package.version.as_str()));
         packages.push(Json::Object(rstd::move(item)));
@@ -228,6 +240,26 @@ auto parse_document(const Json& value) -> InstallStoreResult<InstalledDocument> 
         auto name = rstd_try(required_string(item, "name"_str, "installed package"_str));
         auto source = rstd_try(required_member(item, "source"_str, "installed package"_str));
         auto provenance = rstd_try(parse_install_source_provenance(*source));
+        auto runtime_value = rstd_try(
+            required_member(item, "runtime-dependencies"_str, "installed package"_str));
+        auto runtime_array = runtime_value->as_array();
+        if (runtime_array.is_none()) {
+            return store_failure<InstalledDocument>(
+                "installed package.runtime-dependencies must be an array"_str);
+        }
+        auto runtime_dependencies = Vec<InstallRuntimeDependency>::make();
+        for (const auto& runtime : **runtime_array) {
+            auto dependency = InstallRuntimeDependency {
+                .name = rstd_try(required_string(runtime, "name"_str, "installed runtime dependency"_str)),
+                .source_identity = rstd_try(
+                    required_string(runtime, "source"_str, "installed runtime dependency"_str)),
+            };
+            if (! valid_package_name(dependency.name.as_str())) {
+                return store_failure<InstalledDocument>(
+                    "installed runtime dependency name is invalid"_str);
+            }
+            runtime_dependencies.push(rstd::move(dependency));
+        }
         auto entries_value =
             rstd_try(required_member(item, "entries"_str, "installed package"_str));
         auto entries_array = entries_value->as_array();
@@ -265,9 +297,47 @@ auto parse_document(const Json& value) -> InstallStoreResult<InstalledDocument> 
             .profile         = rstd_try(required_string(item, "profile"_str, "installed package"_str)),
             .target          = rstd_try(required_string(item, "target"_str, "installed package"_str)),
             .entries         = rstd::move(entries),
+            .runtime_dependencies = rstd::move(runtime_dependencies),
         });
     }
     return Ok(rstd::move(document));
+}
+
+auto validate_runtime_dependencies(const InstalledDocument& document)
+    -> InstallStoreResult<empty> {
+    for (const auto& package : document.packages) {
+        auto names = rstd::collections::BTreeMap<String, empty>::make();
+        for (const auto& dependency : package.runtime_dependencies) {
+            if (names.contains_key(dependency.name.as_str())) {
+                return store_failure<empty>(rstd::format(
+                    "installed package '{}' repeats runtime dependency '{}'",
+                    package.name.as_str(), dependency.name.as_str()));
+            }
+            names.insert(dependency.name.clone(), empty {});
+            const StoredPackage* target = nullptr;
+            for (const auto& candidate : document.packages) {
+                if (candidate.name == dependency.name.as_str()) {
+                    target = rstd::addressof(candidate);
+                    break;
+                }
+            }
+            if (target == nullptr) {
+                return store_failure<empty>(rstd::format(
+                    "installed package '{}' requires missing runtime package '{}'",
+                    package.name.as_str(), dependency.name.as_str()));
+            }
+            if (target->source_identity != dependency.source_identity.as_str()) {
+                return store_failure<empty>(rstd::format(
+                    "installed package '{}' requires runtime package '{}' from source '{}', "
+                    "but source '{}' is installed",
+                    package.name.as_str(),
+                    dependency.name.as_str(),
+                    dependency.source_identity.as_str(),
+                    target->source_identity.as_str()));
+            }
+        }
+    }
+    return Ok(empty {});
 }
 
 auto load_document(ref<rstd::path::Path> path) -> InstallStoreResult<InstalledDocument> {
@@ -287,7 +357,9 @@ auto load_document(ref<rstd::path::Path> path) -> InstallStoreResult<InstalledDo
         return Err(InstallStoreError::Cause(
             InstallStoreCause::Json(PathBuf::from(path), rstd::move(parsed).unwrap_err())));
     }
-    return parse_document(*parsed);
+    auto document = rstd_try(parse_document(*parsed));
+    rstd_try(validate_runtime_dependencies(document));
+    return Ok(rstd::move(document));
 }
 
 auto write_document(ref<rstd::path::Path> path, const InstalledDocument& document)
@@ -503,10 +575,10 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
     if (request.packages.is_empty()) {
         return store_failure<InstallStoreSummary>("install request has no packages"_str);
     }
-    auto source_identity = rstd_try(install_source_identity(request.provenance));
     auto requested_destinations = rstd::collections::BTreeMap<String, String>::make();
     for (usize package_index {}; package_index < request.packages.len(); ++package_index) {
         auto& package = request.packages[package_index];
+        rstd_try(install_source_identity(package.provenance));
         if (! valid_package_name(package.name.as_str()) || package.version.is_empty() ||
             package.profile.is_empty() || package.target.is_empty()) {
             return store_failure<InstallStoreSummary>("install package identity is invalid"_str);
@@ -536,6 +608,33 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
                     entry.relative_destination.as_path(), **prior, package.name.as_str()));
             }
             requested_destinations.insert(rstd::move(key), package.name.clone());
+        }
+    }
+    auto requested_packages = rstd::collections::BTreeMap<String, String>::make();
+    for (const auto& package : request.packages) {
+        requested_packages.insert(package.name.clone(),
+                                  rstd_try(install_source_identity(package.provenance)));
+    }
+    for (const auto& package : request.packages) {
+        auto runtime_names = rstd::collections::BTreeMap<String, empty>::make();
+        for (const auto& dependency : package.runtime_dependencies) {
+            if (runtime_names.contains_key(dependency.name.as_str())) {
+                return store_failure<InstallStoreSummary>(rstd::format(
+                    "install package '{}' repeats runtime dependency '{}'",
+                    package.name.as_str(), dependency.name.as_str()));
+            }
+            runtime_names.insert(dependency.name.clone(), empty {});
+            auto target = requested_packages.get(dependency.name.as_str());
+            if (target.is_none()) {
+                return store_failure<InstallStoreSummary>(rstd::format(
+                    "install package '{}' requires runtime package '{}' in the same transaction",
+                    package.name.as_str(), dependency.name.as_str()));
+            }
+            if (**target != dependency.source_identity.as_str()) {
+                return store_failure<InstallStoreSummary>(rstd::format(
+                    "install package '{}' runtime dependency '{}' has source identity mismatch",
+                    package.name.as_str(), dependency.name.as_str()));
+            }
         }
     }
 
@@ -620,6 +719,7 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
                     entry.destination.as_path()));
             }
             auto owner = entry_owner(document, entry.relative_destination.as_path());
+            auto source_identity = rstd_try(install_source_identity(package.provenance));
             if (owner.is_some() &&
                 ! package_owner(document.packages[*owner],
                                 package.name.as_str(), source_identity.as_str()) &&
@@ -665,6 +765,7 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
     for (const auto& stored : document.packages) {
         const InstallPackageRecord* replacement = nullptr;
         for (const auto& package : request.packages) {
+            auto source_identity = rstd_try(install_source_identity(package.provenance));
             if (package_owner(stored, package.name.as_str(), source_identity.as_str())) {
                 replacement = rstd::addressof(package);
                 break;
@@ -760,6 +861,7 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
     for (usize package {}; package < document.packages.len();) {
         auto replaced = false;
         for (const auto& incoming : request.packages) {
+            auto source_identity = rstd_try(install_source_identity(incoming.provenance));
             if (package_owner(document.packages[package],
                               incoming.name.as_str(), source_identity.as_str())) {
                 replaced = true;
@@ -812,15 +914,27 @@ auto install_artifacts(InstallStoreRequest request) -> InstallStoreResult<Instal
             installed_entries.push(rstd::move(entry));
         }
         installed_packages.push(package.name.clone());
+        auto source_identity = rstd_try(install_source_identity(package.provenance));
         document.packages.push(StoredPackage {
             .name            = rstd::move(package.name),
             .version         = rstd::move(package.version),
             .source_identity = source_identity.clone(),
-            .provenance      = request.provenance.clone(),
+            .provenance      = rstd::move(package.provenance),
             .profile         = rstd::move(package.profile),
             .target          = rstd::move(package.target),
             .entries         = rstd::move(stored_entries),
+            .runtime_dependencies = rstd::move(package.runtime_dependencies),
         });
+    }
+    auto runtime_valid = validate_runtime_dependencies(document);
+    if (runtime_valid.is_err()) {
+        auto result = transaction_failure("install metadata validation"_str,
+                                          rstd::move(runtime_valid).unwrap_err(),
+                                          published,
+                                          backups);
+        (void)rstd::fs::remove_dir_all(transaction.as_path());
+        clean_created_directories(created_directories);
+        return Err(rstd::move(result));
     }
     auto written = write_document(layout.metadata.as_path(), document);
     if (written.is_err()) {

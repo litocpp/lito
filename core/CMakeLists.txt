@@ -66,10 +66,12 @@ target_sources(
          src/config/error_contract.cppm
          src/config/mod.cppm
          src/install/contract.cppm
+         src/install/package_contract.cppm
          src/install/recipe_contract.cppm
          src/install/script_error_contract.cppm
          src/install/materialize_error_contract.cppm
          src/install/script.cppm
+         src/install/selection.cppm
          src/install/plan.cppm
          src/install/source.cppm
          src/install/store.cppm
@@ -87,6 +89,7 @@ target_sources(
          src/package/plan.cppm
          src/package/identity.cppm
          src/package/graph_contract.cppm
+         src/package/runtime.cppm
          src/package/target_contract.cppm
          src/package/error_contract.cppm
          src/package/adapter.cppm

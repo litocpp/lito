@@ -92,6 +92,14 @@ auto workspace_dev_dependency_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str;
 }
 
+auto runtime_dependency_key(ref<str> key) -> bool {
+    return dev_dependency_key(key);
+}
+
+auto workspace_runtime_dependency_reference_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
+}
+
 auto external_dependencies_key(ref<str> key) -> bool {
     return key == "cmake"_str || key == "pkg-config"_str;
 }

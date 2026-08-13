@@ -250,13 +250,62 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     }
     rstd::slice_::sort_unstable(selected_roots.as_mut_slice().as_mut_ref());
 
-    auto selected_packages = selected_closure(graph, selected_roots, selected_targets, target);
+    auto install_packages = Vec<String>::make();
+    if (purpose == PackageSelectionPurpose::Install) {
+        auto runtime = resolve_runtime_package_closure(graph, selected_roots, target);
+        if (runtime.is_err()) {
+            return Err(rstd::into<WorkspaceResolutionError>(rstd::move(runtime).unwrap_err()));
+        }
+        install_packages = rstd::move(runtime).unwrap().packages;
+        auto existing_targets = StringSet::make();
+        for (const auto& selected_target : selected_targets) {
+            existing_targets.insert(package_target_id_text(selected_target), empty {});
+        }
+        for (const auto& name : install_packages) {
+            auto already_selected = false;
+            for (const auto& selected : selected_roots) {
+                if (selected == name.as_str()) {
+                    already_selected = true;
+                    break;
+                }
+            }
+            if (already_selected) continue;
+            const PackageManifest* manifest = nullptr;
+            for (const auto& package : graph.packages) {
+                if (package.manifest.name == name.as_str()) {
+                    manifest = rstd::addressof(package.manifest);
+                    break;
+                }
+            }
+            auto appended = Vec<PackageTargetId>::make();
+            if (manifest == nullptr ||
+                ! append_selected_targets(appended,
+                                          *manifest,
+                                          ProjectRootRole::PrimaryPackage,
+                                          purpose)) {
+                return failure<ResolvedPackageSelection>(rstd::format(
+                    "runtime package '{}' has no install target", name.as_str()));
+            }
+            for (auto& selected_target : appended) {
+                auto key = package_target_id_text(selected_target);
+                if (existing_targets.contains_key(key.as_str())) continue;
+                existing_targets.insert(rstd::move(key), empty {});
+                selected_targets.push(rstd::move(selected_target));
+            }
+        }
+    }
+
+    const auto& closure_roots = purpose == PackageSelectionPurpose::Install
+                                    ? install_packages
+                                    : selected_roots;
+    auto selected_packages = selected_closure(graph, closure_roots, selected_targets, target);
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
     }
     return Ok(ResolvedPackageSelection {
         .graph                  = rstd::move(graph),
         .selected_root_names    = rstd::move(selected_roots),
+        .install_package_names  = rstd::move(install_packages),
         .selected_package_names = rstd::move(selected_packages).unwrap(),
         .selected_targets       = rstd::move(selected_targets),
     });

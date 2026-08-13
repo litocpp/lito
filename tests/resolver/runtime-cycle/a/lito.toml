@@ -1,0 +1,10 @@
+[package]
+name = "runtime-cycle-a"
+version.workspace = true
+
+[[bin]]
+name = "runtime-cycle-a"
+sources = ["main.cpp"]
+
+[runtime-dependencies.runtime-cycle-b]
+workspace = true

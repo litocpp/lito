@@ -9,9 +9,31 @@ import lito.source.error_contract;
 import lito.dependency.error_contract;
 import lito.system.error_contract;
 import lito.cpp;
+import lito.source.contract;
+
+using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace lito
 {
+
+enum class PackageDependencyKind
+{
+    Normal,
+    Development,
+    Runtime,
+};
+
+struct PackageDependencyCycleEdge {
+    String                package;
+    String                dependency;
+    PackageDependencyKind kind { PackageDependencyKind::Normal };
+};
+
+struct PackageDependencyCycleError {
+    Vec<String>                     packages;
+    Vec<PackageDependencyCycleEdge> edges;
+};
 
 class PackageError {
     RSTD_ENUM(PackageError,
@@ -19,6 +41,7 @@ class PackageError {
               (Dependency, (DependencyError source;)),
               (System, (SystemError source;)),
               (Cpp, (CppOptionError source;)),
+              (Cycle, (PackageDependencyCycleError cycle;)),
               (Message, (String message;)))
 };
 
@@ -77,6 +100,15 @@ struct Impl<fmt::Display, lito::PackageError> : ImplBase<lito::PackageError> {
         if (error.is_Cpp()) {
             return formatter.write_raw("package C++ options are invalid",
                                        sizeof("package C++ options are invalid") - 1);
+        }
+        if (error.is_Cycle()) {
+            auto text = String::make("package dependency cycle: "_str);
+            const auto& cycle = error.as_Cycle().cycle;
+            for (usize index {}; index < cycle.packages.len(); ++index) {
+                if (index != usize {}) text.push_str(" -> "_str);
+                text.push_str(cycle.packages[index].as_str());
+            }
+            return formatter.write_str(text.as_str());
         }
         return formatter.write_str(error.as_Message().message.as_str());
     }
