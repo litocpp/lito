@@ -1043,12 +1043,6 @@ auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallSt
             }
             auto unchanged =
                 existing.is_some() && rstd_try(same_file(staged.as_path(), installed.as_path()));
-            if (existing.is_some() && ! unchanged && ! request.force) {
-                (void)rstd::fs::remove_dir_all(transaction.as_path());
-                return store_failure<InstallStoreSummary>(rstd::format(
-                    "install prefix destination '{}' already exists; use --force to replace it",
-                    installed.as_path()));
-            }
             entry.action =
                 unchanged ? InstallAction::Unchanged
                           : (existing.is_some() ? InstallAction::Replaced : InstallAction::Created);

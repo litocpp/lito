@@ -656,7 +656,7 @@ TEST(Integration, PrefixInstallPublishesAnUntrackedLogicalTree) {
     ASSERT_TRUE(rstd::fs::write(tool.as_path(), "first"_str.as_bytes()).is_ok());
     ASSERT_TRUE(rstd::fs::write(resource.as_path(), "resource"_str.as_bytes()).is_ok());
 
-    const auto install = [&](bool force) {
+    const auto install = [&]() {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
             .origin               = lito::InstallEntryOrigin::BuildArtifact(lito::PackageTargetId {
@@ -691,14 +691,16 @@ TEST(Integration, PrefixInstallPublishesAnUntrackedLogicalTree) {
             .destination = lito::InstallDestination::Prefix(
                 lito::InstallPrefix { .path = prefix_directory.clone() }),
             .packages = rstd::move(packages),
-            .force    = force,
         });
     };
 
-    auto first = install(false);
+    auto first = install();
     ASSERT_TRUE(first.is_ok());
     EXPECT_TRUE(first->managed_layout.is_none());
     EXPECT_TRUE(first->links.is_empty());
+    ASSERT_EQ(first->entries.len(), usize(2));
+    EXPECT_EQ(first->entries[usize {}].action, lito::InstallAction::Created);
+    EXPECT_EQ(first->entries[usize(1)].action, lito::InstallAction::Created);
     auto installed_tool = prefix_directory.join(PathBuf::from("bin/tool"_str).as_path());
     auto metadata       = rstd::fs::symlink_metadata(installed_tool.as_path());
     ASSERT_TRUE(metadata.is_ok());
@@ -721,17 +723,17 @@ TEST(Integration, PrefixInstallPublishesAnUntrackedLogicalTree) {
         rstd::fs::exists(prefix_directory.join(PathBuf::from(".lito"_str).as_path()).as_path())
             .unwrap());
 
-    auto unchanged = install(false);
+    auto unchanged = install();
     ASSERT_TRUE(unchanged.is_ok());
     for (const auto& entry : unchanged->entries) {
         EXPECT_EQ(entry.action, lito::InstallAction::Unchanged);
     }
     ASSERT_TRUE(rstd::fs::write(tool.as_path(), "second"_str.as_bytes()).is_ok());
-    auto rejected = install(false);
-    ASSERT_TRUE(rejected.is_err());
-    EXPECT_EQ(rstd::fs::read_to_string(installed_tool.as_path()).unwrap().as_str(), "first"_str);
-    auto replaced = install(true);
+    auto replaced = install();
     ASSERT_TRUE(replaced.is_ok());
+    ASSERT_EQ(replaced->entries.len(), usize(2));
+    EXPECT_EQ(replaced->entries[usize {}].action, lito::InstallAction::Replaced);
+    EXPECT_EQ(replaced->entries[usize(1)].action, lito::InstallAction::Unchanged);
     EXPECT_EQ(rstd::fs::read_to_string(installed_tool.as_path()).unwrap().as_str(), "second"_str);
 
     EXPECT_TRUE(clear_output(prefix_directory.as_path()));

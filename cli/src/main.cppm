@@ -112,6 +112,15 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     return counts;
 }
 
+auto install_action_label(lito::InstallAction action) -> ref<str> {
+    switch (action) {
+    case lito::InstallAction::Created: return "install"_str;
+    case lito::InstallAction::Replaced: return "update"_str;
+    case lito::InstallAction::Unchanged: return "install"_str;
+    }
+    rstd::unreachable();
+}
+
 auto make_timing_output(ref<rstd::path::Path>       root,
                         Option<rstd::path::PathBuf> file,
                         bool standard_output) -> lito::timing_output::OutputOptions {
@@ -279,17 +288,24 @@ extern "C++" int main() {
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
-        for (const auto& link : summary.links) {
-            rstd::io::println("[install] {}", link.destination.as_path());
-        }
-        for (const auto& entry : summary.entries) {
-            if (entry.origin.is_BuildArtifact()) {
-                auto linked = false;
-                for (const auto& link : summary.links) {
-                    if (link.target == entry.origin.as_BuildArtifact().target) linked = true;
+        if (summary.destination.is_Prefix()) {
+            for (const auto& entry : summary.entries) {
+                rstd::io::println(
+                    "[{}] {}", install_action_label(entry.action), entry.destination.as_path());
+            }
+        } else {
+            for (const auto& link : summary.links) {
+                rstd::io::println("[install] {}", link.destination.as_path());
+            }
+            for (const auto& entry : summary.entries) {
+                if (entry.origin.is_BuildArtifact()) {
+                    auto linked = false;
+                    for (const auto& link : summary.links) {
+                        if (link.target == entry.origin.as_BuildArtifact().target) linked = true;
+                    }
+                    if (linked) continue;
+                    rstd::io::println("[install] {}", entry.destination.as_path());
                 }
-                if (linked) continue;
-                rstd::io::println("[install] {}", entry.destination.as_path());
             }
         }
         auto emitted = lito::timing_output::emit(summary.build, timing);
