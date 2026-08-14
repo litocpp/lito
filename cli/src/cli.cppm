@@ -361,6 +361,13 @@ auto fetch_seed_arg() -> Arg<String> {
         .append();
 }
 
+auto no_config_arg() -> Arg<bool> {
+    return Arg<bool>::flag("no-config"_str)
+        .long_name("no-config"_str)
+        .help("Ignore .lito/config.toml"_str)
+        .global();
+}
+
 auto timing_file_arg() -> Arg<String> {
     return Arg<String>::value("timing-file"_str, string_parser())
         .long_name("timing-file"_str)
@@ -628,9 +635,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .value_name("DIRECTORY"_str)
                                       .help("Change the working directory"_str)
                                       .default_value("."_str)),
-        .no_config = root.add_arg(Arg<bool>::flag("no-config"_str)
-                                      .long_name("no-config"_str)
-                                      .help("Ignore .lito/config.toml"_str)),
+        .no_config = root.add_arg(no_config_arg()),
     };
     root.add_subcommand(rstd::move(build.command));
     root.add_subcommand(rstd::move(install.command));
