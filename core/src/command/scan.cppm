@@ -99,10 +99,10 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
                                 : request.selection.root.join(request.source.as_path());
     auto canonical_source = rstd::fs::canonicalize(requested_source.as_path());
     if (canonical_source.is_err()) {
-        return Err(CommandError::System(SystemError::Io(
-            String::make("resolve scan source"_str),
-            requested_source.clone(),
-            rstd::move(canonical_source).unwrap_err())));
+        return Err(
+            CommandError::System(SystemError::Io(String::make("resolve scan source"_str),
+                                                 requested_source.clone(),
+                                                 rstd::move(canonical_source).unwrap_err())));
     }
     auto source = rstd::move(canonical_source).unwrap();
 
@@ -112,12 +112,14 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     }
     auto tool_resolver = ToolResolver(*environment);
     auto profile       = request.profile.is_some() ? request.profile->clone() : BuildProfileName {};
-    auto jobs          = usize(1);
-    auto available     = rstd::thread::available_parallelism();
+    auto requested_output = PathBuf::make();
+    auto jobs             = usize(1);
+    auto available        = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();
     auto prepared = prepare_build_project(request.selection,
                                           request.configuration,
                                           profile,
+                                          requested_output.as_path(),
                                           request.sources,
                                           request.lock,
                                           request.pkg_config,
@@ -154,11 +156,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
                          source.as_path(),
                          package_target_id_text(target.id).as_str()));
     }
-    auto requested_output = PathBuf::make();
-    auto layout         = BuildLayout::resolve(metadata.root.as_path(),
-                                               requested_output.as_path(),
-                                               metadata.profiles[discovery.profile].name.as_str());
-    auto primary_output = layout.object(target.id, *relative_source);
+    auto primary_output = project.layout.object(target.id, *relative_source);
     if (primary_output.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(primary_output).unwrap_err()));
     }

@@ -13,6 +13,7 @@ import lito.toolchain.error_contract;
 import lito.lock.error_contract;
 import lito.platform.contract;
 import lito.build.profile_contract;
+import lito.build.layout_error_contract;
 
 export namespace lito
 {
@@ -27,6 +28,7 @@ class ProjectError {
               (Lock, (LockError source;)),
               (Platform, (PlatformError source;)),
               (Profile, (BuildProfileError source;)),
+              (Layout, (BuildLayoutError source;)),
               (Message, (String message;)))
 };
 
@@ -95,6 +97,13 @@ struct Impl<convert::From<lito::BuildProfileError>, lito::ProjectError> {
 };
 
 template<>
+struct Impl<convert::From<lito::BuildLayoutError>, lito::ProjectError> {
+    static auto from(lito::BuildLayoutError error) -> lito::ProjectError {
+        return lito::ProjectError::Layout(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::ProjectError> : ImplBase<lito::ProjectError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -129,6 +138,10 @@ struct Impl<fmt::Display, lito::ProjectError> : ImplBase<lito::ProjectError> {
         if (error.is_Profile()) {
             return formatter.write_raw("project build profile resolution failed",
                                        sizeof("project build profile resolution failed") - 1);
+        }
+        if (error.is_Layout()) {
+            return formatter.write_raw("project build layout resolution failed",
+                                       sizeof("project build layout resolution failed") - 1);
         }
         return formatter.write_str(error.as_Message().message.as_str());
     }
@@ -168,6 +181,9 @@ struct Impl<error::Error, lito::ProjectError> : ImplBase<lito::ProjectError> {
         }
         if (error.is_Profile()) {
             return Some(dyn<error::Error>::from_ref(error.as_Profile().source));
+        }
+        if (error.is_Layout()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Layout().source));
         }
         return None();
     }

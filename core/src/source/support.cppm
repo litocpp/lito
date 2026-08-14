@@ -11,7 +11,6 @@ import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.workspace.contract;
 import lito.build.profile_contract;
-import lito.system.storage;
 import lito.manifest;
 import lito.system.process;
 import lito.system.environment;
@@ -35,8 +34,8 @@ auto source_failure(ref<str> message) -> SourceResult<T> {
 }
 
 template<typename T>
-auto source_io_failure(ref<str> operation,
-                       ref<rstd::path::Path> path,
+auto source_io_failure(ref<str>               operation,
+                       ref<rstd::path::Path>  path,
                        rstd::io::error::Error source) -> SourceResult<T> {
     return Err(SourceError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
@@ -60,7 +59,8 @@ auto path_components(ref<rstd::path::Path> path) -> SourceResult<Vec<String>> {
     return Ok(rstd::move(result));
 }
 
-auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target) -> SourceResult<PathBuf> {
+auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target)
+    -> SourceResult<PathBuf> {
     auto root_components   = path_components(root);
     auto target_components = path_components(target);
     if (root_components.is_err()) return Err(rstd::move(root_components).unwrap_err());
@@ -83,25 +83,6 @@ auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target) -> 
     return Ok(relative.is_empty() ? PathBuf::from("."_str) : rstd::move(relative));
 }
 
-inline constexpr uint64_t FNV_OFFSET = 14695981039346656037ull;
-inline constexpr uint64_t FNV_PRIME  = 1099511628211ull;
-
-auto source_hash(ref<str> value) -> String {
-    auto hash = FNV_OFFSET;
-    for (auto byte : value) {
-        hash ^= byte.to_primitive();
-        hash *= FNV_PRIME;
-    }
-    static constexpr char digits[] = "0123456789abcdef";
-    char                  result[16];
-    for (size_t index = 0; index < 16; ++index) {
-        result[15 - index] = digits[hash & 0xfu];
-        hash >>= 4u;
-    }
-    return String::make(
-        ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(result), usize(16)));
-}
-
 auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> SourceResult<empty> {
     auto text = path.to_str();
     if (text.is_none()) {
@@ -116,8 +97,7 @@ auto git_output(Vec<String>                       arguments,
                 const ResolvedProcessEnvironment& environment) -> SourceResult<String> {
     auto output = run_command(arguments, environment);
     if (output.is_err()) {
-        return Err(SourceError::System(String::make(operation),
-                                       rstd::move(output).unwrap_err()));
+        return Err(SourceError::System(String::make(operation), rstd::move(output).unwrap_err()));
     }
     auto value = rstd::move(output).unwrap();
     if (value.exit_code != i32 {}) {

@@ -92,7 +92,8 @@ void observe_preparation(void* raw_context, const BuildEvent& event) noexcept {
     if (observer.notify != nullptr) observer.notify(observer.context, event);
 }
 
-auto resolve_scan_execution(const ScanExecutionPolicy& policy) -> BuildResult<ResolvedScanExecution> {
+auto resolve_scan_execution(const ScanExecutionPolicy& policy)
+    -> BuildResult<ResolvedScanExecution> {
     auto jobs = usize(1);
     if (policy.jobs.is_some()) {
         jobs = *policy.jobs;
@@ -121,7 +122,7 @@ namespace lito
 auto build_with_environment_impl(const BuildRequest&               request,
                                  const ResolvedProcessEnvironment& process_environment,
                                  Option<WorkspaceCatalog>          catalog,
-                                 Option<PreparedBuildProject> prepared = None())
+                                 Option<PreparedBuildProject>      prepared = None())
     -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return failure<BuildSummary>("build directory is required"_str);
@@ -146,11 +147,13 @@ auto build_with_environment_impl(const BuildRequest&               request,
         .context = rstd::addressof(preparation_context),
         .notify  = observe_preparation,
     });
-    auto resolved_project = [&]() -> BuildResult<PreparedBuildProject> {
+    auto supplied_prepared    = prepared.is_some();
+    auto resolved_project     = [&]() -> BuildResult<PreparedBuildProject> {
         if (prepared.is_some()) return Ok(rstd::move(prepared).unwrap());
         auto project = prepare_build_project(request.selection,
                                              request.configuration,
                                              profile,
+                                             request.output.as_path(),
                                              request.sources,
                                              request.lock,
                                              request.pkg_config,
@@ -168,10 +171,34 @@ auto build_with_environment_impl(const BuildRequest&               request,
         return Ok(rstd::move(project).unwrap());
     }();
     if (resolved_project.is_err()) return Err(rstd::move(resolved_project).unwrap_err());
-    auto  project          = rstd::move(resolved_project).unwrap();
-    auto& toolchain        = project.toolchain;
-    auto& metadata         = project.metadata;
-    auto  created_profiler = ScanProfiler::create();
+    auto  project   = rstd::move(resolved_project).unwrap();
+    auto& toolchain = project.toolchain;
+    auto& metadata  = project.metadata;
+    auto& layout    = project.layout;
+    if (supplied_prepared) {
+        if (profile.as_str() != metadata.default_profile.as_str()) {
+            return failure<BuildSummary>(
+                rstd::format("prepared project profile '{}' cannot satisfy requested profile '{}'",
+                             metadata.default_profile.as_str(),
+                             profile.as_str()));
+        }
+        auto requested_layout = BuildLayout::resolve(
+            metadata.root.as_path(), request.output.as_path(), metadata.default_profile.as_str());
+        auto canonical_output = rstd::fs::canonicalize(requested_layout.output());
+        if (canonical_output.is_err()) {
+            return Err(BuildError::System(
+                SystemError::Io(String::make("resolve requested prepared build output"_str),
+                                PathBuf::from(requested_layout.output()),
+                                rstd::move(canonical_output).unwrap_err())));
+        }
+        if (canonical_output->as_path() != layout.output()) {
+            return failure<BuildSummary>(
+                rstd::format("prepared project output '{}' cannot satisfy requested output '{}'",
+                             layout.output(),
+                             canonical_output->as_path()));
+        }
+    }
+    auto created_profiler = ScanProfiler::create();
     if (created_profiler.is_err()) {
         return failure<BuildSummary>(rstd::move(created_profiler).unwrap_err_unchecked());
     }
@@ -179,10 +206,8 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto frontend_observer = FrontendProfileObserver::make(profiler);
     auto frontend_service  = frontend::FrontendService::make(Some(frontend_observer.observer()));
 
-    auto selected = resolve_source_selection(metadata,
-                                             metadata.default_profile.as_str(),
-                                             request.targets,
-                                             request.exact_targets);
+    auto selected = resolve_source_selection(
+        metadata, metadata.default_profile.as_str(), request.targets, request.exact_targets);
     if (selected.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(selected).unwrap_err()));
     }
@@ -214,9 +239,6 @@ auto build_with_environment_impl(const BuildRequest&               request,
         return Err(rstd::into<BuildError>(rstd::move(script_packages).unwrap_err()));
     }
 
-    auto layout = rstd_try(BuildLayout::create(metadata.root.as_path(),
-                                               request.output.as_path(),
-                                               metadata.default_profile.as_str()));
     auto script_report = rstd_try(execute_build_script(metadata,
                                                        layout,
                                                        metadata.default_profile.as_str(),
@@ -453,12 +475,11 @@ auto build_with_environment_impl(const BuildRequest&               request,
                     continue;
                 }
                 if (archive_paths[candidate].is_none()) {
-                    return failure<BuildSummary>(
-                        rstd::format(
-                            "test target '{}' has no attachment archive for '{}'",
-                            package_target_id_text(target_spec.id).as_str(),
-                            package_target_id_text(candidate_spec.test_attachment->library_target)
-                                .as_str()));
+                    return failure<BuildSummary>(rstd::format(
+                        "test target '{}' has no attachment archive for '{}'",
+                        package_target_id_text(target_spec.id).as_str(),
+                        package_target_id_text(candidate_spec.test_attachment->library_target)
+                            .as_str()));
                 }
                 link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                     .path = (*archive_paths[candidate]).clone(),
@@ -580,10 +601,8 @@ auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
 
 auto build_prepared_project(const BuildRequest&               request,
                             const ResolvedProcessEnvironment& environment,
-                            PreparedBuildProject              project)
-    -> BuildResult<BuildSummary> {
-    return build_with_environment_impl(
-        request, environment, None(), Some(rstd::move(project)));
+                            PreparedBuildProject project) -> BuildResult<BuildSummary> {
+    return build_with_environment_impl(request, environment, None(), Some(rstd::move(project)));
 }
 
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {

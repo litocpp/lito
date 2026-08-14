@@ -31,6 +31,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
                         const ProfileSpec&                        profile,
                         const TargetInfo&                         default_target,
                         ref<str>                                  effective_target,
+                        ref<rstd::path::Path>                     profile_cmake_root,
                         usize jobs = usize(1)) -> DependencyResult<CMakePackagePlan> {
     if (jobs == usize {}) {
         return cmake_failure<CMakePackagePlan>("CMake build jobs must be greater than zero"_str);
@@ -47,7 +48,8 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
             "CMake dependency '{}' archive source must be materialized before planning",
             requirement.alias.as_str()));
     }
-    auto area = work_area(requirement, provider, configuration, profile, effective_target);
+    auto area = work_area(
+        requirement, provider, configuration, profile, effective_target, profile_cmake_root);
     if (area.is_err()) return Err(rstd::move(area).unwrap_err());
     auto operations = Vec<CMakePackageOperation>::make();
     if (requirement.integration == CMakeIntegration::Install &&
@@ -110,20 +112,19 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     const auto& area          = plan.area;
     auto        created       = rstd::fs::create_dir_all(area.root.as_path());
     if (created.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>(
-            "create CMake work directory"_str,
-            area.root.as_path(),
-            rstd::move(created).unwrap_err());
+        return cmake_io_failure<CMakeUsageSnapshot>("create CMake work directory"_str,
+                                                    area.root.as_path(),
+                                                    rstd::move(created).unwrap_err());
     }
     auto lock_path = area.root.join(PathBuf::from("lock"_str).as_path());
     auto lock_file = rstd::fs::File::create(lock_path.as_path());
     if (lock_file.is_err()) {
-        return cmake_io_failure<CMakeUsageSnapshot>(
-            "open CMake dependency lock"_str,
-            lock_path.as_path(),
-            rstd::move(lock_file).unwrap_err());
+        return cmake_io_failure<CMakeUsageSnapshot>("open CMake dependency lock"_str,
+                                                    lock_path.as_path(),
+                                                    rstd::move(lock_file).unwrap_err());
     }
-    auto locked = lock_file->lock();
+    auto locked = rstd::fs::FileLock::acquire(rstd::move(lock_file).unwrap(),
+                                              rstd::fs::FileLockMode::Exclusive);
     if (locked.is_err()) {
         return cmake_io_failure<CMakeUsageSnapshot>(
             rstd::format("lock CMake dependency '{}'", requirement.alias.as_str()).as_str(),
@@ -294,8 +295,7 @@ auto materialize_cmake_usage(const CMakePackagePlan&   plan,
                                             target.name.as_str());
         auto        compile  = parser.parse(snapshot.compile, source.as_str());
         if (compile.is_err()) {
-            return Err(DependencyError::Cpp(
-                source.clone(), rstd::move(compile).unwrap_err()));
+            return Err(DependencyError::Cpp(source.clone(), rstd::move(compile).unwrap_err()));
         }
         auto identity = target_snapshot_identity(provider,
                                                  requirement,

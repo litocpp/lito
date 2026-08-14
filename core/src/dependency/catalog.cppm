@@ -11,6 +11,7 @@ import lito.dependency.error_contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
+import lito.build.layout;
 import lito.platform.contract;
 import lito.source.contract;
 import lito.package.graph_contract;
@@ -68,6 +69,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                     const CMakeProviderConfig&        cmake_config,
                                     const BuildConfiguration&         configuration,
                                     const ProfileSpec&                profile,
+                                    const BuildLayout&                layout,
                                     const BuildPlatform&              platform,
                                     const CppArgumentParser&          parser,
                                     ToolResolver&                     tool_resolver,
@@ -155,6 +157,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
         if (observer.is_some()) fetch_observer = *observer;
         auto fetched = acquire_archive_frontier(rstd::move(archive_requests),
                                                 jobs,
+                                                layout,
                                                 resolved_cmake.executable.as_path(),
                                                 process_environment,
                                                 source_config,
@@ -167,10 +170,9 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
             auto cmake_lists = acquired.root.join(PathBuf::from("CMakeLists.txt"_str).as_path());
             auto has_project = rstd::fs::exists(cmake_lists.as_path());
             if (has_project.is_err()) {
-                return Err(DependencyError::Io(
-                    String::make("inspect archive CMake project"_str),
-                    rstd::move(cmake_lists),
-                    rstd::move(has_project).unwrap_err()));
+                return Err(DependencyError::Io(String::make("inspect archive CMake project"_str),
+                                               rstd::move(cmake_lists),
+                                               rstd::move(has_project).unwrap_err()));
             }
             bindings[archive_bindings[index]].requirement.source =
                 ResolvedCMakeDependencySource::Directory(
@@ -178,8 +180,9 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
         }
     }
 
-    auto snapshots = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
-    auto assets    = ExternalAssetCatalog {};
+    auto snapshots       = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
+    auto assets          = ExternalAssetCatalog {};
+    auto cmake_work_root = layout.cmake_work_root();
     for (auto& binding : bindings) {
         auto plan = plan_cmake_package(binding.requirement,
                                        resolved_cmake,
@@ -187,6 +190,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                        profile,
                                        platform.compiler_default,
                                        platform.effective_target.triple.as_str(),
+                                       cmake_work_root.as_path(),
                                        jobs);
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto key_text = plan->area.query_root.as_path().to_str();
@@ -212,15 +216,16 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                 String::make("CMake usage snapshot was not retained"_str));
         }
         for (const auto& set : (**snapshot).assets) {
-            auto copied = set.clone();
-            copied.alias = binding.requirement.alias.clone();
+            auto copied    = set.clone();
+            copied.alias   = binding.requirement.alias.clone();
             auto duplicate = false;
             for (const auto& prior : assets.sets) {
                 if (prior.alias == copied.alias.as_str() && prior.name == copied.name.as_str()) {
                     if (prior.entries.len() != copied.entries.len()) {
-                        return dependency_failure<PreparedExternalCatalog>(rstd::format(
-                            "external asset set '{}:{}' has conflicting definitions",
-                            copied.alias.as_str(), copied.name.as_str()));
+                        return dependency_failure<PreparedExternalCatalog>(
+                            rstd::format("external asset set '{}:{}' has conflicting definitions",
+                                         copied.alias.as_str(),
+                                         copied.name.as_str()));
                     }
                     for (usize index {}; index < prior.entries.len(); ++index) {
                         if (prior.entries[index].logical_path.as_path() !=
@@ -229,7 +234,8 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&       graph,
                                 copied.entries[index].source.as_path()) {
                             return dependency_failure<PreparedExternalCatalog>(rstd::format(
                                 "external asset set '{}:{}' has conflicting definitions",
-                                copied.alias.as_str(), copied.name.as_str()));
+                                copied.alias.as_str(),
+                                copied.name.as_str()));
                         }
                     }
                     duplicate = true;

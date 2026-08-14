@@ -15,7 +15,6 @@ import lito.dependency.error_contract;
 import lito.cpp;
 import lito.system.process;
 import lito.system.environment;
-import lito.system.storage;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -37,10 +36,10 @@ auto cmake_failure(ref<str> message) -> DependencyResult<T> {
 }
 
 template<typename T>
-auto cmake_io_failure(ref<str> operation,
-                      ref<rstd::path::Path> path,
-                      rstd::io::error::Error source) -> DependencyResult<T> {
-    return Err(DependencyError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
+auto cmake_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
+    -> DependencyResult<T> {
+    return Err(
+        DependencyError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto emit_cmake(const Option<BuildObserver>& observer,
@@ -165,7 +164,7 @@ struct CMakePackagePlan {
 };
 
 template<typename T>
-auto with_operation_context(DependencyResult<T>               result,
+auto with_operation_context(DependencyResult<T>     result,
                             const CMakePackagePlan& plan,
                             CMakePackageOperation   operation) -> DependencyResult<T> {
     if (result.is_ok()) return result;
@@ -239,7 +238,8 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
                const CMakeProviderConfig&                provider,
                const BuildConfiguration&                 build,
                const ProfileSpec&                        profile,
-               ref<str> effective_target) -> DependencyResult<CMakeWorkArea> {
+               ref<str>                                  effective_target,
+               ref<rstd::path::Path> profile_cmake_root) -> DependencyResult<CMakeWorkArea> {
     auto recipe = String::make("lito-cmake-install-v4\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -276,12 +276,8 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());
     }
-    auto cache =
-        lito_cache_directory(PathBuf::from("cmake"_str).as_path(), "CMake dependencies"_str);
-    if (cache.is_err()) {
-        return Err(rstd::into<DependencyError>(rstd::move(cache).unwrap_err()));
-    }
-    auto root         = cache->join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
+    auto root         = PathBuf::from(profile_cmake_root)
+                            .join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
     auto query_recipe = String::make("lito-cmake-query-v5\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());

@@ -9,7 +9,6 @@ import lito.error;
 import lito.dependency.contract;
 import lito.dependency.error_contract;
 import lito.cpp;
-import lito.system.storage;
 import lito.dependency.cmake.model;
 import lito.dependency.cmake.file_api;
 
@@ -95,7 +94,8 @@ auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
     return Ok(rstd::move(result));
 }
 
-auto parse_usage_target(const Json& value, ref<str> context) -> DependencyResult<CMakeTargetUsageSnapshot> {
+auto parse_usage_target(const Json& value, ref<str> context)
+    -> DependencyResult<CMakeTargetUsageSnapshot> {
     auto compile = parse_snapshot_strings(value, "compile"_str, context);
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
     auto link = parse_snapshot_strings(value, "link"_str, context);
@@ -119,10 +119,9 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         auto candidate = root.join(path.as_path());
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return cmake_io_failure<Vec<String>>(
-                "inspect CMake link input"_str,
-                candidate.as_path(),
-                rstd::move(exists).unwrap_err());
+            return cmake_io_failure<Vec<String>>("inspect CMake link input"_str,
+                                                 candidate.as_path(),
+                                                 rstd::move(exists).unwrap_err());
         }
         if (! *exists) {
             result.push(token.clone());
@@ -130,10 +129,9 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
         }
         auto canonical = rstd::fs::canonicalize(candidate.as_path());
         if (canonical.is_err()) {
-            return cmake_io_failure<Vec<String>>(
-                "resolve CMake link input"_str,
-                candidate.as_path(),
-                rstd::move(canonical).unwrap_err());
+            return cmake_io_failure<Vec<String>>("resolve CMake link input"_str,
+                                                 candidate.as_path(),
+                                                 rstd::move(canonical).unwrap_err());
         }
         auto text = path_text(canonical->as_path(), "CMake link input"_str);
         if (text.is_err()) return Err(rstd::move(text).unwrap_err());
@@ -149,9 +147,7 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
         return cmake_io_failure<Option<CMakeUsageSnapshot>>(
-            "inspect CMake usage snapshot"_str,
-            path.as_path(),
-            rstd::move(exists).unwrap_err());
+            "inspect CMake usage snapshot"_str, path.as_path(), rstd::move(exists).unwrap_err());
     }
     if (! *exists) return Ok(None());
     auto value = read_json(path.as_path(), "CMake usage snapshot"_str);
@@ -194,7 +190,7 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
         auto parsed_entries = Vec<ExternalAssetEntry>::make();
         for (const auto& entry : **entries) {
             auto logical = required_json_string(entry, "path"_str, "CMake asset entry"_str);
-            auto source = required_json_string(entry, "source"_str, "CMake asset entry"_str);
+            auto source  = required_json_string(entry, "source"_str, "CMake asset entry"_str);
             if (logical.is_err()) return Err(rstd::move(logical).unwrap_err());
             if (source.is_err()) return Err(rstd::move(source).unwrap_err());
             parsed_entries.push(ExternalAssetEntry {

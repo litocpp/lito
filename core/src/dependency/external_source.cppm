@@ -29,11 +29,16 @@ auto append_locked_git_source(PackageResolutionOptions& options,
                               ref<str>                  url,
                               const GitReference&       reference,
                               ref<str>                  commit) -> DependencyResult<empty> {
-    for (const auto& existing : options.git_sources) {
+    for (auto& existing : options.git_sources) {
         if (existing.git.as_str() != url || ! git_references_equal(existing.reference, reference)) {
             continue;
         }
         if (existing.commit.as_str() != commit) {
+            if (options.git == GitResolutionMode::Refresh &&
+                reference.kind != GitReferenceKind::Commit) {
+                existing.commit = String::make(commit);
+                return Ok(empty {});
+            }
             return dependency_failure<empty>(
                 rstd::format("Git requirement '{}#{}' resolves to both '{}' and '{}'",
                              url,
@@ -198,7 +203,8 @@ struct PreparedExternalSourceTask {
     PreparedCMakeDependencyRequirement requirement;
 };
 
-auto prepare_external_source_task(ExternalSourceTask task) -> DependencyResult<PreparedExternalSourceTask> {
+auto prepare_external_source_task(ExternalSourceTask task)
+    -> DependencyResult<PreparedExternalSourceTask> {
     auto        source      = PreparedCMakeDependencySource::Installed();
     const auto& declaration = task.requirement;
     if (declaration.source.is_Archive()) {
@@ -391,13 +397,14 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
     }
 
     auto worker_count = jobs < tasks.len() ? jobs : tasks.len();
-    auto created      = rstd::thread::BlockingTaskGroup<DependencyResult<PreparedExternalSourceTask>>::make(
-        worker_count, tasks.len());
+    auto created =
+        rstd::thread::BlockingTaskGroup<DependencyResult<PreparedExternalSourceTask>>::make(
+            worker_count, tasks.len());
     if (created.is_err()) {
-        return Err(DependencyError::System(SystemError::Io(
-            String::make("create external source fetch executor"_str),
-            PathBuf::make(),
-            rstd::move(created).unwrap_err_unchecked())));
+        return Err(DependencyError::System(
+            SystemError::Io(String::make("create external source fetch executor"_str),
+                            PathBuf::make(),
+                            rstd::move(created).unwrap_err_unchecked())));
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (auto& task : tasks) {
@@ -457,8 +464,8 @@ auto prepare_external_dependency_sources(ResolvedPackageGraph&             graph
 
 auto prepare_external_dependency_sources(ResolvedPackageGraph&    graph,
                                          PackageResolutionOptions options,
-                                         usize                    jobs     = usize(1),
-                                         BuildObserver            observer = {}) -> DependencyResult<empty> {
+                                         usize                    jobs = usize(1),
+                                         BuildObserver observer = {}) -> DependencyResult<empty> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) {
         return Err(rstd::into<DependencyError>(rstd::move(environment).unwrap_err()));

@@ -40,8 +40,7 @@ auto install_failure(ref<str> message) -> InstallResult<T> {
 template<typename T>
 auto install_project_failure(ProjectResult<T> result) -> InstallResult<T> {
     if (result.is_ok()) return Ok(rstd::move(result).unwrap());
-    return Err(InstallError::Build(
-        BuildError::Project(rstd::move(result).unwrap_err())));
+    return Err(InstallError::Build(BuildError::Project(rstd::move(result).unwrap_err())));
 }
 
 } // namespace lito
@@ -67,35 +66,34 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
             rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
     }
     auto resolver = ToolResolver(*environment);
-    auto toolchain = ClangToolchain::create(
-        request.build.configuration.toolchain, resolver, *environment);
+    auto toolchain =
+        ClangToolchain::create(request.build.configuration.toolchain, resolver, *environment);
     if (toolchain.is_err()) {
         return install_failure<InstallSummary>(
             rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
     }
-    auto jobs = request.build.execution.scan.jobs.is_some()
-                    ? *request.build.execution.scan.jobs
-                    : usize(1);
+    auto jobs =
+        request.build.execution.scan.jobs.is_some() ? *request.build.execution.scan.jobs : usize(1);
     if (request.build.execution.scan.jobs.is_none()) {
         auto available = rstd::thread::available_parallelism();
         if (available.is_ok()) jobs = available->get();
     }
-    auto session = rstd_try(install_project_failure(resolve_project_session(
-        request.build.selection,
-        request.build.configuration,
-        request.build.sources,
-        request.build.lock,
-        *toolchain,
-        resolver,
-        *environment,
-        request.build.locked,
-        PackageSelectionPurpose::Install,
-        jobs,
-        request.build.observer,
-        Some(rstd::move(request.source.project.catalog)))));
+    auto session          = rstd_try(install_project_failure(
+        resolve_project_session(request.build.selection,
+                                request.build.configuration,
+                                request.build.sources,
+                                request.build.lock,
+                                *toolchain,
+                                resolver,
+                                *environment,
+                                request.build.locked,
+                                PackageSelectionPurpose::Install,
+                                jobs,
+                                request.build.observer,
+                                Some(rstd::move(request.source.project.catalog)))));
     auto effective_target = session.platform.effective_target.clone();
-    auto selected_owners = rstd_try(
-        resolve_install_packages(session.project.selection, effective_target));
+    auto selected_owners =
+        rstd_try(resolve_install_packages(session.project.selection, effective_target));
     auto profile = request.build.profile->as_str();
     auto recipes = Vec<InstallRecipe>::make();
     for (const auto& owner : selected_owners) {
@@ -146,31 +144,31 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         }
         recipes.push(rstd::move(recipe));
     }
-    auto requirements = rstd_try(resolve_install_build_requirements(
-        session.project.selection, recipes, effective_target));
+    auto requirements = rstd_try(
+        resolve_install_build_requirements(session.project.selection, recipes, effective_target));
     request.build.exact_targets = rstd::move(requirements.targets);
-    auto profile_name = request.build.profile->clone();
-    auto prepared = rstd_try(install_project_failure(prepare_resolved_build_project(
-        rstd::move(session),
-        request.build.configuration,
-        profile_name,
-        request.build.sources,
-        request.build.pkg_config,
-        request.build.cmake,
-        rstd::move(toolchain).unwrap(),
-        resolver,
-        *environment,
-        jobs,
-        request.build.observer)));
-    auto summary = rstd_try(build_prepared_project(request.build, *environment, rstd::move(prepared)));
-    auto plan = rstd_try(materialize_install_plan(rstd::move(recipes),
-                                                  summary,
-                                                  summary.profile.as_str(),
-                                                  summary.target.as_str()));
+    auto profile_name           = request.build.profile->clone();
+    auto prepared               = rstd_try(
+        install_project_failure(prepare_resolved_build_project(rstd::move(session),
+                                                               request.build.configuration,
+                                                               profile_name,
+                                                               request.build.output.as_path(),
+                                                               request.build.sources,
+                                                               request.build.pkg_config,
+                                                               request.build.cmake,
+                                                               rstd::move(toolchain).unwrap(),
+                                                               resolver,
+                                                               *environment,
+                                                               jobs,
+                                                               request.build.observer)));
+    auto summary =
+        rstd_try(build_prepared_project(request.build, *environment, rstd::move(prepared)));
+    auto plan   = rstd_try(materialize_install_plan(
+        rstd::move(recipes), summary, summary.profile.as_str(), summary.target.as_str()));
     auto stored = rstd_try(install_artifacts(InstallStoreRequest {
-        .root       = InstallRoot { .path = rstd::move(request.root.path) },
-        .packages   = rstd::move(plan.packages),
-        .force      = request.force,
+        .root     = InstallRoot { .path = rstd::move(request.root.path) },
+        .packages = rstd::move(plan.packages),
+        .force    = request.force,
     }));
     return Ok(InstallSummary {
         .build    = rstd::move(summary),

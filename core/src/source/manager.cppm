@@ -39,6 +39,7 @@ class SourceManager {
     const ResolvedProcessEnvironment* environment_ {};
     BuildObserver                     observer_;
     Option<PathBuf>                   git_;
+    Option<SourceCacheSession>        cache_session_;
 
     struct FetchedPackageSource {
         usize       request {};
@@ -50,6 +51,17 @@ class SourceManager {
         ExternalSourceFetchOutcome outcome;
     };
 
+    struct ResolvedGitSeed {
+        String  commit;
+        PathBuf path;
+    };
+
+    struct SourceWork {
+        usize                     request {};
+        PackageSourceFetchRequest source;
+        Option<ResolvedGitSeed>   seed;
+    };
+
     auto source_request_key(const PackageSourceRequirement& source,
                             ref<rstd::path::Path> declaring_root) -> SourceResult<String> {
         if (source.is_Path()) {
@@ -58,6 +70,26 @@ class SourceManager {
         }
         const auto& git = source.as_Git();
         return Ok(git_requirement_identity(git.url.as_str(), git.reference));
+    }
+
+    auto source_work_groups(const Vec<PackageSourceFetchRequest>& requests) -> Vec<Vec<usize>> {
+        auto groups     = Vec<Vec<usize>>::make();
+        auto git_groups = rstd::collections::BTreeMap<String, usize>::make();
+        for (usize index {}; index < requests.len(); ++index) {
+            if (requests[index].source.is_Git()) {
+                const auto& url      = requests[index].source.as_Git().url;
+                auto        existing = git_groups.get(url.as_str());
+                if (existing.is_some()) {
+                    groups[**existing].push(usize(index));
+                    continue;
+                }
+                git_groups.insert(url.clone(), groups.len());
+            }
+            auto group = Vec<usize>::make();
+            group.push(usize(index));
+            groups.push(rstd::move(group));
+        }
+        return groups;
     }
 
     auto take_entry(usize index) -> SourceEntry { return rstd::move(entries_[index]); }
@@ -203,8 +235,119 @@ class SourceManager {
         return None();
     }
 
-    auto repository(ref<rstd::path::Path> bucket, ref<str> url) -> SourceResult<PathBuf> {
-        auto repository = PathBuf::from(bucket).join(PathBuf::from("repository.git"_str).as_path());
+    auto prepared_exact_git_input(ref<str>                     url,
+                                  const GitReference&          reference,
+                                  Option<ref<LockedGitSource>> pin)
+        -> SourceResult<Option<ResolvedGitSeed>> {
+        auto commit = exact_git_commit(reference, pin);
+        if (commit.is_none()) return Ok(None());
+        auto patch = rstd_try(patched_path(url));
+        if (patch.is_some()) {
+            return Ok(Some(ResolvedGitSeed {
+                .commit = String::make(*commit),
+                .path   = PathBuf::from(*patch),
+            }));
+        }
+        auto seed = rstd_try(seed_checkout(url, *commit));
+        if (seed.is_none()) return Ok(None());
+        return Ok(Some(ResolvedGitSeed {
+            .commit = String::make(*commit),
+            .path   = rstd::move(seed).unwrap(),
+        }));
+    }
+
+    auto prepared_git_seed(const PackageSourceRequirement& requirement)
+        -> SourceResult<Option<ResolvedGitSeed>> {
+        if (! requirement.is_Git()) return Ok(None());
+        const auto& git    = requirement.as_Git();
+        auto        locked = rstd_try(locked_source(git.url.as_str(), git.reference));
+        auto        pin    = locked;
+        if (options_.git == GitResolutionMode::Refresh &&
+            options_.sources.network == NetworkPolicy::Allow &&
+            git.reference.kind != GitReferenceKind::Commit) {
+            pin = None();
+        }
+        if (options_.locked && pin.is_none()) {
+            return source_failure<Option<ResolvedGitSeed>>(rstd::format(
+                "--locked has no source matching Git dependency '{}'", git.url.as_str()));
+        }
+        return prepared_exact_git_input(git.url.as_str(), git.reference, pin);
+    }
+
+    auto source_cache_session() -> SourceResult<SourceCacheSession> {
+        if (cache_session_.is_none()) {
+            auto root = LitoDataRoot::resolve();
+            if (root.is_err()) {
+                return Err(rstd::into<SourceError>(rstd::move(root).unwrap_err()));
+            }
+            auto acquired = root->acquire_source_cache();
+            if (acquired.is_err()) {
+                return Err(rstd::into<SourceError>(rstd::move(acquired).unwrap_err()));
+            }
+            cache_session_ = Some(rstd::move(acquired).unwrap());
+        }
+        return Ok(cache_session_->clone());
+    }
+
+    auto clone_cache_session() const -> Option<SourceCacheSession> {
+        if (cache_session_.is_none()) return None();
+        return Some(cache_session_->clone());
+    }
+
+    auto repository_directory_key(ref<str> url) const -> String {
+        auto source = url;
+        auto end    = source.len();
+        auto query  = source.find("?"_str);
+        if (query.is_some() && *query < end) end = *query;
+        auto fragment = source.find("#"_str);
+        if (fragment.is_some() && *fragment < end) end = *fragment;
+        source         = *source.get(usize {}, end);
+        auto component = ""_str;
+        auto scheme    = source.split_once("://"_str);
+        if (scheme.is_some()) {
+            auto path = scheme->get<1>().split_once("/"_str);
+            if (path.is_some()) component = path->get<1>();
+        } else {
+            component = source;
+        }
+        while (component.ends_with("/"_str)) {
+            component = *component.get(usize {}, component.len() - usize(1));
+        }
+        auto slash = component.rsplit_once("/"_str);
+        if (slash.is_some()) component = slash->get<1>();
+        if (slash.is_none() && scheme.is_none()) {
+            auto colon = component.rsplit_once(":"_str);
+            if (colon.is_some()) component = colon->get<1>();
+        }
+        auto without_suffix = component.strip_suffix(".git"_str);
+        if (without_suffix.is_some()) component = *without_suffix;
+
+        auto prefix = String::make();
+        for (auto value : component) {
+            if (prefix.len() == usize(48)) break;
+            const auto ascii = value.to_primitive();
+            const auto safe  = (ascii >= 'a' && ascii <= 'z') || (ascii >= 'A' && ascii <= 'Z') ||
+                               (ascii >= '0' && ascii <= '9') || ascii == '-' || ascii == '_';
+            prefix.push_ascii(safe ? static_cast<char>(ascii) : '-');
+        }
+        if (prefix.is_empty() || prefix.as_str() == "-"_str) {
+            prefix = String::make("repository"_str);
+        }
+        prefix.push('-');
+        prefix.push_str(rstd::crypto::sha256_hex(url).as_str());
+        return prefix;
+    }
+
+    auto repository(const GitCacheLayout& layout, ref<str> repository_key, ref<str> url)
+        -> SourceResult<PathBuf> {
+        auto database = PathBuf::from(layout.root()).join(PathBuf::from("db"_str).as_path());
+        auto created  = rstd::fs::create_dir_all(database.as_path());
+        if (created.is_err()) {
+            return source_io_failure<PathBuf>("create Git database cache"_str,
+                                              database.as_path(),
+                                              rstd::move(created).unwrap_err());
+        }
+        auto repository = layout.repository(repository_key);
         auto exists     = rstd::fs::exists(repository.as_path());
         if (exists.is_err()) {
             return source_io_failure<PathBuf>("inspect Git cache repository"_str,
@@ -239,17 +382,16 @@ class SourceManager {
         if (inspection.exit_code == i32 {}) {
             configured = trim_ascii(rstd::move(inspection.standard_output));
         } else {
-            auto add = rstd_try(git_command());
-            add.push(String::make("--git-dir"_str));
-            path = push_path(add, repository.as_path());
+            auto configure = rstd_try(git_command());
+            configure.push(String::make("--git-dir"_str));
+            path = push_path(configure, repository.as_path());
             if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            add.push(String::make("remote"_str));
-            add.push(String::make("add"_str));
-            add.push(String::make("origin"_str));
-            add.push(String::make(url));
-            auto added =
-                git_status(rstd::move(add), "Git cache remote configuration"_str, *environment_);
-            if (added.is_err()) return Err(rstd::move(added).unwrap_err());
+            configure.push(String::make("config"_str));
+            configure.push(String::make("remote.origin.url"_str));
+            configure.push(String::make(url));
+            auto stored = git_status(
+                rstd::move(configure), "Git cache remote configuration"_str, *environment_);
+            if (stored.is_err()) return Err(rstd::move(stored).unwrap_err());
             configured = String::make(url);
         }
         if (configured.as_str() != url) {
@@ -276,7 +418,9 @@ class SourceManager {
     }
 
     auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision)
-        -> SourceResult<empty> {
+        -> SourceResult<String> {
+        auto local_reference =
+            rstd::format("refs/lito/fetch/{}", rstd::crypto::sha256_hex(revision).as_str());
         auto arguments = rstd_try(git_command());
         arguments.push(String::make("--git-dir"_str));
         auto path = push_path(arguments, repository);
@@ -285,10 +429,11 @@ class SourceManager {
         arguments.push(String::make("--force"_str));
         arguments.push(String::make("--no-tags"_str));
         arguments.push(String::make("origin"_str));
-        arguments.push(String::make(revision));
+        arguments.push(rstd::format("{}:{}", revision, local_reference.as_str()));
         auto source = rstd::format("{}#{}", url, revision);
         emit_fetch(source.as_str(), repository);
-        return git_status(rstd::move(arguments), "Git source fetch"_str, *environment_);
+        rstd_try(git_status(rstd::move(arguments), "Git source fetch"_str, *environment_));
+        return Ok(rstd::move(local_reference));
     }
 
     auto rev_parse(ref<rstd::path::Path> repository, ref<str> revision) -> SourceResult<String> {
@@ -317,8 +462,7 @@ class SourceManager {
             auto present = object_exists(repository, (*locked)->commit.as_str());
             if (present.is_err()) return Err(rstd::move(present).unwrap_err());
             if (! *present) {
-                auto fetched = fetch(repository, url, (*locked)->commit.as_str());
-                if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
+                (void)rstd_try(fetch(repository, url, (*locked)->commit.as_str()));
             }
             return rev_parse(repository, (*locked)->commit.as_str());
         }
@@ -332,22 +476,25 @@ class SourceManager {
                    reference.kind == GitReferenceKind::Commit) {
             revision = reference.value.clone();
         }
-        auto fetched = fetch(repository, url, revision.as_str());
-        if (fetched.is_err()) return Err(rstd::move(fetched).unwrap_err());
-        return rev_parse(repository, "FETCH_HEAD"_str);
+        auto fetched = rstd_try(fetch(repository, url, revision.as_str()));
+        return rev_parse(repository, fetched.as_str());
     }
 
-    auto checkout(ref<rstd::path::Path> bucket, ref<rstd::path::Path> repository, ref<str> commit)
-        -> SourceResult<PathBuf> {
-        auto checkouts = PathBuf::from(bucket).join(PathBuf::from("checkouts"_str).as_path());
-        auto created   = rstd::fs::create_dir_all(checkouts.as_path());
-        if (created.is_err()) {
-            return source_io_failure<PathBuf>("create Git checkout cache"_str,
-                                              checkouts.as_path(),
-                                              rstd::move(created).unwrap_err());
+    auto checkout(const GitCacheLayout& layout,
+                  ref<str>              repository_key,
+                  ref<rstd::path::Path> repository,
+                  ref<str>              commit) -> SourceResult<PathBuf> {
+        auto checkout = layout.checkout(repository_key, commit);
+        auto parent   = checkout.as_path().parent();
+        if (parent.is_none()) {
+            return source_failure<PathBuf>("Git checkout cache has no parent directory"_str);
         }
-        auto checkout = checkouts.join(PathBuf::from(commit).as_path());
-        auto exists   = rstd::fs::exists(checkout.as_path());
+        auto created = rstd::fs::create_dir_all(*parent);
+        if (created.is_err()) {
+            return source_io_failure<PathBuf>(
+                "create Git checkout cache"_str, *parent, rstd::move(created).unwrap_err());
+        }
+        auto exists = rstd::fs::exists(checkout.as_path());
         if (exists.is_err()) {
             return source_io_failure<PathBuf>(
                 "inspect Git checkout"_str, checkout.as_path(), rstd::move(exists).unwrap_err());
@@ -623,46 +770,36 @@ class SourceManager {
                 rstd::format("--locked has no source matching Git dependency '{}'", url));
         }
 
-        auto cache = lito_cache_directory(PathBuf::from("git"_str).as_path(), "Git sources"_str);
+        auto exact_commit = exact_git_commit(reference, pin);
+        auto input        = rstd_try(prepared_exact_git_input(url, reference, pin));
+        if (input.is_some()) {
+            auto resolved   = rstd::move(input).unwrap();
+            auto registered = rstd_try(register_git_source(url,
+                                                           reference,
+                                                           rstd::move(resolved.commit),
+                                                           rstd::move(resolved.path),
+                                                           package_source));
+            source_requests_.insert(rstd::move(request_key), registered);
+            return Ok(registered);
+        }
+
+        auto session = rstd_try(source_cache_session());
+        auto cache   = session.open_git_cache();
         if (cache.is_err()) {
             return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
         }
-        auto cache_directory = rstd::move(cache).unwrap();
-        auto created         = rstd::fs::create_dir_all(cache_directory.as_path());
-        if (created.is_err()) {
-            return source_io_failure<usize>("create Git source cache"_str,
-                                            cache_directory.as_path(),
-                                            rstd::move(created).unwrap_err());
-        }
-        auto bucket = cache_directory.join(PathBuf::from(source_hash(url)).as_path());
-        created     = rstd::fs::create_dir_all(bucket.as_path());
-        if (created.is_err()) {
-            return source_io_failure<usize>(
-                "create Git source bucket"_str, bucket.as_path(), rstd::move(created).unwrap_err());
-        }
-        auto lock_path = bucket.join(PathBuf::from("lock"_str).as_path());
-        auto lock_file = rstd::fs::File::create(lock_path.as_path());
-        if (lock_file.is_err()) {
-            return source_io_failure<usize>("open Git source lock"_str,
-                                            lock_path.as_path(),
-                                            rstd::move(lock_file).unwrap_err());
-        }
-        auto locked_cache = lock_file->lock();
-        if (locked_cache.is_err()) {
-            return source_io_failure<usize>("lock Git source cache"_str,
-                                            lock_path.as_path(),
-                                            rstd::move(locked_cache).unwrap_err());
-        }
-
-        auto repository_path = rstd_try(repository(bucket.as_path(), url));
-        auto exact_commit    = exact_git_commit(reference, pin);
+        auto layout          = rstd::move(cache).unwrap();
+        auto repository_key  = repository_directory_key(url);
+        auto repository_path = rstd_try(repository(layout, repository_key.as_str(), url));
         if (exact_commit.is_some()) {
             auto present = rstd_try(object_exists(repository_path.as_path(), *exact_commit));
             if (present) {
                 auto precise_commit = rstd_try(rev_parse(repository_path.as_path(), *exact_commit));
-                auto local          = rstd_try(
-                    checkout(bucket.as_path(), repository_path.as_path(), precise_commit.as_str()));
-                auto canonical = rstd::fs::canonicalize(local.as_path());
+                auto local          = rstd_try(checkout(layout,
+                                                        repository_key.as_str(),
+                                                        repository_path.as_path(),
+                                                        precise_commit.as_str()));
+                auto canonical      = rstd::fs::canonicalize(local.as_path());
                 if (canonical.is_err()) {
                     return source_io_failure<usize>("resolve Git checkout"_str,
                                                     local.as_path(),
@@ -676,16 +813,6 @@ class SourceManager {
                 source_requests_.insert(rstd::move(request_key), registered);
                 return Ok(registered);
             }
-            auto seed = rstd_try(seed_checkout(url, *exact_commit));
-            if (seed.is_some()) {
-                auto registered = rstd_try(register_git_source(url,
-                                                               reference,
-                                                               String::make(*exact_commit),
-                                                               rstd::move(seed).unwrap(),
-                                                               package_source));
-                source_requests_.insert(rstd::move(request_key), registered);
-                return Ok(registered);
-            }
         }
         if (options_.sources.network == NetworkPolicy::Offline) {
             auto requirement = git_requirement_identity(url, reference);
@@ -694,8 +821,8 @@ class SourceManager {
         }
         auto precise_commit =
             rstd_try(resolve_commit(repository_path.as_path(), url, reference, pin));
-        auto local = rstd_try(
-            checkout(bucket.as_path(), repository_path.as_path(), precise_commit.as_str()));
+        auto local     = rstd_try(checkout(
+            layout, repository_key.as_str(), repository_path.as_path(), precise_commit.as_str()));
         auto canonical = rstd::fs::canonicalize(local.as_path());
         if (canonical.is_err()) {
             return source_io_failure<usize>(
@@ -708,6 +835,30 @@ class SourceManager {
                                                        package_source));
         source_requests_.insert(rstd::move(request_key), registered);
         return Ok(registered);
+    }
+
+    auto acquire_seeded_git(const PackageSourceRequirement& requirement,
+                            ResolvedGitSeed                 seed,
+                            bool                            package_source) -> SourceResult<usize> {
+        const auto& git         = requirement.as_Git();
+        auto        registered  = rstd_try(register_git_source(git.url.as_str(),
+                                                               git.reference,
+                                                               rstd::move(seed.commit),
+                                                               rstd::move(seed.path),
+                                                               package_source));
+        auto        request_key = git_requirement_identity(git.url.as_str(), git.reference);
+        source_requests_.insert(rstd::move(request_key), registered);
+        return Ok(registered);
+    }
+
+    auto acquire_external_seeded(const PackageSourceRequirement& requirement, ResolvedGitSeed seed)
+        -> SourceResult<AcquiredSource> {
+        auto source = rstd_try(acquire_seeded_git(requirement, rstd::move(seed), false));
+        return Ok(AcquiredSource {
+            .root      = entries_[source].source.root_directory.clone(),
+            .identity  = entries_[source].source.identity.clone(),
+            .cacheable = true,
+        });
     }
 
     auto resolve_git(ref<str> url, const GitReference& reference)
@@ -724,58 +875,37 @@ class SourceManager {
                 rstd::format("--locked has no source matching Git dependency '{}'", url));
         }
 
-        auto cache = lito_cache_directory(PathBuf::from("git"_str).as_path(), "Git sources"_str);
-        if (cache.is_err()) {
-            return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
-        }
-        auto cache_directory = rstd::move(cache).unwrap();
-        auto created         = rstd::fs::create_dir_all(cache_directory.as_path());
-        if (created.is_err()) {
-            return source_io_failure<ResolvedPackageSource>("create Git source cache"_str,
-                                                            cache_directory.as_path(),
-                                                            rstd::move(created).unwrap_err());
-        }
-        auto bucket = cache_directory.join(PathBuf::from(source_hash(url)).as_path());
-        created     = rstd::fs::create_dir_all(bucket.as_path());
-        if (created.is_err()) {
-            return source_io_failure<ResolvedPackageSource>(
-                "create Git source bucket"_str, bucket.as_path(), rstd::move(created).unwrap_err());
-        }
-        auto lock_path = bucket.join(PathBuf::from("lock"_str).as_path());
-        auto lock_file = rstd::fs::File::create(lock_path.as_path());
-        if (lock_file.is_err()) {
-            return source_io_failure<ResolvedPackageSource>("open Git source lock"_str,
-                                                            lock_path.as_path(),
-                                                            rstd::move(lock_file).unwrap_err());
-        }
-        auto locked_cache = lock_file->lock();
-        if (locked_cache.is_err()) {
-            return source_io_failure<ResolvedPackageSource>("lock Git source cache"_str,
-                                                            lock_path.as_path(),
-                                                            rstd::move(locked_cache).unwrap_err());
-        }
-
-        auto repository_path = rstd_try(repository(bucket.as_path(), url));
-        auto precise_commit  = String::make();
-        auto exact_commit    = exact_git_commit(reference, pin);
+        auto precise_commit = String::make();
+        auto exact_commit   = exact_git_commit(reference, pin);
         if (exact_commit.is_some()) {
-            auto present = rstd_try(object_exists(repository_path.as_path(), *exact_commit));
-            if (present) {
-                precise_commit = rstd_try(rev_parse(repository_path.as_path(), *exact_commit));
-            } else {
-                auto seed = rstd_try(seed_checkout(url, *exact_commit));
-                if (seed.is_some()) precise_commit = String::make(*exact_commit);
-            }
+            auto input = rstd_try(prepared_exact_git_input(url, reference, pin));
+            if (input.is_some()) precise_commit = String::make(*exact_commit);
         }
         if (precise_commit.is_empty()) {
-            if (options_.sources.network == NetworkPolicy::Offline) {
+            auto session = rstd_try(source_cache_session());
+            auto cache   = session.open_git_cache();
+            if (cache.is_err()) {
+                return Err(rstd::into<SourceError>(rstd::move(cache).unwrap_err()));
+            }
+            auto layout          = rstd::move(cache).unwrap();
+            auto repository_key  = repository_directory_key(url);
+            auto repository_path = rstd_try(repository(layout, repository_key.as_str(), url));
+            if (exact_commit.is_some()) {
+                auto present = rstd_try(object_exists(repository_path.as_path(), *exact_commit));
+                if (present) {
+                    precise_commit = rstd_try(rev_parse(repository_path.as_path(), *exact_commit));
+                }
+            }
+            if (precise_commit.is_empty() && options_.sources.network == NetworkPolicy::Offline) {
                 auto requirement = git_requirement_identity(url, reference);
                 return source_failure<ResolvedPackageSource>(
                     rstd::format("offline source resolution cannot fetch Git source '{}'",
                                  requirement.as_str()));
             }
-            precise_commit = rstd_try(
-                resolve_commit(repository_path.as_path(), url, reference, rstd::move(pin)));
+            if (precise_commit.is_empty()) {
+                precise_commit = rstd_try(
+                    resolve_commit(repository_path.as_path(), url, reference, rstd::move(pin)));
+            }
         }
         return Ok(ResolvedPackageSource {
             .identity = git_source_identity(url, precise_commit.as_str()),
@@ -795,12 +925,14 @@ public:
                            PackageResolutionOptions          options,
                            ToolResolver&                     resolver,
                            const ResolvedProcessEnvironment& environment,
-                           BuildObserver                     observer = {})
+                           BuildObserver                     observer      = {},
+                           Option<SourceCacheSession>        cache_session = None())
         : graph_root_(PathBuf::from(graph_root)),
           options_(rstd::move(options)),
           resolver_(rstd::addressof(resolver)),
           environment_(rstd::addressof(environment)),
-          observer_(observer) {}
+          observer_(observer),
+          cache_session_(rstd::move(cache_session)) {}
 
     auto resolve_external_source(const PackageSourceRequirement& requirement,
                                  ref<rstd::path::Path>           declaring_root)
@@ -878,9 +1010,20 @@ public:
             return Ok(rstd::move(result));
         }
 
-        auto worker_count = jobs < unique.len() ? jobs : unique.len();
-        auto created = rstd::thread::BlockingTaskGroup<SourceResult<FetchedPackageSource>>::make(
-            worker_count, unique.len());
+        auto seeds       = Vec<Option<ResolvedGitSeed>>::with_capacity(unique.len());
+        auto needs_cache = false;
+        for (const auto& request : unique) {
+            auto seed = rstd_try(prepared_git_seed(request.source));
+            if (request.source.is_Git() && seed.is_none()) needs_cache = true;
+            seeds.push(rstd::move(seed));
+        }
+        if (needs_cache) (void)rstd_try(source_cache_session());
+
+        auto work_groups  = source_work_groups(unique);
+        auto worker_count = jobs < work_groups.len() ? jobs : work_groups.len();
+        auto created =
+            rstd::thread::BlockingTaskGroup<SourceResult<Vec<FetchedPackageSource>>>::make(
+                worker_count, work_groups.len());
         if (created.is_err()) {
             return Err(SourceError::System(
                 String::make("create package source fetch executor"_str),
@@ -889,29 +1032,50 @@ public:
                                 rstd::move(created).unwrap_err_unchecked())));
         }
         auto group = rstd::move(created).unwrap_unchecked();
-        for (usize index {}; index < unique.len(); ++index) {
-            auto request     = rstd::move(unique[index]);
+        for (auto& indices : work_groups) {
+            auto work = Vec<SourceWork>::with_capacity(indices.len());
+            for (auto index : indices) {
+                work.push(SourceWork {
+                    .request = index,
+                    .source  = rstd::move(unique[index]),
+                    .seed    = rstd::move(seeds[index]),
+                });
+            }
             auto graph_root  = graph_root_.clone();
             auto options     = options_.clone();
             auto environment = environment_->clone();
             auto observer    = observer_;
-            auto submitted =
-                group.submit([index,
-                              request     = rstd::move(request),
-                              graph_root  = rstd::move(graph_root),
-                              options     = rstd::move(options),
-                              environment = rstd::move(environment),
-                              observer]() mutable -> SourceResult<FetchedPackageSource> {
-                    auto resolver = ToolResolver(environment);
-                    auto manager  = SourceManager(
-                        graph_root.as_path(), rstd::move(options), resolver, environment, observer);
-                    auto acquired =
-                        manager.acquire(request.source, request.declaring_root.as_path());
-                    if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                    return Ok(FetchedPackageSource {
-                        .request = index,
-                        .entry   = manager.take_entry(*acquired),
-                    });
+            auto cache       = clone_cache_session();
+            auto submitted   = group.submit(
+                [work        = rstd::move(work),
+                 graph_root  = rstd::move(graph_root),
+                 options     = rstd::move(options),
+                 environment = rstd::move(environment),
+                 observer,
+                 cache = rstd::move(cache)]() mutable -> SourceResult<Vec<FetchedPackageSource>> {
+                    auto results = Vec<FetchedPackageSource>::with_capacity(work.len());
+                    for (auto& item : work) {
+                        auto resolver   = ToolResolver(environment);
+                        auto item_cache = cache.is_some() ? Some(cache->clone()) : None();
+                        auto manager    = SourceManager(graph_root.as_path(),
+                                                        options.clone(),
+                                                        resolver,
+                                                        environment,
+                                                        observer,
+                                                        rstd::move(item_cache));
+                        auto acquired =
+                            item.seed.is_some()
+                                ? manager.acquire_seeded_git(
+                                      item.source.source, rstd::move(item.seed).unwrap(), true)
+                                : manager.acquire(item.source.source,
+                                                  item.source.declaring_root.as_path());
+                        if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+                        results.push(FetchedPackageSource {
+                            .request = item.request,
+                            .entry   = manager.take_entry(*acquired),
+                        });
+                    }
+                    return Ok(rstd::move(results));
                 });
             if (submitted.is_err()) {
                 return source_failure<Vec<usize>>("cannot submit package source fetch task"_str);
@@ -927,8 +1091,10 @@ public:
             }
             auto task = rstd::move(value).unwrap_unchecked();
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
-            auto source             = rstd::move(task).unwrap();
-            fetched[source.request] = Some(rstd::move(source.entry));
+            auto sources = rstd::move(task).unwrap();
+            for (auto& source : sources) {
+                fetched[source.request] = Some(rstd::move(source.entry));
+            }
         }
         auto unique_indices = Vec<usize>::with_capacity(unique.len());
         for (auto& source : fetched) {
@@ -973,9 +1139,20 @@ public:
             unique.push(rstd::move(request));
         }
 
-        auto worker_count = jobs < unique.len() ? jobs : unique.len();
-        auto created = rstd::thread::BlockingTaskGroup<SourceResult<FetchedExternalSource>>::make(
-            worker_count, unique.len());
+        auto seeds       = Vec<Option<ResolvedGitSeed>>::with_capacity(unique.len());
+        auto needs_cache = false;
+        for (const auto& request : unique) {
+            auto seed = rstd_try(prepared_git_seed(request.source));
+            if (request.source.is_Git() && seed.is_none()) needs_cache = true;
+            seeds.push(rstd::move(seed));
+        }
+        if (needs_cache) (void)rstd_try(source_cache_session());
+
+        auto work_groups  = source_work_groups(unique);
+        auto worker_count = jobs < work_groups.len() ? jobs : work_groups.len();
+        auto created =
+            rstd::thread::BlockingTaskGroup<SourceResult<Vec<FetchedExternalSource>>>::make(
+                worker_count, work_groups.len());
         if (created.is_err()) {
             return Err(SourceError::System(
                 String::make("create external source fetch executor"_str),
@@ -984,33 +1161,54 @@ public:
                                 rstd::move(created).unwrap_err_unchecked())));
         }
         auto group = rstd::move(created).unwrap_unchecked();
-        for (usize index {}; index < unique.len(); ++index) {
-            auto request     = rstd::move(unique[index]);
+        for (auto& indices : work_groups) {
+            auto work = Vec<SourceWork>::with_capacity(indices.len());
+            for (auto index : indices) {
+                work.push(SourceWork {
+                    .request = index,
+                    .source  = rstd::move(unique[index]),
+                    .seed    = rstd::move(seeds[index]),
+                });
+            }
             auto graph_root  = graph_root_.clone();
             auto options     = options_.clone();
             auto environment = environment_->clone();
             auto observer    = observer_;
-            auto submitted =
-                group.submit([index,
-                              request     = rstd::move(request),
-                              graph_root  = rstd::move(graph_root),
-                              options     = rstd::move(options),
-                              environment = rstd::move(environment),
-                              observer]() mutable -> SourceResult<FetchedExternalSource> {
-                    auto resolver = ToolResolver(environment);
-                    auto manager  = SourceManager(
-                        graph_root.as_path(), rstd::move(options), resolver, environment, observer);
-                    auto acquired =
-                        manager.acquire_external(request.source, request.declaring_root.as_path());
-                    if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-                    return Ok(FetchedExternalSource {
-                        .request = index,
-                        .outcome =
-                            ExternalSourceFetchOutcome {
-                                .acquired = rstd::move(acquired).unwrap(),
-                                .sources  = manager.finish(),
-                            },
-                    });
+            auto cache       = clone_cache_session();
+            auto submitted   = group.submit(
+                [work        = rstd::move(work),
+                 graph_root  = rstd::move(graph_root),
+                 options     = rstd::move(options),
+                 environment = rstd::move(environment),
+                 observer,
+                 cache = rstd::move(cache)]() mutable -> SourceResult<Vec<FetchedExternalSource>> {
+                    auto results = Vec<FetchedExternalSource>::with_capacity(work.len());
+                    for (auto& item : work) {
+                        auto resolver   = ToolResolver(environment);
+                        auto item_cache = cache.is_some() ? Some(cache->clone()) : None();
+                        auto manager    = SourceManager(graph_root.as_path(),
+                                                        options.clone(),
+                                                        resolver,
+                                                        environment,
+                                                        observer,
+                                                        rstd::move(item_cache));
+                        auto acquired =
+                            item.seed.is_some()
+                                ? manager.acquire_external_seeded(item.source.source,
+                                                                  rstd::move(item.seed).unwrap())
+                                : manager.acquire_external(item.source.source,
+                                                           item.source.declaring_root.as_path());
+                        if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
+                        results.push(FetchedExternalSource {
+                            .request = item.request,
+                            .outcome =
+                                ExternalSourceFetchOutcome {
+                                    .acquired = rstd::move(acquired).unwrap(),
+                                    .sources  = manager.finish(),
+                                },
+                        });
+                    }
+                    return Ok(rstd::move(results));
                 });
             if (submitted.is_err()) {
                 return source_failure<Vec<ExternalSourceFetchOutcome>>(
@@ -1028,8 +1226,10 @@ public:
             }
             auto task = rstd::move(value).unwrap_unchecked();
             if (task.is_err()) return Err(rstd::move(task).unwrap_err());
-            auto source             = rstd::move(task).unwrap();
-            fetched[source.request] = Some(rstd::move(source.outcome));
+            auto sources = rstd::move(task).unwrap();
+            for (auto& source : sources) {
+                fetched[source.request] = Some(rstd::move(source.outcome));
+            }
         }
         for (auto binding : bindings) {
             if (fetched[binding].is_none()) {
@@ -1038,6 +1238,7 @@ public:
             }
             result.push(clone_external_outcome(*fetched[binding]));
         }
+        cache_session_ = None();
         return Ok(rstd::move(result));
     }
 

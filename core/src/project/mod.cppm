@@ -12,6 +12,7 @@ import lito.source.contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
+import lito.build.layout;
 import lito.lock.contract;
 import lito.package.graph_contract;
 import lito.package.target_contract;
@@ -96,7 +97,8 @@ auto resolve_project(const PackageSelection&           selection,
                      const ResolvedProcessEnvironment& environment,
                      usize                             jobs     = usize(1),
                      BuildObserver                     observer = {},
-                     Option<WorkspaceCatalog> catalog = None()) -> ProjectResult<ProjectResolution> {
+                     Option<WorkspaceCatalog>          catalog  = None())
+    -> ProjectResult<ProjectResolution> {
     auto started = rstd_try(start_project_resolution(selection,
                                                      purpose,
                                                      sources,
@@ -155,11 +157,13 @@ auto resolve_project_selection(const PackageSelection&           selection,
 
 struct PreparedBuildProject {
     ClangToolchain       toolchain;
+    BuildLayout          layout;
     PackageMetadata      metadata;
     ExternalAssetCatalog external_assets;
 };
 
 struct ResolvedProjectMetadata {
+    BuildLayout          layout;
     PackageMetadata      metadata;
     ExternalAssetCatalog external_assets;
 };
@@ -188,18 +192,18 @@ auto resolve_project_session(const PackageSelection&           selection,
     auto host     = rstd_try(detect_host_info());
     auto platform = rstd_try(resolve_build_platform(
         host, toolchain.target_info(), explicit_cpp_target(build_arguments)));
-    auto project = rstd_try(resolve_project(selection,
-                                            purpose,
-                                            sources,
-                                            lock,
-                                            locked,
-                                            GitResolutionMode::ReuseLocked,
-                                            rstd::addressof(platform.effective_target),
-                                            tool_resolver,
-                                            environment,
-                                            jobs,
-                                            observer_value(observer),
-                                            rstd::move(catalog)));
+    auto project  = rstd_try(resolve_project(selection,
+                                             purpose,
+                                             sources,
+                                             lock,
+                                             locked,
+                                             GitResolutionMode::ReuseLocked,
+                                             rstd::addressof(platform.effective_target),
+                                             tool_resolver,
+                                             environment,
+                                             jobs,
+                                             observer_value(observer),
+                                             rstd::move(catalog)));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
         .build_arguments = rstd::move(build_arguments),
@@ -207,9 +211,10 @@ auto resolve_project_session(const PackageSelection&           selection,
     });
 }
 
-auto resolve_project_metadata(ResolvedProjectSession           session,
+auto resolve_project_metadata(ResolvedProjectSession            session,
                               const BuildConfiguration&         configuration,
                               const BuildProfileName&           profile,
+                              ref<rstd::path::Path>             requested_output,
                               const PackageSourceConfig&        sources,
                               const PkgConfigProviderConfig&    pkg_config,
                               const CMakeProviderConfig&        cmake,
@@ -229,12 +234,18 @@ auto resolve_project_metadata(ResolvedProjectSession           session,
                                                        project.graph.profile,
                                                        profile,
                                                        rstd::move(session.build_arguments)));
+    auto layout           = BuildLayout::create(
+        project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());
+    if (layout.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));
+    }
     auto external_usage = rstd_try(resolve_external_usage_catalog(project.graph,
                                                                   project.selected_package_names,
                                                                   pkg_config,
                                                                   cmake,
                                                                   resolved_configuration,
                                                                   resolved_profile,
+                                                                  *layout,
                                                                   session.platform,
                                                                   toolchain.argument_parser(),
                                                                   tool_resolver,
@@ -242,27 +253,29 @@ auto resolve_project_metadata(ResolvedProjectSession           session,
                                                                   jobs,
                                                                   observer,
                                                                   sources));
-    auto assets = rstd::move(external_usage.assets);
-    auto metadata = adapt_package_graph_metadata(rstd::move(project.graph),
-                                                 project.selected_package_names,
-                                                 project.selected_targets,
-                                                 resolved_configuration,
-                                                 rstd::move(resolved_profile),
-                                                 session.platform,
-                                                 rstd::move(external_usage.usage),
-                                                 toolchain.argument_parser());
+    auto assets         = rstd::move(external_usage.assets);
+    auto metadata       = adapt_package_graph_metadata(rstd::move(project.graph),
+                                                       project.selected_package_names,
+                                                       project.selected_targets,
+                                                       resolved_configuration,
+                                                       rstd::move(resolved_profile),
+                                                       session.platform,
+                                                       rstd::move(external_usage.usage),
+                                                       toolchain.argument_parser());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
     return Ok(ResolvedProjectMetadata {
+        .layout          = rstd::move(layout).unwrap(),
         .metadata        = rstd::move(metadata).unwrap(),
         .external_assets = rstd::move(assets),
     });
 }
 
-auto prepare_resolved_build_project(ResolvedProjectSession           session,
+auto prepare_resolved_build_project(ResolvedProjectSession            session,
                                     const BuildConfiguration&         configuration,
                                     const BuildProfileName&           profile,
+                                    ref<rstd::path::Path>             requested_output,
                                     const PackageSourceConfig&        sources,
                                     const PkgConfigProviderConfig&    pkg_config,
                                     const CMakeProviderConfig&        cmake,
@@ -275,6 +288,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession           session,
     auto metadata = resolve_project_metadata(rstd::move(session),
                                              configuration,
                                              profile,
+                                             requested_output,
                                              sources,
                                              pkg_config,
                                              cmake,
@@ -287,6 +301,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession           session,
     auto resolved = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
         .toolchain       = rstd::move(toolchain),
+        .layout          = rstd::move(resolved.layout),
         .metadata        = rstd::move(resolved.metadata),
         .external_assets = rstd::move(resolved.external_assets),
     });
@@ -295,6 +310,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession           session,
 auto resolve_project_metadata(const PackageSelection&           selection,
                               const BuildConfiguration&         configuration,
                               const BuildProfileName&           profile,
+                              ref<rstd::path::Path>             requested_output,
                               const PackageSourceConfig&        sources,
                               const LockConfig&                 lock,
                               const PkgConfigProviderConfig&    pkg_config,
@@ -323,6 +339,7 @@ auto resolve_project_metadata(const PackageSelection&           selection,
     return resolve_project_metadata(rstd::move(session),
                                     configuration,
                                     profile,
+                                    requested_output,
                                     sources,
                                     pkg_config,
                                     cmake,
@@ -336,6 +353,7 @@ auto resolve_project_metadata(const PackageSelection&           selection,
 auto prepare_build_project(const PackageSelection&           selection,
                            const BuildConfiguration&         configuration,
                            const BuildProfileName&           profile,
+                           ref<rstd::path::Path>             requested_output,
                            const PackageSourceConfig&        sources,
                            const LockConfig&                 lock,
                            const PkgConfigProviderConfig&    pkg_config,
@@ -356,6 +374,7 @@ auto prepare_build_project(const PackageSelection&           selection,
     auto metadata  = resolve_project_metadata(selection,
                                               configuration,
                                               profile,
+                                              requested_output,
                                               sources,
                                               lock,
                                               pkg_config,
@@ -372,6 +391,7 @@ auto prepare_build_project(const PackageSelection&           selection,
     auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
         .toolchain       = rstd::move(toolchain),
+        .layout          = rstd::move(resolved_metadata.layout),
         .metadata        = rstd::move(resolved_metadata.metadata),
         .external_assets = rstd::move(resolved_metadata.external_assets),
     });

@@ -16,8 +16,10 @@ import lito.source;
 import lito.manifest;
 import lito.toolchain;
 import lito.build.discovery;
+import lito.build.layout;
 import lito.system.environment;
 import lito.system.process;
+import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
@@ -259,7 +261,7 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                             const lito::ProfileSpec&                             profile,
                             const lito::BuildPlatform&                           platform,
                             const lito::CppArgumentParser&                       parser,
-                            usize                                                jobs = usize(1),
+                            usize                                                jobs   = usize(1),
                             Vec<lito::ExternalAssetSet>*                         assets = nullptr)
     -> lito::DependencyResult<Vec<lito::ResolvedExternalDependency>> {
     auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
@@ -275,8 +277,9 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
     provider.executable = rstd::move(tool).unwrap().executable;
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
-    provider    = rstd::move(identified).unwrap();
-    auto result = Vec<lito::ResolvedExternalDependency>::make();
+    provider       = rstd::move(identified).unwrap();
+    auto result    = Vec<lito::ResolvedExternalDependency>::make();
+    auto work_root = output_root("cmake-fixture-work"_str);
     for (const auto& declaration : declarations) {
         auto requirement = lito::resolve_cmake_requirement_for_platform(declaration, platform);
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
@@ -297,6 +300,7 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                                              profile,
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
+                                             work_root.as_path(),
                                              jobs);
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto snapshot = lito::execute_cmake_package(*plan, *environment);
@@ -348,7 +352,7 @@ auto external_git_graph(ref<str> url, lito::GitReference reference) -> lito::Res
             },
     });
     return lito::ResolvedPackageGraph {
-        .root_directory = root("lock/git-update"_str),
+        .root_directory = root("project"_str),
         .packages       = rstd::move(packages),
     };
 }
@@ -373,11 +377,12 @@ void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
     ++context.count;
     context.source_matches =
         event.target.starts_with(context.expected_url) && event.target.ends_with("#HEAD"_str);
-    auto name = event.path.file_name();
-    if (name.is_some()) {
-        auto text                   = name->to_str();
-        context.destination_matches = text.is_some() && *text == "repository.git"_str;
-    }
+    auto parent = event.path.parent();
+    if (parent.is_none()) return;
+    auto directory = parent->file_name();
+    if (directory.is_none()) return;
+    auto text                   = directory->to_str();
+    context.destination_matches = text.is_some() && *text == "db"_str;
 }
 
 auto write_executable(ref<rstd::path::Path> path) -> bool {
@@ -397,12 +402,13 @@ auto install_script_input(const lito::PackageManifest& manifest) -> lito::Packag
         .root          = manifest.root.clone(),
         .manifest_path = manifest.manifest_path.clone(),
         .script        = Some(manifest.install_script->clone()),
-        .source        = lito::ResolvedPackageSource {
-            .identity       = lito::path_source_identity(root.as_path()),
-            .kind           = lito::PackageSourceKind::Path,
-            .root_directory = rstd::move(root),
-            .path           = PathBuf::from("."_str),
-        },
+        .source =
+            lito::ResolvedPackageSource {
+                .identity       = lito::path_source_identity(root.as_path()),
+                .kind           = lito::PackageSourceKind::Path,
+                .root_directory = rstd::move(root),
+                .path           = PathBuf::from("."_str),
+            },
         .direct = true,
     };
 }
@@ -503,7 +509,237 @@ auto external_usage_metadata(lito::DependencyVisibility     visibility,
     });
 }
 
+class EnvironmentVariableGuard {
+    String                      key_;
+    Option<rstd::ffi::OsString> previous_;
+
+public:
+    EnvironmentVariableGuard(ref<str> key, ref<str> value)
+        : key_(String::make(key)), previous_(rstd::env::var_os(key)) {
+        rstd::env::set_var(key, value);
+    }
+
+    ~EnvironmentVariableGuard() {
+        if (previous_.is_some()) {
+            rstd::env::set_var(key_.as_str(), previous_->as_os_str());
+        } else {
+            rstd::env::remove_var(key_.as_str());
+        }
+    }
+};
+
+struct FileFetchEventCapture {
+    usize count {};
+};
+
+void capture_file_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
+    if (event.kind != lito::BuildEventKind::Fetch) return;
+    ++static_cast<FileFetchEventCapture*>(raw_context)->count;
+}
+
 } // namespace
+
+TEST(Contracts, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
+    auto directory = output_root("source-cache-layout"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+
+    auto root = lito::LitoDataRoot::resolve();
+    ASSERT_TRUE(root.is_ok());
+    auto expected = data_home.join(PathBuf::from("lito"_str).as_path());
+    EXPECT_EQ(root->root(), expected.as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(expected.as_path()).is_ok());
+    auto lock = expected.join(PathBuf::from(".source-cache"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(lock.as_path(), "preserve\n"_str.as_bytes()).is_ok());
+    {
+        auto session = root->acquire_source_cache();
+        ASSERT_TRUE(session.is_ok());
+        auto parent_tag = expected.join(PathBuf::from("CACHEDIR.TAG"_str).as_path());
+        auto files      = expected.join(PathBuf::from("files"_str).as_path());
+        ASSERT_TRUE(rstd::fs::exists(lock.as_path()).unwrap());
+        EXPECT_EQ(rstd::fs::read_to_string(lock.as_path()).unwrap().as_str(), "preserve\n"_str);
+        auto probe = rstd::fs::FileLock::try_acquire(rstd::fs::File::open(lock.as_path()).unwrap(),
+                                                     rstd::fs::FileLockMode::Exclusive);
+        ASSERT_TRUE(probe.is_ok());
+        EXPECT_TRUE(probe->is_none());
+        EXPECT_FALSE(rstd::fs::exists(parent_tag.as_path()).unwrap());
+        EXPECT_FALSE(rstd::fs::exists(files.as_path()).unwrap());
+
+        auto git = session->open_git_cache();
+        ASSERT_TRUE(git.is_ok());
+        auto tag = PathBuf::from(git->root()).join(PathBuf::from("CACHEDIR.TAG"_str).as_path());
+        auto contents = rstd::fs::read_to_string(tag.as_path());
+        ASSERT_TRUE(contents.is_ok());
+        EXPECT_TRUE(
+            contents->as_str().starts_with("Signature: 8a477f597d28d172789f06886806bc55"_str));
+        EXPECT_FALSE(rstd::fs::exists(parent_tag.as_path()).unwrap());
+        EXPECT_FALSE(rstd::fs::exists(files.as_path()).unwrap());
+
+        ASSERT_TRUE(rstd::fs::remove_file(tag.as_path()).is_ok());
+        ASSERT_TRUE(session->open_git_cache().is_ok());
+        EXPECT_TRUE(rstd::fs::exists(tag.as_path()).unwrap());
+        auto custom = "Signature: 8a477f597d28d172789f06886806bc55\ncustom\n"_str;
+        ASSERT_TRUE(rstd::fs::write_atomic(tag.as_path(), custom.as_bytes()).is_ok());
+        ASSERT_TRUE(session->open_git_cache().is_ok());
+        EXPECT_EQ(rstd::fs::read_to_string(tag.as_path()).unwrap().as_str(), custom);
+        ASSERT_TRUE(rstd::fs::write_atomic(tag.as_path(), "invalid\n"_str.as_bytes()).is_ok());
+        EXPECT_TRUE(session->open_git_cache().is_err());
+        ASSERT_TRUE(rstd::fs::remove_file(tag.as_path()).is_ok());
+        ASSERT_TRUE(rstd::fs::create_dir(tag.as_path()).is_ok());
+        EXPECT_TRUE(session->open_git_cache().is_err());
+
+        auto file_cache = session->open_file_cache();
+        ASSERT_TRUE(file_cache.is_ok());
+        auto file_tag =
+            PathBuf::from(file_cache->root()).join(PathBuf::from("CACHEDIR.TAG"_str).as_path());
+        EXPECT_TRUE(rstd::fs::exists(file_tag.as_path()).unwrap());
+    }
+    ASSERT_TRUE(rstd::fs::remove_file(lock.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir(lock.as_path()).is_ok());
+    EXPECT_TRUE(root->acquire_source_cache().is_err());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Contracts, RelativeDataHomeFallsBackToHomeDataDirectory) {
+    auto directory = output_root("source-cache-home-fallback"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
+    auto home_text = directory.as_path().to_str();
+    ASSERT_TRUE(home_text.is_some());
+    EnvironmentVariableGuard home("HOME"_str, *home_text);
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, "relative-data"_str);
+
+    auto root = lito::LitoDataRoot::resolve();
+    ASSERT_TRUE(root.is_ok());
+    auto expected = directory.join(PathBuf::from(".local/share/lito"_str).as_path());
+    EXPECT_EQ(root->root(), expected.as_path());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Contracts, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
+    auto directory = output_root("archive-profile-materialization"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto package = directory.join(PathBuf::from("input/package"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(package.as_path()).is_ok());
+    auto payload = package.join(PathBuf::from("payload.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(payload.as_path(), "archive fixture\n"_str.as_bytes()).is_ok());
+
+    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver = lito::ToolResolver(*environment);
+    auto cmake    = resolver.resolve(PathBuf::from("cmake"_str).as_path(), "CMake executable"_str);
+    ASSERT_TRUE(cmake.is_ok());
+    auto archive = directory.join(PathBuf::from("fixture.tar"_str).as_path());
+    auto command = rstd::process::Command::make(cmake->executable.as_path().as_os_str());
+    command.arg("-E"_str)
+        .arg("tar"_str)
+        .arg("cf"_str)
+        .arg(archive.as_path().as_os_str())
+        .arg("package"_str)
+        .current_dir(directory.join(PathBuf::from("input"_str).as_path()).as_path());
+    auto status = command.status();
+    ASSERT_TRUE(status.is_ok());
+    ASSERT_TRUE(status->success());
+    auto archive_bytes = rstd::fs::read(archive.as_path());
+    ASSERT_TRUE(archive_bytes.is_ok());
+    auto digest = rstd::crypto::sha256_hex(archive_bytes->as_slice());
+    auto url    = rstd::format("file://{}", archive.as_path());
+
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+    auto debug_output   = directory.join(PathBuf::from("build/debug"_str).as_path());
+    auto release_output = directory.join(PathBuf::from("build/release"_str).as_path());
+    auto debug_layout =
+        lito::BuildLayout::create(directory.as_path(), debug_output.as_path(), "debug"_str);
+    auto release_layout =
+        lito::BuildLayout::create(directory.as_path(), release_output.as_path(), "release"_str);
+    ASSERT_TRUE(debug_layout.is_ok());
+    ASSERT_TRUE(release_layout.is_ok());
+
+    auto requests = Vec<lito::ArchiveSourceFetchRequest>::make();
+    requests.push(lito::ArchiveSourceFetchRequest {
+        .url    = url.clone(),
+        .sha256 = digest.clone(),
+    });
+    auto first_events = FileFetchEventCapture {};
+    auto first        = lito::acquire_archive_frontier(rstd::move(requests),
+                                                       usize(1),
+                                                       *debug_layout,
+                                                       cmake->executable.as_path(),
+                                                       *environment,
+                                                       {},
+                                                       lito::BuildObserver {
+                                                           .context = rstd::addressof(first_events),
+                                                           .notify  = capture_file_fetch,
+                                                       });
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_EQ(first->len(), usize(1));
+    EXPECT_EQ(first_events.count, usize(1));
+    EXPECT_TRUE((*first)[usize {}].root.as_path().starts_with(debug_layout->output()));
+
+    requests.push(lito::ArchiveSourceFetchRequest {
+        .url    = url.clone(),
+        .sha256 = digest.clone(),
+    });
+    auto second_events     = FileFetchEventCapture {};
+    auto cache_environment = lito::ResolvedProcessEnvironment::resolve(
+        lito::ProcessEnvironmentSpec {}, None(), directory.as_path());
+    ASSERT_TRUE(cache_environment.is_ok());
+    auto second = lito::acquire_archive_frontier(rstd::move(requests),
+                                                 usize(1),
+                                                 *release_layout,
+                                                 cmake->executable.as_path(),
+                                                 *cache_environment,
+                                                 {},
+                                                 lito::BuildObserver {
+                                                     .context = rstd::addressof(second_events),
+                                                     .notify  = capture_file_fetch,
+                                                 });
+    ASSERT_TRUE(second.is_ok());
+    ASSERT_EQ(second->len(), usize(1));
+    EXPECT_EQ(second_events.count, usize {});
+    EXPECT_TRUE((*second)[usize {}].root.as_path().starts_with(release_layout->output()));
+    EXPECT_NE((*first)[usize {}].root.as_path(), (*second)[usize {}].root.as_path());
+    EXPECT_TRUE(debug_layout->scan_cache_directory().as_path().starts_with(debug_layout->output()));
+    EXPECT_TRUE(
+        release_layout->scan_cache_directory().as_path().starts_with(release_layout->output()));
+
+    auto fetch_identity = lito::archive_fetch_identity(url.as_str(), digest.as_str());
+    auto file_key       = lito::fetch_identity_stable_key(fetch_identity);
+    auto file_bucket    = data_home.join(PathBuf::from("lito/files"_str).as_path())
+                              .join(PathBuf::from(file_key).as_path());
+    EXPECT_TRUE(rstd::fs::exists(file_bucket.join(PathBuf::from("source"_str).as_path()).as_path())
+                    .unwrap());
+    EXPECT_FALSE(
+        rstd::fs::exists(file_bucket.join(PathBuf::from("extracted"_str).as_path()).as_path())
+            .unwrap());
+    auto opened_bucket = rstd::fs::read_dir(file_bucket.as_path());
+    ASSERT_TRUE(opened_bucket.is_ok());
+    auto bucket_entries = rstd::move(opened_bucket).unwrap();
+    auto entry_count    = usize {};
+    for (auto entry = bucket_entries.next(); entry.is_some(); entry = bucket_entries.next()) {
+        ASSERT_TRUE(entry->is_ok());
+        EXPECT_EQ(entry->as_ref().unwrap().file_name().as_os_str().to_string_lossy().as_str(),
+                  "source"_str);
+        ++entry_count;
+    }
+    EXPECT_EQ(entry_count, usize(1));
+    auto archive_identity = lito::archive_source_identity(url.as_str(), digest.as_str());
+    auto debug_receipt    = debug_layout->archive_materialization(archive_identity.as_str())
+                                .join(PathBuf::from("source-v2"_str).as_path());
+    auto receipt          = rstd::fs::read_to_string(debug_receipt.as_path());
+    ASSERT_TRUE(receipt.is_ok());
+    EXPECT_TRUE(receipt->as_str().starts_with("lito-archive-materialization-v2\n"_str));
+    EXPECT_FALSE(
+        rstd::fs::exists(debug_output.join(PathBuf::from("CACHEDIR.TAG"_str).as_path()).as_path())
+            .unwrap());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
 
 TEST(Contracts, UserFacingEnumsImplementDisplay) {
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Scan).as_str(), "scan"_str);
@@ -979,22 +1215,19 @@ TEST(Contracts, InstallPurposeSelectsWorkspaceBinaries) {
 }
 
 TEST(Contracts, RuntimeDependenciesAreInstallOnlyAndDependencyFirst) {
-    auto explicit_manifest = lito::load_package_manifest(
-        root("manifest/runtime/explicit"_str).as_path());
+    auto explicit_manifest =
+        lito::load_package_manifest(root("manifest/runtime/explicit"_str).as_path());
     ASSERT_TRUE(explicit_manifest.is_ok());
     ASSERT_EQ(explicit_manifest->runtime_dependencies.len(), usize(2));
-    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(),
-              "git-helper"_str);
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(), "git-helper"_str);
     ASSERT_TRUE(explicit_manifest->runtime_dependencies[usize {}].source.is_Git());
-    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}]
-                  .source.as_Git().reference.kind,
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].source.as_Git().reference.kind,
               lito::GitReferenceKind::Commit);
-    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(),
-              "path-helper"_str);
+    EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(), "path-helper"_str);
     EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.is_Path());
 
     auto directory = root("runtime-dependency"_str);
-    auto build = lito::resolve_package_selection(
+    auto build     = lito::resolve_package_selection(
         lito::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-runtime-app"_str),
@@ -1037,8 +1270,8 @@ TEST(Contracts, InstallOnlyManifestOwnsItsConventionalScript) {
     ASSERT_TRUE(loaded->version.value.is_some());
     EXPECT_EQ(loaded->version.value->as_str(), "1.2.3"_str);
 
-    auto missing = lito::load_package_manifest(
-        root("manifest/install-only-missing-version"_str).as_path());
+    auto missing =
+        lito::load_package_manifest(root("manifest/install-only-missing-version"_str).as_path());
     ASSERT_TRUE(missing.is_err());
     EXPECT_TRUE(error_chain_text(missing.unwrap_err()).as_str().contains("version"_str));
 }
@@ -1048,18 +1281,16 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     auto manifest  = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
-    auto recipe = lito::execute_install_script(
-        install_script_input(*manifest),
-        lito::InstallScriptContext {
-            .profile     = String::make("release"_str),
-            .target      = String::make("x86_64-test-linux"_str),
-            .target_arch = String::make("x86_64"_str),
-        });
+    auto recipe = lito::execute_install_script(install_script_input(*manifest),
+                                               lito::InstallScriptContext {
+                                                   .profile = String::make("release"_str),
+                                                   .target  = String::make("x86_64-test-linux"_str),
+                                                   .target_arch = String::make("x86_64"_str),
+                                               });
     ASSERT_TRUE(recipe.is_ok());
     EXPECT_EQ(recipe->owner.as_str(), "fixture-install-script"_str);
     ASSERT_EQ(recipe->artifacts.len(), usize(1));
-    EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(),
-              "fixture-install-script"_str);
+    EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(), "fixture-install-script"_str);
     EXPECT_EQ(recipe->artifacts[usize {}].destination.as_path(),
               PathBuf::from("bin/producer"_str).as_path());
     ASSERT_EQ(recipe->external_assets.len(), usize(1));
@@ -1079,26 +1310,26 @@ TEST(Contracts, InstallScriptProducesAnOwnedRecipeOnce) {
     for (auto fixture : binding_errors) {
         auto invalid = lito::load_package_manifest(root(fixture).as_path());
         ASSERT_TRUE(invalid.is_ok());
-        auto executed = lito::execute_install_script(
-            install_script_input(*invalid),
-            lito::InstallScriptContext {
-                .profile     = String::make("release"_str),
-                .target      = String::make("x86_64-test-linux"_str),
-                .target_arch = String::make("x86_64"_str),
-            });
+        auto executed =
+            lito::execute_install_script(install_script_input(*invalid),
+                                         lito::InstallScriptContext {
+                                             .profile     = String::make("release"_str),
+                                             .target      = String::make("x86_64-test-linux"_str),
+                                             .target_arch = String::make("x86_64"_str),
+                                         });
         ASSERT_TRUE(executed.is_err());
         EXPECT_TRUE(executed.unwrap_err().is_Binding());
     }
 
     auto missing = lito::load_package_manifest(root("install-script/missing"_str).as_path());
     ASSERT_TRUE(missing.is_ok());
-    auto unregistered = lito::execute_install_script(
-        install_script_input(*missing),
-        lito::InstallScriptContext {
-            .profile     = String::make("release"_str),
-            .target      = String::make("x86_64-test-linux"_str),
-            .target_arch = String::make("x86_64"_str),
-        });
+    auto unregistered =
+        lito::execute_install_script(install_script_input(*missing),
+                                     lito::InstallScriptContext {
+                                         .profile     = String::make("release"_str),
+                                         .target      = String::make("x86_64-test-linux"_str),
+                                         .target_arch = String::make("x86_64"_str),
+                                     });
     ASSERT_TRUE(unregistered.is_err());
     EXPECT_TRUE(unregistered.unwrap_err().is_Message());
 }
@@ -1724,13 +1955,15 @@ TEST(Contracts, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     };
     auto requirement = lito::resolve_cmake_requirement_for_platform(prepared, platform);
     ASSERT_TRUE(requirement.is_ok());
-    auto first = lito::plan_cmake_package(*requirement,
-                                          fixture_cmake(),
-                                          configuration(),
-                                          default_profile(*parser),
-                                          platform.compiler_default,
-                                          platform.effective_target.triple.as_str(),
-                                          usize(1));
+    auto work_root = output_root("cmake-planner-work"_str);
+    auto first     = lito::plan_cmake_package(*requirement,
+                                              fixture_cmake(),
+                                              configuration(),
+                                              default_profile(*parser),
+                                              platform.compiler_default,
+                                              platform.effective_target.triple.as_str(),
+                                              work_root.as_path(),
+                                              usize(1));
     ASSERT_TRUE(first.is_ok());
     ASSERT_EQ(first->operations.len(), usize(7));
     EXPECT_EQ(first->operations[usize {}], lito::CMakePackageOperation::ConfigureSource);
@@ -1750,6 +1983,7 @@ TEST(Contracts, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                              default_profile(*parser),
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
+                                             work_root.as_path(),
                                              usize(8));
     ASSERT_TRUE(parallel.is_ok());
     EXPECT_EQ(first->area.root.as_path(), parallel->area.root.as_path());
@@ -1761,7 +1995,8 @@ TEST(Contracts, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                         configuration(),
                                                         default_profile(*parser),
                                                         platform.compiler_default,
-                                                        platform.effective_target.triple.as_str());
+                                                        platform.effective_target.triple.as_str(),
+                                                        work_root.as_path());
     ASSERT_TRUE(build_tree.is_ok());
     ASSERT_EQ(build_tree->operations.len(), usize(4));
     EXPECT_EQ(build_tree->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
@@ -1776,7 +2011,8 @@ TEST(Contracts, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                         configuration(),
                                                         default_profile(*parser),
                                                         platform.compiler_default,
-                                                        platform.effective_target.triple.as_str());
+                                                        platform.effective_target.triple.as_str(),
+                                                        work_root.as_path());
     ASSERT_TRUE(installed.is_ok());
     ASSERT_EQ(installed->operations.len(), usize(4));
     EXPECT_EQ(installed->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
@@ -1823,12 +2059,12 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .targets          = rstd::move(targets),
     });
     auto cold_assets = Vec<lito::ExternalAssetSet>::make();
-    auto resolved = resolve_cmake_fixtures(declarations,
-                                           default_profile(*parser),
-                                           native_platform(),
-                                           *parser,
-                                           usize(1),
-                                           rstd::addressof(cold_assets));
+    auto resolved    = resolve_cmake_fixtures(declarations,
+                                              default_profile(*parser),
+                                              native_platform(),
+                                              *parser,
+                                              usize(1),
+                                              rstd::addressof(cold_assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error);
@@ -1877,12 +2113,12 @@ TEST(Contracts, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(first_count.is_ok());
     EXPECT_EQ(first_count->as_str(), "configure\n"_str);
     auto warm_assets = Vec<lito::ExternalAssetSet>::make();
-    auto warm = resolve_cmake_fixtures(declarations,
-                                       default_profile(*parser),
-                                       native_platform(),
-                                       *parser,
-                                       usize(1),
-                                       rstd::addressof(warm_assets));
+    auto warm        = resolve_cmake_fixtures(declarations,
+                                              default_profile(*parser),
+                                              native_platform(),
+                                              *parser,
+                                              usize(1),
+                                              rstd::addressof(warm_assets));
     ASSERT_TRUE(warm.is_ok());
     ASSERT_EQ(warm_assets.len(), cold_assets.len());
     ASSERT_EQ(warm_assets[usize {}].entries.len(), cold_assets[usize {}].entries.len());
@@ -2935,6 +3171,10 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     auto repository = output_root("git-resolution"_str);
     ASSERT_TRUE(clear_output(repository.as_path()));
     ASSERT_TRUE(rstd::fs::create_dir_all(repository.as_path()).is_ok());
+    auto data_home = repository.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
     ASSERT_TRUE(git_succeeds(repository.as_path(), "init"_str));
     ASSERT_TRUE(git_succeeds(repository.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
     ASSERT_TRUE(git_succeeds(
@@ -3016,6 +3256,9 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                                                       .context = rstd::addressof(fetch_events),
                                                       .notify  = capture_fetch,
                                                   });
+    if (updated.is_err()) {
+        rstd::io::eprintln("Git update failed: {}", error_chain_text(updated.unwrap_err()));
+    }
     ASSERT_TRUE(updated.is_ok());
     EXPECT_EQ(fetch_events.count, usize(1));
     EXPECT_TRUE(fetch_events.source_matches);
@@ -3023,6 +3266,32 @@ TEST(Contracts, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     auto updated_commit = resolved_git_commit(update_graph);
     ASSERT_TRUE(updated_commit.is_some());
     EXPECT_EQ(*updated_commit, current->as_str());
+
+    auto database = data_home.join(PathBuf::from("lito/git/db"_str).as_path());
+    auto opened   = rstd::fs::read_dir(database.as_path());
+    ASSERT_TRUE(opened.is_ok());
+    auto entries        = rstd::move(opened).unwrap();
+    auto repository_key = String::make();
+    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
+        ASSERT_TRUE(next->is_ok());
+        auto entry = rstd::move(*next).unwrap();
+        auto name  = entry.file_name().as_os_str().to_string_lossy();
+        ASSERT_TRUE(repository_key.is_empty());
+        repository_key = String::make(name.as_str());
+    }
+    EXPECT_TRUE(repository_key.as_str().contains("git-resolution-"_str));
+    auto cached_repository = database.join(PathBuf::from(repository_key.as_str()).as_path());
+    EXPECT_TRUE(
+        rstd::fs::exists(cached_repository.join(PathBuf::from("HEAD"_str).as_path()).as_path())
+            .unwrap());
+    auto checkout_root = data_home.join(PathBuf::from("lito/git/checkouts"_str).as_path())
+                             .join(PathBuf::from(repository_key.as_str()).as_path());
+    EXPECT_TRUE(
+        rstd::fs::exists(checkout_root.join(PathBuf::from(previous->as_str()).as_path()).as_path())
+            .unwrap());
+    EXPECT_TRUE(
+        rstd::fs::exists(checkout_root.join(PathBuf::from(current->as_str()).as_path()).as_path())
+            .unwrap());
 
     auto pinned_graph = external_git_graph(*url,
                                            lito::GitReference {
