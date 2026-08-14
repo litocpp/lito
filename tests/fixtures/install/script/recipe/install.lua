@@ -32,13 +32,17 @@ lito.install({
                 PROFILE = lito.profile,
                 TARGET = lito.target,
                 ARCH = lito.target_arch,
+                ENVIRONMENT = lito.env("LITO_TEST_INSTALL_ENVIRONMENT"),
+                ENVIRONMENT_EMPTY = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") == "",
+                ENVIRONMENT_UNSET = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_UNSET") == nil,
+                ENVIRONMENT_UNSET_COUNT = select("#", lito.env("LITO_TEST_INSTALL_ENVIRONMENT_UNSET")),
             },
         },
     },
     inventories = {
         {
             destination = "share/fixture/files.txt",
-            relative_to = "share/fixture",
+            relative_to = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY"),
         },
     },
 })

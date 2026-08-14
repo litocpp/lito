@@ -114,6 +114,7 @@ auto asset_set_for(const ExternalAssetCatalog& catalog, ref<str> dependency, ref
 }
 
 auto relative_text(ref<rstd::path::Path> destination, ref<rstd::path::Path> base) -> String {
+    if (base.is_empty()) return destination.to_string_lossy();
     auto relative = rstd::path::lexically_relative(base, destination);
     return relative.is_some() ? relative->as_path().to_string_lossy()
                               : destination.to_string_lossy();

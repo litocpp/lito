@@ -114,6 +114,11 @@ class EnvironmentVariableGuard {
     Option<rstd::ffi::OsString> previous_;
 
 public:
+    explicit EnvironmentVariableGuard(ref<str> key)
+        : key_(String::make(key)), previous_(rstd::env::var_os(key)) {
+        rstd::env::remove_var(key);
+    }
+
     EnvironmentVariableGuard(ref<str> key, ref<str> value)
         : key_(String::make(key)), previous_(rstd::env::var_os(key)) {
         rstd::env::set_var(key, value);

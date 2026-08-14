@@ -43,6 +43,12 @@ TEST(Install, InstallOnlyManifestOwnsItsConventionalScript) {
 }
 
 TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
+    auto environment = EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT"_str,
+                                                 "fixture-environment"_str);
+    auto empty_environment =
+        EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY"_str, ""_str);
+    auto unset_environment =
+        EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_UNSET"_str);
     auto directory = fixture_path("install/script/recipe"_str);
     auto manifest  = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
@@ -63,9 +69,23 @@ TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
     ASSERT_EQ(recipe->files.len(), usize(1));
     ASSERT_EQ(recipe->templates.len(), usize(1));
     ASSERT_EQ(recipe->inventories.len(), usize(1));
+    EXPECT_TRUE(recipe->inventories[usize {}].relative_to.is_empty());
     auto fragment = recipe->templates[usize {}].values.get("FRAGMENT"_str);
     ASSERT_TRUE(fragment.is_some());
     EXPECT_EQ((**fragment).string(), "fixture-install-script 2.4.6\n"_str);
+    auto environment_value = recipe->templates[usize {}].values.get("ENVIRONMENT"_str);
+    ASSERT_TRUE(environment_value.is_some());
+    EXPECT_EQ((**environment_value).string(), "fixture-environment"_str);
+    auto environment_empty = recipe->templates[usize {}].values.get("ENVIRONMENT_EMPTY"_str);
+    ASSERT_TRUE(environment_empty.is_some());
+    EXPECT_TRUE((**environment_empty).boolean());
+    auto environment_unset = recipe->templates[usize {}].values.get("ENVIRONMENT_UNSET"_str);
+    ASSERT_TRUE(environment_unset.is_some());
+    EXPECT_TRUE((**environment_unset).boolean());
+    auto environment_unset_count =
+        recipe->templates[usize {}].values.get("ENVIRONMENT_UNSET_COUNT"_str);
+    ASSERT_TRUE(environment_unset_count.is_some());
+    EXPECT_EQ((**environment_unset_count).integer(), i64(1));
 
     constexpr ref<str> binding_errors[] = {
         "install/script/cross-package"_str,

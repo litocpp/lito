@@ -51,6 +51,11 @@ auto recipe_path(String value, ref<str> context) -> luato::Result<PathBuf> {
     return Ok(rstd::move(path));
 }
 
+auto inventory_base_path(String value) -> luato::Result<PathBuf> {
+    if (value.is_empty()) return Ok(PathBuf::from(rstd::move(value)));
+    return recipe_path(rstd::move(value), "inventory relative_to"_str);
+}
+
 auto known_fields(luato::Table& table, std::initializer_list<ref<str>> names)
     -> luato::Result<empty> {
     auto known = Vec<String>::with_capacity(usize(names.size()));
@@ -96,6 +101,27 @@ auto configure_values(luato::Table table) -> luato::Result<ConfigureValues> {
         }
     }
     return Ok(rstd::move(values));
+}
+
+auto environment_value(String name) -> luato::Result<Option<String>> {
+    if (name.is_empty()) {
+        return Err(luato::Error::binding(
+            String::make("environment variable name must not be empty"_str)));
+    }
+    for (auto byte : name.as_str().as_bytes()) {
+        if (byte == u8('=') || byte == u8 {}) {
+            return Err(luato::Error::binding(rstd::format(
+                "environment variable name '{}' contains an invalid character", name)));
+        }
+    }
+    auto value = rstd::env::var_os(name.as_str());
+    if (value.is_none()) return Ok(None());
+    auto text = rstd::move(value).unwrap().into_string();
+    if (text.is_err()) {
+        return Err(luato::Error::binding(rstd::format(
+            "environment variable '{}' is not valid UTF-8", name)));
+    }
+    return Ok(Some(rstd::move(text).unwrap()));
 }
 
 class InstallScriptSession {
@@ -186,9 +212,8 @@ public:
                 .destination = rstd_try(recipe_path(
                     rstd_try(item.required<String>("destination"_str)),
                     "inventory destination"_str)),
-                .relative_to = rstd_try(recipe_path(
-                    rstd_try(item.required<String>("relative_to"_str)),
-                    "inventory relative_to"_str)),
+                .relative_to = rstd_try(inventory_base_path(
+                    rstd_try(item.required<String>("relative_to"_str)))),
             });
             return Ok(empty {});
         }));
@@ -326,6 +351,21 @@ auto execute_install_script(const PackageInstallInput& package,
                 return Err(luato::Error::binding(rstd::move(text)));
             }
             frame.push(rstd::move(rendered).unwrap());
+            return Ok(usize(1));
+        }));
+    module.add(luato::NativeFunctionSpec::make(
+        String::make("env"_str), usize(1),
+        [](luato::CallFrame& frame) -> luato::BindingResult {
+            auto name = frame.required<String>(usize {});
+            if (name.is_err()) return Err(rstd::move(name).unwrap_err_unchecked());
+            auto value = environment_value(rstd::move(name).unwrap_unchecked());
+            if (value.is_err()) return Err(rstd::move(value).unwrap_err_unchecked());
+            auto resolved = rstd::move(value).unwrap_unchecked();
+            if (resolved.is_none()) {
+                frame.push_nil();
+            } else {
+                frame.push(rstd::move(resolved).unwrap());
+            }
             return Ok(usize(1));
         }));
     auto registered = lua.register_module(rstd::move(module));
