@@ -169,7 +169,15 @@ public:
         {
             auto activity  = ActivityGuard(*this, PreprocessorActivity::TranslationUnit);
             auto processed = process_file(request_.source.as_path(), None());
-            if (processed.is_err()) return Err(rstd::move(processed).unwrap_err());
+            if (processed.is_err()) {
+                auto error = rstd::move(processed).unwrap_err();
+                if (error.path.is_none() && error.location.is_some() &&
+                    error.location->source < sources_.len()) {
+                    error.path =
+                        Some(rstd::path::PathBuf::from(sources_.path(error.location->source)));
+                }
+                return Err(rstd::move(error));
+            }
         }
         auto statistics = finish_statistics();
         rstd::as<PreprocessorObserver>(observer_).record(statistics);
@@ -872,7 +880,8 @@ private:
                 auto include_next       = token.text.matches<HasIncludeNextBuiltin>();
                 auto include_builtin    = token.text.matches<HasIncludeBuiltin>() || include_next;
                 auto identifier_builtin = token.text.matches<IsIdentifierBuiltin>();
-                if (query_builtin || include_builtin || identifier_builtin) {
+                auto building_module    = token.text.matches<BuildingModuleBuiltin>();
+                if (query_builtin || include_builtin || identifier_builtin || building_module) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
                     if (open >= input.len() || input[open].text.as_str() != "("_str) {
@@ -891,15 +900,17 @@ private:
                         auto included = include_query(token, include_next, arguments[usize {}]);
                         if (included.is_err()) return Err(rstd::move(included).unwrap_err());
                         value = Ok(i64(*included));
-                    } else if (identifier_builtin) {
+                    } else if (identifier_builtin || building_module) {
                         if (arguments[usize {}].len() != usize(1) ||
                             arguments[usize {}][usize {}].kind != TokenKind::Identifier) {
                             return Err(failure(
-                                "builtin '__is_identifier' requires one identifier token"_str,
+                                rstd::format("builtin '{}' requires one identifier token", name),
                                 token.expansion));
                         }
-                        value = Ok(
-                            i64(matches_token(identifier_matcher_, arguments[usize {}][usize {}])));
+                        value = building_module
+                                    ? Ok(i64 {})
+                                    : Ok(i64(matches_token(identifier_matcher_,
+                                                           arguments[usize {}][usize {}])));
                     } else {
                         auto matched = BuiltinQuerySet::visit(name_hash, name, [&](auto query) {
                             using Query = typename decltype(query)::type;

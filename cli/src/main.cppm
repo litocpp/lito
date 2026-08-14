@@ -78,13 +78,15 @@ void observe_bench(void* raw_context, const lito::BenchEvent& event) noexcept {
     }
 }
 
-auto build_configuration(lito::ToolchainSpec toolchain, lito::StandardLibrary standard_library)
-    -> lito::BuildConfiguration {
+auto build_configuration(lito::ToolchainSpec   toolchain,
+                         lito::StandardLibrary standard_library,
+                         Vec<String>           options) -> lito::BuildConfiguration {
     return lito::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
         .standard_library  = standard_library,
         .bmi_mode          = lito::BmiMode::Reduced,
         .language_standard = lito::String::make("c++20"_str),
+        .options           = rstd::move(options),
     };
 }
 
@@ -313,12 +315,13 @@ extern "C++" int main() {
             .source      = rstd::move(install_source).unwrap(),
             .destination = rstd::move(destination).unwrap(),
         };
-        request.binaries             = rstd::move(options.binaries);
-        request.force                = options.force;
-        request.build.selection.root = project.root.clone();
-        request.build.environment    = rstd::move(project.environment);
-        request.build.configuration =
-            build_configuration(rstd::move(project.toolchain), project.standard_library);
+        request.binaries                 = rstd::move(options.binaries);
+        request.force                    = options.force;
+        request.build.selection.root     = project.root.clone();
+        request.build.environment        = rstd::move(project.environment);
+        request.build.configuration      = build_configuration(rstd::move(project.toolchain),
+                                                               project.standard_library,
+                                                               rstd::move(project.build_options));
         request.build.lock               = rstd::move(project.lock);
         request.build.sources            = rstd::move(project.sources);
         request.build.pkg_config         = rstd::move(project.pkg_config);
@@ -449,11 +452,12 @@ extern "C++" int main() {
                              options.offline,
                              options.frozen,
                              rstd::move(options.fetch_seeds));
-        auto request           = lito::ScanRequest {};
-        request.selection.root = rstd::move(project.root);
-        request.environment    = rstd::move(project.environment);
-        request.configuration =
-            build_configuration(rstd::move(project.toolchain), project.standard_library);
+        auto request               = lito::ScanRequest {};
+        request.selection.root     = rstd::move(project.root);
+        request.environment        = rstd::move(project.environment);
+        request.configuration      = build_configuration(rstd::move(project.toolchain),
+                                                         project.standard_library,
+                                                         rstd::move(project.build_options));
         request.lock               = rstd::move(project.lock);
         request.sources            = rstd::move(project.sources);
         request.pkg_config         = rstd::move(project.pkg_config);
@@ -498,12 +502,13 @@ extern "C++" int main() {
         auto request                 = lito::TestRequest {};
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
-        request.build.configuration =
-            build_configuration(rstd::move(project.toolchain), project.standard_library);
-        request.build.lock               = rstd::move(project.lock);
-        request.build.sources            = rstd::move(project.sources);
-        request.build.pkg_config         = rstd::move(project.pkg_config);
-        request.build.cmake              = rstd::move(project.cmake);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain),
+                                                           project.standard_library,
+                                                           rstd::move(project.build_options));
+        request.build.lock           = rstd::move(project.lock);
+        request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
+        request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
@@ -621,12 +626,13 @@ extern "C++" int main() {
         auto request                 = lito::BenchRequest {};
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
-        request.build.configuration =
-            build_configuration(rstd::move(project.toolchain), project.standard_library);
-        request.build.lock               = rstd::move(project.lock);
-        request.build.sources            = rstd::move(project.sources);
-        request.build.pkg_config         = rstd::move(project.pkg_config);
-        request.build.cmake              = rstd::move(project.cmake);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain),
+                                                           project.standard_library,
+                                                           rstd::move(project.build_options));
+        request.build.lock           = rstd::move(project.lock);
+        request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
+        request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
@@ -718,8 +724,8 @@ extern "C++" int main() {
     auto request           = lito::BuildRequest {};
     request.selection.root = rstd::move(project.root);
     request.environment    = rstd::move(project.environment);
-    request.configuration =
-        build_configuration(rstd::move(project.toolchain), project.standard_library);
+    request.configuration  = build_configuration(
+        rstd::move(project.toolchain), project.standard_library, rstd::move(project.build_options));
     request.lock               = rstd::move(project.lock);
     request.sources            = rstd::move(project.sources);
     request.pkg_config         = rstd::move(project.pkg_config);

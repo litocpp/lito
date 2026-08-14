@@ -101,3 +101,24 @@ TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
     EXPECT_TRUE(options->vendor[usize {}].native_preprocessor_unsupported);
     EXPECT_EQ(options->vendor[usize {}].raw_tokens.len(), usize(2));
 }
+
+TEST(CompilerArguments, ClassifiesPthreadAsLanguageMode) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto arguments =
+        parser->parse(strings("-pthread"_str, "-pthread"_str), "compiler.arguments"_str);
+    ASSERT_TRUE(arguments.is_ok());
+    auto options = make_cpp_options("c++20"_str,
+                                    StandardLibrary::Libcxx,
+                                    false,
+                                    false,
+                                    CppOptimization::None,
+                                    CppDebugInfo::None,
+                                    CppOptionLayer {
+                                        .arguments = rstd::move(arguments).unwrap(),
+                                    });
+    ASSERT_TRUE(options.is_ok());
+    ASSERT_EQ(options->language.modes.len(), usize(1));
+    EXPECT_EQ(options->language.modes[usize {}].family.as_str(), "posix-threads"_str);
+    EXPECT_EQ(options->language.modes[usize {}].value.as_str(), "-pthread"_str);
+}

@@ -53,7 +53,8 @@ auto config_table(const Toml& value, ref<str> context) -> ConfigResult<ref<Table
 
 auto root_config_key(ref<str> key) -> bool {
     return key == "environment"_str || key == "toolchain"_str || key == "pkg-config"_str ||
-           key == "cmake"_str || key == "patch"_str || key == "lock"_str || key == "install"_str;
+           key == "cmake"_str || key == "patch"_str || key == "lock"_str || key == "install"_str ||
+           key == "build"_str;
 }
 
 auto environment_config_key(ref<str> key) -> bool {
@@ -63,6 +64,10 @@ auto environment_config_key(ref<str> key) -> bool {
 auto toolchain_config_key(ref<str> key) -> bool {
     return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
            key == "strip"_str || key == "format"_str || key == "stdlib"_str;
+}
+
+auto build_config_key(ref<str> key) -> bool {
+    return key == "options"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool {
@@ -138,6 +143,31 @@ auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<St
     if (*text == "libstdc++"_str) return Ok(StandardLibrary::Libstdcxx);
     return config_failure<StandardLibrary>(
         "config.toolchain.stdlib must be 'libc++' or 'libstdc++'"_str);
+}
+
+auto configured_build_options(const Toml& document) -> ConfigResult<Vec<String>> {
+    auto result = Vec<String>::make();
+    auto value  = config_member(document, "build"_str);
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = config_table(**value, "config.build"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.build"_str, build_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto options = config_member(**value, "options"_str);
+    if (options.is_none()) return Ok(rstd::move(result));
+    auto array = (**options).as_array();
+    if (array.is_none()) {
+        return config_failure<Vec<String>>("config.build.options must be an array"_str);
+    }
+    for (const auto& item : **array) {
+        auto text = item.as_str();
+        if (text.is_none() || text->is_empty()) {
+            return config_failure<Vec<String>>(
+                "config.build.options entries must be non-empty strings"_str);
+        }
+        result.push(String::make(*text));
+    }
+    return Ok(rstd::move(result));
 }
 
 auto configured_directories(const Toml&           table,
@@ -480,10 +510,12 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
-    auto cmake   = configured_cmake(document, root.as_path());
-    auto install = configured_install(document, root.as_path());
+    auto cmake         = configured_cmake(document, root.as_path());
+    auto install       = configured_install(document, root.as_path());
+    auto build_options = configured_build_options(document);
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
     if (install.is_err()) return Err(rstd::move(install).unwrap_err());
+    if (build_options.is_err()) return Err(rstd::move(build_options).unwrap_err());
 
     return Ok(ProjectConfig {
         .root             = rstd::move(root),
@@ -491,6 +523,7 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
         .environment      = rstd::move(environment).unwrap(),
         .toolchain        = rstd::move(toolchain),
         .standard_library = standard_library,
+        .build_options    = rstd::move(build_options).unwrap(),
         .sources          = rstd::move(sources).unwrap(),
         .pkg_config       = rstd::move(pkg_config).unwrap(),
         .cmake            = rstd::move(cmake).unwrap(),

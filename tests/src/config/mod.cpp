@@ -164,6 +164,7 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
     overrides.push(String::make("toolchain.cc=generic-cc"_str));
     overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
+    overrides.push(String::make("build.options=[\"-pthread\"]"_str));
     auto loaded = lito::load_project_config(
         directory.as_path(),
         lito::ProjectConfigRequest {
@@ -178,6 +179,8 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("dedicated-cxx"_str).as_path());
     EXPECT_EQ(loaded->standard_library, lito::StandardLibrary::Libcxx);
+    ASSERT_EQ(loaded->build_options.len(), usize(1));
+    EXPECT_EQ(loaded->build_options[usize {}].as_str(), "-pthread"_str);
 
     auto disabled_overrides = Vec<String>::make();
     disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));

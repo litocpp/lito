@@ -27,7 +27,9 @@ public:
 private:
     auto failure(ref<str> message) -> Result<i64> {
         if (index_ < tokens_.len()) {
-            return Err(Error::at(String::make(message), tokens_[index_].expansion));
+            return Err(
+                Error::at(rstd::format("{} before '{}'", message, tokens_[index_].text.as_str()),
+                          tokens_[index_].expansion));
         }
         if (! tokens_.is_empty()) {
             return Err(

@@ -31,6 +31,7 @@ struct ProjectConfig {
     ProcessEnvironmentSpec  environment;
     ToolchainSpec           toolchain;
     StandardLibrary         standard_library { StandardLibrary::Libcxx };
+    Vec<String>             build_options;
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
     CMakeProviderConfig     cmake;

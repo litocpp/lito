@@ -29,6 +29,13 @@ TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
                     .compatible());
     EXPECT_NE(cpp_compile_identity(provider).as_str(), cpp_compile_identity(consumer).as_str());
 
+    auto pthread = cpp_options(
+        "c++20"_str, CppOptimization::None, CppDebugInfo::None, strings("-pthread"_str));
+    EXPECT_FALSE(check_bmi_compatibility(
+                     provider_format, provider, public_requirements, consumer_format, pthread)
+                     .compatible());
+    EXPECT_NE(cpp_scan_identity(provider).as_str(), cpp_scan_identity(pthread).as_str());
+
     auto incompatible = cpp_options("c++23"_str, CppOptimization::Level3, CppDebugInfo::None);
     auto result       = check_bmi_compatibility(
         provider_format, provider, public_requirements, consumer_format, incompatible);

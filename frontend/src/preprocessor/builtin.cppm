@@ -199,6 +199,7 @@ using HasEmbedBuiltin       = StaticName<"__has_embed">;
 using IsIdentifierBuiltin   = StaticName<"__is_identifier">;
 using HasIncludeBuiltin     = StaticName<"__has_include">;
 using HasIncludeNextBuiltin = StaticName<"__has_include_next">;
+using BuildingModuleBuiltin = StaticName<"__building_module">;
 using DynamicBuiltinSet     = BuiltinQuerySet::With<LineBuiltin,
                                                     FileBuiltin,
                                                     BaseFileBuiltin,
@@ -211,6 +212,7 @@ using DynamicBuiltinSet     = BuiltinQuerySet::With<LineBuiltin,
                                                     HasEmbedBuiltin,
                                                     IsIdentifierBuiltin,
                                                     HasIncludeBuiltin,
-                                                    HasIncludeNextBuiltin>;
+                                                    HasIncludeNextBuiltin,
+                                                    BuildingModuleBuiltin>;
 
 } // namespace lito::frontend::preprocessor

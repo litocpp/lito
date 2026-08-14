@@ -174,7 +174,8 @@ auto run_preprocessor_test() -> int {
                 "#if LITO_VALUE == 7 && LITO_STACK == 1 && LITO_HEADER_STACK == 1 && "
                 "__COUNTER__ == 1 && __has_include(\"config.hpp\") && "
                 "__has_include_next(<config.hpp>) && "
-                "__has_builtin(__builtin_assume)\n"
+                "__has_builtin(__builtin_assume) && "
+                "!__building_module(_Builtin_stddef)\n"
                 "/// active documentation\n"
                 "export LITO_MODULE fixture.memory;\n"
                 "export LITO_IMPORT :dependency;\n"
@@ -265,6 +266,7 @@ TEST(BuiltinQuery, TypedDefinition) {
     static_assert(HasBuiltinQuery::Handler::form == BuiltinQueryArgumentForm::Tokens);
     static_assert(HasWarningQuery::Handler::form == BuiltinQueryArgumentForm::StringLiteral);
     static_assert(DynamicBuiltinSet::contains("__has_builtin"_str));
+    static_assert(DynamicBuiltinSet::contains("__building_module"_str));
     static_assert(DynamicBuiltinSet::contains("__DATE__"_str));
     static_assert(! DynamicBuiltinSet::contains("__not_a_builtin"_str));
 

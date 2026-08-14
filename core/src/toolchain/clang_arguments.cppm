@@ -236,6 +236,12 @@ auto make_clang_cpp_argument_parser() -> CppOptionResult<CppArgumentParser> {
         "-mllvm"_str,
         CompilerArgumentValueForm::SeparateOrEquals);
     add(schema,
+        CppCompilerArgumentKind::LanguageMode,
+        "posix-threads"_str,
+        "-pthread"_str,
+        CompilerArgumentValueForm::None,
+        "posix-threads"_str);
+    add(schema,
         CppCompilerArgumentKind::TargetMode,
         "target-mode"_str,
         "-m"_str,
