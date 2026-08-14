@@ -27,6 +27,7 @@ target_sources(
          src/build/configuration.cppm
          src/build/plan_contract.cppm
          src/build/contract.cppm
+         src/build/toolchain_observer.cppm
          src/build/layout_error_contract.cppm
          src/build/script_error_contract.cppm
          src/build/error_contract.cppm

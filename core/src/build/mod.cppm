@@ -258,7 +258,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto stripper       = Option<PathBuf> {};
     if (metadata.profiles[discovery_plan.profile].strip != StripMode::None) {
         auto resolved_stripper = tool_resolver.resolve(
-            request.configuration.toolchain.stripper.as_path(), "LLVM strip executable"_str);
+            request.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
         if (resolved_stripper.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(resolved_stripper).unwrap_err()));
         }

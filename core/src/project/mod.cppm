@@ -12,6 +12,7 @@ import lito.source.contract;
 import lito.build.configuration;
 import lito.build.profile_contract;
 import lito.build.contract;
+import lito.build.toolchain_observer;
 import lito.build.layout;
 import lito.lock.contract;
 import lito.package.graph_contract;
@@ -224,12 +225,12 @@ auto resolve_project_metadata(ResolvedProjectSession            session,
                               usize                             jobs,
                               const Option<BuildObserver>&      observer = None())
     -> ProjectResult<ResolvedProjectMetadata> {
-    auto project                                = rstd::move(session.project.selection);
-    auto resolved_configuration                 = configuration.clone();
-    resolved_configuration.toolchain.compiler   = PathBuf::from(toolchain.compiler_path());
-    resolved_configuration.toolchain.c_compiler = PathBuf::from(toolchain.c_compiler_path());
-    resolved_configuration.toolchain.linker     = PathBuf::from(toolchain.linker_path());
-    resolved_configuration.toolchain.archiver   = PathBuf::from(toolchain.archiver_path());
+    auto project                         = rstd::move(session.project.selection);
+    auto resolved_configuration          = configuration.clone();
+    resolved_configuration.toolchain.cc  = PathBuf::from(toolchain.cc_path());
+    resolved_configuration.toolchain.cxx = PathBuf::from(toolchain.cxx_path());
+    resolved_configuration.toolchain.ld  = PathBuf::from(toolchain.ld_path());
+    resolved_configuration.toolchain.ar  = PathBuf::from(toolchain.ar_path());
     auto resolved_profile = rstd_try(make_profile_spec(resolved_configuration,
                                                        project.graph.profile,
                                                        profile,
@@ -371,22 +372,23 @@ auto prepare_build_project(const PackageSelection&           selection,
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
     auto toolchain = rstd::move(created).unwrap();
-    auto metadata  = resolve_project_metadata(selection,
-                                              configuration,
-                                              profile,
-                                              requested_output,
-                                              sources,
-                                              lock,
-                                              pkg_config,
-                                              cmake,
-                                              toolchain,
-                                              tool_resolver,
-                                              environment,
-                                              locked,
-                                              purpose,
-                                              jobs,
-                                              observer,
-                                              rstd::move(catalog));
+    emit_build_toolchain(observer, toolchain);
+    auto metadata = resolve_project_metadata(selection,
+                                             configuration,
+                                             profile,
+                                             requested_output,
+                                             sources,
+                                             lock,
+                                             pkg_config,
+                                             cmake,
+                                             toolchain,
+                                             tool_resolver,
+                                             environment,
+                                             locked,
+                                             purpose,
+                                             jobs,
+                                             observer,
+                                             rstd::move(catalog));
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {

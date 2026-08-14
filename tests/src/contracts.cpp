@@ -742,6 +742,7 @@ TEST(Contracts, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
 }
 
 TEST(Contracts, UserFacingEnumsImplementDisplay) {
+    EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Toolchain).as_str(), "toolchain"_str);
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Scan).as_str(), "scan"_str);
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Fetch).as_str(), "fetch"_str);
     EXPECT_EQ(rstd::to_string(lito::BuildEventKind::CMakeQueryBuild).as_str(),
@@ -1094,6 +1095,20 @@ TEST(Contracts, ManifestGitCommitIsTypedAndValidated) {
 TEST(Contracts, RemovedConfigFieldsAreRejectedByConfigOwner) {
     auto loaded = lito::load_project_config(root("config/removed-scanner"_str).as_path());
     EXPECT_TRUE(loaded.is_err());
+}
+
+TEST(Contracts, ToolchainConfigurationUsesCommandLineNames) {
+    auto loaded = lito::load_project_config(root("config/toolchain"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("custom-cc"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("custom-cxx"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("custom-ld"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("custom-ar"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.format.as_path(), PathBuf::from("custom-format"_str).as_path());
+
+    auto legacy = lito::load_project_config(root("config/toolchain-legacy"_str).as_path());
+    EXPECT_TRUE(legacy.is_err());
 }
 
 TEST(Contracts, EnvironmentAppendPathBelongsToProjectConfig) {

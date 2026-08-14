@@ -8,6 +8,7 @@ import lito.error;
 import lito.build;
 import lito.build.error_contract;
 import lito.build.profile;
+import lito.build.toolchain_observer;
 import lito.cpp;
 import lito.install;
 import lito.install.package_contract;
@@ -72,6 +73,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         return install_failure<InstallSummary>(
             rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
     }
+    auto resolved_toolchain = rstd::move(toolchain).unwrap();
+    emit_build_toolchain(request.build.observer, resolved_toolchain);
     auto jobs =
         request.build.execution.scan.jobs.is_some() ? *request.build.execution.scan.jobs : usize(1);
     if (request.build.execution.scan.jobs.is_none()) {
@@ -83,7 +86,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 request.build.configuration,
                                 request.build.sources,
                                 request.build.lock,
-                                *toolchain,
+                                resolved_toolchain,
                                 resolver,
                                 *environment,
                                 request.build.locked,
@@ -156,7 +159,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                                request.build.sources,
                                                                request.build.pkg_config,
                                                                request.build.cmake,
-                                                               rstd::move(toolchain).unwrap(),
+                                                               rstd::move(resolved_toolchain),
                                                                resolver,
                                                                *environment,
                                                                jobs,

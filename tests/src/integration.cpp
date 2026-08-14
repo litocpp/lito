@@ -50,12 +50,19 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 
 struct CompileProgressCapture {
     Vec<lito::BuildProgress> values;
+    Vec<String>              toolchain_names;
+    Vec<PathBuf>             toolchain_paths;
     bool                     missing {};
 };
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
-    if (event.kind != lito::BuildEventKind::Compile) return;
     auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
+    if (event.kind == lito::BuildEventKind::Toolchain) {
+        capture.toolchain_names.push(String::make(event.target));
+        capture.toolchain_paths.push(PathBuf::from(event.path));
+        return;
+    }
+    if (event.kind != lito::BuildEventKind::Compile) return;
     if (event.progress.is_none()) {
         capture.missing = true;
         return;
@@ -1261,6 +1268,12 @@ TEST(Integration, EnvironmentIsSharedWithinBuild) {
     });
     auto summary                   = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
+    ASSERT_EQ(progress.toolchain_names.len(), usize(4));
+    EXPECT_EQ(progress.toolchain_names[usize {}].as_str(), "cc"_str);
+    EXPECT_EQ(progress.toolchain_names[usize(1)].as_str(), "cxx"_str);
+    EXPECT_EQ(progress.toolchain_names[usize(2)].as_str(), "ld"_str);
+    EXPECT_EQ(progress.toolchain_names[usize(3)].as_str(), "ar"_str);
+    for (const auto& path : progress.toolchain_paths) EXPECT_TRUE(path.as_path().is_absolute());
     EXPECT_FALSE(progress.missing);
     ASSERT_EQ(progress.values.len(), usize(2));
     EXPECT_EQ(progress.values[usize {}].current, usize(1));

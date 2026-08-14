@@ -125,7 +125,9 @@ class CliCommand {
 
 class CliOutcome {
     RSTD_ENUM(CliOutcome,
-              (Parsed, (PathBuf working_directory; bool no_config; CliCommand command;)),
+              (Parsed,
+               (PathBuf working_directory; bool no_config; ToolchainOverride toolchain;
+                CliCommand                                                   command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
 
@@ -189,9 +191,19 @@ struct BuildExecutionArgs {
     ArgKey<usize>  jobs;
 };
 
+struct ToolchainArgs {
+    ArgKey<String> cc;
+    ArgKey<String> cxx;
+    ArgKey<String> ld;
+    ArgKey<String> ar;
+    ArgKey<String> strip;
+    ArgKey<String> format;
+};
+
 struct RootArgs {
     ArgKey<String> directory;
     ArgKey<bool>   no_config;
+    ToolchainArgs  toolchain;
 };
 
 struct BuildSchema {
@@ -367,6 +379,32 @@ auto no_config_arg() -> Arg<bool> {
         .long_name("no-config"_str)
         .help("Ignore .lito/config.toml"_str)
         .global();
+}
+
+auto toolchain_arg(ref<str> id, ref<str> name, ref<str> help) -> Arg<String> {
+    return Arg<String>::value(id, string_parser())
+        .long_name(name)
+        .value_name("TOOL"_str)
+        .help(help)
+        .help_heading("Toolchain"_str)
+        .global();
+}
+
+auto add_toolchain_args(Command& command) -> ToolchainArgs {
+    return ToolchainArgs {
+        .cc = command.add_arg(
+            toolchain_arg("toolchain-cc"_str, "toolchain.cc"_str, "Set the C compiler"_str)),
+        .cxx = command.add_arg(
+            toolchain_arg("toolchain-cxx"_str, "toolchain.cxx"_str, "Set the C++ compiler"_str)),
+        .ld = command.add_arg(
+            toolchain_arg("toolchain-ld"_str, "toolchain.ld"_str, "Set the LLD linker"_str)),
+        .ar = command.add_arg(
+            toolchain_arg("toolchain-ar"_str, "toolchain.ar"_str, "Set the LLVM archiver"_str)),
+        .strip  = command.add_arg(toolchain_arg(
+            "toolchain-strip"_str, "toolchain.strip"_str, "Set the LLVM strip executable"_str)),
+        .format = command.add_arg(toolchain_arg(
+            "toolchain-format"_str, "toolchain.format"_str, "Set the ClangFormat executable"_str)),
+    };
 }
 
 auto timing_file_arg() -> Arg<String> {
@@ -643,6 +681,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .help("Change the working directory"_str)
                                       .default_value("."_str)),
         .no_config = root.add_arg(no_config_arg()),
+        .toolchain = add_toolchain_args(root),
     };
     root.add_subcommand(rstd::move(build.command));
     root.add_subcommand(rstd::move(install.command));
@@ -968,10 +1007,23 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
 }
 
 struct CliInvocation {
-    PathBuf    working_directory;
-    bool       no_config {};
-    CliCommand command;
+    PathBuf           working_directory;
+    bool              no_config {};
+    ToolchainOverride toolchain;
+    CliCommand        command;
 };
+
+auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
+    -> rstd::Result<ToolchainOverride, CliDecodeError> {
+    return Ok(ToolchainOverride {
+        .cc     = rstd_try(optional_path(matches, args.cc)),
+        .cxx    = rstd_try(optional_path(matches, args.cxx)),
+        .ld     = rstd_try(optional_path(matches, args.ld)),
+        .ar     = rstd_try(optional_path(matches, args.ar)),
+        .strip  = rstd_try(optional_path(matches, args.strip)),
+        .format = rstd_try(optional_path(matches, args.format)),
+    });
+}
 
 auto decode_invocation(const CliSchema& schema, const Matches& matches)
     -> rstd::Result<CliInvocation, CliDecodeError> {
@@ -979,6 +1031,7 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),
         .no_config         = rstd_try(flag_value(matches, schema.root.no_config)),
+        .toolchain         = rstd_try(decode_toolchain(matches, schema.root.toolchain)),
         .command           = rstd_try(decode_command(schema, matches)),
     });
 }
@@ -1034,8 +1087,10 @@ auto parse() -> CliOutcome {
             i32(1));
     }
     auto value = rstd::move(invocation).unwrap();
-    return CliOutcome::Parsed(
-        rstd::move(value.working_directory), value.no_config, rstd::move(value.command));
+    return CliOutcome::Parsed(rstd::move(value.working_directory),
+                              value.no_config,
+                              rstd::move(value.toolchain),
+                              rstd::move(value.command));
 }
 
 } // namespace lito::cli

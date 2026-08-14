@@ -32,7 +32,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (request.selection.root.is_empty()) {
         return format_failure<FormatSummary>("format directory is required"_str);
     }
-    if (request.toolchain.formatter.is_empty()) {
+    if (request.toolchain.format.is_empty()) {
         return format_failure<FormatSummary>("clang-format path is required"_str);
     }
 
@@ -61,7 +61,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     }
 
     auto created = toolchain::ClangFormat::create(
-        request.toolchain.formatter.as_path(), tool_resolver, *environment);
+        request.toolchain.format.as_path(), tool_resolver, *environment);
     if (created.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(created).unwrap_err()));
     }

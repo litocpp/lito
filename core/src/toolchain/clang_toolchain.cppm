@@ -46,18 +46,16 @@ public:
 
     static auto create(const ToolchainSpec&              specification,
                        ToolResolver&                     resolver,
-                       const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangToolchain> {
+                       const ResolvedProcessEnvironment& environment)
+        -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
             return Err(ToolchainError::Cpp(rstd::move(argument_parser).unwrap_err()));
         }
-        auto configured_compiler =
-            resolver.resolve(specification.compiler.as_path(), "clang++"_str);
-        auto configured_c_compiler =
-            resolver.resolve(specification.c_compiler.as_path(), "clang"_str);
-        auto configured_linker = resolver.resolve(specification.linker.as_path(), "LLD linker"_str);
-        auto configured_archiver =
-            resolver.resolve(specification.archiver.as_path(), "llvm-ar"_str);
+        auto configured_compiler   = resolver.resolve(specification.cxx.as_path(), "clang++"_str);
+        auto configured_c_compiler = resolver.resolve(specification.cc.as_path(), "clang"_str);
+        auto configured_linker     = resolver.resolve(specification.ld.as_path(), "LLD linker"_str);
+        auto configured_archiver   = resolver.resolve(specification.ar.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(configured_compiler).unwrap_err()));
         }
@@ -216,10 +214,10 @@ public:
     }
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
-    auto compiler_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
-    auto c_compiler_path() const -> ref<rstd::path::Path> { return c_compiler_.as_path(); }
-    auto linker_path() const -> ref<rstd::path::Path> { return linker_.as_path(); }
-    auto archiver_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
+    auto cxx_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
+    auto cc_path() const -> ref<rstd::path::Path> { return c_compiler_.as_path(); }
+    auto ld_path() const -> ref<rstd::path::Path> { return linker_.as_path(); }
+    auto ar_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
@@ -245,7 +243,8 @@ public:
         return Ok(empty {});
     }
 
-    auto builtin_context(const CompileContext& context) const -> ToolchainResult<ClangBuiltinContext> {
+    auto builtin_context(const CompileContext& context) const
+        -> ToolchainResult<ClangBuiltinContext> {
         return make_builtin_context(context);
     }
 
@@ -301,7 +300,8 @@ public:
                     const CompileContext&      compile_context,
                     ref<rstd::path::Path>      working_directory,
                     frontend::FrontendService& frontend_service,
-                    ScanProfiler& profiler) const -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
+                    ScanProfiler&              profiler) const
+        -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         auto environment_span     = profiler.span(ScanProbe::Environment);
         auto selected_environment = prepare_scan_environment(compile_context, working_directory);
         if (selected_environment.is_err()) {
@@ -769,7 +769,7 @@ private:
 
     auto append_compile_context(Vec<String>&          command,
                                 const CompileContext& context,
-                                bool                  semantic_only) const -> ToolchainResult<empty> {
+                                bool semantic_only) const -> ToolchainResult<empty> {
         auto pushed = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
         toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);

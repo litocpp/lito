@@ -62,19 +62,22 @@
     "toolchain": {
       "type": "object",
       "properties": {
-        "compiler": {
+        "cc": {
           "$ref": "#/definitions/tool"
         },
-        "c-compiler": {
+        "cxx": {
           "$ref": "#/definitions/tool"
         },
-        "archiver": {
+        "ld": {
           "$ref": "#/definitions/tool"
         },
-        "formatter": {
+        "ar": {
           "$ref": "#/definitions/tool"
         },
-        "stripper": {
+        "strip": {
+          "$ref": "#/definitions/tool"
+        },
+        "format": {
           "$ref": "#/definitions/tool"
         }
       },

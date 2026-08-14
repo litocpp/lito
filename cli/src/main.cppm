@@ -20,8 +20,9 @@ struct EventContext {
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (event.completed) return;
-    if (! context.verbose && event.kind != lito::BuildEventKind::Fetch &&
-        event.kind != lito::BuildEventKind::Scan && event.kind != lito::BuildEventKind::Compile &&
+    if (! context.verbose && event.kind != lito::BuildEventKind::Toolchain &&
+        event.kind != lito::BuildEventKind::Fetch && event.kind != lito::BuildEventKind::Scan &&
+        event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::CMakeConfigure &&
         event.kind != lito::BuildEventKind::CMakeBuild &&
@@ -216,7 +217,9 @@ extern "C++" int main() {
         report_error(error);
         return 1;
     }
-    auto project = rstd::move(loaded_config).unwrap();
+    auto project      = rstd::move(loaded_config).unwrap();
+    project.toolchain = lito::apply_toolchain_override(rstd::move(project.toolchain),
+                                                       rstd::move(invocation.toolchain));
 
     if (invocation.command.is_Lock()) {
         auto command = rstd::move(invocation.command).as_Lock().command;

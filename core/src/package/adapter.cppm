@@ -150,8 +150,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                                   const CppArgumentParser&    argument_parser)
     -> PackageResult<PackageMetadata> {
     if (! is_supported_cpp_standard(configuration.language_standard.as_str()) ||
-        configuration.toolchain.compiler.is_empty() || configuration.toolchain.linker.is_empty() ||
-        configuration.toolchain.archiver.is_empty()) {
+        configuration.toolchain.cxx.is_empty() || configuration.toolchain.ld.is_empty() ||
+        configuration.toolchain.ar.is_empty()) {
         return adapter_failure<PackageMetadata>(
             String::make("invalid build configuration for package graph"_str));
     }
@@ -499,12 +499,12 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
         .selected_packages     = rstd::move(selected_packages),
         .toolchain =
             ToolchainSpec {
-                .compiler   = configuration.toolchain.compiler.clone(),
-                .c_compiler = configuration.toolchain.c_compiler.clone(),
-                .linker     = configuration.toolchain.linker.clone(),
-                .archiver   = configuration.toolchain.archiver.clone(),
-                .formatter  = configuration.toolchain.formatter.clone(),
-                .stripper   = configuration.toolchain.stripper.clone(),
+                .cc     = configuration.toolchain.cc.clone(),
+                .cxx    = configuration.toolchain.cxx.clone(),
+                .ld     = configuration.toolchain.ld.clone(),
+                .ar     = configuration.toolchain.ar.clone(),
+                .strip  = configuration.toolchain.strip.clone(),
+                .format = configuration.toolchain.format.clone(),
             },
         .profiles = rstd::move(profiles),
         .targets  = rstd::move(targets),

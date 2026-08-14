@@ -68,8 +68,8 @@ auto same_command(const lito::Vec<String>& left, const lito::Vec<String>& right)
 
 auto run_clang_builtin_context_test() -> int {
     auto created = ClangToolchain::create(ToolchainSpec {
-        .compiler = PathBuf::from("clang++"_str),
-        .archiver = PathBuf::from("llvm-ar"_str),
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
     });
     if (created.is_err()) return 1;
     auto toolchain = rstd::move(created).unwrap();

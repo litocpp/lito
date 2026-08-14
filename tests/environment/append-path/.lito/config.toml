@@ -2,6 +2,6 @@
 append-path = ["tools"]
 
 [toolchain]
-compiler = "lito-fixture-clang++"
-archiver = "lito-fixture-llvm-ar"
-formatter = "lito-fixture-clang-format"
+cxx = "lito-fixture-clang++"
+ar = "lito-fixture-llvm-ar"
+format = "lito-fixture-clang-format"

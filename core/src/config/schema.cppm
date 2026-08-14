@@ -32,8 +32,8 @@ auto config_failure(ref<str> message) -> ConfigResult<T> {
 }
 
 template<typename T>
-auto config_io_failure(ref<str> operation,
-                       ref<rstd::path::Path> path,
+auto config_io_failure(ref<str>               operation,
+                       ref<rstd::path::Path>  path,
                        rstd::io::error::Error source) -> ConfigResult<T> {
     return Err(ConfigError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
@@ -60,8 +60,8 @@ auto environment_config_key(ref<str> key) -> bool {
 }
 
 auto toolchain_config_key(ref<str> key) -> bool {
-    return key == "compiler"_str || key == "c-compiler"_str || key == "archiver"_str ||
-           key == "formatter"_str || key == "stripper"_str;
+    return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
+           key == "strip"_str || key == "format"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool {
@@ -97,24 +97,33 @@ auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)
     return Ok(empty {});
 }
 
-auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback, ref<str> context)
-    -> ConfigResult<PathBuf> {
+auto configured_tool_override(const Toml& toolchain_value, ref<str> key, ref<str> context)
+    -> ConfigResult<Option<PathBuf>> {
     auto value = config_member(toolchain_value, key);
-    if (value.is_none()) return Ok(PathBuf::from(fallback));
+    if (value.is_none()) return Ok(Option<PathBuf> {});
     auto text = (**value).as_str();
     if (text.is_none()) {
-        return config_failure<PathBuf>(rstd::format("{}.{} must be a string", context, key));
+        return config_failure<Option<PathBuf>>(
+            rstd::format("{}.{} must be a string", context, key));
     }
     if (text->is_empty()) {
-        return config_failure<PathBuf>(rstd::format("{}.{} must not be empty", context, key));
+        return config_failure<Option<PathBuf>>(
+            rstd::format("{}.{} must not be empty", context, key));
     }
     auto path = PathBuf::from(*text);
     if (! path.as_path().is_absolute() &&
         ! toolchain::command::is_searchable_tool_name(path.as_path())) {
-        return config_failure<PathBuf>(
+        return config_failure<Option<PathBuf>>(
             rstd::format("{}.{} must be an executable name or absolute path", context, key));
     }
-    return Ok(rstd::move(path));
+    return Ok(Some(rstd::move(path)));
+}
+
+auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback, ref<str> context)
+    -> ConfigResult<PathBuf> {
+    auto configured = rstd_try(configured_tool_override(toolchain_value, key, context));
+    if (configured.is_some()) return Ok(rstd::move(configured).unwrap());
+    return Ok(PathBuf::from(fallback));
 }
 
 auto configured_directories(const Toml&           table,
@@ -245,12 +254,12 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
 
 auto default_toolchain() -> ToolchainSpec {
     return ToolchainSpec {
-        .compiler   = PathBuf::from("clang++"_str),
-        .c_compiler = PathBuf::from("clang"_str),
-        .linker     = PathBuf::from("ld.lld"_str),
-        .archiver   = PathBuf::from("llvm-ar"_str),
-        .formatter  = PathBuf::from("clang-format"_str),
-        .stripper   = PathBuf::from("llvm-strip"_str),
+        .cc     = PathBuf::from("clang"_str),
+        .cxx    = PathBuf::from("clang++"_str),
+        .ld     = PathBuf::from("ld.lld"_str),
+        .ar     = PathBuf::from("llvm-ar"_str),
+        .strip  = PathBuf::from("llvm-strip"_str),
+        .format = PathBuf::from("clang-format"_str),
     };
 }
 
@@ -288,10 +297,9 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
     }
     auto canonical_parent = rstd::fs::canonicalize(*parent);
     if (canonical_parent.is_err()) {
-        return config_io_failure<LockConfig>(
-            "resolve config.lock.path parent"_str,
-            *parent,
-            rstd::move(canonical_parent).unwrap_err());
+        return config_io_failure<LockConfig>("resolve config.lock.path parent"_str,
+                                             *parent,
+                                             rstd::move(canonical_parent).unwrap_err());
     }
     auto path   = canonical_parent->join(PathBuf::from(*name).as_path());
     auto exists = rstd::fs::exists(path.as_path());
@@ -303,9 +311,7 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
         auto metadata = rstd::fs::metadata(path.as_path());
         if (metadata.is_err()) {
             return config_io_failure<LockConfig>(
-                "inspect config.lock.path"_str,
-                path.as_path(),
-                rstd::move(metadata).unwrap_err());
+                "inspect config.lock.path"_str, path.as_path(), rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_file()) {
             return config_failure<LockConfig>(
@@ -420,7 +426,8 @@ export namespace lito
 {
 
 auto load_project_config(ref<rstd::path::Path> requested_root,
-                         ConfigLoadMode mode = ConfigLoadMode::Enabled) -> ConfigResult<ProjectConfig> {
+                         ConfigLoadMode        mode = ConfigLoadMode::Enabled)
+    -> ConfigResult<ProjectConfig> {
     auto canonical = rstd::fs::canonicalize(requested_root);
     if (canonical.is_err()) {
         return config_io_failure<ProjectConfig>(
@@ -467,9 +474,7 @@ auto load_project_config(ref<rstd::path::Path> requested_root,
     auto contents = rstd::fs::read_to_string(config_path.as_path());
     if (contents.is_err()) {
         return config_io_failure<ProjectConfig>(
-            "read configuration"_str,
-            config_path.as_path(),
-            rstd::move(contents).unwrap_err());
+            "read configuration"_str, config_path.as_path(), rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
@@ -488,29 +493,22 @@ auto load_project_config(ref<rstd::path::Path> requested_root,
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto compiler = configured_tool(
-            **toolchain_value, "compiler"_str, "clang++"_str, "config.toolchain"_str);
-        auto c_compiler = configured_tool(
-            **toolchain_value, "c-compiler"_str, "clang"_str, "config.toolchain"_str);
-        auto archiver = configured_tool(
-            **toolchain_value, "archiver"_str, "llvm-ar"_str, "config.toolchain"_str);
-        auto formatter = configured_tool(
-            **toolchain_value, "formatter"_str, "clang-format"_str, "config.toolchain"_str);
-        auto stripper = configured_tool(
-            **toolchain_value, "stripper"_str, "llvm-strip"_str, "config.toolchain"_str);
-        if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
-        if (c_compiler.is_err()) return Err(rstd::move(c_compiler).unwrap_err());
-        if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
-        if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
-        if (stripper.is_err()) return Err(rstd::move(stripper).unwrap_err());
-        toolchain = ToolchainSpec {
-            .compiler   = rstd::move(compiler).unwrap(),
-            .c_compiler = rstd::move(c_compiler).unwrap(),
-            .linker     = PathBuf::from("ld.lld"_str),
-            .archiver   = rstd::move(archiver).unwrap(),
-            .formatter  = rstd::move(formatter).unwrap(),
-            .stripper   = rstd::move(stripper).unwrap(),
-        };
+        toolchain = apply_toolchain_override(
+            rstd::move(toolchain),
+            ToolchainOverride {
+                .cc = rstd_try(
+                    configured_tool_override(**toolchain_value, "cc"_str, "config.toolchain"_str)),
+                .cxx = rstd_try(
+                    configured_tool_override(**toolchain_value, "cxx"_str, "config.toolchain"_str)),
+                .ld = rstd_try(
+                    configured_tool_override(**toolchain_value, "ld"_str, "config.toolchain"_str)),
+                .ar = rstd_try(
+                    configured_tool_override(**toolchain_value, "ar"_str, "config.toolchain"_str)),
+                .strip  = rstd_try(configured_tool_override(
+                    **toolchain_value, "strip"_str, "config.toolchain"_str)),
+                .format = rstd_try(configured_tool_override(
+                    **toolchain_value, "format"_str, "config.toolchain"_str)),
+            });
     }
 
     auto environment = configured_environment(document, root.as_path());

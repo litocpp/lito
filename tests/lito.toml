@@ -4,6 +4,7 @@ name = "lito-test"
 [[test]]
 module = "lito.test"
 name = "lito-test"
+link-stdlib = false
 sources = [
   "src/main.cpp",
   "src/support/mod.cppm",

@@ -25,7 +25,7 @@ auto run_cmake(Vec<String>                       arguments,
                ref<str>                          operation,
                const ResolvedProcessEnvironment& environment,
                Option<ref<rstd::path::Path>>     working_directory = None(),
-               bool                              stream_output     = true) -> DependencyResult<empty> {
+               bool                              stream_output = true) -> DependencyResult<empty> {
     auto output = [&]() -> SystemResult<CommandOutput> {
         if (! stream_output) return run_command(arguments, environment, working_directory);
         auto observer = rstd::process::OutputObserver {
@@ -38,8 +38,8 @@ auto run_cmake(Vec<String>                       arguments,
         return run_command_observed(arguments, environment, observer, working_directory);
     }();
     if (output.is_err()) {
-        return Err(DependencyError::Operation(
-            String::make(operation), rstd::move(output).unwrap_err()));
+        return Err(
+            DependencyError::Operation(String::make(operation), rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
         auto diagnostics = output->standard_output.clone();
@@ -71,23 +71,23 @@ auto push_cmake_toolchain(Vec<String>& arguments, const BuildConfiguration& conf
     -> DependencyResult<empty> {
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_COMPILER="_str,
-                                configuration.toolchain.c_compiler.as_path(),
+                                configuration.toolchain.cc.as_path(),
                                 "C compiler"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_CXX_COMPILER="_str,
-                                configuration.toolchain.compiler.as_path(),
+                                configuration.toolchain.cxx.as_path(),
                                 "C++ compiler"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld="_str,
-                                configuration.toolchain.linker.as_path(),
+                                configuration.toolchain.ld.as_path(),
                                 "LLD linker"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld="_str,
-                                configuration.toolchain.linker.as_path(),
+                                configuration.toolchain.ld.as_path(),
                                 "LLD linker"_str));
     arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_lld"_str));
     rstd_try(push_path_argument(
-        arguments, "-DCMAKE_AR="_str, configuration.toolchain.archiver.as_path(), "archiver"_str));
+        arguments, "-DCMAKE_AR="_str, configuration.toolchain.ar.as_path(), "archiver"_str));
     return Ok(empty {});
 }
 
@@ -141,9 +141,7 @@ auto source_install_current(const CMakeWorkArea& area) -> DependencyResult<bool>
     auto contents = rstd::fs::read_to_string(marker.as_path());
     if (contents.is_err()) {
         return cmake_io_failure<bool>(
-            "read CMake install receipt"_str,
-            marker.as_path(),
-            rstd::move(contents).unwrap_err());
+            "read CMake install receipt"_str, marker.as_path(), rstd::move(contents).unwrap_err());
     }
     if (contents->as_str() != "lito-cmake-install-receipt-v1\n"_str) {
         return cmake_failure<bool>(
@@ -157,7 +155,7 @@ auto configure_source(const ResolvedCMakeDependencyRequirement& requirement,
                       const BuildConfiguration&                 configuration,
                       const ProfileSpec&                        profile,
                       const CMakeWorkArea&                      area,
-                      const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
+                      const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -197,7 +195,7 @@ auto build_source(const ResolvedCMakeDependencyRequirement& requirement,
                   const ProfileSpec&                        profile,
                   const CMakeWorkArea&                      area,
                   usize                                     jobs,
-                  const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
+                  const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -223,7 +221,7 @@ auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
                     const ProfileSpec&                        profile,
                     const CMakeWorkArea&                      area,
                     bool                                      publish_receipt,
-                    const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
+                    const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -244,41 +242,43 @@ auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
                                          ("lito-cmake-install-receipt-v1\n"_str).as_bytes());
     if (marked.is_err()) {
         return cmake_io_failure<empty>(
-            "write CMake install receipt"_str,
-            marker.as_path(),
-            rstd::move(marked).unwrap_err());
+            "write CMake install receipt"_str, marker.as_path(), rstd::move(marked).unwrap_err());
     }
     return Ok(empty {});
 }
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
     -> DependencyResult<String> {
-    auto result = String::make("cmake_minimum_required(VERSION 3.29)\n"
-                               "project(lito_cmake_probe LANGUAGES CXX)\n"
-                               "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
-                               "set(_LITO_ASSET_RECEIPT \"${CMAKE_BINARY_DIR}/lito-assets-v1.txt\")\n"
-                               "file(WRITE \"${_LITO_ASSET_RECEIPT}\" \"lito-cmake-assets-v1\\n\")\n"
-                               "function(lito_export_asset_set)\n"
-                               "  cmake_parse_arguments(LITO_ASSET \"\" \"NAME;ROOT\" \"FILES\" ${ARGN})\n"
-                               "  if(NOT LITO_ASSET_NAME OR NOT LITO_ASSET_ROOT)\n"
-                               "    message(FATAL_ERROR \"lito_export_asset_set requires NAME and ROOT\")\n"
-                               "  endif()\n"
-                               "  if(LITO_ASSET_NAME MATCHES \"[\\t\\r\\n]\")\n"
-                               "    message(FATAL_ERROR \"Lito asset set name contains control characters\")\n"
-                               "  endif()\n"
-                               "  foreach(_lito_asset_file IN LISTS LITO_ASSET_FILES)\n"
-                               "    if(IS_ABSOLUTE \"${_lito_asset_file}\" OR "
-                               "_lito_asset_file MATCHES \"(^|/)\\.\\.?(/|$)\" OR "
-                               "_lito_asset_file MATCHES \"[\\t\\r\\n]\")\n"
-                               "      message(FATAL_ERROR \"Lito asset path is not a normal relative path: ${_lito_asset_file}\")\n"
-                               "    endif()\n"
-                               "    cmake_path(ABSOLUTE_PATH _lito_asset_file BASE_DIRECTORY \"${LITO_ASSET_ROOT}\" NORMALIZE OUTPUT_VARIABLE _lito_asset_source)\n"
-                               "    if(NOT EXISTS \"${_lito_asset_source}\" OR IS_DIRECTORY \"${_lito_asset_source}\")\n"
-                               "      message(FATAL_ERROR \"Lito asset source is not a file: ${_lito_asset_source}\")\n"
-                               "    endif()\n"
-                               "    file(APPEND \"${_LITO_ASSET_RECEIPT}\" \"${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
-                               "  endforeach()\n"
-                               "endfunction()\n"_str);
+    auto result = String::make(
+        "cmake_minimum_required(VERSION 3.29)\n"
+        "project(lito_cmake_probe LANGUAGES CXX)\n"
+        "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
+        "set(_LITO_ASSET_RECEIPT \"${CMAKE_BINARY_DIR}/lito-assets-v1.txt\")\n"
+        "file(WRITE \"${_LITO_ASSET_RECEIPT}\" \"lito-cmake-assets-v1\\n\")\n"
+        "function(lito_export_asset_set)\n"
+        "  cmake_parse_arguments(LITO_ASSET \"\" \"NAME;ROOT\" \"FILES\" ${ARGN})\n"
+        "  if(NOT LITO_ASSET_NAME OR NOT LITO_ASSET_ROOT)\n"
+        "    message(FATAL_ERROR \"lito_export_asset_set requires NAME and ROOT\")\n"
+        "  endif()\n"
+        "  if(LITO_ASSET_NAME MATCHES \"[\\t\\r\\n]\")\n"
+        "    message(FATAL_ERROR \"Lito asset set name contains control characters\")\n"
+        "  endif()\n"
+        "  foreach(_lito_asset_file IN LISTS LITO_ASSET_FILES)\n"
+        "    if(IS_ABSOLUTE \"${_lito_asset_file}\" OR "
+        "_lito_asset_file MATCHES \"(^|/)\\.\\.?(/|$)\" OR "
+        "_lito_asset_file MATCHES \"[\\t\\r\\n]\")\n"
+        "      message(FATAL_ERROR \"Lito asset path is not a normal relative path: "
+        "${_lito_asset_file}\")\n"
+        "    endif()\n"
+        "    cmake_path(ABSOLUTE_PATH _lito_asset_file BASE_DIRECTORY \"${LITO_ASSET_ROOT}\" "
+        "NORMALIZE OUTPUT_VARIABLE _lito_asset_source)\n"
+        "    if(NOT EXISTS \"${_lito_asset_source}\" OR IS_DIRECTORY \"${_lito_asset_source}\")\n"
+        "      message(FATAL_ERROR \"Lito asset source is not a file: ${_lito_asset_source}\")\n"
+        "    endif()\n"
+        "    file(APPEND \"${_LITO_ASSET_RECEIPT}\" "
+        "\"${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
+        "  endforeach()\n"
+        "endfunction()\n"_str);
     if (requirement.integration == CMakeIntegration::BuildTree) {
         auto source = path_text(area.source.as_path(), "CMake build-tree source"_str);
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
@@ -362,10 +362,9 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     for (const auto& directory : directories) {
         auto created = rstd::fs::create_dir_all(directory.as_path());
         if (created.is_err()) {
-            return cmake_io_failure<empty>(
-                "create CMake directory"_str,
-                directory.as_path(),
-                rstd::move(created).unwrap_err());
+            return cmake_io_failure<empty>("create CMake directory"_str,
+                                           directory.as_path(),
+                                           rstd::move(created).unwrap_err());
         }
     }
     auto cmake_lists = area.query_source.join(PathBuf::from("CMakeLists.txt"_str).as_path());
@@ -375,10 +374,9 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     if (project.is_err()) return Err(rstd::move(project).unwrap_err());
     auto written = rstd::fs::write_atomic(cmake_lists.as_path(), project->as_str().as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>(
-            "write CMake probe project"_str,
-            cmake_lists.as_path(),
-            rstd::move(written).unwrap_err());
+        return cmake_io_failure<empty>("write CMake probe project"_str,
+                                       cmake_lists.as_path(),
+                                       rstd::move(written).unwrap_err());
     }
     written =
         rstd::fs::write_atomic(source.as_path(), ("int main() { return 0; }\n"_str).as_bytes());
@@ -390,10 +388,9 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
         query_file.as_path(),
         ("{\"requests\":[{\"kind\":\"codemodel\",\"version\":2}]}\n"_str).as_bytes());
     if (written.is_err()) {
-        return cmake_io_failure<empty>(
-            "write CMake File API query"_str,
-            query_file.as_path(),
-            rstd::move(written).unwrap_err());
+        return cmake_io_failure<empty>("write CMake File API query"_str,
+                                       query_file.as_path(),
+                                       rstd::move(written).unwrap_err());
     }
     return Ok(empty {});
 }
@@ -403,7 +400,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                      const BuildConfiguration&                 configuration,
                      const ProfileSpec&                        profile,
                      const CMakeWorkArea&                      area,
-                     const ResolvedProcessEnvironment&         environment) -> DependencyResult<empty> {
+                     const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());

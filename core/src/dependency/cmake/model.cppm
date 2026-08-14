@@ -244,13 +244,13 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
-    auto compiler = path_text(build.toolchain.compiler.as_path(), "C++ compiler"_str);
+    auto compiler = path_text(build.toolchain.cxx.as_path(), "C++ compiler"_str);
     if (compiler.is_err()) return Err(rstd::move(compiler).unwrap_err());
-    auto c_compiler = path_text(build.toolchain.c_compiler.as_path(), "C compiler"_str);
+    auto c_compiler = path_text(build.toolchain.cc.as_path(), "C compiler"_str);
     if (c_compiler.is_err()) return Err(rstd::move(c_compiler).unwrap_err());
-    auto archiver = path_text(build.toolchain.archiver.as_path(), "archiver"_str);
+    auto archiver = path_text(build.toolchain.ar.as_path(), "archiver"_str);
     if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
-    auto linker = path_text(build.toolchain.linker.as_path(), "LLD linker"_str);
+    auto linker = path_text(build.toolchain.ld.as_path(), "LLD linker"_str);
     if (linker.is_err()) return Err(rstd::move(linker).unwrap_err());
     append_identity(recipe, executable->as_str());
     append_identity(recipe, provider.identity.as_str());

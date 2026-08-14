@@ -507,8 +507,8 @@ TEST(BmiContract, RequiresPublicPreprocessorSemanticsWithoutLeakingPrivateInputs
 
 TEST(ClangContract, EmitsExactResolvedModuleMapping) {
     auto created = ClangToolchain::create(ToolchainSpec {
-        .compiler = PathBuf::from("clang++"_str),
-        .archiver = PathBuf::from("llvm-ar"_str),
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
     });
     ASSERT_TRUE(created.is_ok());
     auto toolchain = rstd::move(created).unwrap();
@@ -567,9 +567,9 @@ TEST(ClangContract, MapsStandardLibraryLinkPolicy) {
 
 TEST(ClangContract, RejectsNonLldLinkers) {
     auto created = ClangToolchain::create(ToolchainSpec {
-        .compiler = PathBuf::from("clang++"_str),
-        .linker   = PathBuf::from("ld"_str),
-        .archiver = PathBuf::from("llvm-ar"_str),
+        .cxx = PathBuf::from("clang++"_str),
+        .ld  = PathBuf::from("ld"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
     });
     ASSERT_TRUE(created.is_err());
     auto error = rstd::move(created).unwrap_err();
@@ -579,8 +579,8 @@ TEST(ClangContract, RejectsNonLldLinkers) {
 
 TEST(ClangContract, DoesNotPublishOneOutputWhenAnotherIsMissing) {
     auto created = ClangToolchain::create(ToolchainSpec {
-        .compiler = PathBuf::from("clang++"_str),
-        .archiver = PathBuf::from("llvm-ar"_str),
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
     });
     ASSERT_TRUE(created.is_ok());
     auto toolchain = rstd::move(created).unwrap();

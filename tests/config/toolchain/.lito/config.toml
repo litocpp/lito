@@ -1,0 +1,7 @@
+[toolchain]
+cc = "custom-cc"
+cxx = "custom-cxx"
+ld = "custom-ld"
+ar = "custom-ar"
+strip = "custom-strip"
+format = "custom-format"
