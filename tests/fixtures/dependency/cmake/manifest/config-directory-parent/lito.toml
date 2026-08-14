@@ -1,0 +1,14 @@
+[package]
+name = "cmake-config-directory-parent"
+version = "0.1.0"
+
+[lib]
+name = "cmake-config-directory-parent"
+module = "cmake_config_directory_parent"
+archive = "cmake_config_directory_parent"
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+path = "../../project/package"
+config-directory = "../LitoFixture"
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]

@@ -2,9 +2,10 @@
 /.lito/
 /.tenon/
 lito.lock
+!tests/fixtures/lock/**/lito.lock
 /tenon.lock
 demo/**/build/
-tests/**/build/
+tests/fixtures/**/build/
 **/lito.lock.tmp.*
 **/tenon.lock.tmp.*
 doc/frontend/node_modules/

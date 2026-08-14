@@ -1,0 +1,2 @@
+[pkg-config]
+search-path = ["../../dependency/pkg-config/provider"]

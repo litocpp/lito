@@ -1,0 +1,7 @@
+[package]
+name = "fixture-lock-stale"
+version = "1.0.0"
+
+[[bin]]
+name = "fixture-lock-stale"
+sources = ["main.cpp"]

@@ -1,0 +1,7 @@
+[package]
+name = "fixture-lock-missing"
+version = "1.0.0"
+
+[[bin]]
+name = "fixture-lock-missing"
+sources = ["main.cpp"]

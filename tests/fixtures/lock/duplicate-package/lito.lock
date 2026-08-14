@@ -1,0 +1,26 @@
+{
+  "externals": [],
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "lito.toml",
+      "name": "fixture-duplicate-package",
+      "runtime-dependencies": [],
+      "source": {
+        "kind": "path",
+        "path": "."
+      }
+    },
+    {
+      "dependencies": [],
+      "manifest": "other/lito.toml",
+      "name": "fixture-duplicate-package",
+      "runtime-dependencies": [],
+      "source": {
+        "kind": "path",
+        "path": "other"
+      }
+    }
+  ],
+  "version": 6
+}

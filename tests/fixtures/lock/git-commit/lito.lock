@@ -1,0 +1,21 @@
+{
+  "externals": [],
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "lito.toml",
+      "name": "fixture-git-commit",
+      "runtime-dependencies": [],
+      "source": {
+        "commit": "1111111111111111111111111111111111111111",
+        "kind": "git",
+        "reference": {
+          "kind": "commit",
+          "value": "1111111111111111111111111111111111111111"
+        },
+        "url": "https://example.invalid/repository.git"
+      }
+    }
+  ],
+  "version": 6
+}
