@@ -40,9 +40,14 @@ TEST(Config, ToolchainConfigurationUsesCommandLineNames) {
     EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("custom-ar"_str).as_path());
     EXPECT_EQ(loaded->toolchain.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
     EXPECT_EQ(loaded->toolchain.format.as_path(), PathBuf::from("custom-format"_str).as_path());
+    EXPECT_EQ(loaded->standard_library, lito::StandardLibrary::Libstdcxx);
 
     auto legacy = lito::load_project_config(fixture_path("config/toolchain-legacy"_str).as_path());
     EXPECT_TRUE(legacy.is_err());
+
+    auto defaults = lito::load_project_config(fixture_path("config"_str).as_path());
+    ASSERT_TRUE(defaults.is_ok());
+    EXPECT_EQ(defaults->standard_library, lito::StandardLibrary::Libcxx);
 }
 
 TEST(Config, EnvironmentAppendPathBelongsToProjectConfig) {
@@ -158,21 +163,25 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     auto overrides = Vec<String>::make();
     overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
     overrides.push(String::make("toolchain.cc=generic-cc"_str));
-    auto loaded =
-        lito::load_project_config(directory.as_path(),
-                                  lito::ProjectConfigRequest {
-                                      .overrides = rstd::move(overrides),
-                                      .toolchain =
-                                          lito::ToolchainOverride {
-                                              .cxx = Some(PathBuf::from("dedicated-cxx"_str)),
-                                          },
-                                  });
+    overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
+    auto loaded = lito::load_project_config(
+        directory.as_path(),
+        lito::ProjectConfigRequest {
+            .overrides = rstd::move(overrides),
+            .toolchain =
+                lito::ToolchainOverride {
+                    .cxx = Some(PathBuf::from("dedicated-cxx"_str)),
+                },
+            .toolchain_standard_library = Some(String::make("libc++"_str)),
+        });
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("dedicated-cxx"_str).as_path());
+    EXPECT_EQ(loaded->standard_library, lito::StandardLibrary::Libcxx);
 
     auto disabled_overrides = Vec<String>::make();
     disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));
+    disabled_overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
     auto disabled = lito::load_project_config(directory.as_path(),
                                               lito::ProjectConfigRequest {
                                                   .mode      = lito::ConfigLoadMode::Disabled,
@@ -180,6 +189,16 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
                                               });
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_EQ(disabled->toolchain.cxx.as_path(), PathBuf::from("no-config-cxx"_str).as_path());
+    EXPECT_EQ(disabled->standard_library, lito::StandardLibrary::Libstdcxx);
+
+    auto invalid_standard_library = Vec<String>::make();
+    invalid_standard_library.push(String::make("toolchain.stdlib=unknown"_str));
+    auto invalid = lito::load_project_config(directory.as_path(),
+                                             lito::ProjectConfigRequest {
+                                                 .mode      = lito::ConfigLoadMode::Disabled,
+                                                 .overrides = rstd::move(invalid_standard_library),
+                                             });
+    EXPECT_TRUE(invalid.is_err());
 
     auto patch_directory = directory.join(PathBuf::from("rstd-patch"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(patch_directory.as_path()).is_ok());

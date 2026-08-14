@@ -2,6 +2,7 @@ export module lito.config.contract;
 
 import rstd;
 import lito.error;
+import lito.cpp;
 import lito.system.environment_contract;
 import lito.toolchain.spec;
 import lito.source.contract;
@@ -29,6 +30,7 @@ struct ProjectConfig {
     LockConfig              lock;
     ProcessEnvironmentSpec  environment;
     ToolchainSpec           toolchain;
+    StandardLibrary         standard_library { StandardLibrary::Libcxx };
     PackageSourceConfig     sources;
     PkgConfigProviderConfig pkg_config;
     CMakeProviderConfig     cmake;
@@ -39,6 +41,7 @@ struct ProjectConfigRequest {
     ConfigLoadMode    mode { ConfigLoadMode::Enabled };
     Vec<String>       overrides;
     ToolchainOverride toolchain;
+    Option<String>    toolchain_standard_library;
 };
 
 struct ConfigQuery {

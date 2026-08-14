@@ -6,6 +6,7 @@ export module lito.config:schema;
 import rstd;
 import rstd.toml;
 import lito.error;
+import lito.cpp;
 import lito.config.contract;
 import lito.dependency.contract;
 import lito.lock.contract;
@@ -61,7 +62,7 @@ auto environment_config_key(ref<str> key) -> bool {
 
 auto toolchain_config_key(ref<str> key) -> bool {
     return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
-           key == "strip"_str || key == "format"_str;
+           key == "strip"_str || key == "format"_str || key == "stdlib"_str;
 }
 
 auto patch_config_key(ref<str> key) -> bool {
@@ -124,6 +125,19 @@ auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallbac
     auto configured = rstd_try(configured_tool_override(toolchain_value, key, context));
     if (configured.is_some()) return Ok(rstd::move(configured).unwrap());
     return Ok(PathBuf::from(fallback));
+}
+
+auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<StandardLibrary> {
+    auto value = config_member(toolchain_value, "stdlib"_str);
+    if (value.is_none()) return Ok(StandardLibrary::Libcxx);
+    auto text = (**value).as_str();
+    if (text.is_none()) {
+        return config_failure<StandardLibrary>("config.toolchain.stdlib must be a string"_str);
+    }
+    if (*text == "libc++"_str) return Ok(StandardLibrary::Libcxx);
+    if (*text == "libstdc++"_str) return Ok(StandardLibrary::Libstdcxx);
+    return config_failure<StandardLibrary>(
+        "config.toolchain.stdlib must be 'libc++' or 'libstdc++'"_str);
 }
 
 auto configured_directories(const Toml&           table,
@@ -431,14 +445,16 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto toolchain       = default_toolchain();
-    auto toolchain_value = config_member(document, "toolchain"_str);
+    auto toolchain        = default_toolchain();
+    auto standard_library = StandardLibrary::Libcxx;
+    auto toolchain_value  = config_member(document, "toolchain"_str);
     if (toolchain_value.is_some()) {
         auto table = config_table(**toolchain_value, "config.toolchain"_str);
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        toolchain = apply_toolchain_override(
+        standard_library = rstd_try(configured_standard_library(**toolchain_value));
+        toolchain        = apply_toolchain_override(
             rstd::move(toolchain),
             ToolchainOverride {
                 .cc = rstd_try(
@@ -470,14 +486,15 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
     if (install.is_err()) return Err(rstd::move(install).unwrap_err());
 
     return Ok(ProjectConfig {
-        .root        = rstd::move(root),
-        .lock        = rstd::move(lock).unwrap(),
-        .environment = rstd::move(environment).unwrap(),
-        .toolchain   = rstd::move(toolchain),
-        .sources     = rstd::move(sources).unwrap(),
-        .pkg_config  = rstd::move(pkg_config).unwrap(),
-        .cmake       = rstd::move(cmake).unwrap(),
-        .install     = rstd::move(install).unwrap(),
+        .root             = rstd::move(root),
+        .lock             = rstd::move(lock).unwrap(),
+        .environment      = rstd::move(environment).unwrap(),
+        .toolchain        = rstd::move(toolchain),
+        .standard_library = standard_library,
+        .sources          = rstd::move(sources).unwrap(),
+        .pkg_config       = rstd::move(pkg_config).unwrap(),
+        .cmake            = rstd::move(cmake).unwrap(),
+        .install          = rstd::move(install).unwrap(),
     });
 }
 

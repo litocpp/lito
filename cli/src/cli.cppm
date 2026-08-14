@@ -150,6 +150,7 @@ class CliOutcome {
               (Parsed,
                (PathBuf working_directory; bool no_config; Vec<String> config_overrides;
                 ToolchainOverride                                      toolchain;
+                Option<String>                                         toolchain_standard_library;
                 CliCommand                                             command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
@@ -222,6 +223,7 @@ struct ToolchainArgs {
     ArgKey<String> ar;
     ArgKey<String> strip;
     ArgKey<String> format;
+    ArgKey<String> stdlib;
 };
 
 struct RootArgs {
@@ -472,6 +474,12 @@ auto add_toolchain_args(Command& command) -> ToolchainArgs {
             "toolchain-strip"_str, "toolchain.strip"_str, "Set the LLVM strip executable"_str)),
         .format = command.add_arg(toolchain_arg(
             "toolchain-format"_str, "toolchain.format"_str, "Set the ClangFormat executable"_str)),
+        .stdlib = command.add_arg(Arg<String>::value("toolchain-stdlib"_str, string_parser())
+                                      .long_name("toolchain.stdlib"_str)
+                                      .value_name("STDLIB"_str)
+                                      .help("Set the C++ standard library"_str)
+                                      .help_heading("Toolchain"_str)
+                                      .global()),
     };
 }
 
@@ -886,6 +894,13 @@ auto optional_path(const Matches& matches, const ArgKey<String>& key)
     return Ok(Some(PathBuf::from((**value).clone())));
 }
 
+auto optional_string(const Matches& matches, const ArgKey<String>& key)
+    -> rstd::Result<Option<String>, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    if (value.is_none()) return Ok(None());
+    return Ok(Some((**value).clone()));
+}
+
 auto optional_profile(const Matches& matches, const ArgKey<BuildProfileName>& key)
     -> rstd::Result<Option<BuildProfileName>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
@@ -1184,12 +1199,14 @@ struct CliInvocation {
     bool              no_config {};
     Vec<String>       config_overrides;
     ToolchainOverride toolchain;
+    Option<String>    toolchain_standard_library;
     CliCommand        command;
 };
 
-auto has_toolchain_override(const ToolchainOverride& value) -> bool {
+auto has_toolchain_override(const ToolchainOverride& value, const Option<String>& standard_library)
+    -> bool {
     return value.cc.is_some() || value.cxx.is_some() || value.ld.is_some() || value.ar.is_some() ||
-           value.strip.is_some() || value.format.is_some();
+           value.strip.is_some() || value.format.is_some() || standard_library.is_some();
 }
 
 auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
@@ -1210,18 +1227,20 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     auto no_config = rstd_try(flag_value(matches, schema.root.no_config));
     auto overrides = rstd_try(string_values(matches, schema.root.config));
     auto toolchain = rstd_try(decode_toolchain(matches, schema.root.toolchain));
-    auto command   = rstd_try(decode_command(schema, matches));
-    if (command.is_Config() &&
-        (no_config || ! overrides.is_empty() || has_toolchain_override(toolchain))) {
+    auto standard_library = rstd_try(optional_string(matches, schema.root.toolchain.stdlib));
+    auto command          = rstd_try(decode_command(schema, matches));
+    if (command.is_Config() && (no_config || ! overrides.is_empty() ||
+                                has_toolchain_override(toolchain, standard_library))) {
         return Err(CliDecodeError::InvalidUsage(String::make(
             "the config command cannot be combined with --no-config, --config, or --toolchain.*"_str)));
     }
     return Ok(CliInvocation {
-        .working_directory = PathBuf::from(rstd::move(directory)),
-        .no_config         = no_config,
-        .config_overrides  = rstd::move(overrides),
-        .toolchain         = rstd::move(toolchain),
-        .command           = rstd::move(command),
+        .working_directory          = PathBuf::from(rstd::move(directory)),
+        .no_config                  = no_config,
+        .config_overrides           = rstd::move(overrides),
+        .toolchain                  = rstd::move(toolchain),
+        .toolchain_standard_library = rstd::move(standard_library),
+        .command                    = rstd::move(command),
     });
 }
 
@@ -1285,6 +1304,7 @@ auto parse() -> CliOutcome {
                               value.no_config,
                               rstd::move(value.config_overrides),
                               rstd::move(value.toolchain),
+                              rstd::move(value.toolchain_standard_library),
                               rstd::move(value.command));
 }
 

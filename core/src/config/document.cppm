@@ -245,14 +245,23 @@ auto apply_toolchain_value(ConfigDocument& document, ref<str> key, Option<PathBu
     return set_config_value(document.value, parsed_key, Toml::String(String::make(*text)));
 }
 
-auto apply_toolchain_values(ConfigDocument& document, ToolchainOverride values)
+auto apply_toolchain_standard_library(ConfigDocument& document, Option<String> value)
     -> ConfigResult<empty> {
+    if (value.is_none()) return Ok(empty {});
+    auto key = rstd::toml::parse_key_path("toolchain.stdlib"_str).unwrap();
+    return set_config_value(document.value, key, Toml::String(rstd::move(value).unwrap()));
+}
+
+auto apply_toolchain_values(ConfigDocument&   document,
+                            ToolchainOverride values,
+                            Option<String>    standard_library) -> ConfigResult<empty> {
     rstd_try(apply_toolchain_value(document, "toolchain.cc"_str, rstd::move(values.cc)));
     rstd_try(apply_toolchain_value(document, "toolchain.cxx"_str, rstd::move(values.cxx)));
     rstd_try(apply_toolchain_value(document, "toolchain.ld"_str, rstd::move(values.ld)));
     rstd_try(apply_toolchain_value(document, "toolchain.ar"_str, rstd::move(values.ar)));
     rstd_try(apply_toolchain_value(document, "toolchain.strip"_str, rstd::move(values.strip)));
     rstd_try(apply_toolchain_value(document, "toolchain.format"_str, rstd::move(values.format)));
+    rstd_try(apply_toolchain_standard_library(document, rstd::move(standard_library)));
     return Ok(empty {});
 }
 
@@ -347,7 +356,8 @@ auto load_project_config(ref<rstd::path::Path> root, ProjectConfigRequest reques
     for (usize index {}; index < request.overrides.len(); ++index) {
         rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
     }
-    rstd_try(apply_toolchain_values(document, rstd::move(request.toolchain)));
+    rstd_try(apply_toolchain_values(
+        document, rstd::move(request.toolchain), rstd::move(request.toolchain_standard_library)));
     return decode_project_config(document.location.root.clone(), document.value);
 }
 
