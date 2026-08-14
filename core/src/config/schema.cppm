@@ -425,62 +425,7 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
 export namespace lito
 {
 
-auto load_project_config(ref<rstd::path::Path> requested_root,
-                         ConfigLoadMode        mode = ConfigLoadMode::Enabled)
-    -> ConfigResult<ProjectConfig> {
-    auto canonical = rstd::fs::canonicalize(requested_root);
-    if (canonical.is_err()) {
-        return config_io_failure<ProjectConfig>(
-            "resolve project root"_str, requested_root, rstd::move(canonical).unwrap_err());
-    }
-    auto root     = rstd::move(canonical).unwrap();
-    auto metadata = rstd::fs::metadata(root.as_path());
-    if (metadata.is_err()) {
-        return config_io_failure<ProjectConfig>(
-            "inspect project root"_str, root.as_path(), rstd::move(metadata).unwrap_err());
-    }
-    if (! metadata->is_dir()) {
-        return config_failure<ProjectConfig>(
-            rstd::format("project root '{}' is not a directory", root.as_path()));
-    }
-
-    auto make_default = [&]() {
-        return ProjectConfig {
-            .root        = root.clone(),
-            .lock        = default_lock_config(root.as_path()),
-            .environment = ProcessEnvironmentSpec {},
-            .toolchain   = default_toolchain(),
-            .pkg_config =
-                PkgConfigProviderConfig {
-                    .executable = PathBuf::from("pkg-config"_str),
-                },
-            .cmake =
-                CMakeProviderConfig {
-                    .executable = PathBuf::from("cmake"_str),
-                    .generator  = String::make("Ninja"_str),
-                },
-        };
-    };
-    if (mode == ConfigLoadMode::Disabled) return Ok(make_default());
-
-    auto config_path = root.join(PathBuf::from(".lito/config.toml"_str).as_path());
-    auto exists      = rstd::fs::exists(config_path.as_path());
-    if (exists.is_err()) {
-        return config_io_failure<ProjectConfig>(
-            "inspect configuration"_str, config_path.as_path(), rstd::move(exists).unwrap_err());
-    }
-    if (! *exists) return Ok(make_default());
-
-    auto contents = rstd::fs::read_to_string(config_path.as_path());
-    if (contents.is_err()) {
-        return config_io_failure<ProjectConfig>(
-            "read configuration"_str, config_path.as_path(), rstd::move(contents).unwrap_err());
-    }
-    auto parsed = rstd::toml::from_str(contents->as_str());
-    if (parsed.is_err()) {
-        return Err(ConfigError::Parse(config_path.clone(), rstd::move(parsed).unwrap_err()));
-    }
-    auto document   = rstd::move(parsed).unwrap();
+auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<ProjectConfig> {
     auto root_table = config_table(document, "config root"_str);
     if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);

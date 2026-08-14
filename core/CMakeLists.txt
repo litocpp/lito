@@ -63,6 +63,7 @@ target_sources(
          src/manifest/schema.cppm
          src/manifest/mod.cppm
          src/config/schema.cppm
+         src/config/document.cppm
          src/config/contract.cppm
          src/config/error_contract.cppm
          src/config/mod.cppm

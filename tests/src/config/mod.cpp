@@ -146,3 +146,145 @@ TEST(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(),
               fixture_path("config/cmake"_str).as_path());
 }
+
+TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
+    auto directory = output_root("config-runtime-overrides"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
+    auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(config.as_path(), "[toolchain]\ncxx = 7\n"_str.as_bytes()).is_ok());
+
+    auto overrides = Vec<String>::make();
+    overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
+    overrides.push(String::make("toolchain.cc=generic-cc"_str));
+    auto loaded =
+        lito::load_project_config(directory.as_path(),
+                                  lito::ProjectConfigRequest {
+                                      .overrides = rstd::move(overrides),
+                                      .toolchain =
+                                          lito::ToolchainOverride {
+                                              .cxx = Some(PathBuf::from("dedicated-cxx"_str)),
+                                          },
+                                  });
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("dedicated-cxx"_str).as_path());
+
+    auto disabled_overrides = Vec<String>::make();
+    disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));
+    auto disabled = lito::load_project_config(directory.as_path(),
+                                              lito::ProjectConfigRequest {
+                                                  .mode      = lito::ConfigLoadMode::Disabled,
+                                                  .overrides = rstd::move(disabled_overrides),
+                                              });
+    ASSERT_TRUE(disabled.is_ok());
+    EXPECT_EQ(disabled->toolchain.cxx.as_path(), PathBuf::from("no-config-cxx"_str).as_path());
+
+    auto patch_directory = directory.join(PathBuf::from("rstd-patch"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(patch_directory.as_path()).is_ok());
+    auto patch_overrides = Vec<String>::make();
+    patch_overrides.push(rstd::format("patch.\"https://example.com/source?a=b\".path={}",
+                                      patch_directory.as_path()));
+    auto patched = lito::load_project_config(directory.as_path(),
+                                             lito::ProjectConfigRequest {
+                                                 .mode      = lito::ConfigLoadMode::Disabled,
+                                                 .overrides = rstd::move(patch_overrides),
+                                             });
+    ASSERT_TRUE(patched.is_ok());
+    ASSERT_EQ(patched->sources.patches.len(), usize(1));
+    EXPECT_EQ(patched->sources.patches[usize {}].git.as_str(),
+              "https://example.com/source?a=b"_str);
+    EXPECT_EQ(patched->sources.patches[usize {}].path.as_path(), patch_directory.as_path());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Config, RuntimeOverridesRejectKeyStructureConflicts) {
+    auto directory = output_root("config-runtime-conflict"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
+    auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(config.as_path(), "toolchain = \"scalar\"\n"_str.as_bytes()).is_ok());
+    auto overrides = Vec<String>::make();
+    overrides.push(String::make("toolchain.cxx=clang++"_str));
+    auto loaded = lito::load_project_config(directory.as_path(),
+                                            lito::ProjectConfigRequest {
+                                                .overrides = rstd::move(overrides),
+                                            });
+    EXPECT_TRUE(loaded.is_err());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
+    auto directory = output_root("config-persistence"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
+
+    auto path = lito::project_config_path(directory.as_path());
+    ASSERT_TRUE(path.is_ok());
+    EXPECT_EQ(path->as_path(),
+              directory.join(PathBuf::from(".lito/config.toml"_str).as_path()).as_path());
+
+    auto set =
+        lito::set_persisted_config(directory.as_path(), "lock.path"_str, ".lito/lito.lock"_str);
+    ASSERT_TRUE(set.is_ok());
+    EXPECT_EQ(set->key.as_str(), "lock.path"_str);
+
+    auto get = lito::get_persisted_config(directory.as_path(), Some(String::make("lock.path"_str)));
+    ASSERT_TRUE(get.is_ok());
+    EXPECT_EQ(get->output.as_str(), "\".lito/lito.lock\"\n"_str);
+
+    auto before_invalid = rstd::fs::read_to_string(path->as_path());
+    ASSERT_TRUE(before_invalid.is_ok());
+    auto invalid = lito::set_persisted_config(directory.as_path(), "unknown"_str, "value"_str);
+    EXPECT_TRUE(invalid.is_err());
+    auto after_invalid = rstd::fs::read_to_string(path->as_path());
+    ASSERT_TRUE(after_invalid.is_ok());
+    EXPECT_EQ(after_invalid->as_str(), before_invalid->as_str());
+
+    ASSERT_TRUE(rstd::fs::write(path->as_path(), "[lock]\npath = 7\n"_str.as_bytes()).is_ok());
+    auto repaired =
+        lito::set_persisted_config(directory.as_path(), "lock.path"_str, ".lito/lito.lock"_str);
+    ASSERT_TRUE(repaired.is_ok());
+
+    auto unset = lito::unset_persisted_config(directory.as_path(), "lock.path"_str);
+    ASSERT_TRUE(unset.is_ok());
+    auto whole = lito::get_persisted_config(directory.as_path(), None());
+    ASSERT_TRUE(whole.is_ok());
+    EXPECT_EQ(whole->output.as_str(), "\n"_str);
+
+    ASSERT_TRUE(rstd::fs::write(path->as_path(), "unknown = 1\n"_str.as_bytes()).is_ok());
+    auto repaired_unknown = lito::unset_persisted_config(directory.as_path(), "unknown"_str);
+    ASSERT_TRUE(repaired_unknown.is_ok());
+    whole = lito::get_persisted_config(directory.as_path(), None());
+    ASSERT_TRUE(whole.is_ok());
+    EXPECT_EQ(whole->output.as_str(), "\n"_str);
+
+    auto missing =
+        lito::get_persisted_config(directory.as_path(), Some(String::make("lock.path"_str)));
+    EXPECT_TRUE(missing.is_err());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
+TEST(Config, PersistedConfigRejectsSymlinkFiles) {
+    auto directory = output_root("config-symlink"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
+    auto target = directory.join(PathBuf::from("target.toml"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(target.as_path(), "[lock]\npath = \"safe.lock\"\n"_str.as_bytes()).is_ok());
+    auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::soft_link(target.as_path(), config.as_path()).is_ok());
+
+    EXPECT_TRUE(lito::get_persisted_config(directory.as_path(), None()).is_err());
+    EXPECT_TRUE(
+        lito::set_persisted_config(directory.as_path(), "lock.path"_str, ".lito/lito.lock"_str)
+            .is_err());
+    auto unchanged = rstd::fs::read_to_string(target.as_path());
+    ASSERT_TRUE(unchanged.is_ok());
+    EXPECT_EQ(unchanged->as_str(), "[lock]\npath = \"safe.lock\"\n"_str);
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}

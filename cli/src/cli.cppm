@@ -107,8 +107,29 @@ struct LockExportOptions {
     PathBuf output;
 };
 
+struct ConfigGetOptions {
+    Option<String> key;
+};
+
+struct ConfigSetOptions {
+    String key;
+    String value;
+};
+
+struct ConfigUnsetOptions {
+    String key;
+};
+
 class LockCommand {
     RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
+};
+
+class ConfigCommand {
+    RSTD_ENUM(ConfigCommand,
+              (Path),
+              (Get, (ConfigGetOptions options;)),
+              (Set, (ConfigSetOptions options;)),
+              (Unset, (ConfigUnsetOptions options;)))
 };
 
 class CliCommand {
@@ -120,14 +141,16 @@ class CliCommand {
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
-              (Lock, (LockCommand command;)))
+              (Lock, (LockCommand command;)),
+              (Config, (ConfigCommand command;)))
 };
 
 class CliOutcome {
     RSTD_ENUM(CliOutcome,
               (Parsed,
-               (PathBuf working_directory; bool no_config; ToolchainOverride toolchain;
-                CliCommand                                                   command;)),
+               (PathBuf working_directory; bool no_config; Vec<String> config_overrides;
+                ToolchainOverride                                      toolchain;
+                CliCommand                                             command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
 
@@ -169,7 +192,8 @@ class CliDecodeError {
     RSTD_ENUM(CliDecodeError,
               (MatchAccess, (MatchAccessError error;)),
               (MissingValue, (String argument;)),
-              (CommandMismatch, (String command;)))
+              (CommandMismatch, (String command;)),
+              (InvalidUsage, (String message;)))
 };
 
 struct PackageProfileArgs {
@@ -203,6 +227,7 @@ struct ToolchainArgs {
 struct RootArgs {
     ArgKey<String> directory;
     ArgKey<bool>   no_config;
+    ArgKey<String> config;
     ToolchainArgs  toolchain;
 };
 
@@ -298,6 +323,38 @@ struct LockSchema {
     auto decode(const Matches& matches) const -> rstd::Result<LockCommand, CliDecodeError>;
 };
 
+struct ConfigGetSchema {
+    CommandKey     command;
+    ArgKey<String> key;
+
+    auto decode(const Matches& matches) const -> rstd::Result<ConfigGetOptions, CliDecodeError>;
+};
+
+struct ConfigSetSchema {
+    CommandKey     command;
+    ArgKey<String> key;
+    ArgKey<String> value;
+
+    auto decode(const Matches& matches) const -> rstd::Result<ConfigSetOptions, CliDecodeError>;
+};
+
+struct ConfigUnsetSchema {
+    CommandKey     command;
+    ArgKey<String> key;
+
+    auto decode(const Matches& matches) const -> rstd::Result<ConfigUnsetOptions, CliDecodeError>;
+};
+
+struct ConfigSchema {
+    CommandKey        command;
+    CommandKey        path;
+    ConfigGetSchema   get;
+    ConfigSetSchema   set;
+    ConfigUnsetSchema unset;
+
+    auto decode(const Matches& matches) const -> rstd::Result<ConfigCommand, CliDecodeError>;
+};
+
 struct CliSchema {
     RootArgs      root;
     BuildSchema   build;
@@ -308,6 +365,7 @@ struct CliSchema {
     FormatSchema  format;
     UpdateSchema  update;
     LockSchema    lock;
+    ConfigSchema  config;
     Parser        parser;
 };
 
@@ -378,6 +436,16 @@ auto no_config_arg() -> Arg<bool> {
     return Arg<bool>::flag("no-config"_str)
         .long_name("no-config"_str)
         .help("Ignore .lito/config.toml"_str)
+        .global();
+}
+
+auto config_override_arg() -> Arg<String> {
+    return Arg<String>::value("config"_str, string_parser())
+        .short_name(u8('c'))
+        .long_name("config"_str)
+        .value_name("KEY=VALUE"_str)
+        .help("Override a configuration value for this invocation"_str)
+        .append()
         .global();
 }
 
@@ -661,6 +729,65 @@ auto make_lock_definition() -> CommandDefinition<LockSchema> {
     };
 }
 
+auto make_config_definition() -> CommandDefinition<ConfigSchema> {
+    auto path_command = Command::make("path"_str);
+    path_command.about("Print the project configuration path"_str);
+    auto path_key = path_command.key();
+
+    auto get_command = Command::make("get"_str);
+    get_command.about("Read stored project configuration"_str);
+    auto get_key      = get_command.key();
+    auto get_argument = get_command.add_arg(Arg<String>::value("key"_str, string_parser())
+                                                .value_name("KEY"_str)
+                                                .help("Read one stored configuration key"_str));
+
+    auto set_command = Command::make("set"_str);
+    set_command.about("Set a stored project configuration value"_str);
+    auto set_key          = set_command.key();
+    auto set_key_argument = set_command.add_arg(Arg<String>::value("key"_str, string_parser())
+                                                    .value_name("KEY"_str)
+                                                    .help("Configuration key to set"_str)
+                                                    .required());
+    auto set_value_argument =
+        set_command.add_arg(Arg<String>::value("value"_str, string_parser())
+                                .value_name("VALUE"_str)
+                                .help("TOML value or unquoted string to store"_str)
+                                .allow_hyphen_values()
+                                .required());
+
+    auto unset_command = Command::make("unset"_str);
+    unset_command.about("Remove a stored project configuration value"_str);
+    auto unset_key      = unset_command.key();
+    auto unset_argument = unset_command.add_arg(Arg<String>::value("key"_str, string_parser())
+                                                    .value_name("KEY"_str)
+                                                    .help("Configuration key to remove"_str)
+                                                    .required());
+
+    auto command = Command::make("config"_str);
+    command.about("Read and write project configuration"_str);
+    command.require_subcommand();
+    auto key = command.key();
+    command.add_subcommand(rstd::move(path_command));
+    command.add_subcommand(rstd::move(get_command));
+    command.add_subcommand(rstd::move(set_command));
+    command.add_subcommand(rstd::move(unset_command));
+    return {
+        ConfigSchema {
+            .command = key,
+            .path    = path_key,
+            .get     = ConfigGetSchema { .command = get_key, .key = get_argument },
+            .set =
+                ConfigSetSchema {
+                    .command = set_key,
+                    .key     = set_key_argument,
+                    .value   = set_value_argument,
+                },
+            .unset = ConfigUnsetSchema { .command = unset_key, .key = unset_argument },
+        },
+        rstd::move(command),
+    };
+}
+
 auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto build   = make_build_definition();
     auto install = make_install_definition();
@@ -670,6 +797,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto format  = make_format_definition();
     auto update  = make_update_definition();
     auto lock    = make_lock_definition();
+    auto config  = make_config_definition();
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
@@ -681,6 +809,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
                                       .help("Change the working directory"_str)
                                       .default_value("."_str)),
         .no_config = root.add_arg(no_config_arg()),
+        .config    = root.add_arg(config_override_arg()),
         .toolchain = add_toolchain_args(root),
     };
     root.add_subcommand(rstd::move(build.command));
@@ -691,6 +820,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
     root.add_subcommand(rstd::move(lock.command));
+    root.add_subcommand(rstd::move(config.command));
 
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
@@ -704,6 +834,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .format  = rstd::move(format.schema),
         .update  = rstd::move(update.schema),
         .lock    = rstd::move(lock.schema),
+        .config  = rstd::move(config.schema),
         .parser  = rstd::move(parser).unwrap(),
     });
 }
@@ -969,6 +1100,44 @@ auto LockSchema::decode(const Matches& matches) const -> rstd::Result<LockComman
     return Err(CliDecodeError::CommandMismatch(String::make("lock"_str)));
 }
 
+auto ConfigGetSchema::decode(const Matches& matches) const
+    -> rstd::Result<ConfigGetOptions, CliDecodeError> {
+    auto value = rstd_try(optional_value(matches, key));
+    return Ok(ConfigGetOptions {
+        .key = value.is_some() ? Some((**value).clone()) : None(),
+    });
+}
+
+auto ConfigSetSchema::decode(const Matches& matches) const
+    -> rstd::Result<ConfigSetOptions, CliDecodeError> {
+    return Ok(ConfigSetOptions {
+        .key   = rstd_try(required_string(matches, key, "key"_str)),
+        .value = rstd_try(required_string(matches, value, "value"_str)),
+    });
+}
+
+auto ConfigUnsetSchema::decode(const Matches& matches) const
+    -> rstd::Result<ConfigUnsetOptions, CliDecodeError> {
+    return Ok(ConfigUnsetOptions {
+        .key = rstd_try(required_string(matches, key, "key"_str)),
+    });
+}
+
+auto ConfigSchema::decode(const Matches& matches) const
+    -> rstd::Result<ConfigCommand, CliDecodeError> {
+    if (matches.subcommand_matches(path).is_some()) return Ok(ConfigCommand::Path());
+    if (auto child = matches.subcommand_matches(get.command); child.is_some()) {
+        return Ok(ConfigCommand::Get(rstd_try(get.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(set.command); child.is_some()) {
+        return Ok(ConfigCommand::Set(rstd_try(set.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(unset.command); child.is_some()) {
+        return Ok(ConfigCommand::Unset(rstd_try(unset.decode(**child))));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("config"_str)));
+}
+
 auto decode_command(const CliSchema& schema, const Matches& matches)
     -> rstd::Result<CliCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
@@ -1003,15 +1172,25 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto command = rstd_try(schema.lock.decode(**child));
         return Ok(CliCommand::Lock(rstd::move(command)));
     }
+    if (auto child = matches.subcommand_matches(schema.config.command); child.is_some()) {
+        auto command = rstd_try(schema.config.decode(**child));
+        return Ok(CliCommand::Config(rstd::move(command)));
+    }
     return Err(CliDecodeError::CommandMismatch(String::make("lito"_str)));
 }
 
 struct CliInvocation {
     PathBuf           working_directory;
     bool              no_config {};
+    Vec<String>       config_overrides;
     ToolchainOverride toolchain;
     CliCommand        command;
 };
+
+auto has_toolchain_override(const ToolchainOverride& value) -> bool {
+    return value.cc.is_some() || value.cxx.is_some() || value.ld.is_some() || value.ar.is_some() ||
+           value.strip.is_some() || value.format.is_some();
+}
 
 auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
     -> rstd::Result<ToolchainOverride, CliDecodeError> {
@@ -1028,11 +1207,21 @@ auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
 auto decode_invocation(const CliSchema& schema, const Matches& matches)
     -> rstd::Result<CliInvocation, CliDecodeError> {
     auto directory = rstd_try(required_string(matches, schema.root.directory, "directory"_str));
+    auto no_config = rstd_try(flag_value(matches, schema.root.no_config));
+    auto overrides = rstd_try(string_values(matches, schema.root.config));
+    auto toolchain = rstd_try(decode_toolchain(matches, schema.root.toolchain));
+    auto command   = rstd_try(decode_command(schema, matches));
+    if (command.is_Config() &&
+        (no_config || ! overrides.is_empty() || has_toolchain_override(toolchain))) {
+        return Err(CliDecodeError::InvalidUsage(String::make(
+            "the config command cannot be combined with --no-config, --config, or --toolchain.*"_str)));
+    }
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),
-        .no_config         = rstd_try(flag_value(matches, schema.root.no_config)),
-        .toolchain         = rstd_try(decode_toolchain(matches, schema.root.toolchain)),
-        .command           = rstd_try(decode_command(schema, matches)),
+        .no_config         = no_config,
+        .config_overrides  = rstd::move(overrides),
+        .toolchain         = rstd::move(toolchain),
+        .command           = rstd::move(command),
     });
 }
 
@@ -1043,6 +1232,7 @@ auto decode_error_text(const CliDecodeError& error) -> String {
     if (error.is_MissingValue()) {
         return rstd::format("required argument '{}' is missing", error.as_MissingValue().argument);
     }
+    if (error.is_InvalidUsage()) return error.as_InvalidUsage().message.clone();
     return rstd::format("parsed command '{}' does not match its schema",
                         error.as_CommandMismatch().command);
 }
@@ -1081,6 +1271,10 @@ auto parse() -> CliOutcome {
     auto invocation = decode_invocation(schema, matches);
     if (invocation.is_err()) {
         auto error = rstd::move(invocation).unwrap_err();
+        if (error.is_InvalidUsage()) {
+            return CliOutcome::Exit(
+                rstd::format("lito: {}\n", error.as_InvalidUsage().message), true, i32(2));
+        }
         return CliOutcome::Exit(
             rstd::format("lito: invalid parsed command: {}\n", decode_error_text(error)),
             true,
@@ -1089,6 +1283,7 @@ auto parse() -> CliOutcome {
     auto value = rstd::move(invocation).unwrap();
     return CliOutcome::Parsed(rstd::move(value.working_directory),
                               value.no_config,
+                              rstd::move(value.config_overrides),
                               rstd::move(value.toolchain),
                               rstd::move(value.command));
 }

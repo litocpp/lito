@@ -46,7 +46,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG a0c566690a6c2d6dc82c4147e5de75b76ce7f354)
+  GIT_TAG a802845810966d738b65a4f86331358eef0ec8c9)
 
 set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)

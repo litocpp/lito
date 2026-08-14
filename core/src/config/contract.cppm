@@ -35,4 +35,20 @@ struct ProjectConfig {
     InstallConfig           install;
 };
 
+struct ProjectConfigRequest {
+    ConfigLoadMode    mode { ConfigLoadMode::Enabled };
+    Vec<String>       overrides;
+    ToolchainOverride toolchain;
+};
+
+struct ConfigQuery {
+    PathBuf path;
+    String  output;
+};
+
+struct ConfigMutation {
+    PathBuf path;
+    String  key;
+};
+
 } // namespace lito

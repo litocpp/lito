@@ -9,9 +9,6 @@ import lito.command.reporting;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-namespace
-{
-
 struct EventContext {
     bool verbose { false };
     bool standard_error { false };
@@ -183,8 +180,6 @@ void report_error(const E& error) {
     }
 }
 
-} // namespace
-
 extern "C++" int main() {
     auto parsed = lito::cli::parse();
     if (parsed.is_Exit()) {
@@ -195,7 +190,55 @@ extern "C++" int main() {
             rstd::io::print("{}", result.output.as_str());
         return static_cast<int>(result.exit_code.to_primitive());
     }
-    auto invocation     = rstd::move(parsed).as_Parsed();
+    auto invocation = rstd::move(parsed).as_Parsed();
+    if (invocation.command.is_Config()) {
+        auto command = rstd::move(invocation.command).as_Config().command;
+        if (command.is_Path()) {
+            auto path = lito::project_config_path(invocation.working_directory.as_path());
+            if (path.is_err()) {
+                auto error = rstd::move(path).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            rstd::io::println("{}", path->as_path());
+            return 0;
+        }
+        if (command.is_Get()) {
+            auto options = rstd::move(command).as_Get().options;
+            auto query   = lito::get_persisted_config(invocation.working_directory.as_path(),
+                                                      rstd::move(options.key));
+            if (query.is_err()) {
+                auto error = rstd::move(query).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            rstd::io::print("{}", query->output.as_str());
+            return 0;
+        }
+        if (command.is_Set()) {
+            auto options  = rstd::move(command).as_Set().options;
+            auto mutation = lito::set_persisted_config(invocation.working_directory.as_path(),
+                                                       options.key.as_str(),
+                                                       options.value.as_str());
+            if (mutation.is_err()) {
+                auto error = rstd::move(mutation).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            rstd::io::println("set {} in {}", mutation->key, mutation->path.as_path());
+            return 0;
+        }
+        auto options  = rstd::move(command).as_Unset().options;
+        auto mutation = lito::unset_persisted_config(invocation.working_directory.as_path(),
+                                                     options.key.as_str());
+        if (mutation.is_err()) {
+            auto error = rstd::move(mutation).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        rstd::io::println("unset {} in {}", mutation->key, mutation->path.as_path());
+        return 0;
+    }
     auto install_source = Option<lito::ResolvedInstallSource> {};
     if (invocation.command.is_Install()) {
         auto resolved = lito::resolve_install_source(
@@ -207,19 +250,22 @@ extern "C++" int main() {
         }
         install_source = Some(rstd::move(resolved).unwrap());
     }
-    auto config_root   = install_source.is_some() ? install_source->project.root.as_path()
-                                                  : invocation.working_directory.as_path();
-    auto loaded_config = lito::load_project_config(
-        config_root,
-        invocation.no_config ? lito::ConfigLoadMode::Disabled : lito::ConfigLoadMode::Enabled);
+    auto config_root = install_source.is_some() ? install_source->project.root.as_path()
+                                                : invocation.working_directory.as_path();
+    auto loaded_config =
+        lito::load_project_config(config_root,
+                                  lito::ProjectConfigRequest {
+                                      .mode = invocation.no_config ? lito::ConfigLoadMode::Disabled
+                                                                   : lito::ConfigLoadMode::Enabled,
+                                      .overrides = rstd::move(invocation.config_overrides),
+                                      .toolchain = rstd::move(invocation.toolchain),
+                                  });
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();
         report_error(error);
         return 1;
     }
-    auto project      = rstd::move(loaded_config).unwrap();
-    project.toolchain = lito::apply_toolchain_override(rstd::move(project.toolchain),
-                                                       rstd::move(invocation.toolchain));
+    auto project = rstd::move(loaded_config).unwrap();
 
     if (invocation.command.is_Lock()) {
         auto command = rstd::move(invocation.command).as_Lock().command;
