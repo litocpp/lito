@@ -17,6 +17,20 @@ struct InstallRuntimeDependency {
     String source_identity;
 };
 
+struct InstallPackageIdentity {
+    String id;
+    String name;
+    String source_identity;
+
+    auto clone() const -> InstallPackageIdentity {
+        return InstallPackageIdentity {
+            .id              = id.clone(),
+            .name            = name.clone(),
+            .source_identity = source_identity.clone(),
+        };
+    }
+};
+
 class InstallSourceProvenance {
     RSTD_ENUM(InstallSourceProvenance,
               (Local, (PathBuf root; String identity;)),
@@ -25,8 +39,8 @@ class InstallSourceProvenance {
 public:
     auto clone() const -> InstallSourceProvenance {
         if (is_Local()) {
-            return InstallSourceProvenance::Local(
-                as_Local().root.clone(), as_Local().identity.clone());
+            return InstallSourceProvenance::Local(as_Local().root.clone(),
+                                                  as_Local().identity.clone());
         }
         return InstallSourceProvenance::Git(as_Git().url.clone(),
                                             as_Git().reference.clone(),

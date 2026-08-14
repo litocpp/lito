@@ -1366,6 +1366,39 @@ TEST(Contracts, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
     auto empty_error = rstd::move(empty).unwrap_err();
     ASSERT_TRUE(empty_error.is_Message());
     EXPECT_TRUE(empty_error.as_Message().message.as_str().contains("must not be empty"_str));
+
+    auto prefix = lito::resolve_install_destination(
+        directory.as_path(),
+        lito::InstallDestinationRequirement::Prefix(PathBuf::from("staging"_str)),
+        lito::InstallConfig {
+            .root = Some(PathBuf::from("/tmp/ignored-managed-root"_str)),
+        });
+    ASSERT_TRUE(prefix.is_ok());
+    ASSERT_TRUE(prefix->is_Prefix());
+    EXPECT_EQ(prefix->path(), directory.join(PathBuf::from("staging"_str).as_path()).as_path());
+
+    auto managed = lito::resolve_install_destination(
+        directory.as_path(),
+        lito::InstallDestinationRequirement::Managed(Some(PathBuf::from("managed"_str))),
+        lito::InstallConfig {});
+    ASSERT_TRUE(managed.is_ok());
+    ASSERT_TRUE(managed->is_Managed());
+    EXPECT_EQ(managed->path(), directory.join(PathBuf::from("managed"_str).as_path()).as_path());
+}
+
+TEST(Contracts, InstallPackageIdentityUsesNameAndExactSourceIdentity) {
+    auto first        = lito::install_package_id("fixture-tool"_str, "path+/workspace/tool"_str);
+    auto repeated     = lito::install_package_id("fixture-tool"_str, "path+/workspace/tool"_str);
+    auto other_name   = lito::install_package_id("fixture-other"_str, "path+/workspace/tool"_str);
+    auto other_source = lito::install_package_id("fixture-tool"_str, "path+/workspace/other"_str);
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_TRUE(repeated.is_ok());
+    ASSERT_TRUE(other_name.is_ok());
+    ASSERT_TRUE(other_source.is_ok());
+    EXPECT_EQ(first->as_str(), repeated->as_str());
+    EXPECT_TRUE(first->as_str().starts_with("fixture-tool-"_str));
+    EXPECT_NE(first->as_str(), other_name->as_str());
+    EXPECT_NE(first->as_str(), other_source->as_str());
 }
 
 TEST(Contracts, WorkspaceAndMemberInstallUseTheSameSource) {

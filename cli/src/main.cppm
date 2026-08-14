@@ -238,10 +238,11 @@ extern "C++" int main() {
                              options.offline,
                              options.frozen,
                              rstd::move(options.fetch_seeds));
-        auto root    = lito::resolve_install_root(
-            invocation.working_directory.as_path(), rstd::move(options.root), project.install);
-        if (root.is_err()) {
-            auto error = rstd::move(root).unwrap_err();
+        auto destination = lito::resolve_install_destination(invocation.working_directory.as_path(),
+                                                             rstd::move(options.destination),
+                                                             project.install);
+        if (destination.is_err()) {
+            auto error = rstd::move(destination).unwrap_err();
             report_error(error);
             return 1;
         }
@@ -249,8 +250,8 @@ extern "C++" int main() {
                                           rstd::move(options.timing_file),
                                           options.verbose && ! options.no_timing);
         auto request = lito::InstallRequest {
-            .source = rstd::move(install_source).unwrap(),
-            .root   = rstd::move(root).unwrap(),
+            .source      = rstd::move(install_source).unwrap(),
+            .destination = rstd::move(destination).unwrap(),
         };
         request.binaries                 = rstd::move(options.binaries);
         request.force                    = options.force;
@@ -278,8 +279,16 @@ extern "C++" int main() {
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
+        for (const auto& link : summary.links) {
+            rstd::io::println("[install] {}", link.destination.as_path());
+        }
         for (const auto& entry : summary.entries) {
             if (entry.origin.is_BuildArtifact()) {
+                auto linked = false;
+                for (const auto& link : summary.links) {
+                    if (link.target == entry.origin.as_BuildArtifact().target) linked = true;
+                }
+                if (linked) continue;
                 rstd::io::println("[install] {}", entry.destination.as_path());
             }
         }
@@ -289,11 +298,13 @@ extern "C++" int main() {
             report_error(error);
             return 1;
         }
-        rstd::io::println("installed {} entries from {} packages ({}) to {}",
+        rstd::io::println("installed {} entries from {} packages ({}) to {} {}",
                           summary.entries.len(),
                           summary.packages.len(),
                           summary.build.profile.as_str(),
-                          summary.root.path.as_path());
+                          summary.destination.is_Managed() ? "managed root"_str
+                                                           : "untracked prefix"_str,
+                          summary.destination.path());
         return 0;
     }
 
@@ -364,7 +375,7 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Scan()) {
-        auto options               = rstd::move(invocation.command).as_Scan().options;
+        auto options = rstd::move(invocation.command).as_Scan().options;
         apply_source_options(project.sources,
                              project.root.as_path(),
                              options.offline,
@@ -406,7 +417,7 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Test()) {
-        auto options                 = rstd::move(invocation.command).as_Test().options;
+        auto options = rstd::move(invocation.command).as_Test().options;
         apply_source_options(project.sources,
                              project.root.as_path(),
                              options.offline,
@@ -528,7 +539,7 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Bench()) {
-        auto options                 = rstd::move(invocation.command).as_Bench().options;
+        auto options = rstd::move(invocation.command).as_Bench().options;
         apply_source_options(project.sources,
                              project.root.as_path(),
                              options.offline,
@@ -624,7 +635,7 @@ extern "C++" int main() {
         return failed == usize {} ? 0 : 1;
     }
 
-    auto options               = rstd::move(invocation.command).as_Build().options;
+    auto options = rstd::move(invocation.command).as_Build().options;
     apply_source_options(project.sources,
                          project.root.as_path(),
                          options.offline,

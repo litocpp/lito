@@ -39,8 +39,7 @@ using InstallSourceResult = rstd::Result<T, InstallSourceError>;
 class InstallStoreCause {
     RSTD_ENUM(InstallStoreCause,
               (Source, (InstallSourceError source;)),
-              (Io,
-               (String operation; PathBuf path; rstd::io::error::Error source;)),
+              (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
               (Message, (String message;)))
 };
@@ -55,9 +54,8 @@ class InstallStoreError {
     RSTD_ENUM(InstallStoreError,
               (Cause, (InstallStoreCause source;)),
               (Transaction,
-               (String operation;
-                rstd::boxed::Box<InstallStoreError> source;
-                Vec<InstallRollbackFailure> rollback_failures;)))
+               (String operation; rstd::boxed::Box<InstallStoreError> source;
+                Vec<InstallRollbackFailure>                           rollback_failures;)))
 };
 
 template<typename T>
@@ -92,11 +90,38 @@ struct InstallRoot {
     PathBuf path;
 };
 
+struct InstallPrefix {
+    PathBuf path;
+};
+
+class InstallDestinationRequirement {
+    RSTD_ENUM(InstallDestinationRequirement,
+              (Managed, (Option<PathBuf> command_root;)),
+              (Prefix, (PathBuf path;)))
+};
+
+class InstallDestination {
+    RSTD_ENUM(InstallDestination, (Managed, (InstallRoot root;)), (Prefix, (InstallPrefix prefix;)))
+
+public:
+    auto clone() const -> InstallDestination {
+        if (is_Managed()) {
+            return InstallDestination::Managed(
+                InstallRoot { .path = as_Managed().root.path.clone() });
+        }
+        return InstallDestination::Prefix(
+            InstallPrefix { .path = as_Prefix().prefix.path.clone() });
+    }
+
+    auto path() const noexcept -> ref<rstd::path::Path> {
+        return is_Managed() ? as_Managed().root.path.as_path() : as_Prefix().prefix.path.as_path();
+    }
+};
+
 struct InstallLayout {
     InstallRoot root;
     PathBuf     bin_directory;
-    PathBuf     state_directory;
-    PathBuf     metadata;
+    PathBuf     packages_directory;
     PathBuf     lock;
     PathBuf     transactions;
 };
@@ -138,44 +163,133 @@ struct InstallEntry {
     InstallAction       action { InstallAction::Created };
 };
 
+enum class InstallManagedPackageLayout
+{
+    DirectBin,
+    IsolatedPrefix,
+};
+
+enum class InstallOwnedEntryKind
+{
+    File,
+    SoftLink,
+};
+
+struct InstallOwnedEntry {
+    PathBuf               logical_destination;
+    PathBuf               physical_destination;
+    InstallOwnedEntryKind kind { InstallOwnedEntryKind::File };
+    String                origin;
+    Option<PathBuf>       link_target;
+
+    auto clone() const -> InstallOwnedEntry {
+        return InstallOwnedEntry {
+            .logical_destination  = logical_destination.clone(),
+            .physical_destination = physical_destination.clone(),
+            .kind                 = kind,
+            .origin               = origin.clone(),
+            .link_target          = link_target.is_some() ? Some(link_target->clone()) : None(),
+        };
+    }
+};
+
+struct InstallStoredRuntimeDependency {
+    String package_id;
+    String name;
+    String source_identity;
+
+    auto clone() const -> InstallStoredRuntimeDependency {
+        return InstallStoredRuntimeDependency {
+            .package_id      = package_id.clone(),
+            .name            = name.clone(),
+            .source_identity = source_identity.clone(),
+        };
+    }
+};
+
+struct InstallPackageInfo {
+    InstallPackageIdentity              identity;
+    String                              version;
+    InstallSourceProvenance             provenance;
+    String                              profile;
+    String                              target;
+    InstallManagedPackageLayout         layout { InstallManagedPackageLayout::DirectBin };
+    Vec<InstallOwnedEntry>              entries;
+    Vec<InstallStoredRuntimeDependency> runtime_dependencies;
+
+    auto clone() const -> InstallPackageInfo {
+        auto copied_entries = Vec<InstallOwnedEntry>::with_capacity(entries.len());
+        for (const auto& entry : entries) copied_entries.push(entry.clone());
+        auto copied_dependencies =
+            Vec<InstallStoredRuntimeDependency>::with_capacity(runtime_dependencies.len());
+        for (const auto& dependency : runtime_dependencies) {
+            copied_dependencies.push(dependency.clone());
+        }
+        return InstallPackageInfo {
+            .identity             = identity.clone(),
+            .version              = version.clone(),
+            .provenance           = provenance.clone(),
+            .profile              = profile.clone(),
+            .target               = target.clone(),
+            .layout               = layout,
+            .entries              = rstd::move(copied_entries),
+            .runtime_dependencies = rstd::move(copied_dependencies),
+        };
+    }
+};
+
+struct InstallCatalog {
+    Vec<InstallPackageInfo> packages;
+};
+
+struct InstallLink {
+    PackageTargetId target;
+    PathBuf         destination;
+    PathBuf         relative_target;
+    InstallAction   action { InstallAction::Created };
+};
+
 struct InstallPackageRecord {
-    String             name;
-    String             version;
-    String             profile;
-    String             target;
-    Vec<InstallBinary> binaries;
-    Vec<InstallEntry>  entries;
-    InstallSourceProvenance         provenance;
-    Vec<InstallRuntimeDependency>   runtime_dependencies;
+    String                        name;
+    String                        version;
+    String                        profile;
+    String                        target;
+    Vec<InstallBinary>            binaries;
+    Vec<InstallEntry>             entries;
+    InstallSourceProvenance       provenance;
+    Vec<InstallRuntimeDependency> runtime_dependencies;
 };
 
 struct InstallStoreRequest {
-    InstallRoot               root;
+    InstallDestination        destination;
     Vec<InstallPackageRecord> packages;
     bool                      force { false };
 };
 
 struct InstallStoreSummary {
-    InstallLayout      layout;
-    Vec<String>        packages;
-    Vec<InstallBinary> binaries;
-    Vec<InstallEntry>  entries;
+    InstallDestination    destination;
+    Option<InstallLayout> managed_layout;
+    Vec<String>           packages;
+    Vec<InstallBinary>    binaries;
+    Vec<InstallEntry>     entries;
+    Vec<InstallLink>      links;
 };
 
 struct InstallRequest {
     ResolvedInstallSource source;
     BuildRequest          build;
-    InstallRoot           root;
+    InstallDestination    destination;
     Vec<String>           binaries;
     bool                  force { false };
 };
 
 struct InstallSummary {
     BuildSummary       build;
-    InstallRoot        root;
+    InstallDestination destination;
     Vec<String>        packages;
     Vec<InstallBinary> binaries;
     Vec<InstallEntry>  entries;
+    Vec<InstallLink>   links;
 };
 
 } // namespace lito
@@ -222,8 +336,7 @@ struct Impl<error::Error, lito::InstallSourceError> : ImplBase<lito::InstallSour
 template<>
 struct Impl<convert::From<lito::InstallSourceError>, lito::InstallStoreError> {
     static auto from(lito::InstallSourceError error) -> lito::InstallStoreError {
-        return lito::InstallStoreError::Cause(
-            lito::InstallStoreCause::Source(rstd::move(error)));
+        return lito::InstallStoreError::Cause(lito::InstallStoreCause::Source(rstd::move(error)));
     }
 };
 
@@ -241,8 +354,8 @@ struct Impl<fmt::Display, lito::InstallStoreCause> : ImplBase<lito::InstallStore
                     .as_str());
         }
         if (error.is_Json()) {
-            return formatter.write_fmt(fmt::Arguments::make(
-                "cannot parse install metadata '{}'", error.as_Json().path.as_path()));
+            return formatter.write_fmt(fmt::Arguments::make("cannot parse install metadata '{}'",
+                                                            error.as_Json().path.as_path()));
         }
         return formatter.write_str(error.as_Message().message.as_str());
     }

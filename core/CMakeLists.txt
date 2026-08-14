@@ -74,6 +74,10 @@ target_sources(
          src/install/selection.cppm
          src/install/plan.cppm
          src/install/source.cppm
+         src/install/identity.cppm
+         src/install/path.cppm
+         src/install/publication.cppm
+         src/install/catalog.cppm
          src/install/store.cppm
          src/install/mod.cppm
          src/modules/convention.cppm

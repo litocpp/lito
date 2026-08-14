@@ -43,19 +43,19 @@ struct ScanOptions {
 };
 
 struct InstallOptions {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              binaries;
-    Option<PathBuf>          root;
-    bool                     force {};
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
-    bool                     verbose {};
-    Option<PathBuf>          timing_file;
-    bool                     no_timing {};
-    Option<usize>            jobs;
+    Vec<String>                   packages;
+    Option<BuildProfileName>      profile;
+    Vec<String>                   binaries;
+    InstallDestinationRequirement destination;
+    bool                          force {};
+    bool                          locked {};
+    bool                          offline {};
+    bool                          frozen {};
+    Vec<PathBuf>                  fetch_seeds;
+    bool                          verbose {};
+    Option<PathBuf>               timing_file;
+    bool                          no_timing {};
+    Option<usize>                 jobs;
 };
 
 struct TestOptions {
@@ -210,6 +210,7 @@ struct InstallSchema {
     PackageProfileArgs    package;
     ArgKey<String>        binary;
     ArgKey<String>        root;
+    ArgKey<String>        prefix;
     ArgKey<bool>          force;
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
@@ -450,8 +451,13 @@ auto make_install_definition() -> CommandDefinition<InstallSchema> {
     auto root    = command.add_arg(Arg<String>::value("root"_str, string_parser())
                                        .long_name("root"_str)
                                        .value_name("DIRECTORY"_str)
-                                       .help("Set the installation root"_str));
-    auto force   = command.add_arg(
+                                       .help("Set the Lito-managed install root"_str));
+    auto prefix  = command.add_arg(Arg<String>::value("prefix"_str, string_parser())
+                                       .long_name("prefix"_str)
+                                       .value_name("DIRECTORY"_str)
+                                       .help("Install an untracked prefix tree"_str));
+    command.conflicts(root, prefix);
+    auto force = command.add_arg(
         Arg<bool>::flag("force"_str).long_name("force"_str).help("Replace conflicting files"_str));
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
@@ -461,6 +467,7 @@ auto make_install_definition() -> CommandDefinition<InstallSchema> {
             .package            = rstd::move(package),
             .binary             = binary,
             .root               = root,
+            .prefix             = prefix,
             .force              = force,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
@@ -800,14 +807,19 @@ auto BuildSchema::decode(const Matches& matches) const
 
 auto InstallSchema::decode(const Matches& matches) const
     -> rstd::Result<InstallOptions, CliDecodeError> {
-    auto package   = rstd_try(decode_package_profile(matches, this->package));
-    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
-    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    auto package     = rstd_try(decode_package_profile(matches, this->package));
+    auto source      = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution   = rstd_try(decode_build_execution(matches, this->execution));
+    auto root        = rstd_try(optional_path(matches, this->root));
+    auto prefix      = rstd_try(optional_path(matches, this->prefix));
+    auto destination = prefix.is_some()
+                           ? InstallDestinationRequirement::Prefix(rstd::move(prefix).unwrap())
+                           : InstallDestinationRequirement::Managed(rstd::move(root));
     return Ok(InstallOptions {
         .packages    = rstd::move(package.packages),
         .profile     = rstd::move(package.profile),
         .binaries    = rstd_try(string_values(matches, binary)),
-        .root        = rstd_try(optional_path(matches, this->root)),
+        .destination = rstd::move(destination),
         .force       = rstd_try(flag_value(matches, force)),
         .locked      = source.locked,
         .offline     = source.offline,

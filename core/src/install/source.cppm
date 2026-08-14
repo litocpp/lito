@@ -83,10 +83,10 @@ auto required_source_text(const Json& source, ref<str> key) -> InstallSourceResu
     return Ok(String::make(*value));
 }
 
-auto reject_source_fields(const Json& source,
-                          bool (*allowed)(ref<str>)) -> InstallSourceResult<empty> {
+auto reject_source_fields(const Json& source, bool (*allowed)(ref<str>))
+    -> InstallSourceResult<empty> {
     auto object = source.as_object();
-    auto keys = (**object).keys();
+    auto keys   = (**object).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (! allowed((**key).as_str())) {
             return install_source_failure<empty>(rstd::format(
@@ -120,6 +120,11 @@ auto resolve_install_root(ref<rstd::path::Path> invocation_root,
                           Option<PathBuf>       command_root,
                           const InstallConfig&  config) -> InstallSourceResult<InstallRoot>;
 
+auto resolve_install_destination(ref<rstd::path::Path>         invocation_root,
+                                 InstallDestinationRequirement requirement,
+                                 const InstallConfig&          config)
+    -> InstallSourceResult<InstallDestination>;
+
 auto resolve_install_source(InstallSourceRequirement requirement)
     -> InstallSourceResult<ResolvedInstallSource> {
     if (! requirement.is_LocalProject()) {
@@ -130,11 +135,11 @@ auto resolve_install_source(InstallSourceRequirement requirement)
         rstd_try(resolve_project_entry(requirement.as_LocalProject().requested_root.as_path()));
     auto root = project.root.clone();
     return Ok(ResolvedInstallSource {
-        .project    = rstd::move(project),
-        .provenance = InstallSourceProvenance::Local(
-            root.clone(), path_source_identity(root.as_path())),
-        .identity   = path_source_identity(root.as_path()),
-        .storage    = InstallSourceStorage::BorrowedLocal,
+        .project = rstd::move(project),
+        .provenance =
+            InstallSourceProvenance::Local(root.clone(), path_source_identity(root.as_path())),
+        .identity = path_source_identity(root.as_path()),
+        .storage  = InstallSourceStorage::BorrowedLocal,
     });
 }
 
@@ -174,8 +179,8 @@ auto install_source_provenance(const ResolvedPackageSource& source)
             return install_source_failure<InstallSourceProvenance>(
                 "resolved package source root must be absolute"_str);
         }
-        return Ok(InstallSourceProvenance::Local(
-            source.root_directory.clone(), source.identity.clone()));
+        return Ok(
+            InstallSourceProvenance::Local(source.root_directory.clone(), source.identity.clone()));
     }
     if (! git_commit_is_valid(source.commit.as_str())) {
         return install_source_failure<InstallSourceProvenance>(
@@ -189,8 +194,8 @@ auto install_source_provenance(const ResolvedPackageSource& source)
 
 auto serialize_install_source_provenance(const InstallSourceProvenance& provenance)
     -> InstallSourceResult<Json> {
-    auto        identity = rstd_try(install_source_identity(provenance));
-    auto source = JsonMap::make();
+    auto identity = rstd_try(install_source_identity(provenance));
+    auto source   = JsonMap::make();
     source.insert(String::make("identity"_str), Json::String(rstd::move(identity)));
     if (provenance.is_Git()) {
         const auto& git = provenance.as_Git();
@@ -203,7 +208,7 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
         return Ok(Json::Object(rstd::move(source)));
     }
     const auto& root = provenance.as_Local().root;
-    auto path = root.as_path().to_str();
+    auto        path = root.as_path().to_str();
     if (path.is_none()) {
         return install_source_failure<Json>(
             rstd::format("install source path '{}' is not valid UTF-8", root.as_path()));
@@ -220,16 +225,20 @@ auto parse_install_source_provenance(const Json& source)
         return install_source_failure<InstallSourceProvenance>(
             "installed package source must be an object"_str);
     }
-    auto kind = rstd_try(required_source_string(source, "kind"_str));
+    auto kind     = rstd_try(required_source_string(source, "kind"_str));
     auto identity = rstd_try(required_source_string(source, "identity"_str));
     if (kind == "git"_str) {
         rstd_try(reject_source_fields(source, git_install_source_key));
         auto reference_kind = rstd_try(required_source_string(source, "reference-kind"_str));
-        auto parsed_kind = GitReferenceKind::DefaultBranch;
-        if (reference_kind == "branch"_str) parsed_kind = GitReferenceKind::Branch;
-        else if (reference_kind == "tag"_str) parsed_kind = GitReferenceKind::Tag;
-        else if (reference_kind == "rev"_str) parsed_kind = GitReferenceKind::Rev;
-        else if (reference_kind == "commit"_str) parsed_kind = GitReferenceKind::Commit;
+        auto parsed_kind    = GitReferenceKind::DefaultBranch;
+        if (reference_kind == "branch"_str)
+            parsed_kind = GitReferenceKind::Branch;
+        else if (reference_kind == "tag"_str)
+            parsed_kind = GitReferenceKind::Tag;
+        else if (reference_kind == "rev"_str)
+            parsed_kind = GitReferenceKind::Rev;
+        else if (reference_kind == "commit"_str)
+            parsed_kind = GitReferenceKind::Commit;
         else if (reference_kind != "default"_str) {
             return install_source_failure<InstallSourceProvenance>(
                 "installed Git source reference kind is invalid"_str);
@@ -251,9 +260,9 @@ auto parse_install_source_provenance(const Json& source)
     }
     rstd_try(reject_source_fields(source, path_install_source_key));
     auto path = rstd_try(required_source_string(source, "path"_str));
-    auto provenance = InstallSourceProvenance::Local(
-        PathBuf::from(path.as_str()), rstd::move(identity));
-    auto expected   = rstd_try(install_source_identity(provenance));
+    auto provenance =
+        InstallSourceProvenance::Local(PathBuf::from(path.as_str()), rstd::move(identity));
+    auto expected = rstd_try(install_source_identity(provenance));
     static_cast<void>(expected);
     return Ok(rstd::move(provenance));
 }
@@ -288,6 +297,24 @@ auto resolve_install_root(ref<rstd::path::Path> invocation_root,
     auto root = rstd::move(home).unwrap().unwrap();
     root.push(PathBuf::from(".lito"_str).as_path());
     return Ok(InstallRoot { .path = rstd::move(root) });
+}
+
+auto resolve_install_destination(ref<rstd::path::Path>         invocation_root,
+                                 InstallDestinationRequirement requirement,
+                                 const InstallConfig&          config)
+    -> InstallSourceResult<InstallDestination> {
+    if (requirement.is_Prefix()) {
+        auto path = rstd::move(requirement).as_Prefix().path;
+        if (path.is_empty()) {
+            return install_source_failure<InstallDestination>(
+                "install prefix must not be empty"_str);
+        }
+        return Ok(InstallDestination::Prefix(
+            InstallPrefix { .path = absolute_root(invocation_root, rstd::move(path)) }));
+    }
+    auto root = rstd_try(resolve_install_root(
+        invocation_root, rstd::move(requirement).as_Managed().command_root, config));
+    return Ok(InstallDestination::Managed(rstd::move(root)));
 }
 
 } // namespace lito

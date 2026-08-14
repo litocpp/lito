@@ -9,4 +9,8 @@ export import lito.install.script;
 export import lito.install.selection;
 export import lito.install.plan;
 export import lito.install.source;
+export import lito.install.identity;
+export import lito.install.path;
+export import lito.install.publication;
+export import lito.install.catalog;
 export import lito.install.store;

@@ -166,16 +166,17 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     auto plan   = rstd_try(materialize_install_plan(
         rstd::move(recipes), summary, summary.profile.as_str(), summary.target.as_str()));
     auto stored = rstd_try(install_artifacts(InstallStoreRequest {
-        .root     = InstallRoot { .path = rstd::move(request.root.path) },
-        .packages = rstd::move(plan.packages),
-        .force    = request.force,
+        .destination = rstd::move(request.destination),
+        .packages    = rstd::move(plan.packages),
+        .force       = request.force,
     }));
     return Ok(InstallSummary {
-        .build    = rstd::move(summary),
-        .root     = InstallRoot { .path = stored.layout.root.path.clone() },
-        .packages = rstd::move(stored.packages),
-        .binaries = rstd::move(stored.binaries),
-        .entries  = rstd::move(stored.entries),
+        .build       = rstd::move(summary),
+        .destination = rstd::move(stored.destination),
+        .packages    = rstd::move(stored.packages),
+        .binaries    = rstd::move(stored.binaries),
+        .entries     = rstd::move(stored.entries),
+        .links       = rstd::move(stored.links),
     });
 }
 
