@@ -173,7 +173,7 @@ private:
                     left = Ok(i64 {});
                     continue;
                 }
-                left = Ok(left->wrapping_shl(u64(rstd::as_cast<u64>(*right))));
+                left = Ok(left->wrapping_shl(u64(as_cast<u64>(*right))));
             } else if (match(">>"_str)) {
                 auto right = additive();
                 if (right.is_err()) return right;
@@ -184,7 +184,7 @@ private:
                     left = Ok(i64 {});
                     continue;
                 }
-                left = Ok(left->wrapping_shr(u64(rstd::as_cast<u64>(*right))));
+                left = Ok(left->wrapping_shr(u64(as_cast<u64>(*right))));
             } else {
                 break;
             }
@@ -272,7 +272,7 @@ private:
         }
         if (token.kind != TokenKind::PpNumber) return failure("expected integer constant"_str);
         auto bytes  = token.text.as_str().as_bytes();
-        auto base   = rstd::uint32_t(10);
+        auto base   = uint32_t(10);
         auto cursor = usize {};
         if (bytes.len() > usize(1) && bytes[usize {}] == u8('0')) {
             base   = 8;
@@ -294,7 +294,7 @@ private:
                 ++cursor;
                 continue;
             }
-            auto digit = rstd::uint32_t(99);
+            auto digit = uint32_t(99);
             if (byte >= u8('0') && byte <= u8('9'))
                 digit = byte.to_primitive() - '0';
             else if (byte >= u8('a') && byte <= u8('f'))

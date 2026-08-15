@@ -5,26 +5,15 @@ module;
 export module lito.test.support.source;
 
 import rstd;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.base_support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
@@ -96,18 +85,30 @@ struct FetchEventCapture {
     bool     destination_matches {};
 };
 
-void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
-    if (event.kind != lito::BuildEventKind::Fetch) return;
-    auto& context = *static_cast<FetchEventCapture*>(raw_context);
+void record_fetch(FetchEventCapture&    context,
+                  ref<str>              source,
+                  ref<rstd::path::Path> destination) noexcept {
     ++context.count;
     context.source_matches =
-        event.target.starts_with(context.expected_url) && event.target.ends_with("#HEAD"_str);
-    auto parent = event.path.parent();
+        source.starts_with(context.expected_url) && source.ends_with("#HEAD"_str);
+    auto parent = destination.parent();
     if (parent.is_none()) return;
     auto directory = parent->file_name();
     if (directory.is_none()) return;
     auto text                   = directory->to_str();
     context.destination_matches = text.is_some() && *text == "db"_str;
+}
+
+void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
+    if (event.kind != lito::BuildEventKind::Fetch) return;
+    auto& context = *static_cast<FetchEventCapture*>(raw_context);
+    record_fetch(context, event.target, event.path);
+}
+
+void capture_source_fetch(void* raw_context, const lito::SourceEvent& event) noexcept {
+    if (event.kind != lito::SourceEventKind::Fetch) return;
+    auto& context = *static_cast<FetchEventCapture*>(raw_context);
+    record_fetch(context, event.source, event.destination);
 }
 class EnvironmentVariableGuard {
     String                      key_;
@@ -137,8 +138,8 @@ struct FileFetchEventCapture {
     usize count {};
 };
 
-void capture_file_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
-    if (event.kind != lito::BuildEventKind::Fetch) return;
+void capture_file_fetch(void* raw_context, const lito::SourceEvent& event) noexcept {
+    if (event.kind != lito::SourceEventKind::Fetch) return;
     ++static_cast<FileFetchEventCapture*>(raw_context)->count;
 }
 

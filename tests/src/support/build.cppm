@@ -5,26 +5,16 @@ module;
 export module lito.test.support.build;
 
 import rstd;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.cpp;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.base_support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
@@ -32,7 +22,7 @@ export namespace lito_test
 {
 auto executable(const lito::BuildSummary& summary) -> Option<ref<rstd::path::Path>> {
     for (const auto& artifact : summary.artifacts) {
-        if (artifact.kind == lito::ArtifactKind::Executable) {
+        if (artifact.kind == lito::cpp::ArtifactKind::Executable) {
             return Some(artifact.path.as_path());
         }
     }

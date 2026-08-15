@@ -3,5 +3,6 @@ name = "leaf"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "runtime-leaf"
 sources = ["main.cpp"]

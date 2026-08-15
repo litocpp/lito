@@ -3,6 +3,7 @@ name = "runtime-cycle-b"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "runtime-cycle-b"
 sources = ["main.cpp"]
 

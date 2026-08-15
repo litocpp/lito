@@ -1,13 +1,13 @@
-export module lito.system.storage;
+export module lito.system:storage;
 
 import rstd;
-import lito.error;
-export import lito.system.error_contract;
+import :error;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
-namespace lito
+namespace lito::system
 {
 
 inline constexpr auto CACHE_TAG_SIGNATURE = "Signature: 8a477f597d28d172789f06886806bc55"_str;
@@ -69,9 +69,9 @@ struct SourceCacheState {
     PathBuf            root;
 };
 
-} // namespace lito
+} // namespace lito::system
 
-export namespace lito
+export namespace lito::system
 {
 
 class GitCacheLayout {
@@ -226,4 +226,4 @@ public:
     }
 };
 
-} // namespace lito
+} // namespace lito::system

@@ -79,17 +79,17 @@ struct Language {
 };
 
 template<typename LanguageType>
-    requires rstd::Impled<LanguageType, Language>
+    requires Impled<LanguageType, Language>
 auto language_identity(const LanguageType& language) noexcept -> LanguageIdentity {
-    return rstd::as<Language>(language).identity();
+    return as<Language>(language).identity();
 }
 
 template<typename LanguageType>
-    requires rstd::Impled<LanguageType, Language>
+    requires Impled<LanguageType, Language>
 auto language_symbol_info(const LanguageType& language, SymbolId symbol) noexcept
     -> Option<SymbolInfo> {
     if (! symbol.template belongs_to<LanguageType>()) return None();
-    return rstd::as<Language>(language).symbol_info(symbol);
+    return as<Language>(language).symbol_info(symbol);
 }
 
 } // namespace lito::frontend::lexical

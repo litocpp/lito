@@ -3,5 +3,6 @@ name = "fixture-conventional-name"
 version = "0.1.0"
 
 [[test]]
+link-stdlib = false
 name = "fixture-conventional-name-test"
 sources = ["main.cpp"]

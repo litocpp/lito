@@ -1,17 +1,37 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.system.environment;
+export module lito.system:environment;
 
 import rstd;
-export import lito.system.environment_contract;
-import lito.error;
-export import lito.system.error_contract;
+import :error;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
-namespace lito
+export namespace lito::system
+{
+
+struct ProcessEnvironmentSpec {
+    Vec<PathBuf> append_path;
+
+    auto clone() const -> ProcessEnvironmentSpec {
+        return ProcessEnvironmentSpec {
+            .append_path = as<Clone>(append_path).clone(),
+        };
+    }
+};
+
+auto is_searchable_executable_name(ref<rstd::path::Path> path) -> bool {
+    auto components = path.components();
+    auto first      = components.next();
+    return first.is_some() && first->is_normal() && components.next().is_none();
+}
+
+} // namespace lito::system
+
+namespace lito::system
 {
 
 template<typename T>
@@ -20,8 +40,8 @@ auto environment_failure(String message) -> SystemResult<T> {
 }
 
 template<typename T>
-auto environment_io_failure(ref<str> operation,
-                            ref<rstd::path::Path> path,
+auto environment_io_failure(ref<str>               operation,
+                            ref<rstd::path::Path>  path,
                             rstd::io::error::Error source) -> SystemResult<T> {
     return Err(SystemError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
@@ -63,9 +83,9 @@ auto executable_candidate(ref<rstd::path::Path> path) -> SystemResult<bool> {
 #endif
 }
 
-} // namespace lito
+} // namespace lito::system
 
-export namespace lito
+export namespace lito::system
 {
 
 class ResolvedProcessEnvironment {
@@ -154,7 +174,7 @@ public:
         for (const auto& extension : executable_extensions_) {
             extensions.push(rstd::ffi::OsString::from(extension.as_os_str()));
         }
-        return ResolvedProcessEnvironment(as<rstd::clone::Clone>(directories_).clone(),
+        return ResolvedProcessEnvironment(as<Clone>(directories_).clone(),
                                           rstd::ffi::OsString::from(child_path_.as_os_str()),
                                           rstd::move(extensions));
     }
@@ -251,4 +271,4 @@ private:
     Vec<ResolvedTool>                 cache_;
 };
 
-} // namespace lito
+} // namespace lito::system

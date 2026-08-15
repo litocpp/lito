@@ -3,6 +3,7 @@ name = "fixture-public-usage-without-lib"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-public-usage-without-lib"
 sources = ["main.cpp"]
 

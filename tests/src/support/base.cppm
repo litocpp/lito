@@ -1,11 +1,13 @@
 export module lito.test.base_support;
 
 import rstd;
-import lito;
-import lito.system.environment;
-import lito.workspace.contract;
+import lito.driver;
+import lito.cpp;
+import lito.system;
+import lito.core;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
@@ -47,7 +49,7 @@ auto clear_output(ref<rstd::path::Path> path) -> bool {
 template<typename Error>
 auto error_chain_text(const Error& error) -> String {
     auto text   = rstd::format("{}", error);
-    auto source = rstd::as<rstd::error::Error>(error).source();
+    auto source = as<rstd::error::Error>(error).source();
     for (auto depth = usize {}; source.is_some() && depth < usize(32); ++depth) {
         text.push_str("\n"_str);
         text.push_str(rstd::format("{}", *source).as_str());
@@ -60,10 +62,11 @@ auto build_profile(ref<str> name) -> lito::BuildProfileName {
     return lito::parse_build_profile(name).unwrap();
 }
 
-auto configuration() -> lito::BuildConfiguration {
+auto configuration() -> lito::cpp::BuildConfiguration {
     auto environment =
-        lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {}).unwrap();
-    auto resolver = lito::ToolResolver(environment);
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {})
+            .unwrap();
+    auto resolver = lito::system::ToolResolver(environment);
     auto compiler =
         resolver.resolve(PathBuf::from("clang++"_str).as_path(), "clang++"_str).unwrap().executable;
     auto linker = resolver.resolve(PathBuf::from("ld.lld"_str).as_path(), "LLD linker"_str)
@@ -71,7 +74,7 @@ auto configuration() -> lito::BuildConfiguration {
                       .executable;
     auto archiver =
         resolver.resolve(PathBuf::from("llvm-ar"_str).as_path(), "llvm-ar"_str).unwrap().executable;
-    return lito::BuildConfiguration {
+    return lito::cpp::BuildConfiguration {
         .toolchain =
             lito::ToolchainSpec {
                 .cxx    = rstd::move(compiler),
@@ -81,7 +84,7 @@ auto configuration() -> lito::BuildConfiguration {
                 .format = PathBuf::from("clang-format"_str),
             },
         .standard_library  = lito::StandardLibrary::Libcxx,
-        .bmi_mode          = lito::BmiMode::Reduced,
+        .bmi_mode          = lito::cpp::BmiMode::Reduced,
         .language_standard = String::make("c++20"_str),
     };
 }
@@ -102,7 +105,7 @@ auto build_request(ref<rstd::path::Path>  root,
     };
 }
 
-auto artifact_count(const lito::BuildSummary& summary, lito::ArtifactKind kind) -> usize {
+auto artifact_count(const lito::BuildSummary& summary, lito::cpp::ArtifactKind kind) -> usize {
     auto count = usize {};
     for (const auto& artifact : summary.artifacts) {
         if (artifact.kind == kind) ++count;

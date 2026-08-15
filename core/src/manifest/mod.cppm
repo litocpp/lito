@@ -1,5 +1,12 @@
-export module lito.manifest;
+export module lito.core:manifest;
 
-export import lito.manifest.contract;
-export import :locator;
-export import :schema;
+export import :manifest.profile;
+export import :manifest.source_convention;
+export import :manifest.target;
+export import :manifest.dependency;
+export import :manifest.build_tool;
+export import :manifest.package;
+export import :manifest.workspace;
+export import :manifest.document;
+export import :manifest.error;
+export import :manifest.locator;

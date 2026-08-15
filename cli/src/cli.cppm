@@ -5,7 +5,7 @@ export module lito.executable:cli;
 
 import rstd;
 import rstd.argparse;
-import lito;
+import lito.driver;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -181,7 +181,7 @@ namespace lito::cli
 
 class BuildProfileParser {
 public:
-    auto parse(ref<OsStr> value) const -> rstd::Result<BuildProfileName, ValueError> {
+    auto parse(ref<OsStr> value) const -> Result<BuildProfileName, ValueError> {
         auto text = value.to_str();
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
         auto profile = parse_build_profile(*text);
@@ -192,7 +192,7 @@ public:
 
 class ScanOutputFormatParser {
 public:
-    auto parse(ref<OsStr> value) const -> rstd::Result<ScanOutputFormat, ValueError> {
+    auto parse(ref<OsStr> value) const -> Result<ScanOutputFormat, ValueError> {
         auto text = value.to_str();
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
         auto format = parse_scan_output_format(*text);
@@ -260,7 +260,7 @@ struct BuildSchema {
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
 
-    auto decode(const Matches& matches) const -> rstd::Result<BuildOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<BuildOptions, CliDecodeError>;
 };
 
 struct InstallSchema {
@@ -273,7 +273,7 @@ struct InstallSchema {
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
 
-    auto decode(const Matches& matches) const -> rstd::Result<InstallOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<InstallOptions, CliDecodeError>;
 };
 
 struct TestSchema {
@@ -286,7 +286,7 @@ struct TestSchema {
     BuildExecutionArgs    execution;
     ArgKey<String>        arguments;
 
-    auto decode(const Matches& matches) const -> rstd::Result<TestOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<TestOptions, CliDecodeError>;
 };
 
 struct BenchSchema {
@@ -299,7 +299,7 @@ struct BenchSchema {
     BuildExecutionArgs    execution;
     ArgKey<String>        arguments;
 
-    auto decode(const Matches& matches) const -> rstd::Result<BenchOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<BenchOptions, CliDecodeError>;
 };
 
 struct ScanSchema {
@@ -310,7 +310,7 @@ struct ScanSchema {
     ArgKey<ScanOutputFormat> format;
     SourceAcquisitionArgs    source_acquisition;
 
-    auto decode(const Matches& matches) const -> rstd::Result<ScanOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<ScanOptions, CliDecodeError>;
 };
 
 struct DocSchema {
@@ -324,7 +324,7 @@ struct DocSchema {
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
 
-    auto decode(const Matches& matches) const -> rstd::Result<DocOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<DocOptions, CliDecodeError>;
 };
 
 struct FormatSchema {
@@ -332,7 +332,7 @@ struct FormatSchema {
     ArgKey<String> package;
     ArgKey<bool>   check;
 
-    auto decode(const Matches& matches) const -> rstd::Result<FormatOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<FormatOptions, CliDecodeError>;
 };
 
 struct UpdateSchema {
@@ -340,7 +340,7 @@ struct UpdateSchema {
     ArgKey<bool>   offline;
     ArgKey<String> fetch_seed;
 
-    auto decode(const Matches& matches) const -> rstd::Result<UpdateOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError>;
 };
 
 struct LockExportSchema {
@@ -348,21 +348,21 @@ struct LockExportSchema {
     ArgKey<String> format;
     ArgKey<String> output;
 
-    auto decode(const Matches& matches) const -> rstd::Result<LockExportOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<LockExportOptions, CliDecodeError>;
 };
 
 struct LockSchema {
     CommandKey       command;
     LockExportSchema export_command;
 
-    auto decode(const Matches& matches) const -> rstd::Result<LockCommand, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<LockCommand, CliDecodeError>;
 };
 
 struct ConfigGetSchema {
     CommandKey     command;
     ArgKey<String> key;
 
-    auto decode(const Matches& matches) const -> rstd::Result<ConfigGetOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<ConfigGetOptions, CliDecodeError>;
 };
 
 struct ConfigSetSchema {
@@ -370,14 +370,14 @@ struct ConfigSetSchema {
     ArgKey<String> key;
     ArgKey<String> value;
 
-    auto decode(const Matches& matches) const -> rstd::Result<ConfigSetOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<ConfigSetOptions, CliDecodeError>;
 };
 
 struct ConfigUnsetSchema {
     CommandKey     command;
     ArgKey<String> key;
 
-    auto decode(const Matches& matches) const -> rstd::Result<ConfigUnsetOptions, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<ConfigUnsetOptions, CliDecodeError>;
 };
 
 struct ConfigSchema {
@@ -387,7 +387,7 @@ struct ConfigSchema {
     ConfigSetSchema   set;
     ConfigUnsetSchema unset;
 
-    auto decode(const Matches& matches) const -> rstd::Result<ConfigCommand, CliDecodeError>;
+    auto decode(const Matches& matches) const -> Result<ConfigCommand, CliDecodeError>;
 };
 
 struct CliSchema {
@@ -869,7 +869,7 @@ auto make_config_definition() -> CommandDefinition<ConfigSchema> {
     };
 }
 
-auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
+auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto build   = make_build_definition();
     auto install = make_install_definition();
     auto test    = make_test_definition();
@@ -925,7 +925,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
 
 template<typename T>
 auto optional_value(const Matches& matches, const ArgKey<T>& key)
-    -> rstd::Result<Option<ref<T>>, CliDecodeError> {
+    -> Result<Option<ref<T>>, CliDecodeError> {
     auto value = matches.get_one(key);
     if (value.is_err()) {
         return Err(CliDecodeError::MatchAccess(rstd::move(value).unwrap_err()));
@@ -934,7 +934,7 @@ auto optional_value(const Matches& matches, const ArgKey<T>& key)
 }
 
 auto string_values(const Matches& matches, const ArgKey<String>& key)
-    -> rstd::Result<Vec<String>, CliDecodeError> {
+    -> Result<Vec<String>, CliDecodeError> {
     auto values = matches.get_many(key);
     if (values.is_err()) {
         return Err(CliDecodeError::MatchAccess(rstd::move(values).unwrap_err()));
@@ -950,49 +950,48 @@ auto string_values(const Matches& matches, const ArgKey<String>& key)
 }
 
 auto path_values(const Matches& matches, const ArgKey<String>& key)
-    -> rstd::Result<Vec<PathBuf>, CliDecodeError> {
+    -> Result<Vec<PathBuf>, CliDecodeError> {
     auto strings = rstd_try(string_values(matches, key));
     auto result  = Vec<PathBuf>::with_capacity(strings.len());
     for (auto& value : strings) result.push(PathBuf::from(rstd::move(value)));
     return Ok(rstd::move(result));
 }
 
-auto flag_value(const Matches& matches, const ArgKey<bool>& key)
-    -> rstd::Result<bool, CliDecodeError> {
+auto flag_value(const Matches& matches, const ArgKey<bool>& key) -> Result<bool, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     return Ok(value.is_some() && **value);
 }
 
 auto optional_path(const Matches& matches, const ArgKey<String>& key)
-    -> rstd::Result<Option<PathBuf>, CliDecodeError> {
+    -> Result<Option<PathBuf>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Ok(None());
     return Ok(Some(PathBuf::from((**value).clone())));
 }
 
 auto optional_string(const Matches& matches, const ArgKey<String>& key)
-    -> rstd::Result<Option<String>, CliDecodeError> {
+    -> Result<Option<String>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Ok(None());
     return Ok(Some((**value).clone()));
 }
 
 auto optional_profile(const Matches& matches, const ArgKey<BuildProfileName>& key)
-    -> rstd::Result<Option<BuildProfileName>, CliDecodeError> {
+    -> Result<Option<BuildProfileName>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Ok(None());
     return Ok(Some<BuildProfileName>((**value).clone()));
 }
 
 auto optional_jobs(const Matches& matches, const ArgKey<usize>& key)
-    -> rstd::Result<Option<usize>, CliDecodeError> {
+    -> Result<Option<usize>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Ok(None());
     return Ok(Some<usize>(**value));
 }
 
 auto required_string(const Matches& matches, const ArgKey<String>& key, ref<str> name)
-    -> rstd::Result<String, CliDecodeError> {
+    -> Result<String, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Err(CliDecodeError::MissingValue(String::make(name)));
     return Ok((**value).clone());
@@ -1004,7 +1003,7 @@ struct PackageProfileValues {
 };
 
 auto decode_package_profile(const Matches& matches, const PackageProfileArgs& args)
-    -> rstd::Result<PackageProfileValues, CliDecodeError> {
+    -> Result<PackageProfileValues, CliDecodeError> {
     return Ok(PackageProfileValues {
         .packages = rstd_try(string_values(matches, args.package)),
         .profile  = rstd_try(optional_profile(matches, args.profile)),
@@ -1019,7 +1018,7 @@ struct SourceAcquisitionValues {
 };
 
 auto decode_source_acquisition(const Matches& matches, const SourceAcquisitionArgs& args)
-    -> rstd::Result<SourceAcquisitionValues, CliDecodeError> {
+    -> Result<SourceAcquisitionValues, CliDecodeError> {
     return Ok(SourceAcquisitionValues {
         .locked      = rstd_try(flag_value(matches, args.locked)),
         .offline     = rstd_try(flag_value(matches, args.offline)),
@@ -1036,7 +1035,7 @@ struct BuildExecutionValues {
 };
 
 auto decode_build_execution(const Matches& matches, const BuildExecutionArgs& args)
-    -> rstd::Result<BuildExecutionValues, CliDecodeError> {
+    -> Result<BuildExecutionValues, CliDecodeError> {
     return Ok(BuildExecutionValues {
         .verbose     = rstd_try(flag_value(matches, args.verbose)),
         .timing_file = rstd_try(optional_path(matches, args.timing_file)),
@@ -1045,8 +1044,7 @@ auto decode_build_execution(const Matches& matches, const BuildExecutionArgs& ar
     });
 }
 
-auto BuildSchema::decode(const Matches& matches) const
-    -> rstd::Result<BuildOptions, CliDecodeError> {
+auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, CliDecodeError> {
     auto package   = rstd_try(decode_package_profile(matches, this->package));
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
@@ -1066,8 +1064,7 @@ auto BuildSchema::decode(const Matches& matches) const
     });
 }
 
-auto InstallSchema::decode(const Matches& matches) const
-    -> rstd::Result<InstallOptions, CliDecodeError> {
+auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOptions, CliDecodeError> {
     auto package     = rstd_try(decode_package_profile(matches, this->package));
     auto source      = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution   = rstd_try(decode_build_execution(matches, this->execution));
@@ -1093,7 +1090,7 @@ auto InstallSchema::decode(const Matches& matches) const
     });
 }
 
-auto TestSchema::decode(const Matches& matches) const -> rstd::Result<TestOptions, CliDecodeError> {
+auto TestSchema::decode(const Matches& matches) const -> Result<TestOptions, CliDecodeError> {
     auto package   = rstd_try(decode_package_profile(matches, this->package));
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
@@ -1115,8 +1112,7 @@ auto TestSchema::decode(const Matches& matches) const -> rstd::Result<TestOption
     });
 }
 
-auto BenchSchema::decode(const Matches& matches) const
-    -> rstd::Result<BenchOptions, CliDecodeError> {
+auto BenchSchema::decode(const Matches& matches) const -> Result<BenchOptions, CliDecodeError> {
     auto package   = rstd_try(decode_package_profile(matches, this->package));
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
@@ -1138,7 +1134,7 @@ auto BenchSchema::decode(const Matches& matches) const
     });
 }
 
-auto ScanSchema::decode(const Matches& matches) const -> rstd::Result<ScanOptions, CliDecodeError> {
+auto ScanSchema::decode(const Matches& matches) const -> Result<ScanOptions, CliDecodeError> {
     auto package       = rstd_try(decode_package_profile(matches, this->package));
     auto source_values = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto input         = rstd_try(required_string(matches, this->source, "source"_str));
@@ -1156,7 +1152,7 @@ auto ScanSchema::decode(const Matches& matches) const -> rstd::Result<ScanOption
     });
 }
 
-auto DocSchema::decode(const Matches& matches) const -> rstd::Result<DocOptions, CliDecodeError> {
+auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDecodeError> {
     auto package   = rstd_try(decode_package_profile(matches, this->package));
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
@@ -1179,16 +1175,14 @@ auto DocSchema::decode(const Matches& matches) const -> rstd::Result<DocOptions,
     });
 }
 
-auto FormatSchema::decode(const Matches& matches) const
-    -> rstd::Result<FormatOptions, CliDecodeError> {
+auto FormatSchema::decode(const Matches& matches) const -> Result<FormatOptions, CliDecodeError> {
     return Ok(FormatOptions {
         .packages = rstd_try(string_values(matches, package)),
         .check    = rstd_try(flag_value(matches, check)),
     });
 }
 
-auto UpdateSchema::decode(const Matches& matches) const
-    -> rstd::Result<UpdateOptions, CliDecodeError> {
+auto UpdateSchema::decode(const Matches& matches) const -> Result<UpdateOptions, CliDecodeError> {
     return Ok(UpdateOptions {
         .offline     = rstd_try(flag_value(matches, offline)),
         .fetch_seeds = rstd_try(path_values(matches, fetch_seed)),
@@ -1196,7 +1190,7 @@ auto UpdateSchema::decode(const Matches& matches) const
 }
 
 auto LockExportSchema::decode(const Matches& matches) const
-    -> rstd::Result<LockExportOptions, CliDecodeError> {
+    -> Result<LockExportOptions, CliDecodeError> {
     auto format_value = rstd_try(required_string(matches, format, "format"_str));
     auto output_value = rstd_try(required_string(matches, output, "output"_str));
     return Ok(LockExportOptions {
@@ -1205,7 +1199,7 @@ auto LockExportSchema::decode(const Matches& matches) const
     });
 }
 
-auto LockSchema::decode(const Matches& matches) const -> rstd::Result<LockCommand, CliDecodeError> {
+auto LockSchema::decode(const Matches& matches) const -> Result<LockCommand, CliDecodeError> {
     auto export_matches = matches.subcommand_matches(export_command.command);
     if (export_matches.is_some()) {
         auto options = rstd_try(export_command.decode(**export_matches));
@@ -1215,7 +1209,7 @@ auto LockSchema::decode(const Matches& matches) const -> rstd::Result<LockComman
 }
 
 auto ConfigGetSchema::decode(const Matches& matches) const
-    -> rstd::Result<ConfigGetOptions, CliDecodeError> {
+    -> Result<ConfigGetOptions, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     return Ok(ConfigGetOptions {
         .key = value.is_some() ? Some((**value).clone()) : None(),
@@ -1223,7 +1217,7 @@ auto ConfigGetSchema::decode(const Matches& matches) const
 }
 
 auto ConfigSetSchema::decode(const Matches& matches) const
-    -> rstd::Result<ConfigSetOptions, CliDecodeError> {
+    -> Result<ConfigSetOptions, CliDecodeError> {
     return Ok(ConfigSetOptions {
         .key   = rstd_try(required_string(matches, key, "key"_str)),
         .value = rstd_try(required_string(matches, value, "value"_str)),
@@ -1231,14 +1225,13 @@ auto ConfigSetSchema::decode(const Matches& matches) const
 }
 
 auto ConfigUnsetSchema::decode(const Matches& matches) const
-    -> rstd::Result<ConfigUnsetOptions, CliDecodeError> {
+    -> Result<ConfigUnsetOptions, CliDecodeError> {
     return Ok(ConfigUnsetOptions {
         .key = rstd_try(required_string(matches, key, "key"_str)),
     });
 }
 
-auto ConfigSchema::decode(const Matches& matches) const
-    -> rstd::Result<ConfigCommand, CliDecodeError> {
+auto ConfigSchema::decode(const Matches& matches) const -> Result<ConfigCommand, CliDecodeError> {
     if (matches.subcommand_matches(path).is_some()) return Ok(ConfigCommand::Path());
     if (auto child = matches.subcommand_matches(get.command); child.is_some()) {
         return Ok(ConfigCommand::Get(rstd_try(get.decode(**child))));
@@ -1253,7 +1246,7 @@ auto ConfigSchema::decode(const Matches& matches) const
 }
 
 auto decode_command(const CliSchema& schema, const Matches& matches)
-    -> rstd::Result<CliCommand, CliDecodeError> {
+    -> Result<CliCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
         auto options = rstd_try(schema.build.decode(**child));
         return Ok(CliCommand::Build(rstd::move(options)));
@@ -1313,7 +1306,7 @@ auto has_toolchain_override(const ToolchainOverride& value, const Option<String>
 }
 
 auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
-    -> rstd::Result<ToolchainOverride, CliDecodeError> {
+    -> Result<ToolchainOverride, CliDecodeError> {
     return Ok(ToolchainOverride {
         .cc     = rstd_try(optional_path(matches, args.cc)),
         .cxx    = rstd_try(optional_path(matches, args.cxx)),
@@ -1325,7 +1318,7 @@ auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
 }
 
 auto decode_invocation(const CliSchema& schema, const Matches& matches)
-    -> rstd::Result<CliInvocation, CliDecodeError> {
+    -> Result<CliInvocation, CliDecodeError> {
     auto directory = rstd_try(required_string(matches, schema.root.directory, "directory"_str));
     auto no_config = rstd_try(flag_value(matches, schema.root.no_config));
     auto overrides = rstd_try(string_values(matches, schema.root.config));

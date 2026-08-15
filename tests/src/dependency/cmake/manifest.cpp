@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
+import lito.driver;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -61,16 +50,13 @@ TEST(CMake, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
         lito::resolve_package_graph(fixture_path("dependency/cmake/manifest/valid"_str).as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
-    EXPECT_TRUE(graph->packages[usize {}].cmake_external_dependencies.is_empty());
     auto external = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
-    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(2));
+    ASSERT_EQ(external->dependencies.len(), usize(2));
     const auto resolved_index =
-        graph->packages[usize {}].cmake_external_dependencies[usize {}].alias.as_str() ==
-                "fixture"_str
-            ? usize {}
-            : usize(1);
-    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[resolved_index];
+        external->dependencies[usize {}].requirement.alias.as_str() == "fixture"_str ? usize {}
+                                                                                     : usize(1);
+    const auto& resolved = external->dependencies[resolved_index].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
     EXPECT_FALSE(resolved.source.as_Directory().identity.is_empty());
     EXPECT_FALSE(resolved.source.as_Directory().root.as_path().to_str().unwrap().is_empty());
@@ -89,8 +75,10 @@ TEST(CMake, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
 
     auto graph = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
-    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
-    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    auto external = lito::prepare_external_dependency_sources(*graph, {});
+    ASSERT_TRUE(external.is_ok());
+    ASSERT_EQ(external->dependencies.len(), usize(1));
+    const auto& resolved = external->dependencies[usize {}].requirement;
     EXPECT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.integration, lito::CMakeIntegration::BuildTree);
     ASSERT_TRUE(resolved.adapter.is_some());
@@ -103,14 +91,15 @@ TEST(CMake, PackageOwnedPathUsesOneResolvedRelationForLockAndPreparation) {
     ASSERT_TRUE(graph.is_ok());
     auto source_count = graph->sources.len();
 
-    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
+    auto prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
+    ASSERT_TRUE(prepared_sources.is_ok());
     ASSERT_EQ(graph->externals.len(), usize(1));
     const auto& external = graph->externals[usize {}];
     ASSERT_TRUE(external.source.is_Package());
     EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "shaders"_str);
 
-    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
-    const auto& prepared = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
+    const auto& prepared = prepared_sources->dependencies[usize {}].requirement;
     ASSERT_TRUE(prepared.source.is_Directory());
     EXPECT_TRUE(prepared.source.as_Directory().identity.as_str().starts_with(
         "lito-package-external-v1\n"_str));
@@ -156,13 +145,13 @@ TEST(CMake, CMakeArchitectureArchivesInvalidManifestsAreRejected) {
 TEST(CMake, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto variants = Vec<lito::CMakeArchiveVariant>::make();
     variants.push(lito::CMakeArchiveVariant {
-        .architecture = lito::Architecture { .name = String::make("aarch64"_str) },
+        .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
         .url          = String::make("https://example.com/arm64.tar.gz"_str),
         .sha256 =
             String::make("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str),
     });
     variants.push(lito::CMakeArchiveVariant {
-        .architecture = lito::Architecture { .name = String::make("x86_64"_str) },
+        .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
         .url          = String::make("https://example.com/x64.tar.gz"_str),
         .sha256 =
             String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str),
@@ -210,7 +199,7 @@ TEST(CMake, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto cross_error = rstd::move(cross_cmake).unwrap_err();
     EXPECT_TRUE(error_chain_text(cross_error)
                     .as_str()
-                    .contains("without an explicit CMake toolchain contract"_str));
+                    .contains("without an explicit CMake toolchain file"_str));
 }
 
 TEST(CMake, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) {
@@ -234,10 +223,11 @@ TEST(CMake, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) 
     ASSERT_EQ(inherited.targets.len(), usize(1));
     EXPECT_EQ(inherited.targets[usize {}].name.as_str(), "Fixture::fixture"_str);
 
-    const auto source_count = graph->sources.len();
-    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
-    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
-    const auto& prepared = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    const auto source_count     = graph->sources.len();
+    auto       prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
+    ASSERT_TRUE(prepared_sources.is_ok());
+    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
+    const auto& prepared = prepared_sources->dependencies[usize {}].requirement;
     ASSERT_TRUE(prepared.source.is_ArchitectureArchives());
     EXPECT_EQ(prepared.source.as_ArchitectureArchives().variants.len(), usize(2));
     EXPECT_EQ(graph->sources.len(), source_count);
@@ -245,29 +235,29 @@ TEST(CMake, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) 
 
 TEST(CMake, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     auto compiler_default = pkg_config_target();
-    auto host             = lito::HostInfo {
+    auto host             = lito::system::HostInfo {
         .architecture = compiler_default.architecture.clone(),
         .os           = compiler_default.os.clone(),
     };
-    auto native = lito::resolve_build_platform(host, compiler_default, None());
+    auto native = lito::system::resolve_build_platform(host, compiler_default, None());
     ASSERT_TRUE(native.is_ok());
-    EXPECT_EQ(native->intent, lito::BuildTargetIntent::Native);
+    EXPECT_EQ(native->intent, lito::system::BuildTargetIntent::Native);
     EXPECT_FALSE(native->cross);
     EXPECT_EQ(native->effective_target.architecture.as_str(), "x86_64"_str);
 
-    auto arm_default = lito::parse_target_info("aarch64-unknown-linux-gnu"_str);
+    auto arm_default = lito::system::parse_target_info("aarch64-unknown-linux-gnu"_str);
     ASSERT_TRUE(arm_default.is_ok());
-    auto unintentional_cross = lito::resolve_build_platform(host, *arm_default, None());
+    auto unintentional_cross = lito::system::resolve_build_platform(host, *arm_default, None());
     ASSERT_TRUE(unintentional_cross.is_err());
     auto cross_error = rstd::move(unintentional_cross).unwrap_err();
     EXPECT_TRUE(rstd::format("{}", cross_error)
                     .as_str()
-                    .contains("declare an explicit target/toolchain contract"_str));
+                    .contains("declare an explicit target/toolchain configuration"_str));
 
-    auto explicit_cross =
-        lito::resolve_build_platform(host, compiler_default, Some("aarch64-unknown-linux-gnu"_str));
+    auto explicit_cross = lito::system::resolve_build_platform(
+        host, compiler_default, Some("aarch64-unknown-linux-gnu"_str));
     ASSERT_TRUE(explicit_cross.is_ok());
-    EXPECT_EQ(explicit_cross->intent, lito::BuildTargetIntent::ExplicitTarget);
+    EXPECT_EQ(explicit_cross->intent, lito::system::BuildTargetIntent::ExplicitTarget);
     EXPECT_TRUE(explicit_cross->cross);
     EXPECT_EQ(explicit_cross->effective_target.architecture.as_str(), "aarch64"_str);
 }

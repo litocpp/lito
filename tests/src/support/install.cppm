@@ -5,26 +5,15 @@ module;
 export module lito.test.support.install;
 
 import rstd;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.base_support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 

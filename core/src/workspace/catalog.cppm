@@ -1,17 +1,18 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.workspace:catalog;
+export module lito.core:workspace.catalog;
 
 import rstd;
-import lito.error;
-import lito.workspace.contract;
-import lito.package.identity;
-import lito.build.profile_contract;
-import lito.manifest;
-import :member;
+import :workspace.error;
+import :package.identity;
+import :package.graph;
+import :manifest.profile;
+import :manifest;
+import :workspace.member;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 using PackageMap = rstd::collections::BTreeMap<String, lito::PackageManifest>;
 using StringSet  = rstd::collections::BTreeMap<String, empty>;

@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
+import lito.driver;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -33,24 +22,30 @@ TEST(Lock, OnlyCurrentLockVersionIsAcceptedByLockStore) {
         if (current) rstd::io::eprintln("unexpected current lock: {}", path);
         EXPECT_FALSE(current);
     }
-    auto old_version =
-        lito::load_lock_session(fixture_path("lock/old-version"_str).as_path(), false);
-    ASSERT_TRUE(old_version.is_err());
-    auto version_error = rstd::move(old_version).unwrap_err();
+    auto future_version =
+        lito::load_lock_session(fixture_path("lock/future-version"_str).as_path(), false);
+    ASSERT_TRUE(future_version.is_err());
+    auto version_error = rstd::move(future_version).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 8"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("supports version 1"_str));
 }
 
-TEST(Lock, OldLockRequiresUpdateMode) {
-    auto directory = fixture_path("lock/old-version"_str);
-    auto migration = lito::load_lock_session(directory.as_path(), false);
-    ASSERT_TRUE(migration.is_err());
+TEST(Lock, FutureLockCannotBeDowngradedByUpdate) {
+    auto directory = fixture_path("lock/future-version"_str);
+    auto loading   = lito::load_lock_session(directory.as_path(), false);
+    ASSERT_TRUE(loading.is_err());
     auto update = lito::load_lock_session(
         directory.as_path(), lito::LockConfig {}, false, lito::GitResolutionMode::Refresh);
-    ASSERT_TRUE(update.is_ok());
+    ASSERT_TRUE(update.is_err());
     auto locked = lito::load_lock_session(directory.as_path(), true);
     ASSERT_TRUE(locked.is_err());
-    auto error = rstd::move(locked).unwrap_err();
-    ASSERT_TRUE(error.is_Schema());
-    EXPECT_TRUE(error.as_Schema().message.as_str().contains("integer 8"_str));
+    auto loading_error = rstd::move(loading).unwrap_err();
+    ASSERT_TRUE(loading_error.is_Schema());
+    EXPECT_TRUE(loading_error.as_Schema().message.as_str().contains("supports version 1"_str));
+    auto update_error = rstd::move(update).unwrap_err();
+    ASSERT_TRUE(update_error.is_Schema());
+    EXPECT_TRUE(update_error.as_Schema().message.as_str().contains("supports version 1"_str));
+    auto locked_error = rstd::move(locked).unwrap_err();
+    ASSERT_TRUE(locked_error.is_Schema());
+    EXPECT_TRUE(locked_error.as_Schema().message.as_str().contains("supports version 1"_str));
 }

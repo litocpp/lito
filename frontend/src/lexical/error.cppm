@@ -39,10 +39,10 @@ struct Impl<fmt::Display, lito::frontend::lexical::Error>
         const auto& error = this->self();
         if (error.path.is_some() && error.location.is_some()) {
             return formatter.write_fmt(fmt::Arguments::make("{}:{}:{}: {}",
-                                                             error.path->as_path(),
-                                                             error.location->line,
-                                                             error.location->column,
-                                                             error.message));
+                                                            error.path->as_path(),
+                                                            error.location->line,
+                                                            error.location->column,
+                                                            error.message));
         }
         if (error.path.is_some()) {
             return formatter.write_fmt(
@@ -53,8 +53,7 @@ struct Impl<fmt::Display, lito::frontend::lexical::Error>
 };
 
 template<>
-struct Impl<fmt::Debug, lito::frontend::lexical::Error>
-    : ImplBase<lito::frontend::lexical::Error> {
+struct Impl<fmt::Debug, lito::frontend::lexical::Error> : ImplBase<lito::frontend::lexical::Error> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }

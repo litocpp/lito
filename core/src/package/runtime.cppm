@@ -1,15 +1,15 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.package.runtime;
+export module lito.core:package.runtime;
 
 import rstd;
-import lito.error;
-import lito.package.graph_contract;
-import lito.package.error_contract;
-import lito.platform.contract;
+import :package.graph;
+import :package.error;
+import lito.system;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using IndexMap = rstd::collections::BTreeMap<String, usize>;
 
@@ -79,8 +79,10 @@ private:
 
         const auto& package = graph_.packages[**index];
         if (target_ != nullptr && ! package.manifest.target.matches(*target_)) {
-            return runtime_failure<empty>(rstd::format(
-                "runtime package '{}' does not support target '{}'", name, target_->triple.as_str()));
+            return runtime_failure<empty>(
+                rstd::format("runtime package '{}' does not support target '{}'",
+                             name,
+                             target_->triple.as_str()));
         }
         colors_[**index] = u8(1);
         active_.push(String::make(name));

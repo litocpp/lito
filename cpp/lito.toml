@@ -1,0 +1,24 @@
+[package]
+name = "lito-cpp"
+version.workspace = true
+
+[lib]
+name = "lito-cpp"
+module = "lito.cpp"
+archive = "lito.cpp"
+
+[dependencies.lito-core]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-frontend]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-std]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-nostd]
+workspace = true
+visibility = "link"

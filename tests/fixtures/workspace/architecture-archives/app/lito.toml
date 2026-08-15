@@ -3,6 +3,7 @@ name = "fixture-workspace-architecture-archives-app"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "fixture-workspace-architecture-archives-app"
 sources = ["main.cpp"]
 

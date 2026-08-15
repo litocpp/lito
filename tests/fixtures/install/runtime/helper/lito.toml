@@ -3,6 +3,7 @@ name = "helper"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "runtime-helper"
 sources = ["main.cpp"]
 

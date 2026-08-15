@@ -1,15 +1,14 @@
-export module lito.system.process;
+export module lito.system:process;
 
 import rstd;
-import lito.error;
-export import lito.system.error_contract;
-import lito.system.environment_contract;
-import lito.system.environment;
+import :error;
+import :environment;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
-namespace lito
+namespace lito::system
 {
 
 auto output_text(Vec<u8> bytes, ref<str> context) -> SystemResult<String> {
@@ -38,9 +37,9 @@ auto push_fragment_word(Vec<String>& output, Vec<u8>& current, ref<str> context)
     return Ok(empty {});
 }
 
-} // namespace lito
+} // namespace lito::system
 
-export namespace lito
+export namespace lito::system
 {
 
 struct CommandOutput {
@@ -93,15 +92,15 @@ auto decode_command_output(rstd::process::Output value, rstd::time::Duration ela
 auto run_command(const Vec<String>&                arguments,
                  const ResolvedProcessEnvironment& environment,
                  Option<ref<rstd::path::Path>>     working_directory = None(),
-                 Option<ref<CommandEnvironment>>   overrides = None()) -> SystemResult<CommandOutput> {
+                 Option<ref<CommandEnvironment>>   overrides         = None())
+    -> SystemResult<CommandOutput> {
     if (arguments.is_empty()) {
         return Err(SystemError::InvalidCommand(String::make("empty command"_str)));
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(SystemError::InvalidCommand(
-            rstd::format("command program '{}' is not an absolute path",
-                         arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(rstd::format(
+            "command program '{}' is not an absolute path", arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -137,9 +136,8 @@ auto run_command_observed(const Vec<String>&                arguments,
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(SystemError::InvalidCommand(
-            rstd::format("command program '{}' is not an absolute path",
-                         arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(rstd::format(
+            "command program '{}' is not an absolute path", arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -171,9 +169,8 @@ auto run_command_with_input(const Vec<String>&                arguments,
     }
     auto program = PathBuf::from(arguments[usize {}].as_str());
     if (! program.as_path().is_absolute()) {
-        return Err(SystemError::InvalidCommand(
-            rstd::format("command program '{}' is not an absolute path",
-                         arguments[usize {}].as_str())));
+        return Err(SystemError::InvalidCommand(rstd::format(
+            "command program '{}' is not an absolute path", arguments[usize {}].as_str())));
     }
 
     auto command = rstd::process::Command::make(arguments[usize {}].as_str());
@@ -197,8 +194,8 @@ auto run_command_with_input(const Vec<String>&                arguments,
     {
         auto input = child.take_stdin();
         if (input.is_none()) {
-            return Err(SystemError::InvalidCommand(
-                String::make("command stdin pipe is unavailable"_str)));
+            return Err(
+                SystemError::InvalidCommand(String::make("command stdin pipe is unavailable"_str)));
         }
         auto written = rstd::io::write_all(*input, standard_input.as_bytes());
         if (written.is_err()) {
@@ -246,7 +243,8 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
     auto word_active = false;
     for (auto byte : input.as_bytes()) {
         if (byte == u8()) {
-            return Err(SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
+            return Err(
+                SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
         }
         if (escaping) {
             if (quote == FragmentQuote::Double && byte != u8('"') && byte != u8('\\') &&
@@ -302,8 +300,8 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
         }
     }
     if (escaping) {
-        return Err(SystemError::Fragment(String::make(context),
-                                         String::make("ends with an escape"_str)));
+        return Err(
+            SystemError::Fragment(String::make(context), String::make("ends with an escape"_str)));
     }
     if (quote != FragmentQuote::None) {
         return Err(SystemError::Fragment(String::make(context),
@@ -316,4 +314,4 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
     return Ok(rstd::move(result));
 }
 
-} // namespace lito
+} // namespace lito::system

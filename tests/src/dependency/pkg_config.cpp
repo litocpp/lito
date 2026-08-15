@@ -2,26 +2,16 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.cpp;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -103,8 +93,9 @@ TEST(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
          (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
         if (! occurrence.argument.is_IncludeDirectory()) continue;
         const auto& include = occurrence.argument.as_IncludeDirectory().directory;
-        user_include        = user_include || include.kind == lito::CppIncludeDirectoryKind::User;
-        system_include = system_include || include.kind == lito::CppIncludeDirectoryKind::System;
+        user_include = user_include || include.kind == lito::cpp::CppIncludeDirectoryKind::User;
+        system_include =
+            system_include || include.kind == lito::cpp::CppIncludeDirectoryKind::System;
     }
     EXPECT_TRUE(user_include);
     EXPECT_TRUE(system_include);

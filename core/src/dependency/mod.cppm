@@ -1,8 +1,8 @@
-export module lito.dependency;
+export module lito.core:dependency;
 
-export import lito.dependency.contract;
-export import lito.dependency.error_contract;
-export import lito.dependency.cmake;
-export import :external_source;
-export import :pkg_config;
-export import :catalog;
+export import :dependency.visibility;
+export import :dependency.cmake;
+export import :dependency.pkg_config;
+export import :dependency.source;
+export import :dependency.usage;
+export import :dependency.error;

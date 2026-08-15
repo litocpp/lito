@@ -7,7 +7,7 @@ module = "lito.executable"
 name = "lito"
 link-stdlib = false
 
-[dependencies.lito-core]
+[dependencies.lito-driver]
 workspace = true
 visibility = "private"
 

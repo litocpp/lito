@@ -1,0 +1,86 @@
+module;
+#include <rstd/enum.hpp>
+
+export module lito.core:config.error;
+
+import rstd;
+import rstd.toml;
+
+using namespace rstd::prelude;
+
+export namespace lito
+{
+
+class ConfigError {
+    RSTD_ENUM(ConfigError,
+              (Schema, (String message;)),
+              (Input, (String context; rstd::toml::Error source;)),
+              (MissingKey, (String key;)),
+              (KeyConflict, (String key;)),
+              (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
+              (Parse, (rstd::path::PathBuf path; rstd::toml::Error source;)),
+              (Serialize, (rstd::path::PathBuf path; rstd::toml::SerializeError source;)))
+};
+
+template<typename T>
+using ConfigResult = Result<T, ConfigError>;
+
+} // namespace lito
+
+export namespace rstd
+{
+
+template<>
+struct Impl<fmt::Display, lito::ConfigError> : ImplBase<lito::ConfigError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        const auto& error = this->self();
+        if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
+        if (error.is_Input()) {
+            return formatter.write_fmt(
+                fmt::Arguments::make("cannot parse {}", error.as_Input().context));
+        }
+        if (error.is_MissingKey()) {
+            return formatter.write_fmt(fmt::Arguments::make("configuration key '{}' does not exist",
+                                                            error.as_MissingKey().key));
+        }
+        if (error.is_KeyConflict()) {
+            return formatter.write_fmt(
+                fmt::Arguments::make("configuration key '{}' conflicts with a non-table value",
+                                     error.as_KeyConflict().key));
+        }
+        if (error.is_Io()) {
+            const auto& value = error.as_Io();
+            return formatter.write_fmt(
+                fmt::Arguments::make("cannot {} '{}'", value.operation, value.path.as_path()));
+        }
+        if (error.is_Parse()) {
+            return formatter.write_fmt(fmt::Arguments::make("cannot parse configuration '{}'",
+                                                            error.as_Parse().path.as_path()));
+        }
+        return formatter.write_fmt(fmt::Arguments::make("cannot serialize configuration '{}'",
+                                                        error.as_Serialize().path.as_path()));
+    }
+};
+
+template<>
+struct Impl<fmt::Debug, lito::ConfigError> : ImplBase<lito::ConfigError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::ConfigError> : ImplBase<lito::ConfigError> {
+    auto source() const noexcept -> Option<error::ErrorRef> {
+        const auto& error = this->self();
+        if (error.is_Input()) return Some(dyn<error::Error>::from_ref(error.as_Input().source));
+        if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
+        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
+        if (error.is_Serialize()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Serialize().source));
+        }
+        return None();
+    }
+};
+
+} // namespace rstd

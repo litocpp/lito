@@ -3,6 +3,7 @@ name = "fixture-test-attach"
 version = { workspace = true }
 
 [[test]]
+link-stdlib = false
 name = "fixture-test-attach"
 sources = ["src/main.cpp"]
 

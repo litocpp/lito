@@ -1,0 +1,8 @@
+[package]
+name = "fixture-ambiguous-alpha"
+version = "0.1.0"
+
+[lib]
+name = "fixture-ambiguous-alpha"
+module = "fixture.alpha"
+archive = "fixture.ambiguous.alpha"

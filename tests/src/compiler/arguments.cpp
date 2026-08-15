@@ -3,12 +3,8 @@
 import rstd;
 import rstd.test;
 import lito.test.cpp;
-import lito.error;
-import lito.compiler.arguments;
+import lito.core;
 import lito.cpp;
-import lito.cpp.bmi;
-import lito.package.target_contract;
-import lito.build.plan_contract;
 import lito.toolchain;
 
 using namespace rstd::prelude;
@@ -34,29 +30,29 @@ TEST(CompilerArguments, PreservesTokenRangesAndDoesNotGuessUnknownArity) {
 }
 
 TEST(CompilerArguments, RejectsInvalidAndDuplicateSchemaDefinitions) {
-    auto invalid_schema = CompilerArgumentSchema::make();
-    invalid_schema.add(CompilerArgumentDefinition {
+    auto invalid_schema = cpp::CompilerArgumentSchema::make();
+    invalid_schema.add(cpp::CompilerArgumentDefinition {
         .name      = String::make("invalid"_str),
-        .spellings = lito::Vec<CompilerArgumentSpelling>::make(),
+        .spellings = Vec<cpp::CompilerArgumentSpelling>::make(),
     });
     auto invalid = rstd::move(invalid_schema).build();
     ASSERT_TRUE(invalid.is_err());
     EXPECT_TRUE(invalid.unwrap_err().is_InvalidDefinition());
 
-    auto duplicate_schema = CompilerArgumentSchema::make();
-    auto first_spellings  = lito::Vec<CompilerArgumentSpelling>::make();
-    first_spellings.push(CompilerArgumentSpelling {
+    auto duplicate_schema = cpp::CompilerArgumentSchema::make();
+    auto first_spellings  = Vec<cpp::CompilerArgumentSpelling>::make();
+    first_spellings.push(cpp::CompilerArgumentSpelling {
         .value = String::make("-duplicate"_str),
     });
-    duplicate_schema.add(CompilerArgumentDefinition {
+    duplicate_schema.add(cpp::CompilerArgumentDefinition {
         .name      = String::make("first"_str),
         .spellings = rstd::move(first_spellings),
     });
-    auto second_spellings = lito::Vec<CompilerArgumentSpelling>::make();
-    second_spellings.push(CompilerArgumentSpelling {
+    auto second_spellings = Vec<cpp::CompilerArgumentSpelling>::make();
+    second_spellings.push(cpp::CompilerArgumentSpelling {
         .value = String::make("-duplicate"_str),
     });
-    duplicate_schema.add(CompilerArgumentDefinition {
+    duplicate_schema.add(cpp::CompilerArgumentDefinition {
         .name      = String::make("second"_str),
         .spellings = rstd::move(second_spellings),
     });
@@ -86,18 +82,18 @@ TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
     auto arguments =
         parser->parse(strings("-include"_str, "forced.hpp"_str), "compiler.arguments"_str);
     ASSERT_TRUE(arguments.is_ok());
-    auto options = make_cpp_options("c++20"_str,
-                                    StandardLibrary::Libcxx,
-                                    false,
-                                    false,
-                                    CppOptimization::None,
-                                    CppDebugInfo::None,
-                                    CppOptionLayer {
-                                        .arguments = rstd::move(arguments).unwrap(),
-                                    });
+    auto options = cpp::make_cpp_options("c++20"_str,
+                                         StandardLibrary::Libcxx,
+                                         false,
+                                         false,
+                                         lito::CppOptimization::None,
+                                         lito::CppDebugInfo::None,
+                                         cpp::CppOptionLayer {
+                                             .arguments = rstd::move(arguments).unwrap(),
+                                         });
     ASSERT_TRUE(options.is_ok());
     ASSERT_EQ(options->vendor.len(), usize(1));
-    EXPECT_EQ(options->vendor[usize {}].effect, CppVendorOptionEffect::Preprocessor);
+    EXPECT_EQ(options->vendor[usize {}].effect, cpp::CppVendorOptionEffect::Preprocessor);
     EXPECT_TRUE(options->vendor[usize {}].native_preprocessor_unsupported);
     EXPECT_EQ(options->vendor[usize {}].raw_tokens.len(), usize(2));
 }
@@ -108,15 +104,15 @@ TEST(CompilerArguments, ClassifiesPthreadAsLanguageMode) {
     auto arguments =
         parser->parse(strings("-pthread"_str, "-pthread"_str), "compiler.arguments"_str);
     ASSERT_TRUE(arguments.is_ok());
-    auto options = make_cpp_options("c++20"_str,
-                                    StandardLibrary::Libcxx,
-                                    false,
-                                    false,
-                                    CppOptimization::None,
-                                    CppDebugInfo::None,
-                                    CppOptionLayer {
-                                        .arguments = rstd::move(arguments).unwrap(),
-                                    });
+    auto options = cpp::make_cpp_options("c++20"_str,
+                                         StandardLibrary::Libcxx,
+                                         false,
+                                         false,
+                                         lito::CppOptimization::None,
+                                         lito::CppDebugInfo::None,
+                                         cpp::CppOptionLayer {
+                                             .arguments = rstd::move(arguments).unwrap(),
+                                         });
     ASSERT_TRUE(options.is_ok());
     ASSERT_EQ(options->language.modes.len(), usize(1));
     EXPECT_EQ(options->language.modes[usize {}].family.as_str(), "posix-threads"_str);

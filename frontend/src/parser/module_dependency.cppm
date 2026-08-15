@@ -232,7 +232,7 @@ private:
         auto normalized = normalized_import(name.as_str(), declared_.as_str());
         if (normalized.is_err()) return Err(rstd::move(normalized).unwrap_err());
         auto logical_name = rstd::move(normalized).unwrap();
-        auto existing = import_names_.get(logical_name.as_str());
+        auto existing     = import_names_.get(logical_name.as_str());
         if (existing.is_some()) {
             if (exported) imports_[**existing].exported = true;
             return Ok(empty {});

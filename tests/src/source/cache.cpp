@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
+import lito.driver;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -34,7 +23,7 @@ TEST(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
     ASSERT_TRUE(data_text.is_some());
     EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
 
-    auto root = lito::LitoDataRoot::resolve();
+    auto root = lito::system::LitoDataRoot::resolve();
     ASSERT_TRUE(root.is_ok());
     auto expected = data_home.join(PathBuf::from("lito"_str).as_path());
     EXPECT_EQ(root->root(), expected.as_path());
@@ -99,7 +88,7 @@ TEST(Source, RelativeDataHomeFallsBackToHomeDataDirectory) {
     EnvironmentVariableGuard home("HOME"_str, *home_text);
     EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, "relative-data"_str);
 
-    auto root = lito::LitoDataRoot::resolve();
+    auto root = lito::system::LitoDataRoot::resolve();
     ASSERT_TRUE(root.is_ok());
     auto expected = directory.join(PathBuf::from(".local/share/lito"_str).as_path());
     EXPECT_EQ(root->root(), expected.as_path());
@@ -114,9 +103,10 @@ TEST(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     auto payload = package.join(PathBuf::from("payload.txt"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(payload.as_path(), "archive fixture\n"_str.as_bytes()).is_ok());
 
-    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = lito::ToolResolver(*environment);
+    auto resolver = lito::system::ToolResolver(*environment);
     auto cmake    = resolver.resolve(PathBuf::from("cmake"_str).as_path(), "CMake executable"_str);
     ASSERT_TRUE(cmake.is_ok());
     auto archive = directory.join(PathBuf::from("fixture.tar"_str).as_path());
@@ -153,17 +143,18 @@ TEST(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
-    auto first_events = FileFetchEventCapture {};
-    auto first        = lito::acquire_archive_frontier(rstd::move(requests),
-                                                       usize(1),
-                                                       *debug_layout,
-                                                       cmake->executable.as_path(),
-                                                       *environment,
-                                                       {},
-                                                       lito::BuildObserver {
-                                                           .context = rstd::addressof(first_events),
-                                                           .notify  = capture_file_fetch,
-                                                       });
+    auto first_events          = FileFetchEventCapture {};
+    auto debug_materialization = debug_layout->source_materialization_root();
+    auto first = lito::acquire_archive_frontier(rstd::move(requests),
+                                                usize(1),
+                                                debug_materialization.as_path(),
+                                                cmake->executable.as_path(),
+                                                *environment,
+                                                {},
+                                                lito::SourceEventSink {
+                                                    .context = rstd::addressof(first_events),
+                                                    .notify  = capture_file_fetch,
+                                                });
     ASSERT_TRUE(first.is_ok());
     ASSERT_EQ(first->len(), usize(1));
     EXPECT_EQ(first_events.count, usize(1));
@@ -174,16 +165,17 @@ TEST(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .sha256 = digest.clone(),
     });
     auto second_events     = FileFetchEventCapture {};
-    auto cache_environment = lito::ResolvedProcessEnvironment::resolve(
-        lito::ProcessEnvironmentSpec {}, None(), directory.as_path());
+    auto cache_environment = lito::system::ResolvedProcessEnvironment::resolve(
+        lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(cache_environment.is_ok());
+    auto release_materialization = release_layout->source_materialization_root();
     auto second = lito::acquire_archive_frontier(rstd::move(requests),
                                                  usize(1),
-                                                 *release_layout,
+                                                 release_materialization.as_path(),
                                                  cmake->executable.as_path(),
                                                  *cache_environment,
                                                  {},
-                                                 lito::BuildObserver {
+                                                 lito::SourceEventSink {
                                                      .context = rstd::addressof(second_events),
                                                      .notify  = capture_file_fetch,
                                                  });

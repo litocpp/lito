@@ -1,14 +1,12 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.manifest:profile_schema;
+module lito.core:manifest.profile_schema;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.cpp;
-import lito.build.profile;
-import :primitives;
+import :manifest.profile;
+import :manifest.primitives;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,7 +20,8 @@ auto build_profile_key(ref<str> key) -> bool {
            key == "strip"_str || key == "lto"_str;
 }
 
-auto parse_profile_optimization(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppOptimization> {
+auto parse_profile_optimization(const Toml& value, ref<str> context)
+    -> ManifestSchemaResult<CppOptimization> {
     auto integer = value.as_integer();
     if (integer.is_some()) {
         switch (integer->to_primitive()) {
@@ -36,10 +35,12 @@ auto parse_profile_optimization(const Toml& value, ref<str> context) -> Manifest
     auto text = value.as_str();
     if (text.is_some() && *text == "s"_str) return Ok(CppOptimization::Size);
     if (text.is_some() && *text == "z"_str) return Ok(CppOptimization::SizeMin);
-    return failure<CppOptimization>(rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
+    return manifest_schema_failure<CppOptimization>(
+        rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
 }
 
-auto parse_profile_debug(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppDebugInfo> {
+auto parse_profile_debug(const Toml& value, ref<str> context)
+    -> ManifestSchemaResult<CppDebugInfo> {
     auto boolean = value.as_bool();
     if (boolean.is_some()) return Ok(*boolean ? CppDebugInfo::Full : CppDebugInfo::None);
     auto integer = value.as_integer();
@@ -61,7 +62,7 @@ auto parse_profile_debug(const Toml& value, ref<str> context) -> ManifestSchemaR
     }
     if (text.is_some() && *text == "limited"_str) return Ok(CppDebugInfo::Limited);
     if (text.is_some() && *text == "full"_str) return Ok(CppDebugInfo::Full);
-    return failure<CppDebugInfo>(
+    return manifest_schema_failure<CppDebugInfo>(
         rstd::format("{} must be false, true, 0, 1, 2, 'none', 'line-directives-only', "
                      "'line-tables-only', 'limited', or 'full'",
                      context));
@@ -74,7 +75,7 @@ auto parse_profile_strip(const Toml& value, ref<str> context) -> ManifestSchemaR
     if (text.is_some() && *text == "none"_str) return Ok(StripMode::None);
     if (text.is_some() && *text == "debuginfo"_str) return Ok(StripMode::DebugInfo);
     if (text.is_some() && *text == "symbols"_str) return Ok(StripMode::Symbols);
-    return failure<StripMode>(
+    return manifest_schema_failure<StripMode>(
         rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context));
 }
 
@@ -85,14 +86,15 @@ auto parse_profile_lto(const Toml& value, ref<str> context) -> ManifestSchemaRes
     if (text.is_some() && *text == "off"_str) return Ok(CppLto::Off);
     if (text.is_some() && *text == "thin"_str) return Ok(CppLto::Thin);
     if (text.is_some() && *text == "fat"_str) return Ok(CppLto::Fat);
-    return failure<CppLto>(
+    return manifest_schema_failure<CppLto>(
         rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context));
 }
 
-auto parse_build_profile(ref<str> name, const Toml& value) -> ManifestSchemaResult<BuildProfileDefinition> {
+auto parse_build_profile(ref<str> name, const Toml& value)
+    -> ManifestSchemaResult<BuildProfileDefinition> {
     auto context = rstd::format("manifest.profile.{}", name);
     if (! valid_build_profile_name(name)) {
-        return failure<BuildProfileDefinition>(
+        return manifest_schema_failure<BuildProfileDefinition>(
             rstd::format("{} is not a valid build profile name", context.as_str()));
     }
     auto table = table_value(value, context.as_str());
@@ -108,7 +110,7 @@ auto parse_build_profile(ref<str> name, const Toml& value) -> ManifestSchemaResu
     if (inherits.is_some()) {
         auto text = (**inherits).as_str();
         if (text.is_none() || ! valid_build_profile_name(*text)) {
-            return failure<BuildProfileDefinition>(
+            return manifest_schema_failure<BuildProfileDefinition>(
                 rstd::format("{}.inherits must name a valid build profile", context.as_str()));
         }
         result.inherits = Some(BuildProfileName {
@@ -138,7 +140,8 @@ auto parse_build_profile(ref<str> name, const Toml& value) -> ManifestSchemaResu
     return Ok(rstd::move(result));
 }
 
-auto parse_project_profile(Option<ref<Toml>> value) -> ManifestSchemaResult<Option<ProjectProfile>> {
+auto parse_project_profile(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<Option<ProjectProfile>> {
     if (value.is_none()) return Ok(Option<ProjectProfile> {});
     auto table = table_value(**value, "manifest.profile"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
@@ -148,7 +151,7 @@ auto parse_project_profile(Option<ref<Toml>> value) -> ManifestSchemaResult<Opti
     if (exceptions.is_some()) {
         auto parsed = (**exceptions).as_bool();
         if (parsed.is_none()) {
-            return failure<Option<ProjectProfile>>(
+            return manifest_schema_failure<Option<ProjectProfile>>(
                 "manifest.profile.exceptions must be a bool"_str);
         }
         profile.exceptions = *parsed;
@@ -157,7 +160,8 @@ auto parse_project_profile(Option<ref<Toml>> value) -> ManifestSchemaResult<Opti
     if (rtti.is_some()) {
         auto parsed = (**rtti).as_bool();
         if (parsed.is_none()) {
-            return failure<Option<ProjectProfile>>("manifest.profile.rtti must be a bool"_str);
+            return manifest_schema_failure<Option<ProjectProfile>>(
+                "manifest.profile.rtti must be a bool"_str);
         }
         profile.rtti = *parsed;
     }

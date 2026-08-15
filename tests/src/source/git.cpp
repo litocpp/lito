@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -116,7 +105,7 @@ TEST(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     auto                     fetch_events = FetchEventCapture { .expected_url = *url };
     auto                     updated      = lito::update_dependencies(lito::UpdateRequest {
         .root     = project.clone(),
-        .observer = Some(lito::BuildObserver {
+        .observer = Some(lito::BuildEventSink {
             .context = rstd::addressof(fetch_events),
             .notify  = capture_fetch,
         }),
@@ -157,9 +146,10 @@ TEST(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
         .network     = lito::NetworkPolicy::Offline,
     };
     external_options.sources = options.sources.clone();
-    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver       = lito::ToolResolver(*environment);
+    auto resolver       = lito::system::ToolResolver(*environment);
     auto offline_events = FetchEventCapture { .expected_url = *url };
     auto graph =
         lito::resolve_package_graph_with_environment(project.as_path(),
@@ -167,21 +157,21 @@ TEST(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
                                                      resolver,
                                                      *environment,
                                                      usize(1),
-                                                     lito::BuildObserver {
+                                                     lito::SourceEventSink {
                                                          .context = rstd::addressof(offline_events),
-                                                         .notify  = capture_fetch,
+                                                         .notify  = capture_source_fetch,
                                                      });
     ASSERT_TRUE(graph.is_ok());
-    ASSERT_TRUE(lito::prepare_external_dependency_sources(
-                    *graph, rstd::move(external_options), resolver, *environment)
-                    .is_ok());
+    auto prepared = lito::prepare_external_dependency_sources(
+        *graph, rstd::move(external_options), resolver, *environment);
+    ASSERT_TRUE(prepared.is_ok());
     EXPECT_EQ(offline_events.count, usize {});
     auto found_package = false;
-    for (const auto& resolved : graph->packages) {
-        if (resolved.manifest.name.as_str() != "owned-fixture"_str) continue;
-        found_package = true;
-        ASSERT_EQ(resolved.cmake_external_dependencies.len(), usize(1));
-        const auto& source = resolved.cmake_external_dependencies[usize {}].source;
+    for (const auto& dependency : prepared->dependencies) {
+        if (graph->packages[dependency.package].manifest.name.as_str() != "owned-fixture"_str)
+            continue;
+        found_package      = true;
+        const auto& source = dependency.requirement.source;
         ASSERT_TRUE(source.is_Directory());
         EXPECT_TRUE(source.as_Directory().root.as_path().starts_with(shaders.as_path()));
         EXPECT_TRUE(shaders.as_path().starts_with(source.as_Directory().root.as_path()));
@@ -304,7 +294,7 @@ TEST(GitSource, GitPatchManifestChangesConfiguredLock) {
     EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(GitSource, BuildResolutionReusesLockedGitSources) {
+TEST(GitSource, BuildResolutionReusesGitSourcePins) {
     auto directory = fixture_path("lock/git-update"_str);
 
     auto building = lito::load_lock_session(directory.as_path(), false);
@@ -378,8 +368,8 @@ TEST(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     ASSERT_TRUE(current.is_some());
     ASSERT_NE(current->as_str(), previous->as_str());
 
-    auto locked_sources = Vec<lito::LockedGitSource>::make();
-    locked_sources.push(lito::LockedGitSource {
+    auto locked_sources = Vec<lito::GitSourcePin>::make();
+    locked_sources.push(lito::GitSourcePin {
         .git       = String::make(*url),
         .reference = lito::GitReference {},
         .commit    = previous->clone(),
@@ -393,26 +383,20 @@ TEST(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
         });
     auto reused =
         lito::prepare_external_dependency_sources(reuse_graph,
-                                                  lito::PackageResolutionOptions {
+                                                  lito::SourceResolutionOptions {
                                                       .git_sources = rstd::move(locked_sources),
                                                   },
                                                   usize(2));
     ASSERT_TRUE(reused.is_ok());
     ASSERT_EQ(reuse_graph.sources.len(), usize(1));
-    ASSERT_EQ(reuse_graph.packages[usize {}].cmake_external_dependencies.len(), usize(2));
-    EXPECT_EQ(reuse_graph.packages[usize {}]
-                  .cmake_external_dependencies[usize {}]
-                  .source.as_Directory()
-                  .identity,
-              reuse_graph.packages[usize {}]
-                  .cmake_external_dependencies[usize(1)]
-                  .source.as_Directory()
-                  .identity);
+    ASSERT_EQ(reused->dependencies.len(), usize(2));
+    EXPECT_EQ(reused->dependencies[usize {}].requirement.source.as_Directory().identity,
+              reused->dependencies[usize(1)].requirement.source.as_Directory().identity);
     auto reused_commit = resolved_git_commit(reuse_graph);
     ASSERT_TRUE(reused_commit.is_some());
     EXPECT_EQ(*reused_commit, previous->as_str());
 
-    locked_sources.push(lito::LockedGitSource {
+    locked_sources.push(lito::GitSourcePin {
         .git       = String::make(*url),
         .reference = lito::GitReference {},
         .commit    = previous->clone(),
@@ -421,12 +405,12 @@ TEST(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     auto fetch_events = FetchEventCapture { .expected_url = *url };
     auto updated =
         lito::prepare_external_dependency_sources(update_graph,
-                                                  lito::PackageResolutionOptions {
+                                                  lito::SourceResolutionOptions {
                                                       .git = lito::GitResolutionMode::Refresh,
                                                       .git_sources = rstd::move(locked_sources),
                                                   },
                                                   usize(1),
-                                                  lito::BuildObserver {
+                                                  lito::BuildEventSink {
                                                       .context = rstd::addressof(fetch_events),
                                                       .notify  = capture_fetch,
                                                   });
@@ -474,7 +458,7 @@ TEST(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                                            });
     auto pinned =
         lito::prepare_external_dependency_sources(pinned_graph,
-                                                  lito::PackageResolutionOptions {
+                                                  lito::SourceResolutionOptions {
                                                       .git = lito::GitResolutionMode::Refresh,
                                                   });
     ASSERT_TRUE(pinned.is_ok());

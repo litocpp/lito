@@ -2,11 +2,9 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.manifest;
-import lito.source;
+import lito.driver;
+import lito.core;
 import lito.test.support;
-import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -23,7 +21,7 @@ TEST(BuildEnvironment, EnvironmentIsSharedWithinBuild) {
     request.execution.scan.jobs    = Some(usize(2));
     request.execution.compile.jobs = Some(usize(2));
     auto progress                  = CompileProgressCapture {};
-    request.observer               = Some(lito::BuildObserver {
+    request.observer               = Some(lito::BuildEventSink {
         .context = rstd::addressof(progress),
         .notify  = capture_compile_progress,
     });

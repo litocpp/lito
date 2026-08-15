@@ -3,6 +3,7 @@ name = "fixture-workspace-inherited-missing-app"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "fixture-workspace-inherited-missing-app"
 sources = ["main.cpp"]
 

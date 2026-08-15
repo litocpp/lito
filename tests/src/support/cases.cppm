@@ -5,26 +5,15 @@ module;
 export module lito.test.support.cases;
 
 import rstd;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
+import lito.driver;
 import lito.test.base_support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 
@@ -47,7 +36,6 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/package-name-empty"_str,
     "manifest/package-version-missing"_str,
     "manifest/profile/cycle"_str,
-    "manifest/profile/linker-owned"_str,
     "manifest/profile/nested"_str,
     "manifest/profile/type"_str,
     "manifest/public-usage-without-lib"_str,
@@ -60,7 +48,6 @@ inline constexpr ref<str> INVALID_MANIFESTS[] = {
     "manifest/test-attach-unknown-key"_str,
     "manifest/toml-explicit/dependency"_str,
     "manifest/toml-explicit/version-workspace-false"_str,
-    "build/profile/owned-definition"_str,
     "workspace/cmake-definition-targets"_str,
     "workspace/dependency-definition-visibility"_str,
     "workspace/dependency-reference-mixed"_str,
@@ -142,7 +129,7 @@ inline constexpr ref<str> INVALID_LOCKS[] = {
     "lock/invalid"_str,
     "lock/missing"_str,
     "lock/stale"_str,
-    "lock/old-version"_str,
+    "lock/future-version"_str,
     "lock/git-reference-mismatch"_str,
     "lock/dangling-dependency"_str,
     "lock/duplicate-package"_str,
@@ -154,6 +141,7 @@ inline constexpr ref<str> INVALID_LOCKS[] = {
 
 inline constexpr ref<str> VALID_BUILD_CASES[] = {
     "cache/long-path"_str,
+    "modules/discovery/ambiguous-relative/app"_str,
     "modules/discovery/preprocess/app"_str,
     "manifest/multiple-primary-modules"_str,
     "manifest/toml-module/directory-markers"_str,

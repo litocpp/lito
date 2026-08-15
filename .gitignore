@@ -1,4 +1,5 @@
 /build/
+/tests/build/
 /.lito/
 /.tenon/
 lito.lock

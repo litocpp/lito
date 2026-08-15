@@ -2,27 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.build.host_tool;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
+import lito.driver;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -50,7 +38,7 @@ TEST(Manifest, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
     EXPECT_EQ(schema.as_UnknownField().node.value.as_str(), "manifest.lib"_str);
     EXPECT_EQ(schema.as_UnknownField().field.as_str(), "discovery"_str);
 
-    auto manifest_source = rstd::as<rstd::error::Error>(error).source();
+    auto manifest_source = as<rstd::error::Error>(error).source();
     ASSERT_TRUE(manifest_source.is_some());
     EXPECT_TRUE(rstd::error::is<lito::ManifestFileError>(*manifest_source));
     auto file_source = (*manifest_source)->source();
@@ -86,7 +74,7 @@ TEST(Manifest, PackageManifestOwnsTypedTargetCollection) {
     EXPECT_EQ(binaries, usize(2));
     EXPECT_EQ(tests, usize(2));
     EXPECT_EQ(benchmarks, usize(2));
-    EXPECT_EQ(no_stdlib, usize(3));
+    EXPECT_EQ(no_stdlib, usize(6));
 
     for (const auto& target : loaded->targets) {
         EXPECT_EQ(lito::package_target_source(target).discovery,
@@ -108,8 +96,8 @@ TEST(Manifest, PackageManifestOwnsTypedTargetCollection) {
 }
 
 TEST(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
-    auto loaded = lito::load_package_manifest(
-        fixture_path("manifest/build-tools/valid"_str).as_path());
+    auto loaded =
+        lito::load_package_manifest(fixture_path("manifest/build-tools/valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->build_tools.len(), usize(1));
     const auto& tool = loaded->build_tools[usize {}];
@@ -117,7 +105,7 @@ TEST(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
     EXPECT_EQ(tool.version.as_str(), "1.2.3"_str);
     EXPECT_EQ(tool.executable.as_path(), PathBuf::from("bin/generator"_str).as_path());
     ASSERT_EQ(tool.archives.len(), usize(2));
-    auto has_x86_64 = false;
+    auto has_x86_64  = false;
     auto has_aarch64 = false;
     for (const auto& archive : tool.archives) {
         EXPECT_EQ(archive.host.os.as_str(), "linux"_str);
@@ -137,18 +125,18 @@ TEST(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
 
     auto selected = lito::select_host_build_tool_archive(
         tool,
-        lito::HostInfo {
-            .architecture = lito::canonical_architecture("aarch64"_str).unwrap(),
+        lito::system::HostInfo {
+            .architecture = lito::system::canonical_architecture("aarch64"_str).unwrap(),
             .os           = String::make("linux"_str),
-    });
+        });
     ASSERT_TRUE(selected.is_ok());
     EXPECT_EQ((**selected).sha256.as_str(),
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
 
     auto unsupported = lito::select_host_build_tool_archive(
         tool,
-        lito::HostInfo {
-            .architecture = lito::canonical_architecture("x86_64"_str).unwrap(),
+        lito::system::HostInfo {
+            .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
             .os           = String::make("windows"_str),
         });
     ASSERT_TRUE(unsupported.is_err());

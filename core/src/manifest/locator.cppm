@@ -1,10 +1,10 @@
-export module lito.manifest:locator;
+export module lito.core:manifest.locator;
 
 import rstd;
-import lito.error;
-import lito.manifest.contract;
+import :manifest.error;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
 namespace lito
@@ -22,10 +22,9 @@ auto manifest_directory(ref<rstd::path::Path> requested_directory)
     -> ManifestLocatorResult<PathBuf> {
     auto canonical_directory = rstd::fs::canonicalize(requested_directory);
     if (canonical_directory.is_err()) {
-        return Err(locator_io(
-            "resolve manifest directory"_str,
-            requested_directory,
-            rstd::move(canonical_directory).unwrap_err()));
+        return Err(locator_io("resolve manifest directory"_str,
+                              requested_directory,
+                              rstd::move(canonical_directory).unwrap_err()));
     }
     auto directory = rstd::move(canonical_directory).unwrap();
     auto metadata  = rstd::fs::metadata(directory.as_path());
@@ -40,30 +39,26 @@ auto manifest_directory(ref<rstd::path::Path> requested_directory)
     return Ok(rstd::move(directory));
 }
 
-auto try_manifest_path(ref<rstd::path::Path> directory)
-    -> ManifestLocatorResult<Option<PathBuf>> {
+auto try_manifest_path(ref<rstd::path::Path> directory) -> ManifestLocatorResult<Option<PathBuf>> {
     for (auto name : MANIFEST_NAMES) {
         auto candidate = PathBuf::from(directory).join(PathBuf::from(name).as_path());
         auto exists    = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {
-            return Err(locator_io("inspect manifest"_str,
-                                  candidate.as_path(),
-                                  rstd::move(exists).unwrap_err()));
+            return Err(locator_io(
+                "inspect manifest"_str, candidate.as_path(), rstd::move(exists).unwrap_err()));
         }
         if (! *exists) continue;
 
         auto canonical = rstd::fs::canonicalize(candidate.as_path());
         if (canonical.is_err()) {
-            return Err(locator_io("resolve manifest"_str,
-                                  candidate.as_path(),
-                                  rstd::move(canonical).unwrap_err()));
+            return Err(locator_io(
+                "resolve manifest"_str, candidate.as_path(), rstd::move(canonical).unwrap_err()));
         }
         auto manifest = rstd::move(canonical).unwrap();
         auto metadata = rstd::fs::metadata(manifest.as_path());
         if (metadata.is_err()) {
-            return Err(locator_io("inspect manifest"_str,
-                                  manifest.as_path(),
-                                  rstd::move(metadata).unwrap_err()));
+            return Err(locator_io(
+                "inspect manifest"_str, manifest.as_path(), rstd::move(metadata).unwrap_err()));
         }
         if (! metadata->is_file()) {
             return Err(ManifestLocatorError::NotRegularFile(rstd::move(manifest)));
@@ -77,6 +72,11 @@ auto try_manifest_path(ref<rstd::path::Path> directory)
 
 export namespace lito
 {
+
+struct ManifestLocation {
+    PathBuf directory;
+    PathBuf manifest;
+};
 
 auto locate_manifest(ref<rstd::path::Path> requested_directory)
     -> ManifestLocatorResult<ManifestLocation>;

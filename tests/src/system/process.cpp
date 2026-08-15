@@ -3,26 +3,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -72,8 +61,8 @@ TEST(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
     auto append = Vec<rstd::path::PathBuf>::make();
     append.push(first.clone());
     append.push(second.clone());
-    auto environment = lito::ResolvedProcessEnvironment::resolve(
-        lito::ProcessEnvironmentSpec { .append_path = rstd::move(append) },
+    auto environment = lito::system::ResolvedProcessEnvironment::resolve(
+        lito::system::ProcessEnvironmentSpec { .append_path = rstd::move(append) },
         Some(inherited_path->as_os_str()),
         directory.as_path());
     ASSERT_TRUE(environment.is_ok());
@@ -92,7 +81,7 @@ TEST(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
                   environment->search_directories()[index].as_path());
     }
 
-    auto resolver = lito::ToolResolver(*environment);
+    auto resolver = lito::system::ToolResolver(*environment);
     auto selected = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
                                      "test executable"_str);
     ASSERT_TRUE(selected.is_ok());
@@ -140,12 +129,12 @@ TEST(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
 }
 
 TEST(SystemProcess, ProcessExecutionRejectsUnresolvedToolNames) {
-    auto environment = lito::ResolvedProcessEnvironment::resolve(
-        lito::ProcessEnvironmentSpec {}, None(), fixture_path("config"_str).as_path());
+    auto environment = lito::system::ResolvedProcessEnvironment::resolve(
+        lito::system::ProcessEnvironmentSpec {}, None(), fixture_path("config"_str).as_path());
     ASSERT_TRUE(environment.is_ok());
     auto arguments = strings("lito-unresolved-tool"_str);
-    EXPECT_TRUE(lito::run_command(arguments, *environment).is_err());
-    EXPECT_TRUE(lito::run_command_with_input(arguments, ""_str, *environment).is_err());
+    EXPECT_TRUE(lito::system::run_command(arguments, *environment).is_err());
+    EXPECT_TRUE(lito::system::run_command_with_input(arguments, ""_str, *environment).is_err());
 }
 
 TEST(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
@@ -160,7 +149,7 @@ TEST(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     request.configuration.toolchain = rstd::move(config->toolchain);
     auto built                      = lito::build(request);
     ASSERT_TRUE(built.is_ok());
-    EXPECT_EQ(artifact_count(*built, lito::ArtifactKind::Executable), usize(1));
+    EXPECT_EQ(artifact_count(*built, lito::cpp::ArtifactKind::Executable), usize(1));
     EXPECT_TRUE(clear_output(output.as_path()));
 }
 

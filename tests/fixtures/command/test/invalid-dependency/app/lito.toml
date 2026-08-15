@@ -3,6 +3,7 @@ name = "fixture-invalid-test-app"
 version = { workspace = true }
 
 [[bin]]
+link-stdlib = false
 name = "fixture-invalid-test-app"
 sources = ["main.cpp"]
 

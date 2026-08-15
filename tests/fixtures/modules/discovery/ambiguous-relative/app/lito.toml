@@ -1,0 +1,15 @@
+[package]
+name = "fixture-ambiguous-app"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-ambiguous-app"
+
+[dependencies.fixture-ambiguous-alpha]
+path = "../alpha"
+visibility = "private"
+
+[dependencies.fixture-ambiguous-beta]
+path = "../beta"
+visibility = "private"

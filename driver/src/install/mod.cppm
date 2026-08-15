@@ -1,0 +1,21 @@
+export module lito.driver:install;
+
+export import :install.error;
+export import :install.destination;
+export import :install.entry;
+export import :install.catalog.model;
+export import :install.store.model;
+export import :install.request;
+export import :install.result;
+export import :install.package;
+export import :install.recipe;
+export import :install.script_error;
+export import :install.materialize_error;
+export import :install.script;
+export import :install.selection;
+export import :install.plan;
+export import :install.source;
+export import :install.identity;
+export import :install.path;
+export import :install.catalog;
+export import :install.store;

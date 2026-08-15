@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
+import lito.driver;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -116,9 +105,10 @@ TEST(Workspace, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
     ASSERT_TRUE(cmake.adapter_root.is_some());
     EXPECT_EQ(cmake.adapter_root->as_path(), directory.as_path());
 
-    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
-    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
-    const auto& resolved = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    auto prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
+    ASSERT_TRUE(prepared_sources.is_ok());
+    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
+    const auto& resolved = prepared_sources->dependencies[usize {}].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.source.as_Directory().root.as_path(),
               fixture_path("dependency/cmake/project/package"_str).as_path());

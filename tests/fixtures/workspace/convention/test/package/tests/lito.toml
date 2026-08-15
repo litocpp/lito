@@ -2,6 +2,7 @@
 name = "fixture-conventional-test"
 
 [[test]]
+link-stdlib = false
 name = "fixture-conventional-test"
 sources = ["main.cpp"]
 

@@ -1,14 +1,14 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.manifest:key_schema;
+module lito.core:manifest.key_schema;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.manifest.contract;
-import lito.package.identity;
-import :primitives;
+import :manifest.error;
+import :manifest.package;
+import :package.identity;
+import :manifest.primitives;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -17,7 +17,7 @@ using Toml = rstd::toml::Value;
 namespace lito
 {
 
-auto package_key(ref<str> key) -> bool {
+auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
            key == "target"_str;
 }
@@ -32,7 +32,9 @@ auto runnable_key(ref<str> key) -> bool {
            key == "source-groups"_str || key == "link-stdlib"_str;
 }
 
-auto binary_key(ref<str> key) -> bool { return runnable_key(key) || key == "resources"_str; }
+auto binary_key(ref<str> key) -> bool {
+    return runnable_key(key) || key == "resources"_str;
+}
 
 auto runtime_resource_key(ref<str> key) -> bool {
     return key == "name"_str || key == "root"_str || key == "path"_str;
@@ -168,17 +170,18 @@ auto workspace_package_key(ref<str> key) -> bool {
     return key == "version"_str;
 }
 
-auto parse_package_version(const Toml& package, bool optional) -> ManifestSchemaResult<PackageVersion> {
+auto parse_package_version(const Toml& package, bool optional)
+    -> ManifestSchemaResult<PackageVersion> {
     auto declared = member(package, "version"_str);
     if (declared.is_none()) {
         if (optional) return Ok(PackageVersion {});
-        return failure<PackageVersion>("package is missing 'version'"_str);
+        return manifest_schema_failure<PackageVersion>("package is missing 'version'"_str);
     }
 
     auto explicit_value = (**declared).as_str();
     if (explicit_value.is_some()) {
         if (explicit_value->is_empty()) {
-            return failure<PackageVersion>("package.version must not be empty"_str);
+            return manifest_schema_failure<PackageVersion>("package.version must not be empty"_str);
         }
         return Ok(PackageVersion {
             .source = PackageVersionSource::Explicit,
@@ -192,11 +195,13 @@ auto parse_package_version(const Toml& package, bool optional) -> ManifestSchema
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
     auto workspace = member(**declared, "workspace"_str);
     if (workspace.is_none()) {
-        return failure<PackageVersion>("package.version is missing 'workspace'"_str);
+        return manifest_schema_failure<PackageVersion>(
+            "package.version is missing 'workspace'"_str);
     }
     auto enabled = (**workspace).as_bool();
     if (enabled.is_none() || ! *enabled) {
-        return failure<PackageVersion>("package.version.workspace must be true"_str);
+        return manifest_schema_failure<PackageVersion>(
+            "package.version.workspace must be true"_str);
     }
     return Ok(PackageVersion {
         .source = PackageVersionSource::Workspace,

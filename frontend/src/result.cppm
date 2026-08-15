@@ -4,8 +4,6 @@ import rstd;
 
 using namespace rstd::prelude;
 
-using Clone = rstd::clone::Clone;
-
 export namespace lito::frontend
 {
 
@@ -176,7 +174,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
     });
 }
 
-auto validate(const IncludeLookupDependency& lookup) -> rstd::Result<bool, String> {
+auto validate(const IncludeLookupDependency& lookup) -> Result<bool, String> {
     for (const auto& candidate : lookup.missing_candidates) {
         auto exists = rstd::fs::exists(candidate.as_path());
         if (exists.is_err()) {

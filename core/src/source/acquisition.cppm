@@ -1,21 +1,20 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.source:acquisition;
+export module lito.core:source.acquisition;
 
 import rstd;
-import lito.error;
-import lito.source.contract;
-import lito.source.error_contract;
-import lito.build.contract;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.storage;
-import lito.system.process;
-import :support;
-import :seed;
+import :source.git;
+import :source.config;
+import :source.requirement;
+import :source.error;
+import :source.event;
+import lito.system;
+import :source.seed;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 
 export namespace lito
@@ -38,22 +37,10 @@ auto archive_source_identity(ref<str> url, ref<str> sha256) -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
-struct SelectedSourcePackage {
-    String                source_identity;
-    ResolvedPackageSource source;
-    PathBuf               manifest;
-    PackageManifest       package;
-};
-
 struct AcquiredSource {
     PathBuf root;
     String  identity;
     bool    cacheable { false };
-};
-
-struct AcquiredProjectSources {
-    usize         primary;
-    Option<usize> tests;
 };
 
 struct PackageSourceFetchRequest {
@@ -192,7 +179,7 @@ auto acquire_cached_file(ArchiveSourceFetchRequest         request,
                          const FileCacheLayout&            layout,
                          const ResolvedProcessEnvironment& environment,
                          const PackageSourceConfig&        source_config,
-                         BuildObserver                     observer) -> SourceResult<FetchedFile> {
+                         SourceEventSink                   observer) -> SourceResult<FetchedFile> {
     (void)session;
     auto identity  = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
     auto fetch_key = fetch_identity_stable_key(identity);
@@ -237,7 +224,7 @@ auto acquire_cached_file(ArchiveSourceFetchRequest         request,
     if (observer.notify != nullptr) {
         observer.notify(
             observer.context,
-            BuildEvent { BuildEventKind::Fetch, request.url.as_str(), source.as_path() });
+            SourceEvent { SourceEventKind::Fetch, request.url.as_str(), source.as_path() });
     }
     auto downloaded = run_command(arguments, environment);
     if (downloaded.is_err()) {
@@ -295,7 +282,7 @@ auto acquire_file_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                            usize                             jobs,
                            const ResolvedProcessEnvironment& environment,
                            const PackageSourceConfig&        source_config,
-                           BuildObserver observer) -> SourceResult<Vec<FetchedFile>> {
+                           SourceEventSink observer) -> SourceResult<Vec<FetchedFile>> {
     auto fetched = Vec<Option<FetchedFile>>::with_capacity(requests.len());
     auto pending = Vec<usize>::make();
     for (usize index {}; index < requests.len(); ++index) {
@@ -378,11 +365,14 @@ auto acquire_file_frontier(Vec<ArchiveSourceFetchRequest>    requests,
 }
 
 auto materialize_archive(FetchedFile                       file,
-                         const BuildLayout&                layout,
+                         ref<rstd::path::Path>             materialization_root,
                          ref<rstd::path::Path>             cmake_executable,
                          const ResolvedProcessEnvironment& environment)
     -> SourceResult<AcquiredSource> {
-    auto area    = layout.archive_materialization(file.identity.as_str());
+    auto archives =
+        PathBuf::from(materialization_root).join(PathBuf::from("archives"_str).as_path());
+    auto area =
+        archives.join(PathBuf::from(rstd::crypto::sha256_hex(file.identity.as_str())).as_path());
     auto created = rstd::fs::create_dir_all(area.as_path());
     if (created.is_err()) {
         return source_io_failure<AcquiredSource>("create archive materialization area"_str,
@@ -553,11 +543,11 @@ export namespace lito
 
 auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                               usize                             jobs,
-                              const BuildLayout&                layout,
+                              ref<rstd::path::Path>             materialization_root,
                               ref<rstd::path::Path>             cmake_executable,
                               const ResolvedProcessEnvironment& environment,
                               const PackageSourceConfig&        source_config = {},
-                              BuildObserver observer = {}) -> SourceResult<Vec<AcquiredSource>> {
+                              SourceEventSink observer = {}) -> SourceResult<Vec<AcquiredSource>> {
     if (jobs == usize {}) {
         return source_failure<Vec<AcquiredSource>>(
             "archive source fetch jobs must be greater than zero"_str);
@@ -595,24 +585,25 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (usize index {}; index < files.len(); ++index) {
-        auto file        = rstd::move(files[index]);
-        auto task_layout = layout.clone();
-        auto executable  = PathBuf::from(cmake_executable);
-        auto task_env    = environment.clone();
-        auto submitted   = group.submit([index,
-                                         file        = rstd::move(file),
-                                         layout      = rstd::move(task_layout),
-                                         executable  = rstd::move(executable),
-                                         environment = rstd::move(task_env)]() mutable
-                                            -> SourceResult<MaterializedArchiveTask> {
-            auto source =
-                materialize_archive(rstd::move(file), layout, executable.as_path(), environment);
-            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-            return Ok(MaterializedArchiveTask {
-                .request = index,
-                .source  = rstd::move(source).unwrap(),
+        auto file       = rstd::move(files[index]);
+        auto task_root  = PathBuf::from(materialization_root);
+        auto executable = PathBuf::from(cmake_executable);
+        auto task_env   = environment.clone();
+        auto submitted =
+            group.submit([index,
+                          file        = rstd::move(file),
+                          root        = rstd::move(task_root),
+                          executable  = rstd::move(executable),
+                          environment = rstd::move(
+                              task_env)]() mutable -> SourceResult<MaterializedArchiveTask> {
+                auto source = materialize_archive(
+                    rstd::move(file), root.as_path(), executable.as_path(), environment);
+                if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+                return Ok(MaterializedArchiveTask {
+                    .request = index,
+                    .source  = rstd::move(source).unwrap(),
+                });
             });
-        });
         if (submitted.is_err()) {
             return source_failure<Vec<AcquiredSource>>(
                 "cannot submit archive materialization task"_str);

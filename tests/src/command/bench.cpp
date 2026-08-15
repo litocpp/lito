@@ -2,11 +2,9 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.manifest;
-import lito.source;
+import lito.driver;
+import lito.core;
 import lito.test.support;
-import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,17 +20,17 @@ TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     auto production = lito::build(
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-target"_str)));
     ASSERT_TRUE(production.is_ok());
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::Executable), usize(2));
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::TestExecutable), usize {});
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::BenchmarkExecutable), usize {});
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::Executable), usize(2));
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::TestExecutable), usize {});
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::BenchmarkExecutable), usize {});
 
     auto consumed = lito::build(
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-consumer"_str)));
     ASSERT_TRUE(consumed.is_ok());
-    EXPECT_EQ(artifact_count(*consumed, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*consumed, lito::ArtifactKind::Executable), usize(1));
-    EXPECT_EQ(artifact_count(*consumed, lito::ArtifactKind::BenchmarkExecutable), usize {});
+    EXPECT_EQ(artifact_count(*consumed, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*consumed, lito::cpp::ArtifactKind::Executable), usize(1));
+    EXPECT_EQ(artifact_count(*consumed, lito::cpp::ArtifactKind::BenchmarkExecutable), usize {});
 
     auto ambiguous_request =
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-target"_str));
@@ -50,8 +48,8 @@ TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     typed_request.targets = strings("bin:shared"_str);
     auto typed            = lito::build(rstd::move(typed_request));
     ASSERT_TRUE(typed.is_ok());
-    EXPECT_EQ(artifact_count(*typed, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*typed, lito::ArtifactKind::Executable), usize(1));
+    EXPECT_EQ(artifact_count(*typed, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*typed, lito::cpp::ArtifactKind::Executable), usize(1));
 
     auto test_request = lito::TestRequest {
         .build =
@@ -60,8 +58,9 @@ TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     };
     auto tested = lito::test(rstd::move(test_request));
     ASSERT_TRUE(tested.is_ok());
-    EXPECT_EQ(artifact_count(tested->build, lito::ArtifactKind::TestExecutable), usize(2));
-    EXPECT_EQ(artifact_count(tested->build, lito::ArtifactKind::BenchmarkExecutable), usize {});
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::TestExecutable), usize(2));
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::BenchmarkExecutable),
+              usize {});
 
     auto bench_build =
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-target"_str));
@@ -73,7 +72,7 @@ TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     ASSERT_TRUE(benchmarked.is_ok());
     EXPECT_TRUE(benchmarked->success());
     EXPECT_EQ(benchmarked->build.profile.as_str(), "release"_str);
-    EXPECT_EQ(artifact_count(benchmarked->build, lito::ArtifactKind::BenchmarkExecutable),
+    EXPECT_EQ(artifact_count(benchmarked->build, lito::cpp::ArtifactKind::BenchmarkExecutable),
               usize(2));
     ASSERT_EQ(benchmarked->executions.len(), usize(2));
     EXPECT_EQ(benchmarked->executions[usize {}].target.name.as_str(), "shared"_str);

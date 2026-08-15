@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.driver;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -43,14 +32,13 @@ TEST(Install, InstallOnlyManifestOwnsItsConventionalScript) {
 }
 
 TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
-    auto environment = EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT"_str,
-                                                 "fixture-environment"_str);
+    auto environment =
+        EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT"_str, "fixture-environment"_str);
     auto empty_environment =
         EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY"_str, ""_str);
-    auto unset_environment =
-        EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_UNSET"_str);
-    auto directory = fixture_path("install/script/recipe"_str);
-    auto manifest  = lito::load_package_manifest(directory.as_path());
+    auto unset_environment = EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_UNSET"_str);
+    auto directory         = fixture_path("install/script/recipe"_str);
+    auto manifest          = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
     auto recipe = lito::execute_install_script(install_script_input(*manifest),

@@ -1,16 +1,17 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.lock.flatpak;
+export module lito.core:lock.flatpak;
 
 import rstd;
 import rstd.json;
-import lito.error;
-import lito.lock;
-import lito.lock.contract;
-import lito.source.contract;
+import :lock;
+import :lock.config;
+import :lock.document;
+import :source.fetch;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 using Json  = rstd::json::Value;
 using Map   = rstd::json::Map;

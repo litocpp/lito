@@ -1,16 +1,18 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.workspace:member;
+export module lito.core:workspace.member;
 
 import rstd;
-import lito.error;
-import lito.workspace.contract;
-import lito.source.contract;
-import lito.dependency.contract;
-import lito.manifest;
+import :workspace.error;
+import :source.git;
+import :source.requirement;
+import :dependency.cmake;
+import :dependency.pkg_config;
+import :manifest;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
 namespace lito
@@ -91,7 +93,8 @@ auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& requirem
 }
 
 auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
-                                           const WorkspaceManifest& workspace) -> WorkspaceResult<empty> {
+                                           const WorkspaceManifest& workspace)
+    -> WorkspaceResult<empty> {
     const auto resolve_package_dependencies =
         [&](const Vec<WorkspaceDependencyReference>& references,
             Vec<DeclaredDependency>&                 dependencies,
@@ -137,11 +140,11 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
             }
         }
         if (definition == nullptr) {
-            return workspace_failure<empty>(rstd::format(
-                "workspace member '{}' inherits runtime dependency '{}' but "
-                "workspace.dependencies has no matching definition",
-                manifest.name.as_str(),
-                reference.name.as_str()));
+            return workspace_failure<empty>(
+                rstd::format("workspace member '{}' inherits runtime dependency '{}' but "
+                             "workspace.dependencies has no matching definition",
+                             manifest.name.as_str(),
+                             reference.name.as_str()));
         }
         manifest.runtime_dependencies.push(DeclaredRuntimeDependency {
             .name             = reference.name.clone(),
@@ -239,8 +242,8 @@ auto resolve_containing_workspace_version(PackageManifest& manifest) -> Workspac
     while (directory.pop()) {
         auto located = try_locate_manifest(directory.as_path());
         if (located.is_err()) {
-            return Err(WorkspaceError::Manifest(ManifestError::Locate(
-                rstd::move(located).unwrap_err())));
+            return Err(
+                WorkspaceError::Manifest(ManifestError::Locate(rstd::move(located).unwrap_err())));
         }
         if (located->is_none()) continue;
 

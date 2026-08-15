@@ -3,6 +3,7 @@ name = "fixture-test-pass"
 version = { workspace = true }
 
 [[test]]
+link-stdlib = false
 name = "fixture-test-pass"
 sources = ["src/main.cpp"]
 

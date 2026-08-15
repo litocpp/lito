@@ -2,11 +2,9 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.manifest;
-import lito.source;
+import lito.driver;
+import lito.core;
 import lito.test.support;
-import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,9 +20,9 @@ TEST(BuildCommand, BuildSelectsProductionArtifacts) {
         root.as_path(), output.as_path(), strings("fixture-test-lib"_str, "fixture-test-app"_str));
     auto summary = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
-    EXPECT_EQ(artifact_count(*summary, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*summary, lito::ArtifactKind::Executable), usize(1));
-    EXPECT_EQ(artifact_count(*summary, lito::ArtifactKind::TestExecutable), usize {});
+    EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::Executable), usize(1));
+    EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::TestExecutable), usize {});
     EXPECT_FALSE(summary->documentation_units.is_empty());
     for (const auto& unit : summary->documentation_units) {
         EXPECT_FALSE(unit.invocation.arguments.is_empty());
@@ -46,8 +44,8 @@ TEST(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
     request.purpose = lito::PackageSelectionPurpose::Documentation;
     auto summary    = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
-    EXPECT_EQ(artifact_count(*summary, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*summary, lito::ArtifactKind::Executable), usize {});
+    EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::Executable), usize {});
     ASSERT_FALSE(summary->documentation_units.is_empty());
     for (const auto& unit : summary->documentation_units) {
         EXPECT_EQ(unit.target.kind, lito::PackageTargetKind::Library);

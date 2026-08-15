@@ -126,7 +126,7 @@ struct ScannedToken {
 class ScannerSession {
 public:
     template<typename LanguageType>
-        requires rstd::Impled<LanguageType, Language>
+        requires Impled<LanguageType, Language>
     static auto make(SourceFile source) -> ScannerSession {
         return ScannerSession(rstd::move(source), LanguageId::of<LanguageType>());
     }
@@ -137,7 +137,7 @@ public:
     }
 
     template<typename ScannerType>
-        requires rstd::Impled<ScannerType, Scanner>
+        requires Impled<ScannerType, Scanner>
     auto scan(ScannerType& scanner, slice<SymbolId> valid_symbol_slice)
         -> Result<Option<ScannedToken>> {
         auto valid_symbols = ValidSymbols { valid_symbol_slice };
@@ -147,7 +147,7 @@ public:
         }
 
         auto cursor  = ScannerCursor { source_.contents(), position_ };
-        auto scanned = rstd::as<Scanner>(scanner).scan(cursor, valid_symbols);
+        auto scanned = as<Scanner>(scanner).scan(cursor, valid_symbols);
         if (scanned.is_err()) return Err(rstd::move(scanned).unwrap_err());
         if (scanned->is_none()) return Ok(None());
 

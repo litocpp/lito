@@ -4,26 +4,14 @@ version.workspace = true
 
 [lib]
 name = "lito-core"
-module = "lito"
-archive = "lito"
-
-[dependencies.lito-frontend]
-workspace = true
-visibility = "public"
-
-[dependencies.luato]
-workspace = true
-visibility = "private"
+module = "lito.core"
+archive = "lito.core"
 
 [dependencies.rstd-std]
 workspace = true
 visibility = "public"
 
 [dependencies.rstd-json]
-workspace = true
-visibility = "private"
-
-[dependencies.rstd-bench]
 workspace = true
 visibility = "private"
 

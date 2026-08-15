@@ -3,9 +3,11 @@ name = "fixture-invalid-test-artifact"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-invalid-test-artifact"
 sources = ["main.cpp"]
 
 [[bin]]
+link-stdlib = false
 name = "fixture-invalid-test-artifact"
 sources = ["main.cpp"]

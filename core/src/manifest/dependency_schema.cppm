@@ -1,21 +1,26 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.manifest:dependency_schema;
+module lito.core:manifest.dependency_schema;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.manifest.contract;
-import lito.package.identity;
-import lito.dependency.contract;
-import lito.source.contract;
-import lito.platform;
-import :primitives;
-import :key_schema;
-import :target_schema;
+import :manifest.dependency;
+import :manifest.error;
+import :package.identity;
+import :dependency.visibility;
+import :dependency.cmake;
+import :dependency.pkg_config;
+import :source.git;
+import :source.requirement;
+import lito.system;
+import :manifest.primitives;
+import :manifest.key_schema;
+import :manifest.target_schema;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
@@ -23,11 +28,12 @@ using Table = rstd::toml::Table;
 namespace lito
 {
 
-auto parse_visibility(ref<str> value, ref<str> context) -> ManifestSchemaResult<DependencyVisibility> {
+auto parse_visibility(ref<str> value, ref<str> context)
+    -> ManifestSchemaResult<DependencyVisibility> {
     if (value == "public"_str) return Ok(DependencyVisibility::Public);
     if (value == "private"_str) return Ok(DependencyVisibility::Private);
     if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
-    return failure<DependencyVisibility>(
+    return manifest_schema_failure<DependencyVisibility>(
         rstd::format("{} must be public, private, or link", context));
 }
 
@@ -52,19 +58,19 @@ auto parse_pkg_config_version(ref<str> value, ref<str> context)
         comparison = PkgConfigVersionOperator::Less;
         prefix     = usize(1);
     } else {
-        return failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<PkgConfigVersionRequirement>(
             rstd::format("{} must begin with one of '=', '<', '>', '<=', or '>='", context));
     }
     auto version = text.get(prefix, text.len());
     if (version.is_none()) {
-        return failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<PkgConfigVersionRequirement>(
             rstd::format("{} must contain a version value", context));
     }
     auto normalized = version->trim_ascii();
     if (normalized.is_empty() || normalized.contains(" "_str) || normalized.contains("\t"_str) ||
         normalized.contains("<"_str) || normalized.contains(">"_str) ||
         normalized.contains("="_str)) {
-        return failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<PkgConfigVersionRequirement>(
             rstd::format("{} contains an invalid version value", context));
     }
     return Ok(PkgConfigVersionRequirement {
@@ -121,7 +127,8 @@ auto cmake_cache_key_is_valid(ref<str> value) -> bool {
     return true;
 }
 
-auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> ManifestSchemaResult<Vec<CMakeCacheEntry>> {
+auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Vec<CMakeCacheEntry>> {
     auto result = Vec<CMakeCacheEntry>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, context);
@@ -129,7 +136,7 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> ManifestSch
     auto keys = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (! cmake_cache_key_is_valid((**key).as_str())) {
-            return failure<Vec<CMakeCacheEntry>>(rstd::format(
+            return manifest_schema_failure<Vec<CMakeCacheEntry>>(rstd::format(
                 "{} key '{}' must contain only ASCII letters, digits, or '_'", context, **key));
         }
         auto item       = (**table).get((**key).as_str());
@@ -144,7 +151,7 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> ManifestSch
         else if (integer.is_some())
             cache_text = rstd::format("{}", *integer);
         else
-            return failure<Vec<CMakeCacheEntry>>(rstd::format(
+            return manifest_schema_failure<Vec<CMakeCacheEntry>>(rstd::format(
                 "{} value '{}' must be a string, boolean, or integer", context, **key));
         result.push(CMakeCacheEntry {
             .name  = (**key).clone(),
@@ -154,7 +161,8 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context) -> ManifestSch
     return Ok(rstd::move(result));
 }
 
-auto parse_git_reference(const Toml& specification, ref<str> context) -> ManifestSchemaResult<GitReference> {
+auto parse_git_reference(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<GitReference> {
     auto branch = optional_string(specification, "branch"_str, context);
     auto tag    = optional_string(specification, "tag"_str, context);
     auto rev    = optional_string(specification, "rev"_str, context);
@@ -173,7 +181,7 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Manifes
     if (rev_value.is_some()) ++count;
     if (commit_value.is_some()) ++count;
     if (count > usize(1)) {
-        return failure<GitReference>(rstd::format(
+        return manifest_schema_failure<GitReference>(rstd::format(
             "{} may contain only one of 'branch', 'tag', 'rev', or 'commit'", context));
     }
     auto reference = GitReference {};
@@ -192,11 +200,12 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Manifes
     }
     if (reference.kind != GitReferenceKind::DefaultBranch &&
         (reference.value.is_empty() || reference.value.as_str().starts_with("-"_str))) {
-        return failure<GitReference>(rstd::format("{} Git selector is invalid", context));
+        return manifest_schema_failure<GitReference>(
+            rstd::format("{} Git selector is invalid", context));
     }
     if (reference.kind == GitReferenceKind::Commit &&
         ! git_commit_is_valid(reference.value.as_str())) {
-        return failure<GitReference>(
+        return manifest_schema_failure<GitReference>(
             rstd::format("{} Git commit must be a full hexadecimal object id", context));
     }
     return Ok(rstd::move(reference));
@@ -204,14 +213,16 @@ auto parse_git_reference(const Toml& specification, ref<str> context) -> Manifes
 
 auto validate_git_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
     if (value.is_empty() || value.starts_with("-"_str) || value.contains("#"_str)) {
-        return failure<empty>(rstd::format("{}.git is not a valid Git source URL", context));
+        return manifest_schema_failure<empty>(
+            rstd::format("{}.git is not a valid Git source URL", context));
     }
     return Ok(empty {});
 }
 
 auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
     if (! archive_url_is_valid(value)) {
-        return failure<empty>(rstd::format("{}.archive is not a valid archive URL", context));
+        return manifest_schema_failure<empty>(
+            rstd::format("{}.archive is not a valid archive URL", context));
     }
     return Ok(empty {});
 }
@@ -223,7 +234,7 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
     auto table           = table_value(**value, variant_context.as_str());
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     if ((**table).is_empty()) {
-        return failure<Option<Vec<CMakeArchiveVariant>>>(
+        return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
             rstd::format("{}.archives must not be empty", context));
     }
     auto variants = Vec<CMakeArchiveVariant>::with_capacity((**table).len());
@@ -241,16 +252,16 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
         if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
         rstd_try(validate_archive_url(archive->as_str(), entry_context.as_str()));
         if (! sha256_is_valid(sha256->as_str())) {
-            return failure<Option<Vec<CMakeArchiveVariant>>>(rstd::format(
+            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(rstd::format(
                 "{}.sha256 must be a full hexadecimal SHA-256 digest", entry_context.as_str()));
         }
         auto architecture = canonical_architecture(name.as_str());
         if (architecture.is_err()) {
-            return failure<Option<Vec<CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
         }
         if (architecture->as_str() != name.as_str()) {
-            return failure<Option<Vec<CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is not canonical; use '{}'",
                              context,
                              name.as_str(),
@@ -270,12 +281,13 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
     return Ok(Some(rstd::move(variants)));
 }
 
-auto workspace_reference_enabled(const Toml& specification, ref<str> context) -> ManifestSchemaResult<bool> {
+auto workspace_reference_enabled(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<bool> {
     auto value = member(specification, "workspace"_str);
     if (value.is_none()) return Ok(false);
     auto enabled = (**value).as_bool();
     if (enabled.is_none() || ! *enabled) {
-        return failure<bool>(rstd::format("{}.workspace must be true", context));
+        return manifest_schema_failure<bool>(rstd::format("{}.workspace must be true", context));
     }
     return Ok(true);
 }
@@ -289,13 +301,13 @@ auto parse_package_dependency_source(const Toml& specification, ref<str> context
     auto path_value = rstd::move(path).unwrap();
     auto git_value  = rstd::move(git).unwrap();
     if (path_value.is_some() == git_value.is_some()) {
-        return failure<PackageSourceRequirement>(
+        return manifest_schema_failure<PackageSourceRequirement>(
             rstd::format("{} must contain exactly one of 'path' or 'git'", context));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
     if (git_value.is_none() && reference->kind != GitReferenceKind::DefaultBranch) {
-        return failure<PackageSourceRequirement>(
+        return manifest_schema_failure<PackageSourceRequirement>(
             rstd::format("{} Git selector requires 'git'", context));
     }
     if (path_value.is_some()) {
@@ -327,7 +339,7 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
         auto        context = rstd::format(
             "{} dependency '{}'", development ? "development"_str : "normal"_str, name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return failure<ParsedDependencies>(rstd::format(
+            return manifest_schema_failure<ParsedDependencies>(rstd::format(
                 "dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
                 name.as_str()));
         }
@@ -393,15 +405,15 @@ auto parse_runtime_dependencies(Option<ref<Toml>> value)
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name = **key;
-        auto context = rstd::format("runtime dependency '{}'", name.as_str());
+        const auto& name    = **key;
+        auto        context = rstd::format("runtime dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return failure<ParsedRuntimeDependencies>(rstd::format(
+            return manifest_schema_failure<ParsedRuntimeDependencies>(rstd::format(
                 "runtime dependency name '{}' must contain only ASCII letters, digits, '-' or '_'",
                 name.as_str()));
         }
         auto specification = (**table).get(name.as_str());
-        auto fields = table_value(**specification, context.as_str());
+        auto fields        = table_value(**specification, context.as_str());
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
         rstd_try(reject_unknown(**fields, context.as_str(), runtime_dependency_key));
         auto inherited = rstd_try(workspace_reference_enabled(**specification, context.as_str()));
@@ -432,7 +444,7 @@ auto parse_workspace_dependencies(Option<ref<Toml>> value)
         const auto& name    = **key;
         auto        context = rstd::format("workspace dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return failure<Vec<WorkspaceDependencyDefinition>>(
+            return manifest_schema_failure<Vec<WorkspaceDependencyDefinition>>(
                 rstd::format("workspace dependency alias '{}' is invalid", name.as_str()));
         }
         auto specification = (**table).get(name.as_str());
@@ -463,7 +475,7 @@ auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
     if (module.is_err()) return Err(rstd::move(module).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     if (module->is_empty() || module->as_str().starts_with("-"_str)) {
-        return failure<PkgConfigDependencyRequirement>(
+        return manifest_schema_failure<PkgConfigDependencyRequirement>(
             rstd::format("{}.module must be non-empty and must not start with '-'", context));
     }
     auto version_requirement = Option<PkgConfigVersionRequirement> {};
@@ -478,7 +490,7 @@ auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
     if (static_value.is_some()) {
         auto parsed = (**static_value).as_bool();
         if (parsed.is_none()) {
-            return failure<PkgConfigDependencyRequirement>(
+            return manifest_schema_failure<PkgConfigDependencyRequirement>(
                 rstd::format("{}.static must be a boolean", context));
         }
         static_mode = *parsed;
@@ -506,7 +518,7 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
         const auto& alias   = **key;
         auto        context = rstd::format("pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return failure<ParsedPkgConfigExternalDependencies>(
+            return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
         }
         auto specification = (**table).get(alias.as_str());
@@ -554,7 +566,7 @@ auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
         auto        context =
             rstd::format("workspace pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return failure<Vec<WorkspacePkgConfigExternalDependencyDefinition>>(
+            return manifest_schema_failure<Vec<WorkspacePkgConfigExternalDependencyDefinition>>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
         }
         auto specification = (**table).get(alias.as_str());
@@ -575,12 +587,12 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
     -> ManifestSchemaResult<Vec<CMakeTargetRequirement>> {
     auto value = member(specification, "targets"_str);
     if (value.is_none()) {
-        return failure<Vec<CMakeTargetRequirement>>(
+        return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
             rstd::format("{} is missing 'targets'", context));
     }
     auto array = (**value).as_array();
     if (array.is_none() || (**array).is_empty()) {
-        return failure<Vec<CMakeTargetRequirement>>(
+        return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
             rstd::format("{}.targets must be a non-empty array", context));
     }
     auto result = Vec<CMakeTargetRequirement>::with_capacity((**array).len());
@@ -594,11 +606,11 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
         if (! cmake_target_is_valid(name->as_str())) {
-            return failure<Vec<CMakeTargetRequirement>>(
+            return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
                 rstd::format("CMake target '{}' is invalid", name->as_str()));
         }
         if (names.contains_key(name->as_str())) {
-            return failure<Vec<CMakeTargetRequirement>>(
+            return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
                 rstd::format("{} repeats CMake target '{}'", context, name->as_str()));
         }
         names.insert(name->clone(), empty {});
@@ -636,7 +648,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
     if (! cmake_name_is_valid(package->as_str())) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.find-package is unsafe", context));
     }
     auto path_value     = rstd::move(path).unwrap();
@@ -646,13 +658,13 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     auto source_count   = usize(path_value.is_some()) + usize(git_value.is_some()) +
                           usize(archive_value.is_some()) + usize(archives_value.is_some());
     if (source_count > usize(1)) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} cannot combine 'path', 'git', 'archive', and 'archives'", context));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
     if (git_value.is_none() && reference->kind != GitReferenceKind::DefaultBranch) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} Git selector requires 'git'", context));
     }
     auto cache = parse_cmake_cache(member(specification, "cache"_str),
@@ -660,7 +672,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
     auto sourced = source_count == usize(1);
     if (! sourced && (! cache->is_empty() || config_directory->is_some())) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} cache and config-directory require a source", context));
     }
     auto integration_kind  = CMakeIntegration::Install;
@@ -669,34 +681,34 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         if (integration_value->as_str() == "build-tree"_str) {
             integration_kind = CMakeIntegration::BuildTree;
         } else if (integration_value->as_str() != "install"_str) {
-            return failure<WorkspaceCMakeExternalDependencyDefinition>(
+            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.integration must be 'install' or 'build-tree'", context));
         }
     }
     if (integration_kind == CMakeIntegration::BuildTree && ! sourced) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} build-tree integration requires a source", context));
     }
     if (integration_kind == CMakeIntegration::BuildTree && config_directory->is_some()) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} build-tree integration cannot use config-directory", context));
     }
     auto adapter_value = rstd::move(adapter).unwrap();
     if (adapter_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.adapter requires build-tree integration", context));
     }
     auto hash_value = rstd::move(sha256).unwrap();
     if (archive_value.is_some() != hash_value.is_some()) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive and .sha256 must be specified together", context));
     }
     if (archive_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive requires build-tree integration", context));
     }
     if (archives_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
-        return failure<WorkspaceCMakeExternalDependencyDefinition>(
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archives requires build-tree integration", context));
     }
     auto source = CMakeDependencySource::Installed();
@@ -713,7 +725,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         auto url = rstd::move(archive_value).unwrap();
         rstd_try(validate_archive_url(url.as_str(), context));
         if (! sha256_is_valid(hash_value->as_str())) {
-            return failure<WorkspaceCMakeExternalDependencyDefinition>(
+            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
         }
         source = CMakeDependencySource::Archive(rstd::move(url), rstd::move(hash_value).unwrap());
@@ -761,7 +773,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
         const auto& alias   = **key;
         auto        context = rstd::format("CMake external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return failure<ParsedCMakeExternalDependencies>(
+            return manifest_schema_failure<ParsedCMakeExternalDependencies>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
         }
         auto specification = (**table).get(alias.as_str());
@@ -810,7 +822,7 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
         const auto& alias = **key;
         auto context = rstd::format("workspace CMake external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
-            return failure<Vec<WorkspaceCMakeExternalDependencyDefinition>>(
+            return manifest_schema_failure<Vec<WorkspaceCMakeExternalDependencyDefinition>>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
         }
         auto specification = (**table).get(alias.as_str());
@@ -825,7 +837,8 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
     return Ok(rstd::move(result));
 }
 
-auto parse_external_dependencies(Option<ref<Toml>> value) -> ManifestSchemaResult<ParsedExternalDependencies> {
+auto parse_external_dependencies(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<ParsedExternalDependencies> {
     auto result = ParsedExternalDependencies {};
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, "manifest.external-dependencies"_str);

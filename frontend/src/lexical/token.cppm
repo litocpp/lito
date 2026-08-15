@@ -62,9 +62,9 @@ public:
     auto len() const noexcept -> usize { return as_str().len(); }
     auto is_empty() const noexcept -> bool { return as_str().is_empty(); }
     auto clone() const -> String { return String::make(as_str()); }
-    auto comparable_hash() const noexcept -> rstd::uint64_t { return hash_; }
+    auto comparable_hash() const noexcept -> uint64_t { return hash_; }
 
-    auto matches(rstd::uint64_t hash, ref<str> text) const noexcept -> bool {
+    auto matches(uint64_t hash, ref<str> text) const noexcept -> bool {
         return hash_ == hash && as_str() == text;
     }
 
@@ -104,10 +104,10 @@ public:
     }
 
 private:
-    ref<str>       borrowed_;
-    String         owned_;
-    rstd::uint64_t hash_ { COMPARABLE_NAME_HASH_OFFSET };
-    bool           is_borrowed_ { false };
+    ref<str> borrowed_;
+    String   owned_;
+    uint64_t hash_ { COMPARABLE_NAME_HASH_OFFSET };
+    bool     is_borrowed_ { false };
 };
 
 struct Token {

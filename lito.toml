@@ -1,6 +1,6 @@
 [workspace]
 name = "lito"
-members = ["frontend", "core", "cli"]
+members = ["frontend", "core", "cpp", "toolchain", "driver", "cli", "tests"]
 default-members = ["cli"]
 
 [workspace.package]
@@ -11,6 +11,15 @@ path = "frontend"
 
 [workspace.dependencies.lito-core]
 path = "core"
+
+[workspace.dependencies.lito-cpp]
+path = "cpp"
+
+[workspace.dependencies.lito-toolchain]
+path = "toolchain"
+
+[workspace.dependencies.lito-driver]
+path = "driver"
 
 [workspace.dependencies.luato]
 git = "https://github.com/litocpp/luato.git"

@@ -1,5 +1,5 @@
-export module lito.workspace;
+export module lito.core:workspace;
 
-export import lito.workspace.contract;
-export import :member;
-export import :catalog;
+export import :workspace.error;
+export import :workspace.member;
+export import :workspace.catalog;

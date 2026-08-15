@@ -1,30 +1,33 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.manifest:assembly;
+module lito.core:manifest.assembly;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.manifest.contract;
-import lito.package.identity;
-import lito.dependency.contract;
-import lito.source.contract;
-import lito.platform;
-import :locator;
-import :primitives;
-import :profile_schema;
-import :key_schema;
-import :convention;
-import :target_schema;
-import :dependency_schema;
-import :build_tool_schema;
+import :manifest.document;
+import :manifest.package;
+import :manifest.workspace;
+import :manifest.target;
+import :manifest.error;
+import :package.identity;
+import lito.system;
+import :manifest.locator;
+import :manifest.primitives;
+import :manifest.profile_schema;
+import :manifest.key_schema;
+import :manifest.convention;
+import :manifest.target_schema;
+import :manifest.dependency_schema;
+import :manifest.build_tool_schema;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
 
-export namespace lito
+namespace lito
 {
 
 auto valid_package_name(ref<str> value) -> bool {
@@ -57,7 +60,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         auto workspace_name = required_string(**workspace_value, "name"_str, "workspace"_str);
         if (workspace_name.is_err()) return Err(rstd::move(workspace_name).unwrap_err());
         if (! package_name_is_valid(workspace_name->as_str())) {
-            return failure<ManifestDocument>(
+            return manifest_schema_failure<ManifestDocument>(
                 "workspace.name must contain only ASCII letters, digits, '-' or '_'"_str);
         }
         auto members =
@@ -88,7 +91,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
                 return Err(rstd::move(workspace_version).unwrap_err());
             }
             if (workspace_version->is_some() && (**workspace_version).is_empty()) {
-                return failure<ManifestDocument>("workspace.package.version must not be empty"_str);
+                return manifest_schema_failure<ManifestDocument>(
+                    "workspace.package.version must not be empty"_str);
             }
             package_defaults.version = rstd::move(workspace_version).unwrap();
         }
@@ -118,14 +122,15 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
     auto package_table = required_table(document, "package"_str, "manifest"_str);
     if (package_table.is_err()) return Err(rstd::move(package_table).unwrap_err());
-    auto package_known = reject_unknown(**package_table, "manifest.package"_str, package_key);
+    auto package_known =
+        reject_unknown(**package_table, "manifest.package"_str, manifest_package_key);
     if (package_known.is_err()) return Err(rstd::move(package_known).unwrap_err());
 
     const auto& package_value = **member(document, "package"_str);
     auto        name          = required_string(package_value, "name"_str, "package"_str);
     if (name.is_err()) return Err(rstd::move(name).unwrap_err());
     if (! package_name_is_valid(name->as_str())) {
-        return failure<ManifestDocument>(
+        return manifest_schema_failure<ManifestDocument>(
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
     }
     auto library = rstd_try(parse_library_target(member(document, "lib"_str)));
@@ -162,7 +167,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
     for (auto& target : *conventional) targets.push(rstd::move(target));
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none()) {
-        return failure<ManifestDocument>(
+        return manifest_schema_failure<ManifestDocument>(
             "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
             "'compile-test', or provide install.lua"_str);
     }
@@ -173,9 +178,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             break;
         }
     }
-    const auto version_optional = install_script->is_none() &&
-                                  ! has_library && ! has_bins && ! has_benches;
-    auto       version          = parse_package_version(package_value, version_optional);
+    const auto version_optional =
+        install_script->is_none() && ! has_library && ! has_bins && ! has_benches;
+    auto version = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
 
     auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
@@ -184,7 +189,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto runtime_dependencies =
         parse_runtime_dependencies(member(document, "runtime-dependencies"_str));
     auto build_tools = parse_build_tools(member(document, "build-tools"_str));
-    auto external = parse_external_dependencies(member(document, "external-dependencies"_str));
+    auto external    = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
@@ -199,21 +204,22 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (! has_library && (! parsed_usage.public_include_directories.is_empty() ||
                           ! parsed_usage.public_definitions.is_empty() ||
                           ! parsed_usage.public_options.is_empty())) {
-        return failure<ManifestDocument>("usage.public-* requires a library target"_str);
+        return manifest_schema_failure<ManifestDocument>(
+            "usage.public-* requires a library target"_str);
     }
-    auto parsed_dependencies     = rstd::move(dependencies).unwrap();
-    auto parsed_dev_dependencies = rstd::move(dev_dependencies).unwrap();
+    auto parsed_dependencies         = rstd::move(dependencies).unwrap();
+    auto parsed_dev_dependencies     = rstd::move(dev_dependencies).unwrap();
     auto parsed_runtime_dependencies = rstd::move(runtime_dependencies).unwrap();
     for (const auto& dependency : parsed_dev_dependencies.explicit_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
-            return failure<ManifestDocument>(rstd::format(
+            return manifest_schema_failure<ManifestDocument>(rstd::format(
                 "dependency '{}' is declared in both dependencies and dev-dependencies",
                 dependency.name.as_str()));
         }
     }
     for (const auto& dependency : parsed_dev_dependencies.workspace_dependencies) {
         if (contains_dependency(parsed_dependencies, dependency.name.as_str())) {
-            return failure<ManifestDocument>(rstd::format(
+            return manifest_schema_failure<ManifestDocument>(rstd::format(
                 "dependency '{}' is declared in both dependencies and dev-dependencies",
                 dependency.name.as_str()));
         }
@@ -238,8 +244,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .usage                  = rstd::move(parsed_usage),
             .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
             .dev_dependencies       = rstd::move(parsed_dev_dependencies.explicit_dependencies),
-            .runtime_dependencies =
-                rstd::move(parsed_runtime_dependencies.explicit_dependencies),
+            .runtime_dependencies   = rstd::move(parsed_runtime_dependencies.explicit_dependencies),
             .workspace_dependencies = rstd::move(parsed_dependencies.workspace_dependencies),
             .workspace_dev_dependencies =
                 rstd::move(parsed_dev_dependencies.workspace_dependencies),
@@ -257,7 +262,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
 
 } // namespace lito
 
-export namespace lito
+namespace lito
 {
 
 auto load_manifest_document(ref<rstd::path::Path> requested_directory)
@@ -281,8 +286,8 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory)
             .cause = ManifestFileCause::Parse(rstd::move(parsed).unwrap_err()),
         }));
     }
-    auto assembled = assemble_manifest_document(
-        rstd::move(root), path.clone(), rstd::move(parsed).unwrap());
+    auto assembled =
+        assemble_manifest_document(rstd::move(root), path.clone(), rstd::move(parsed).unwrap());
     if (assembled.is_err()) {
         return Err(ManifestError::File(ManifestFileError {
             .path  = rstd::move(path),
@@ -298,9 +303,8 @@ auto load_package_manifest(ref<rstd::path::Path> requested_directory)
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto document = rstd::move(loaded).unwrap();
     if (document.kind != ManifestKind::Package || document.package.is_none()) {
-        return Err(ManifestError::Kind(PathBuf::from(requested_directory),
-                                       ManifestKind::Package,
-                                       document.kind));
+        return Err(ManifestError::Kind(
+            PathBuf::from(requested_directory), ManifestKind::Package, document.kind));
     }
     return Ok(rstd::move(document.package).unwrap());
 }

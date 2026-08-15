@@ -24,9 +24,9 @@ struct TokenMatcher {
 };
 
 template<typename Matcher>
-    requires rstd::Impled<Matcher, TokenMatcher>
+    requires Impled<Matcher, TokenMatcher>
 auto matches_token(const Matcher& matcher, const Token& token) noexcept -> bool {
-    return rstd::as<TokenMatcher>(matcher).matches(token);
+    return as<TokenMatcher>(matcher).matches(token);
 }
 
 struct TokenKindMatcher {
@@ -42,7 +42,7 @@ struct TokenTextMatcher {
     }
 };
 
-static_assert(rstd::Impled<TokenKindMatcher, TokenMatcher>);
-static_assert(rstd::Impled<TokenTextMatcher<StaticName<"">>, TokenMatcher>);
+static_assert(Impled<TokenKindMatcher, TokenMatcher>);
+static_assert(Impled<TokenTextMatcher<StaticName<"">>, TokenMatcher>);
 
 } // namespace lito::frontend::lexical

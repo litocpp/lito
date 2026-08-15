@@ -1,20 +1,21 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.config:schema;
+module lito.core:config.schema;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.cpp;
-import lito.config.contract;
-import lito.dependency.contract;
-import lito.lock.contract;
-import lito.source.contract;
-import lito.system.environment_contract;
-import lito.toolchain;
+import :config.project;
+import :dependency.cmake;
+import :dependency.pkg_config;
+import :lock.config;
+import :source.config;
+import lito.system;
+import :config.toolchain;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
@@ -121,8 +122,7 @@ auto configured_tool_override(const Toml& toolchain_value, ref<str> key, ref<str
             rstd::format("{}.{} must not be empty", context, key));
     }
     auto path = PathBuf::from(*text);
-    if (! path.as_path().is_absolute() &&
-        ! toolchain::command::is_searchable_tool_name(path.as_path())) {
+    if (! path.as_path().is_absolute() && ! is_searchable_executable_name(path.as_path())) {
         return config_failure<Option<PathBuf>>(
             rstd::format("{}.{} must be an executable name or absolute path", context, key));
     }
@@ -505,7 +505,7 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
 
 } // namespace lito
 
-export namespace lito
+namespace lito
 {
 
 auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<ProjectConfig> {

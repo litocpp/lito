@@ -3,7 +3,7 @@
 import rstd;
 import rstd.bench;
 import rstd.test;
-import lito.build.profiling;
+import lito.driver;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

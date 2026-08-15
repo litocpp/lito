@@ -1,17 +1,17 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.source:seed;
+export module lito.core:source.seed;
 
 import rstd;
 import rstd.json;
-import lito.error;
-import lito.source.contract;
-import lito.source.error_contract;
-import lito.platform;
-import :support;
+import :source.fetch;
+import :source.error;
+import lito.system;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 using Json      = rstd::json::Value;
 using StringSet = rstd::collections::BTreeMap<String, empty>;

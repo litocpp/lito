@@ -3,5 +3,6 @@ name = "fixture-test-dependency"
 version = { workspace = true }
 
 [[test]]
+link-stdlib = false
 name = "fixture-test-dependency"
 sources = ["main.cpp"]

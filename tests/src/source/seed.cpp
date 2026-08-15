@@ -2,26 +2,15 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.lock;
-import lito.package;
-import lito.package.graph_contract;
-import lito.workspace.contract;
-import lito.workspace.resolver;
-import lito.platform;
-import lito.dependency;
-import lito.dependency.cmake;
-import lito.source;
-import lito.manifest;
+import lito.core;
+import lito.system;
+import lito.toolchain.cmake;
 import lito.toolchain;
-import lito.build.discovery;
-import lito.build.layout;
-import lito.system.environment;
-import lito.system.process;
-import lito.system.storage;
+import lito.driver;
 import lito.test.support;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
@@ -91,11 +80,12 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
     ASSERT_TRUE(
         rstd::fs::write_atomic(catalog_path.as_path(), catalog.as_str().as_bytes()).is_ok());
 
-    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = lito::ToolResolver(*environment);
-    auto pins     = Vec<lito::LockedGitSource>::make();
-    pins.push(lito::LockedGitSource {
+    auto resolver = lito::system::ToolResolver(*environment);
+    auto pins     = Vec<lito::GitSourcePin>::make();
+    pins.push(lito::GitSourcePin {
         .git       = String::make("https://example.invalid/seed-only.git"_str),
         .reference = lito::GitReference {},
         .commit    = commit->clone(),
@@ -106,7 +96,7 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
         .expected_url = "https://example.invalid/seed-only.git"_str,
     };
     auto manager  = lito::SourceManager(directory.as_path(),
-                                        lito::PackageResolutionOptions {
+                                        lito::SourceResolutionOptions {
                                             .locked      = true,
                                             .git_sources = rstd::move(pins),
                                             .sources =
@@ -117,9 +107,9 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
                                         },
                                         resolver,
                                         *environment,
-                                        lito::BuildObserver {
+                                        lito::SourceEventSink {
                                             .context = rstd::addressof(events),
-                                            .notify  = capture_fetch,
+                                            .notify  = capture_source_fetch,
                                         });
     auto acquired = manager.acquire_external(
         lito::PackageSourceRequirement::Git(
@@ -136,7 +126,7 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
     auto direct_seeds = Vec<PathBuf>::make();
     direct_seeds.push(directory.clone());
     auto direct_manager = lito::SourceManager(directory.as_path(),
-                                              lito::PackageResolutionOptions {
+                                              lito::SourceResolutionOptions {
                                                   .sources =
                                                       lito::PackageSourceConfig {
                                                           .fetch_seeds = rstd::move(direct_seeds),
@@ -145,9 +135,9 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
                                               },
                                               resolver,
                                               *environment,
-                                              lito::BuildObserver {
+                                              lito::SourceEventSink {
                                                   .context = rstd::addressof(events),
-                                                  .notify  = capture_fetch,
+                                                  .notify  = capture_source_fetch,
                                               });
     auto direct         = direct_manager.acquire_external(
         lito::PackageSourceRequirement::Git(

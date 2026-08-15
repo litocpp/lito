@@ -3,5 +3,6 @@ name = "fixture-scanner-stdlib-header"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-scanner-stdlib-header"
 sources = ["main.cpp"]

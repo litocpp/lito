@@ -1,7 +1,6 @@
-export module lito.package.identity;
+export module lito.core:package.identity;
 
 import rstd;
-import lito.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

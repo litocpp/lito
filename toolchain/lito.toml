@@ -1,0 +1,32 @@
+[package]
+name = "lito-toolchain"
+version.workspace = true
+
+[lib]
+name = "lito-toolchain"
+module = "lito.toolchain"
+archive = "lito.toolchain"
+
+[dependencies.lito-core]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-cpp]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-frontend]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-std]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-json]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-nostd]
+workspace = true
+visibility = "link"

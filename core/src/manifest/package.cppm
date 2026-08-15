@@ -1,0 +1,57 @@
+export module lito.core:manifest.package;
+
+import rstd;
+import lito.system;
+import :manifest.profile;
+import :manifest.target;
+import :manifest.dependency;
+import :manifest.build_tool;
+import :dependency.usage;
+import :dependency.cmake;
+import :dependency.pkg_config;
+
+using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
+
+export namespace lito
+{
+
+enum class PackageVersionSource
+{
+    Unspecified,
+    Explicit,
+    Workspace,
+};
+
+struct PackageVersion {
+    PackageVersionSource source { PackageVersionSource::Unspecified };
+    Option<String>       value;
+};
+
+struct PackageManifest {
+    String                                             name;
+    PackageVersion                                     version;
+    PathBuf                                            root;
+    PathBuf                                            source_root;
+    PathBuf                                            manifest_path;
+    Option<PathBuf>                                    install_script;
+    Option<ProjectProfile>                             profile;
+    Vec<BuildToolRequirement>                          build_tools;
+    Vec<PackageTargetManifest>                         targets;
+    TargetPredicate                                    target;
+    Vec<CompileTestCase>                               compile_tests;
+    DeclaredUsageRequirements                          usage;
+    Vec<DeclaredDependency>                            dependencies;
+    Vec<DeclaredDependency>                            dev_dependencies;
+    Vec<DeclaredRuntimeDependency>                     runtime_dependencies;
+    Vec<WorkspaceDependencyReference>                  workspace_dependencies;
+    Vec<WorkspaceDependencyReference>                  workspace_dev_dependencies;
+    Vec<WorkspaceRuntimeDependencyReference>           workspace_runtime_dependencies;
+    Vec<PkgConfigExternalDependency>                   pkg_config_external_dependencies;
+    Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
+    Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
+    Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
+};
+
+} // namespace lito

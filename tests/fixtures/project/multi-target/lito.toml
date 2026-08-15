@@ -9,6 +9,7 @@ archive = "fixture_multi"
 sources = ["src/lib.cppm"]
 
 [[bin]]
+link-stdlib = false
 name = "shared"
 sources = ["src/main.cpp"]
 
@@ -18,6 +19,7 @@ sources = ["src/main.cpp"]
 link-stdlib = false
 
 [[test]]
+link-stdlib = false
 name = "shared"
 sources = ["src/main.cpp"]
 
@@ -27,6 +29,7 @@ sources = ["src/main.cpp"]
 link-stdlib = false
 
 [[bench]]
+link-stdlib = false
 name = "shared"
 sources = ["src/main.cpp"]
 

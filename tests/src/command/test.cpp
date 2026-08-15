@@ -2,11 +2,9 @@
 
 import rstd;
 import rstd.test;
-import lito;
-import lito.manifest;
-import lito.source;
+import lito.driver;
+import lito.core;
 import lito.test.support;
-import lito.workspace.contract;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,8 +20,9 @@ TEST(TestCommand, TestAttachmentKeepsProductionArtifactsIsolated) {
     auto production = lito::build(
         build_request(root.as_path(), output.as_path(), strings("fixture-test-attach-lib"_str)));
     ASSERT_TRUE(production.is_ok());
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(*production, lito::ArtifactKind::TestAttachmentArchive), usize {});
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*production, lito::cpp::ArtifactKind::TestAttachmentArchive),
+              usize {});
     auto attachment_directory =
         output.join(PathBuf::from("test-attachments/fixture-test-attach/fixture-test-attach/"
                                   "fixture-test-attach-lib/fixture-test-attach-lib"_str)
@@ -36,9 +35,10 @@ TEST(TestCommand, TestAttachmentKeepsProductionArtifactsIsolated) {
     });
     ASSERT_TRUE(tested.is_ok());
     EXPECT_TRUE(tested->success());
-    EXPECT_EQ(artifact_count(tested->build, lito::ArtifactKind::StaticLibrary), usize(1));
-    EXPECT_EQ(artifact_count(tested->build, lito::ArtifactKind::TestAttachmentArchive), usize(1));
-    EXPECT_EQ(artifact_count(tested->build, lito::ArtifactKind::TestExecutable), usize(1));
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::TestAttachmentArchive),
+              usize(1));
+    EXPECT_EQ(artifact_count(tested->build, lito::cpp::ArtifactKind::TestExecutable), usize(1));
     EXPECT_TRUE(
         rstd::fs::exists(
             attachment_directory.join(PathBuf::from("libfixture_test_attach.test.a"_str).as_path())
@@ -74,7 +74,7 @@ TEST(TestCommand, TestRunsPassFailureSignalAndNoRun) {
     ASSERT_TRUE(no_run.is_ok());
     EXPECT_EQ(no_run->build.profile.as_str(), "release"_str);
     EXPECT_TRUE(no_run->executions.is_empty());
-    EXPECT_EQ(artifact_count(no_run->build, lito::ArtifactKind::TestExecutable), usize(3));
+    EXPECT_EQ(artifact_count(no_run->build, lito::cpp::ArtifactKind::TestExecutable), usize(3));
 
     auto failure = lito::test(lito::TestRequest {
         .build = build_request(root.as_path(), output.as_path(), strings("fixture-test-fail"_str)),

@@ -1,10 +1,9 @@
 module;
 #include <rstd/enum.hpp>
 
-export module lito.configure_template;
+export module lito.core:configure_template;
 
 import rstd;
-import lito.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -61,7 +60,7 @@ class TemplateError {
 };
 
 template<typename T>
-using TemplateResult = rstd::Result<T, TemplateError>;
+using TemplateResult = Result<T, TemplateError>;
 
 auto configure_placeholder_name_is_valid(ref<str> name) noexcept -> bool {
     if (name.is_empty()) return false;
@@ -77,7 +76,7 @@ auto configure_placeholder_name_is_valid(ref<str> name) noexcept -> bool {
     return true;
 }
 
-auto render_configure_template(ref<str>                input,
+auto render_configure_template(ref<str>               input,
                                const ConfigureValues& values,
                                ref<rstd::path::Path>  source) -> TemplateResult<String> {
     auto output        = String::make();
@@ -135,8 +134,8 @@ auto render_configure_template(ref<str>                input,
     auto keys = values.keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (used.contains_key((**key).as_str())) continue;
-        return Err(TemplateError::Message(rstd::format(
-            "template '{}' does not use value '{}'", source, (**key).as_str())));
+        return Err(TemplateError::Message(
+            rstd::format("template '{}' does not use value '{}'", source, (**key).as_str())));
     }
     return Ok(rstd::move(output));
 }
@@ -161,6 +160,7 @@ struct Impl<fmt::Debug, lito::TemplateError> : ImplBase<lito::TemplateError> {
 };
 
 template<>
-struct Impl<error::Error, lito::TemplateError> : DefaultInImpl<error::Error, lito::TemplateError> {};
+struct Impl<error::Error, lito::TemplateError> : DefaultInImpl<error::Error, lito::TemplateError> {
+};
 
 } // namespace rstd

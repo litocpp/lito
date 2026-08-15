@@ -3,5 +3,6 @@ name = "fixture-conventional-invalid-workspace-root"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-conventional-invalid-workspace-root"
 sources = ["main.cpp"]

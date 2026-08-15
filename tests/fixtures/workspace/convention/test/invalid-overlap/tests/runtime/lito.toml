@@ -3,5 +3,6 @@ name = "fixture-conventional-overlap-test"
 version.workspace = true
 
 [[test]]
+link-stdlib = false
 name = "fixture-conventional-overlap-test"
 sources = ["main.cpp"]

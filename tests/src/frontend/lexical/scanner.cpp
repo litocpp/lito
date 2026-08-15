@@ -99,9 +99,9 @@ struct EmptyScanner {
     }
 };
 
-static_assert(rstd::Impled<FixtureLanguageA, Language>);
-static_assert(rstd::Impled<FixtureLanguageB, Language>);
-static_assert(rstd::Impled<FixtureScanner, Scanner>);
+static_assert(Impled<FixtureLanguageA, Language>);
+static_assert(Impled<FixtureLanguageB, Language>);
+static_assert(Impled<FixtureScanner, Scanner>);
 
 auto fixture_source(ref<str> contents) -> SourceFile {
     return SourceFile::make(usize(7),
@@ -125,7 +125,7 @@ TEST(LexicalLanguage, KeepsLocalSymbolsScoped) {
 TEST(LexicalScanner, UsesValidSymbolsAndMarkedEnd) {
     auto session = ScannerSession::make<FixtureLanguageA>(fixture_source(" \r\nabx"_str));
     auto scanner = FixtureScanner {};
-    auto valid   = rstd::array<SymbolId, 1> { FIXTURE_A_LONG };
+    auto valid   = array<SymbolId, 1> { FIXTURE_A_LONG };
     auto token   = session.scan(scanner, valid.as_slice());
     ASSERT_TRUE(token.is_ok());
     ASSERT_TRUE(token->is_some());
@@ -139,7 +139,7 @@ TEST(LexicalScanner, UsesValidSymbolsAndMarkedEnd) {
     EXPECT_EQ(session.position().offset, usize(5));
 
     auto short_session = ScannerSession::make<FixtureLanguageA>(fixture_source("ab"_str));
-    auto short_valid   = rstd::array<SymbolId, 1> { FIXTURE_A_SHORT };
+    auto short_valid   = array<SymbolId, 1> { FIXTURE_A_SHORT };
     auto short_token   = short_session.scan(scanner, short_valid.as_slice());
     ASSERT_TRUE(short_token.is_ok());
     ASSERT_TRUE(short_token->is_some());
@@ -148,7 +148,7 @@ TEST(LexicalScanner, UsesValidSymbolsAndMarkedEnd) {
 }
 
 TEST(LexicalScanner, RollsBackAndRejectsInvalidResults) {
-    auto valid = rstd::array<SymbolId, 1> { FIXTURE_A_SHORT };
+    auto valid = array<SymbolId, 1> { FIXTURE_A_SHORT };
 
     auto failed_session = ScannerSession::make<FixtureLanguageA>(fixture_source("abc"_str));
     auto failed_scanner = ConsumingFailureScanner {};
@@ -169,7 +169,7 @@ TEST(LexicalScanner, RollsBackAndRejectsInvalidResults) {
     EXPECT_TRUE(foreign.is_err());
     EXPECT_EQ(foreign_session.position().offset, usize {});
 
-    auto wrong_valid = rstd::array<SymbolId, 1> { FIXTURE_B_SHORT };
+    auto wrong_valid = array<SymbolId, 1> { FIXTURE_B_SHORT };
     auto mixed       = failed_session.scan(failed_scanner, wrong_valid.as_slice());
     EXPECT_TRUE(mixed.is_err());
 
@@ -190,10 +190,10 @@ TEST(LexicalScanner, UsesByteOffsetsForUtf8) {
         }
     };
 
-    static_assert(rstd::Impled<Utf8Scanner, Scanner>);
+    static_assert(Impled<Utf8Scanner, Scanner>);
     auto session = ScannerSession::make<FixtureLanguageA>(fixture_source("é"_str));
     auto scanner = Utf8Scanner {};
-    auto valid   = rstd::array<SymbolId, 1> { FIXTURE_A_SHORT };
+    auto valid   = array<SymbolId, 1> { FIXTURE_A_SHORT };
     auto token   = session.scan(scanner, valid.as_slice());
     ASSERT_TRUE(token.is_ok());
     ASSERT_TRUE(token->is_some());
@@ -204,32 +204,32 @@ TEST(LexicalScanner, UsesByteOffsetsForUtf8) {
 }
 
 TEST(CppWordScanner, OwnsCppWordClassification) {
-    auto session = ScannerSession::make<CppLexicalLanguage>(
+    auto session = ScannerSession::make<cpp::CppLexicalLanguage>(
         fixture_source("module import export name class"_str));
-    auto scanner = CppWordScanner {};
+    auto scanner = cpp::CppWordScanner {};
 
-    auto identifier = rstd::array<SymbolId, 1> { CPP_IDENTIFIER_SYMBOL };
+    auto identifier = array<SymbolId, 1> { cpp::CPP_IDENTIFIER_SYMBOL };
     auto module     = session.scan(scanner, identifier.as_slice());
     ASSERT_TRUE(module.is_ok());
     ASSERT_TRUE(module->is_some());
-    EXPECT_TRUE((**module).symbol == CPP_IDENTIFIER_SYMBOL);
+    EXPECT_TRUE((**module).symbol == cpp::CPP_IDENTIFIER_SYMBOL);
 
-    auto import_symbols = rstd::array<SymbolId, 2> { CPP_IMPORT_SYMBOL, CPP_IDENTIFIER_SYMBOL };
+    auto import_symbols = array<SymbolId, 2> { cpp::CPP_IMPORT_SYMBOL, cpp::CPP_IDENTIFIER_SYMBOL };
     auto import_token   = session.scan(scanner, import_symbols.as_slice());
     ASSERT_TRUE(import_token.is_ok());
     ASSERT_TRUE(import_token->is_some());
-    EXPECT_TRUE((**import_token).symbol == CPP_IMPORT_SYMBOL);
+    EXPECT_TRUE((**import_token).symbol == cpp::CPP_IMPORT_SYMBOL);
 
-    auto export_symbols = rstd::array<SymbolId, 1> { CPP_EXPORT_SYMBOL };
+    auto export_symbols = array<SymbolId, 1> { cpp::CPP_EXPORT_SYMBOL };
     auto export_token   = session.scan(scanner, export_symbols.as_slice());
     ASSERT_TRUE(export_token.is_ok());
     ASSERT_TRUE(export_token->is_some());
-    EXPECT_TRUE((**export_token).symbol == CPP_EXPORT_SYMBOL);
+    EXPECT_TRUE((**export_token).symbol == cpp::CPP_EXPORT_SYMBOL);
 
     auto name = session.scan(scanner, identifier.as_slice());
     ASSERT_TRUE(name.is_ok());
     ASSERT_TRUE(name->is_some());
-    EXPECT_TRUE((**name).symbol == CPP_IDENTIFIER_SYMBOL);
+    EXPECT_TRUE((**name).symbol == cpp::CPP_IDENTIFIER_SYMBOL);
 
     auto keyword = session.scan(scanner, identifier.as_slice());
     ASSERT_TRUE(keyword.is_ok());

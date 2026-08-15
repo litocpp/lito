@@ -3,6 +3,7 @@ name = "fixture-workspace-inherited-outside"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-workspace-inherited-outside"
 sources = ["main.cpp"]
 

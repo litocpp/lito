@@ -1,11 +1,8 @@
 export module lito.executable;
 
 import rstd;
-import lito;
-import lito.source.contract;
-import lito.workspace.contract;
+import lito.driver;
 import :cli;
-import lito.command.reporting;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -99,12 +96,12 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
 
 auto build_configuration(lito::ToolchainSpec   toolchain,
                          lito::StandardLibrary standard_library,
-                         Vec<String>           options) -> lito::BuildConfiguration {
-    return lito::BuildConfiguration {
+                         Vec<String>           options) -> lito::cpp::BuildConfiguration {
+    return lito::cpp::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
         .standard_library  = standard_library,
-        .bmi_mode          = lito::BmiMode::Reduced,
-        .language_standard = lito::String::make("c++20"_str),
+        .bmi_mode          = lito::cpp::BmiMode::Reduced,
+        .language_standard = String::make("c++20"_str),
         .options           = rstd::move(options),
     };
 }
@@ -121,12 +118,12 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     auto counts = ArtifactCounts {};
     for (const auto& artifact : summary.artifacts) {
         switch (artifact.kind) {
-        case lito::ArtifactKind::StaticLibrary: ++counts.archives; break;
-        case lito::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
-        case lito::ArtifactKind::Executable: ++counts.executables; break;
-        case lito::ArtifactKind::TestExecutable: ++counts.tests; break;
-        case lito::ArtifactKind::BenchmarkExecutable: ++counts.benchmarks; break;
-        case lito::ArtifactKind::CompileTest: ++counts.compile_tests; break;
+        case lito::cpp::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::Executable: ++counts.executables; break;
+        case lito::cpp::ArtifactKind::TestExecutable: ++counts.tests; break;
+        case lito::cpp::ArtifactKind::BenchmarkExecutable: ++counts.benchmarks; break;
+        case lito::cpp::ArtifactKind::CompileTest: ++counts.compile_tests; break;
         }
     }
     return counts;
@@ -174,13 +171,13 @@ void apply_source_options(lito::PackageSourceConfig& sources,
 }
 
 template<typename E>
-    requires rstd::Impled<E, rstd::error::Error>
+    requires Impled<E, rstd::error::Error>
 void report_error(const E& error) {
     rstd::io::eprintln("lito: {}", error);
     const void* seen_data[32] {};
     const void* seen_metadata[32] {};
     auto        seen_count = usize {};
-    auto        source     = rstd::as<rstd::error::Error>(error).source();
+    auto        source     = as<rstd::error::Error>(error).source();
     while (source.is_some() && seen_count < usize(32)) {
         auto address  = source->as_raw_ptr();
         auto metadata = static_cast<const void*>(source->metadata());
@@ -351,7 +348,7 @@ extern "C++" int main() {
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         auto event_context                   = EventContext { .verbose = options.verbose };
-        request.build.observer               = Some(lito::BuildObserver {
+        request.build.observer               = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
@@ -411,7 +408,7 @@ extern "C++" int main() {
             .environment = rstd::move(project.environment),
             .lock        = rstd::move(project.lock),
             .sources     = rstd::move(project.sources),
-            .observer    = Some(lito::BuildObserver {
+            .observer    = Some(lito::BuildEventSink {
                 .context = rstd::addressof(event_context),
                 .notify  = observe,
             }),
@@ -440,7 +437,7 @@ extern "C++" int main() {
         request.selection.packages = rstd::move(options.packages);
         request.mode       = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
         auto event_context = EventContext {};
-        request.observer   = Some(lito::BuildObserver {
+        request.observer   = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
@@ -487,7 +484,7 @@ extern "C++" int main() {
         request.locked             = options.locked || options.frozen;
         if (options.profile.is_some()) request.profile = Some(options.profile->clone());
         auto event_context = EventContext { .standard_error = true };
-        request.observer   = Some(lito::BuildObserver {
+        request.observer   = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
@@ -550,11 +547,11 @@ extern "C++" int main() {
         }
         request.data_only      = options.data_only;
         auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildObserver {
+        request.build.observer = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
-        request.observer       = Some(lito::DocObserver {
+        request.observer       = Some(lito::DocEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe_doc,
         });
@@ -612,7 +609,7 @@ extern "C++" int main() {
         request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildObserver {
+        request.build.observer = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
@@ -734,7 +731,7 @@ extern "C++" int main() {
         request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
         auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildObserver {
+        request.build.observer = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
@@ -830,7 +827,7 @@ extern "C++" int main() {
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 
-    request.observer = Some(lito::BuildObserver {
+    request.observer = Some(lito::BuildEventSink {
         .context = rstd::addressof(event_context),
         .notify  = observe,
     });

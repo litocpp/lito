@@ -3,12 +3,8 @@
 import rstd;
 import rstd.test;
 import lito.test.cpp;
-import lito.error;
-import lito.compiler.arguments;
+import lito.core;
 import lito.cpp;
-import lito.cpp.bmi;
-import lito.package.target_contract;
-import lito.build.plan_contract;
 import lito.toolchain;
 
 using namespace rstd::prelude;
@@ -26,28 +22,28 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(toolchain.capabilities().reduced_bmi);
     EXPECT_TRUE(toolchain.capabilities().one_phase_bmi);
     EXPECT_TRUE(toolchain.capabilities().exact_module_mapping);
-    auto cpp     = cpp_options("c++20"_str, CppOptimization::None, CppDebugInfo::None);
-    auto context = CompileContext {
+    auto cpp     = cpp_options("c++20"_str, lito::CppOptimization::None, lito::CppDebugInfo::None);
+    auto context = cpp::CompileContext {
         .id  = String::make("context"_str),
         .cpp = rstd::move(cpp),
     };
     EXPECT_TRUE(toolchain.validate(context.cpp, context.bmi).is_ok());
-    auto prepared = PreparedUnit {
+    auto prepared = cpp::PreparedUnit {
         .unit =
-            UnitSpec {
+            cpp::UnitSpec {
                 .source  = PathBuf::from("/tmp/lito-bmi-consumer.cpp"_str),
                 .object  = PathBuf::from("/tmp/lito-bmi-consumer.o"_str),
                 .context = rstd::addressof(context),
             },
         .working_directory = PathBuf::from("/tmp"_str),
     };
-    auto dependencies = lito::Vec<ModuleArtifactDependency>::make();
-    dependencies.push(ModuleArtifactDependency {
+    auto dependencies = Vec<cpp::ModuleArtifactDependency>::make();
+    dependencies.push(cpp::ModuleArtifactDependency {
         .logical_name = String::make("sample.module"_str),
-        .artifact_key = BmiArtifactKey { .value = String::make("artifact-key"_str) },
+        .artifact_key = cpp::BmiArtifactKey { .value = String::make("artifact-key"_str) },
         .path         = PathBuf::from("/tmp/sample.module.pcm"_str),
     });
-    auto invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
+    auto invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
     EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
     EXPECT_FALSE(has_argument(invocation->arguments, "-fsized-deallocation"_str));
@@ -61,8 +57,9 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
                              "-fmodule-file=sample.module=/tmp/sample.module.pcm"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));
 
-    context.cpp.language.sized_deallocation = CppSizedDeallocation::Disabled;
-    auto disabled_invocation = toolchain.prepare_compile(prepared, ScanResult {}, dependencies);
+    context.cpp.language.sized_deallocation = cpp::CppSizedDeallocation::Disabled;
+    auto disabled_invocation =
+        toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(disabled_invocation.is_ok());
     EXPECT_TRUE(has_argument(disabled_invocation->arguments, "-fno-sized-deallocation"_str));
 }

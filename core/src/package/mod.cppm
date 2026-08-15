@@ -1,10 +1,9 @@
-export module lito.package;
+export module lito.core:package;
 
-export import lito.package.identity;
-export import lito.package.graph_contract;
-export import lito.package.runtime;
-export import lito.package.target_contract;
-export import lito.package.error_contract;
-export import :plan;
-export import :adapter;
-export import :resolver;
+export import :package.identity;
+export import :package.graph;
+export import :package.runtime;
+export import :package.error;
+export import :package.resolver;
+export import :package.selection_error;
+export import :package.selection;

@@ -3,10 +3,12 @@ name = "fixture-configure-file"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "configure-file"
 sources = ["src/main.cpp"]
 
 [[test]]
+link-stdlib = false
 name = "configure-file-test"
 sources = ["src/main.cpp"]
 

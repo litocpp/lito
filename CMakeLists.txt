@@ -60,6 +60,9 @@ FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)
 add_subdirectory(core)
+add_subdirectory(cpp)
+add_subdirectory(toolchain)
+add_subdirectory(driver)
 add_subdirectory(cli)
 
 install(FILES schema/lito.schema.json DESTINATION ${CMAKE_INSTALL_DATADIR}/lito)

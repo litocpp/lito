@@ -1,19 +1,21 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.manifest:build_tool_schema;
+module lito.core:manifest.build_tool_schema;
 
 import rstd;
 import rstd.toml;
-import lito.error;
-import lito.manifest.contract;
-import lito.package.identity;
-import lito.platform;
-import :primitives;
-import :key_schema;
-import :convention;
+import :manifest.build_tool;
+import :manifest.error;
+import :package.identity;
+import lito.system;
+import :manifest.primitives;
+import :manifest.key_schema;
+import :manifest.convention;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
+using namespace lito::system;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
 
@@ -47,7 +49,7 @@ auto parse_host_key(ref<str> value, ref<str> context) -> ManifestSchemaResult<Ho
         }
     }
     if (separator.is_none() || *separator == usize {} || *separator + usize(1) >= value.len()) {
-        return failure<HostInfo>(
+        return manifest_schema_failure<HostInfo>(
             rstd::format("{} must use '<os>-<architecture>'", context));
     }
     auto os   = value.get(usize {}, *separator).unwrap();
@@ -55,14 +57,14 @@ auto parse_host_key(ref<str> value, ref<str> context) -> ManifestSchemaResult<Ho
     for (auto character : os) {
         const auto ascii = character.to_primitive();
         if (! ((ascii >= 'a' && ascii <= 'z') || (ascii >= '0' && ascii <= '9'))) {
-            return failure<HostInfo>(rstd::format("{} contains an invalid OS", context));
+            return manifest_schema_failure<HostInfo>(
+                rstd::format("{} contains an invalid OS", context));
         }
     }
     auto architecture = canonical_architecture(arch);
     if (architecture.is_err()) {
-        return failure<HostInfo>(rstd::format("{} contains unsupported architecture '{}'",
-                                              context,
-                                              arch));
+        return manifest_schema_failure<HostInfo>(
+            rstd::format("{} contains unsupported architecture '{}'", context, arch));
     }
     return Ok(HostInfo {
         .architecture = rstd::move(architecture).unwrap(),
@@ -70,72 +72,69 @@ auto parse_host_key(ref<str> value, ref<str> context) -> ManifestSchemaResult<Ho
     });
 }
 
-auto parse_build_tools(Option<ref<Toml>> value)
-    -> ManifestSchemaResult<Vec<BuildToolRequirement>> {
+auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<BuildToolRequirement>> {
     auto result = Vec<BuildToolRequirement>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto tools = rstd_try(table_value(**value, "manifest.build-tools"_str));
+    auto tools   = rstd_try(table_value(**value, "manifest.build-tools"_str));
     auto aliases = tools->keys();
     for (auto alias = aliases.next(); alias.is_some(); alias = aliases.next()) {
         const auto context = rstd::format("manifest.build-tools.{}", **alias);
         if (! package_name_is_valid((**alias).as_str())) {
-            return failure<Vec<BuildToolRequirement>>(
+            return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{} is not a valid tool alias", context));
         }
         auto value = tools->get((**alias).as_str());
         auto table = rstd_try(table_value(**value, context.as_str()));
         rstd_try(reject_unknown(*table, context.as_str(), build_tool_key));
-        auto version = rstd_try(required_string(**value, "version"_str, context.as_str()));
-        auto executable =
-            rstd_try(required_string(**value, "executable"_str, context.as_str()));
+        auto version    = rstd_try(required_string(**value, "version"_str, context.as_str()));
+        auto executable = rstd_try(required_string(**value, "executable"_str, context.as_str()));
         if (! exact_build_tool_version(version.as_str())) {
-            return failure<Vec<BuildToolRequirement>>(
+            return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{}.version must be an exact non-empty version", context));
         }
         auto executable_path = PathBuf::from(rstd::move(executable));
         if (executable_path.is_empty() || ! executable_path.as_path().is_safe_relative()) {
-            return failure<Vec<BuildToolRequirement>>(
+            return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{}.executable must be a safe non-empty relative path", context));
         }
         auto archives_value = member(**value, "archives"_str);
         if (archives_value.is_none()) {
-            return failure<Vec<BuildToolRequirement>>(
+            return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{} is missing 'archives'", context));
         }
-        auto archives_table = rstd_try(
-            table_value(**archives_value, rstd::format("{}.archives", context).as_str()));
+        auto archives_table =
+            rstd_try(table_value(**archives_value, rstd::format("{}.archives", context).as_str()));
         auto archives = Vec<BuildToolArchiveManifest>::make();
         auto hosts    = archives_table->keys();
         for (auto host = hosts.next(); host.is_some(); host = hosts.next()) {
             const auto archive_context = rstd::format("{}.archives.{}", context, **host);
             auto       archive_value   = archives_table->get((**host).as_str());
-            auto archive_table =
-                rstd_try(table_value(**archive_value, archive_context.as_str()));
-            rstd_try(reject_unknown(
-                *archive_table, archive_context.as_str(), build_tool_archive_key));
+            auto archive_table = rstd_try(table_value(**archive_value, archive_context.as_str()));
+            rstd_try(
+                reject_unknown(*archive_table, archive_context.as_str(), build_tool_archive_key));
             auto url =
                 rstd_try(required_string(**archive_value, "url"_str, archive_context.as_str()));
-            auto sha256 = rstd_try(
-                required_string(**archive_value, "sha256"_str, archive_context.as_str()));
+            auto sha256 =
+                rstd_try(required_string(**archive_value, "sha256"_str, archive_context.as_str()));
             if (! url.as_str().starts_with("https://"_str) ||
                 ! archive_url_is_valid(url.as_str())) {
-                return failure<Vec<BuildToolRequirement>>(
+                return manifest_schema_failure<Vec<BuildToolRequirement>>(
                     rstd::format("{}.url must be an HTTPS archive URL", archive_context));
             }
             if (! sha256_is_valid(sha256.as_str())) {
-                return failure<Vec<BuildToolRequirement>>(
-                    rstd::format("{}.sha256 must be a 64-character hexadecimal digest",
-                                 archive_context));
+                return manifest_schema_failure<Vec<BuildToolRequirement>>(rstd::format(
+                    "{}.sha256 must be a 64-character hexadecimal digest", archive_context));
             }
-            auto parsed_host = rstd_try(parse_host_key((**host).as_str(), archive_context.as_str()));
+            auto parsed_host =
+                rstd_try(parse_host_key((**host).as_str(), archive_context.as_str()));
             for (const auto& existing : archives) {
                 if (existing.host.os == parsed_host.os.as_str() &&
                     existing.host.architecture == parsed_host.architecture) {
-                    return failure<Vec<BuildToolRequirement>>(rstd::format(
-                        "{}.archives repeats canonical host '{}-{}'",
-                        context,
-                        parsed_host.os.as_str(),
-                        parsed_host.architecture.as_str()));
+                    return manifest_schema_failure<Vec<BuildToolRequirement>>(
+                        rstd::format("{}.archives repeats canonical host '{}-{}'",
+                                     context,
+                                     parsed_host.os.as_str(),
+                                     parsed_host.architecture.as_str()));
                 }
             }
             archives.push(BuildToolArchiveManifest {
@@ -145,7 +144,7 @@ auto parse_build_tools(Option<ref<Toml>> value)
             });
         }
         if (archives.is_empty()) {
-            return failure<Vec<BuildToolRequirement>>(
+            return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{}.archives must not be empty", context));
         }
         result.push(BuildToolRequirement {

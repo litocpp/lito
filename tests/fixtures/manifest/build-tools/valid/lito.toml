@@ -3,6 +3,7 @@ name = "build-tool-valid"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "tool-consumer"
 sources = ["main.cpp"]
 resources = [

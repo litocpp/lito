@@ -3,6 +3,7 @@ name = "fixture-associated-workspace-test"
 version.workspace = true
 
 [[test]]
+link-stdlib = false
 name = "fixture-associated-workspace-test"
 sources = ["main.cpp"]
 

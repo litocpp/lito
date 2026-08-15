@@ -3,6 +3,7 @@ name = "fixture-multiple-primary-modules"
 version = "0.1.0"
 
 [[bin]]
+link-stdlib = false
 name = "fixture-multiple-primary-modules"
 sources = [
   "src/alpha.cppm",

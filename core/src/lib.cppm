@@ -1,27 +1,29 @@
-export module lito;
+export module lito.core;
 
-export import lito.error;
-export import lito.cpp;
-export import lito.compiler.arguments;
-export import lito.cpp.bmi;
-export import lito.build.configuration;
-export import lito.build.contract;
-export import lito.build.profile;
-export import lito.command.project_contract;
-export import lito.command.scan_contract;
-export import lito.lock.contract;
-export import lito.lock.flatpak;
-export import lito.package.identity;
-export import lito.package.target_contract;
-export import lito.toolchain.spec;
-export import lito.config;
-export import lito.build;
-export import lito.command.test;
-export import lito.command.bench;
-export import lito.command.scan;
-export import lito.command.doc;
-export import lito.command.format;
-export import lito.command.update;
-export import lito.install;
-export import lito.command.install;
-export import lito.command.reporting;
+import rstd;
+
+export import lito.system;
+export import :config;
+export import :configure_template;
+export import :dependency;
+export import :lock;
+export import :lock.flatpak;
+export import :manifest;
+export import :package;
+export import :source;
+export import :workspace;
+
+using namespace rstd::prelude;
+
+export namespace lito
+{
+
+using PathBuf  = rstd::path::PathBuf;
+using ErrorBox = Box<dyn<rstd::error::Error>>;
+
+template<typename E>
+auto erase_error(E error) -> ErrorBox {
+    return ErrorBox::make(rstd::move(error));
+}
+
+} // namespace lito

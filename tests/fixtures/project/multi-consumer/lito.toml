@@ -3,6 +3,7 @@ name = "fixture-multi-consumer"
 version = { workspace = true }
 
 [[bin]]
+link-stdlib = false
 name = "fixture-multi-consumer"
 sources = ["src/main.cpp"]
 

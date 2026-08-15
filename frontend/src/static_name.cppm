@@ -7,10 +7,10 @@ using namespace rstd::prelude;
 export namespace lito::frontend
 {
 
-inline constexpr rstd::uint64_t COMPARABLE_NAME_HASH_OFFSET = 14695981039346656037ull;
-inline constexpr rstd::uint64_t COMPARABLE_NAME_HASH_PRIME  = 1099511628211ull;
+inline constexpr uint64_t COMPARABLE_NAME_HASH_OFFSET = 14695981039346656037ull;
+inline constexpr uint64_t COMPARABLE_NAME_HASH_PRIME  = 1099511628211ull;
 
-constexpr auto comparable_name_hash(ref<str> name) noexcept -> rstd::uint64_t {
+constexpr auto comparable_name_hash(ref<str> name) noexcept -> uint64_t {
     auto hash = COMPARABLE_NAME_HASH_OFFSET;
     for (auto value : name) {
         hash ^= value.to_primitive();
@@ -47,7 +47,7 @@ struct StaticNameSet {
     }
 
     template<typename Function>
-    static constexpr auto visit(rstd::uint64_t hash, ref<str> name, Function&& function) -> bool {
+    static constexpr auto visit(uint64_t hash, ref<str> name, Function&& function) -> bool {
         return (((hash == Types::hash && name == Types::name) &&
                  (function(rstd::mtp::type_c<Types>), true)) ||
                 ...);
@@ -57,7 +57,7 @@ struct StaticNameSet {
         return contains(comparable_name_hash(name), name);
     }
 
-    static constexpr auto contains(rstd::uint64_t hash, ref<str> name) -> bool {
+    static constexpr auto contains(uint64_t hash, ref<str> name) -> bool {
         return (((hash == Types::hash) && name == Types::name) || ...);
     }
 

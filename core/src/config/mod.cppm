@@ -1,4 +1,6 @@
-export module lito.config;
+export module lito.core:config;
 
-export import lito.config.contract;
-export import :document;
+export import :config.error;
+export import :config.toolchain;
+export import :config.project;
+export import :config.document;

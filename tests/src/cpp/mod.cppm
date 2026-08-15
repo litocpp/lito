@@ -1,12 +1,8 @@
 export module lito.test.cpp;
 
 import rstd;
-import lito.error;
-import lito.compiler.arguments;
+import lito.core;
 import lito.cpp;
-import lito.cpp.bmi;
-import lito.package.target_contract;
-import lito.build.plan_contract;
 import lito.toolchain;
 
 using namespace rstd::prelude;
@@ -17,45 +13,45 @@ export namespace lito_test
 {
 
 template<typename... Values>
-auto strings(Values... values) -> lito::Vec<String> {
-    auto result = lito::Vec<String>::with_capacity(usize(sizeof...(Values)));
+auto strings(Values... values) -> Vec<String> {
+    auto result = Vec<String>::with_capacity(usize(sizeof...(Values)));
     (result.push(String::make(values)), ...);
     return result;
 }
 
 template<typename... Values>
-auto paths(Values... values) -> lito::Vec<PathBuf> {
-    auto result = lito::Vec<PathBuf>::with_capacity(usize(sizeof...(Values)));
+auto paths(Values... values) -> Vec<PathBuf> {
+    auto result = Vec<PathBuf>::with_capacity(usize(sizeof...(Values)));
     (result.push(PathBuf::from(values)), ...);
     return result;
 }
 
-auto argument_layer(lito::Vec<String> options) -> CppArgumentLayer {
+auto argument_layer(Vec<String> options) -> cpp::CppArgumentLayer {
     auto parser = make_clang_cpp_argument_parser();
-    if (parser.is_err()) return CppArgumentLayer {};
+    if (parser.is_err()) return cpp::CppArgumentLayer {};
     auto parsed = parser->parse(options, "cpp test"_str);
-    return parsed.is_ok() ? rstd::move(parsed).unwrap() : CppArgumentLayer {};
+    return parsed.is_ok() ? rstd::move(parsed).unwrap() : cpp::CppArgumentLayer {};
 }
 
-auto cpp_options(ref<str>          standard,
-                 CppOptimization   optimization,
-                 CppDebugInfo      debug_info,
-                 lito::Vec<String> options = {}) -> CppCompileOptions {
-    auto result = make_cpp_options(standard,
-                                   StandardLibrary::Libcxx,
-                                   false,
-                                   false,
-                                   optimization,
-                                   debug_info,
-                                   CppOptionLayer {
-                                       .arguments = argument_layer(rstd::move(options)),
-                                   });
-    if (result.is_err()) return CppCompileOptions {};
+auto cpp_options(ref<str>              standard,
+                 lito::CppOptimization optimization,
+                 lito::CppDebugInfo    debug_info,
+                 Vec<String>           options = {}) -> cpp::CppCompileOptions {
+    auto result = cpp::make_cpp_options(standard,
+                                        StandardLibrary::Libcxx,
+                                        false,
+                                        false,
+                                        optimization,
+                                        debug_info,
+                                        cpp::CppOptionLayer {
+                                            .arguments = argument_layer(rstd::move(options)),
+                                        });
+    if (result.is_err()) return cpp::CppCompileOptions {};
     return rstd::move(result).unwrap();
 }
 
-auto format(ref<str> build = "clang-build-a"_str) -> BmiFormatIdentity {
-    return BmiFormatIdentity {
+auto format(ref<str> build = "clang-build-a"_str) -> cpp::BmiFormatIdentity {
+    return cpp::BmiFormatIdentity {
         .family               = String::make("clang"_str),
         .compiler_build       = String::make(build),
         .target               = String::make("x86_64-unknown-linux-gnu"_str),
@@ -63,20 +59,20 @@ auto format(ref<str> build = "clang-build-a"_str) -> BmiFormatIdentity {
     };
 }
 
-auto artifact_key(BmiRepresentation        representation,
-                  BmiSourceEmbeddingPolicy embedding,
-                  ref<str>                 dependency,
-                  ref<str> source_content = "source-content-a"_str) -> BmiArtifactKey {
-    auto dependencies = lito::Vec<BmiRecipeDependency>::make();
+auto artifact_key(cpp::BmiRepresentation        representation,
+                  cpp::BmiSourceEmbeddingPolicy embedding,
+                  ref<str>                      dependency,
+                  ref<str> source_content = "source-content-a"_str) -> cpp::BmiArtifactKey {
+    auto dependencies = Vec<cpp::BmiRecipeDependency>::make();
     if (! dependency.is_empty()) {
-        dependencies.push(BmiRecipeDependency {
+        dependencies.push(cpp::BmiRecipeDependency {
             .logical_name = String::make("dependency"_str),
             .artifact_key = String::make(dependency),
         });
     }
-    return make_bmi_artifact_key(BmiRecipe {
+    return cpp::make_bmi_artifact_key(cpp::BmiRecipe {
         .request =
-            BmiRequest {
+            cpp::BmiRequest {
                 .representation   = representation,
                 .source_embedding = embedding,
             },
@@ -91,14 +87,14 @@ auto artifact_key(BmiRepresentation        representation,
     });
 }
 
-auto has_argument(const lito::Vec<String>& arguments, ref<str> expected) -> bool {
+auto has_argument(const Vec<String>& arguments, ref<str> expected) -> bool {
     for (const auto& argument : arguments) {
         if (argument.as_str() == expected) return true;
     }
     return false;
 }
 
-auto has_prefix(const lito::Vec<String>& arguments, ref<str> prefix) -> bool {
+auto has_prefix(const Vec<String>& arguments, ref<str> prefix) -> bool {
     for (const auto& argument : arguments) {
         if (argument.as_str().starts_with(prefix)) return true;
     }

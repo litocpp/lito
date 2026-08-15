@@ -40,7 +40,7 @@ template<typename Sources,
          typename Events,
          typename Consumer,
          typename Observer>
-    requires rstd::Impled<Identifiers, TokenMatcher>
+    requires Impled<Identifiers, TokenMatcher>
 class PreprocessorSession {
     struct ConditionalFrame {
         bool           parent_active { false };
@@ -94,21 +94,21 @@ class PreprocessorSession {
     };
 
     struct RawStatistics {
-        rstd::size_t files {};
-        rstd::size_t source_tokens {};
-        rstd::size_t source_comments {};
-        rstd::size_t active_comments {};
-        rstd::size_t token_clones {};
-        rstd::size_t synthetic_tokens {};
-        rstd::size_t directives {};
-        rstd::size_t conditionals {};
-        rstd::size_t macro_lookups {};
-        rstd::size_t macro_lookup_hits {};
-        rstd::size_t macro_expansions {};
-        rstd::size_t include_attempts {};
-        rstd::size_t include_hits {};
-        rstd::size_t consumer_batches {};
-        rstd::size_t consumer_tokens {};
+        size_t files {};
+        size_t source_tokens {};
+        size_t source_comments {};
+        size_t active_comments {};
+        size_t token_clones {};
+        size_t synthetic_tokens {};
+        size_t directives {};
+        size_t conditionals {};
+        size_t macro_lookups {};
+        size_t macro_lookup_hits {};
+        size_t macro_expansions {};
+        size_t include_attempts {};
+        size_t include_hits {};
+        size_t consumer_batches {};
+        size_t consumer_tokens {};
     };
 
     class ActivityGuard {
@@ -151,7 +151,7 @@ public:
     auto run() -> Result<PreprocessedTranslationUnit> {
         {
             auto activity   = ActivityGuard(*this, PreprocessorActivity::PredefinedMacros);
-            auto predefined = rstd::as<BuiltinProvider>(builtin_provider_).predefined_macros();
+            auto predefined = as<BuiltinProvider>(builtin_provider_).predefined_macros();
             if (predefined.is_err()) return Err(rstd::move(predefined).unwrap_err());
             for (auto& operation : *predefined) {
                 if (operation.kind == PredefinedMacroOperationKind::Define) {
@@ -180,7 +180,7 @@ public:
             }
         }
         auto statistics = finish_statistics();
-        rstd::as<PreprocessorObserver>(observer_).record(statistics);
+        as<PreprocessorObserver>(observer_).record(statistics);
         return Ok(PreprocessedTranslationUnit {
             .sources              = rstd::move(sources_),
             .main_source          = main_source_,
@@ -195,11 +195,11 @@ public:
 
 private:
     auto begin_activity(PreprocessorActivity activity) -> void {
-        rstd::as<PreprocessorObserver>(observer_).begin(activity);
+        as<PreprocessorObserver>(observer_).begin(activity);
     }
 
     auto end_activity(PreprocessorActivity activity) -> void {
-        rstd::as<PreprocessorObserver>(observer_).end(activity);
+        as<PreprocessorObserver>(observer_).end(activity);
     }
 
     auto finish_statistics() const noexcept -> PreprocessorStatistics {
@@ -248,14 +248,14 @@ private:
     }
 
     auto emit(Event event) -> Result<empty> {
-        if (! rstd::as<PreprocessorEventSink>(event_sink_).wants(event.kind)) return Ok(empty {});
-        return rstd::as<PreprocessorEventSink>(event_sink_).on_event(event);
+        if (! as<PreprocessorEventSink>(event_sink_).wants(event.kind)) return Ok(empty {});
+        return as<PreprocessorEventSink>(event_sink_).on_event(event);
     }
 
     auto emit_name(EventKind kind, ref<str> name, SourceLocation location) -> Result<empty> {
-        if (! rstd::as<PreprocessorEventSink>(event_sink_).wants(kind)) return Ok(empty {});
+        if (! as<PreprocessorEventSink>(event_sink_).wants(kind)) return Ok(empty {});
         auto event = Event { .kind = kind, .name = String::make(name), .location = location };
-        return rstd::as<PreprocessorEventSink>(event_sink_).on_event(event);
+        return as<PreprocessorEventSink>(event_sink_).on_event(event);
     }
 
     auto active(const Vec<ConditionalFrame>& conditions) const -> bool {
@@ -437,7 +437,7 @@ private:
             return Ok(empty {});
         }
         auto outcome =
-            rstd::as<PragmaHandler>(pragma_handler_)
+            as<PragmaHandler>(pragma_handler_)
                 .handle(PragmaRequest { .tokens = rstd::move(tokens), .location = location });
         if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());
         return Ok(empty {});
@@ -723,7 +723,7 @@ private:
         } else {
             value = joined_argument(argument);
         }
-        return rstd::as<BuiltinProvider>(builtin_provider_)
+        return as<BuiltinProvider>(builtin_provider_)
             .evaluate(BuiltinQueryKey::template make<Query>(value.as_str()));
     }
 
@@ -761,7 +761,7 @@ private:
             .previous_search_index = frame.search_index,
             .location              = origin.expansion,
         };
-        auto resolved = rstd::as<IncludeResolver>(include_resolver_).resolve(request);
+        auto resolved = as<IncludeResolver>(include_resolver_).resolve(request);
         ++raw_statistics_.include_attempts;
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
         if (resolved->is_some()) ++raw_statistics_.include_hits;
@@ -805,19 +805,19 @@ private:
                     continue;
                 }
                 if (token.text.matches<LineBuiltin>()) {
-                    output.push(number_token(rstd::as_cast<i64>(token.expansion.line), token));
+                    output.push(number_token(as_cast<i64>(token.expansion.line), token));
                     ++index;
                     continue;
                 }
                 if (token.text.matches<IncludeLevelBuiltin>()) {
                     auto level =
                         include_stack_.is_empty() ? usize {} : include_stack_.len() - usize(1);
-                    output.push(number_token(rstd::as_cast<i64>(level), token));
+                    output.push(number_token(as_cast<i64>(level), token));
                     ++index;
                     continue;
                 }
                 if (token.text.matches<CounterBuiltin>()) {
-                    output.push(number_token(rstd::as_cast<i64>(counter_), token));
+                    output.push(number_token(as_cast<i64>(counter_), token));
                     ++counter_;
                     ++index;
                     continue;
@@ -850,7 +850,7 @@ private:
                 auto time = token.text.matches<TimeBuiltin>();
                 if (date || time) {
                     auto kind  = date ? BuiltinTextKind::Date : BuiltinTextKind::Time;
-                    auto value = rstd::as<BuiltinProvider>(builtin_provider_).text(kind);
+                    auto value = as<BuiltinProvider>(builtin_provider_).text(kind);
                     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
                     builtin_identity_.push_str(name);
                     builtin_identity_.push_ascii('=');
@@ -1168,7 +1168,7 @@ private:
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         const auto& frame = include_stack_[include_stack_.len() - usize(1)];
         auto        resolved =
-            rstd::as<IncludeResolver>(include_resolver_)
+            as<IncludeResolver>(include_resolver_)
                 .resolve(IncludeRequest {
                     .name                  = name->clone(),
                     .kind                  = kind,
@@ -1282,8 +1282,7 @@ private:
         if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
         ++raw_statistics_.consumer_batches;
         raw_statistics_.consumer_tokens += expanded->len().to_primitive();
-        return rstd::as<PreprocessedTokenConsumer>(consumer_).consume(
-            rstd::move(expanded).unwrap());
+        return as<PreprocessedTokenConsumer>(consumer_).consume(rstd::move(expanded).unwrap());
     }
 
     auto collect_comments_through(const Vec<CommentTrivia>& comments,
@@ -1317,7 +1316,7 @@ private:
                 return Ok(empty {});
             }
         }
-        auto loaded = rstd::as<SourceProvider>(source_provider_).load(path);
+        auto loaded = as<SourceProvider>(source_provider_).load(path);
         if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
         input_bytes_ += (*loaded)->snapshot->contents.len();
         ++raw_statistics_.files;
@@ -1459,7 +1458,7 @@ private:
                 }
                 auto physical  = end < tokens.len() ? tokens[end].expansion.line + usize(1)
                                                     : location.line + usize(1);
-                auto requested = rstd::as_cast<usize>(*value);
+                auto requested = as_cast<usize>(*value);
                 for (auto adjust = end < tokens.len() ? end + usize(1) : end; adjust < tokens.len();
                      ++adjust) {
                     if (tokens[adjust].expansion.line >= physical) {
@@ -1543,7 +1542,7 @@ template<typename Sources,
          typename Events,
          typename Consumer,
          typename Observer>
-    requires rstd::Impled<Identifiers, TokenMatcher>
+    requires Impled<Identifiers, TokenMatcher>
 auto preprocess_to(PreprocessRequest request,
                    Sources&          sources,
                    Includes&         includes,
@@ -1579,7 +1578,7 @@ template<typename Sources,
          typename Pragmas,
          typename Events,
          typename Consumer>
-    requires rstd::Impled<Identifiers, TokenMatcher>
+    requires Impled<Identifiers, TokenMatcher>
 auto preprocess_to(PreprocessRequest request,
                    Sources&          sources,
                    Includes&         includes,
@@ -1606,7 +1605,7 @@ template<typename Sources,
          typename Identifiers,
          typename Pragmas,
          typename Events>
-    requires rstd::Impled<Identifiers, TokenMatcher>
+    requires Impled<Identifiers, TokenMatcher>
 auto preprocess(PreprocessRequest request,
                 Sources&          sources,
                 Includes&         includes,

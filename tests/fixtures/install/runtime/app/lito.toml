@@ -3,6 +3,7 @@ name = "fixture-runtime-app"
 version.workspace = true
 
 [[bin]]
+link-stdlib = false
 name = "runtime-app"
 sources = ["main.cpp"]
 

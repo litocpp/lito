@@ -1,0 +1,48 @@
+[package]
+name = "lito-driver"
+version.workspace = true
+
+[lib]
+name = "lito-driver"
+module = "lito.driver"
+archive = "lito.driver"
+
+[dependencies.lito-core]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-cpp]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-toolchain]
+workspace = true
+visibility = "public"
+
+[dependencies.lito-frontend]
+workspace = true
+visibility = "public"
+
+[dependencies.luato]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-std]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-json]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-toml]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-bench]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-nostd]
+workspace = true
+visibility = "link"

@@ -3,6 +3,7 @@ name = "fixture-associated-workspace-benchmark"
 version = "0.1.0"
 
 [[bench]]
+link-stdlib = false
 name = "fixture-associated-workspace-benchmark"
 sources = ["main.cpp"]
 

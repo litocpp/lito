@@ -68,6 +68,18 @@ sources = [
 workspace = true
 visibility = "private"
 
+[dependencies.lito-cpp]
+workspace = true
+visibility = "private"
+
+[dependencies.lito-toolchain]
+workspace = true
+visibility = "private"
+
+[dependencies.lito-driver]
+workspace = true
+visibility = "private"
+
 [dependencies.lito-frontend]
 workspace = true
 visibility = "private"

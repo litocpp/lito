@@ -133,7 +133,7 @@ struct FrontendStatistics {
 
 class FrontendSourceStore {
     using SharedLoadError = rstd::sync::Arc<lexical::Error>;
-    using LoadResult      = rstd::Result<lexical::SharedLexedSource, SharedLoadError>;
+    using LoadResult      = Result<lexical::SharedLexedSource, SharedLoadError>;
     using LoadCell        = rstd::sync::OnceLock<LoadResult>;
     using SharedLoadCell  = rstd::sync::Arc<LoadCell>;
 
@@ -309,12 +309,11 @@ public:
                     if (lexed.is_err()) return share_error(rstd::move(lexed).unwrap_err());
                     ++statistics_.lex_builds;
                     auto file = rstd::move(lexed).unwrap();
-                    return Ok(rstd::sync::Arc<lexical::LexedSource>::make(
-                        lexical::LexedSource {
-                            .snapshot = rstd::move(snapshot),
-                            .tokens   = rstd::move(file.tokens),
-                            .comments = rstd::move(file.comments),
-                        }));
+                    return Ok(rstd::sync::Arc<lexical::LexedSource>::make(lexical::LexedSource {
+                        .snapshot = rstd::move(snapshot),
+                        .tokens   = rstd::move(file.tokens),
+                        .comments = rstd::move(file.comments),
+                    }));
                 });
             if (identity_waiting && ! identity_initialized) {
                 ++statistics_.source_waits;
@@ -365,8 +364,8 @@ private:
     static auto clone_error(const FrontendSourceStore::SharedLoadError& error) -> lexical::Error {
         return lexical::Error {
             .message  = error->message.clone(),
-            .location = as<rstd::clone::Clone>(error->location).clone(),
-            .path     = as<rstd::clone::Clone>(error->path).clone(),
+            .location = as<Clone>(error->location).clone(),
+            .path     = as<Clone>(error->path).clone(),
         };
     }
 

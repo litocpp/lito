@@ -3,5 +3,6 @@ name = "fixture-conventional-invalid-version-test"
 version.workspace = true
 
 [[test]]
+link-stdlib = false
 name = "fixture-conventional-invalid-version-test"
 sources = ["main.cpp"]

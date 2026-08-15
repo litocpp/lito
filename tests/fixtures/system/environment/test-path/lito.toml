@@ -3,6 +3,7 @@ name = "fixture-environment-test"
 version = "0.1.0"
 
 [[test]]
+link-stdlib = false
 name = "fixture-environment-test"
 sources = ["test/path.cpp"]
 

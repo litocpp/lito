@@ -2,9 +2,8 @@
 
 import rstd;
 import rstd.test;
-import lito.error;
+import lito.core;
 import lito.cpp;
-import lito.package.target_contract;
 import lito.toolchain;
 
 using namespace rstd::prelude;
@@ -14,49 +13,49 @@ using namespace lito;
 namespace
 {
 
-auto context_with(lito::Vec<String> options,
-                  CppOptimization   optimization = CppOptimization::Default,
-                  CppDebugInfo      debug_info   = CppDebugInfo::None) -> CompileContext {
+auto context_with(Vec<String>           options,
+                  lito::CppOptimization optimization = lito::CppOptimization::Default,
+                  lito::CppDebugInfo debug_info = lito::CppDebugInfo::None) -> cpp::CompileContext {
     auto parser = make_clang_cpp_argument_parser();
-    if (parser.is_err()) return CompileContext {};
+    if (parser.is_err()) return cpp::CompileContext {};
     auto arguments = parser->parse(options, "clang-builtin-context-test"_str);
-    if (arguments.is_err()) return CompileContext {};
-    auto normalized = make_cpp_options("c++20"_str,
-                                       StandardLibrary::Libcxx,
-                                       false,
-                                       false,
-                                       optimization,
-                                       debug_info,
-                                       CppOptionLayer {
-                                           .arguments = rstd::move(arguments).unwrap(),
-                                       });
-    if (normalized.is_err()) return CompileContext {};
-    return CompileContext {
+    if (arguments.is_err()) return cpp::CompileContext {};
+    auto normalized = cpp::make_cpp_options("c++20"_str,
+                                            StandardLibrary::Libcxx,
+                                            false,
+                                            false,
+                                            optimization,
+                                            debug_info,
+                                            cpp::CppOptionLayer {
+                                                .arguments = rstd::move(arguments).unwrap(),
+                                            });
+    if (normalized.is_err()) return cpp::CompileContext {};
+    return cpp::CompileContext {
         .cpp = rstd::move(normalized).unwrap(),
     };
 }
 
-auto context_with_standard(ref<str> standard) -> CompileContext {
-    auto normalized = make_cpp_options(standard,
-                                       StandardLibrary::Libcxx,
-                                       false,
-                                       false,
-                                       CppOptimization::Default,
-                                       CppDebugInfo::None);
-    if (normalized.is_err()) return CompileContext {};
-    return CompileContext {
+auto context_with_standard(ref<str> standard) -> cpp::CompileContext {
+    auto normalized = cpp::make_cpp_options(standard,
+                                            StandardLibrary::Libcxx,
+                                            false,
+                                            false,
+                                            lito::CppOptimization::Default,
+                                            lito::CppDebugInfo::None);
+    if (normalized.is_err()) return cpp::CompileContext {};
+    return cpp::CompileContext {
         .cpp = rstd::move(normalized).unwrap(),
     };
 }
 
 template<typename... Values>
-auto options(Values... values) -> lito::Vec<String> {
-    auto result = lito::Vec<String>::with_capacity(usize(sizeof...(Values)));
+auto options(Values... values) -> Vec<String> {
+    auto result = Vec<String>::with_capacity(usize(sizeof...(Values)));
     (result.push(String::make(values)), ...);
     return result;
 }
 
-auto same_command(const lito::Vec<String>& left, const lito::Vec<String>& right) -> bool {
+auto same_command(const Vec<String>& left, const Vec<String>& right) -> bool {
     if (left.len() != right.len()) return false;
     for (auto index = usize {}; index < left.len(); ++index) {
         if (left[index].as_str() != right[index].as_str()) return false;
@@ -74,18 +73,18 @@ auto run_clang_builtin_context_test() -> int {
     if (created.is_err()) return 1;
     auto toolchain = rstd::move(created).unwrap();
 
-    auto debug = toolchain.builtin_context(
-        context_with(options("-Wall"_str, "-fPIC"_str), CppOptimization::None, CppDebugInfo::Full));
+    auto debug     = toolchain.builtin_context(context_with(
+        options("-Wall"_str, "-fPIC"_str), lito::CppOptimization::None, lito::CppDebugInfo::Full));
     auto reordered = toolchain.builtin_context(
-        context_with(options("-fPIC"_str, "-Wall"_str), CppOptimization::None));
+        context_with(options("-fPIC"_str, "-Wall"_str), lito::CppOptimization::None));
     if (debug.is_err() || reordered.is_err()) return 2;
     if (debug->key.as_str() != reordered->key.as_str() ||
         ! same_command(debug->query_command, reordered->query_command)) {
         return 3;
     }
 
-    auto optimized =
-        toolchain.builtin_context(context_with(options("-fPIC"_str), CppOptimization::Level3));
+    auto optimized = toolchain.builtin_context(
+        context_with(options("-fPIC"_str), lito::CppOptimization::Level3));
     if (optimized.is_err()) return 4;
     if (optimized->key.as_str() == debug->key.as_str()) return 5;
 
@@ -105,8 +104,9 @@ auto run_clang_builtin_context_test() -> int {
     if (target_feature.is_err() || target_feature_direct.is_err()) return 8;
     if (target_feature->key.as_str() != target_feature_direct->key.as_str()) return 9;
 
-    auto llvm_debug        = toolchain.builtin_context(context_with(
-        options("-mllvm=lito-ignored"_str), CppOptimization::Default, CppDebugInfo::Full));
+    auto llvm_debug = toolchain.builtin_context(context_with(options("-mllvm=lito-ignored"_str),
+                                                             lito::CppOptimization::Default,
+                                                             lito::CppDebugInfo::Full));
     auto llvm_debug_direct = toolchain.builtin_context(context_with(options()));
     if (llvm_debug.is_err() || llvm_debug_direct.is_err()) return 10;
     if (llvm_debug->key.as_str() != llvm_debug_direct->key.as_str() ||
