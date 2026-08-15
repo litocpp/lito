@@ -1,11 +1,11 @@
-export module lito.toolchain:clang_format;
+export module lito.toolchain:clang.format;
 
 import rstd;
 import lito.error;
 import lito.toolchain.error_contract;
 import lito.toolchain.spec;
 import lito.system.environment;
-import :clang_format_options;
+import :clang.format_options;
 import :command;
 
 using namespace rstd::prelude;

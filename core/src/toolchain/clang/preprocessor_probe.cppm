@@ -1,4 +1,4 @@
-export module lito.toolchain:clang_preprocessor_probe;
+export module lito.toolchain:clang.preprocessor_probe;
 
 import rstd;
 import lito.cpp;
@@ -8,9 +8,9 @@ import lito.package.target_contract;
 import lito.system.process;
 import lito.system.environment;
 import lito.frontend;
-import :clang_options;
+import :clang.options;
 import :command;
-import :clang_preprocessor_model;
+import :clang.preprocessor_model;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

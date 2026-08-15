@@ -1,4 +1,4 @@
-export module lito.toolchain:clang_format_options;
+export module lito.toolchain:clang.format_options;
 
 import rstd;
 

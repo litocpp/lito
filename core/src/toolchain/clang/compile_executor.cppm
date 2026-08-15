@@ -1,12 +1,12 @@
-export module lito.toolchain:clang_compile_executor;
+export module lito.toolchain:clang.compile_executor;
 
 import rstd;
 import lito.error;
 import lito.toolchain.contract;
 import lito.system.process;
 import lito.system.environment;
-import :clang_preprocessor_environment;
-import :clang_support;
+import :clang.preprocessor_environment;
+import :clang.support;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

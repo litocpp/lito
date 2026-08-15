@@ -1,7 +1,7 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.toolchain.clang_sdk;
+export module lito.toolchain:clang.sdk;
 
 import rstd;
 import lito.cpp;

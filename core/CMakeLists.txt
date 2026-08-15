@@ -124,20 +124,20 @@ target_sources(
          src/toolchain/spec.cppm
         src/toolchain/contract.cppm
         src/toolchain/error_contract.cppm
-         src/toolchain/clang_arguments.cppm
-         src/toolchain/clang_options.cppm
-         src/toolchain/clang_format_options.cppm
-         src/toolchain/clang_format.cppm
-         src/toolchain/clang_preprocessor_model.cppm
-         src/toolchain/clang_preprocessor_probe.cppm
-         src/toolchain/clang_preprocessor_query.cppm
-         src/toolchain/clang_preprocessor_provider.cppm
-         src/toolchain/clang_preprocessor_environment.cppm
-         src/toolchain/clang_support.cppm
-         src/toolchain/clang_compile_executor.cppm
-         src/toolchain/clang_toolchain.cppm
-         src/toolchain/clang_sdk.cppm
-         src/toolchain/clang.cppm
+         src/toolchain/clang/arguments.cppm
+         src/toolchain/clang/options.cppm
+         src/toolchain/clang/format_options.cppm
+         src/toolchain/clang/format.cppm
+         src/toolchain/clang/preprocessor_model.cppm
+         src/toolchain/clang/preprocessor_probe.cppm
+         src/toolchain/clang/preprocessor_query.cppm
+         src/toolchain/clang/preprocessor_provider.cppm
+         src/toolchain/clang/preprocessor_environment.cppm
+         src/toolchain/clang/support.cppm
+         src/toolchain/clang/compile_executor.cppm
+         src/toolchain/clang/toolchain.cppm
+         src/toolchain/clang/sdk.cppm
+         src/toolchain/clang/mod.cppm
          src/toolchain/mod.cppm
          src/build/layout.cppm
          src/build/host_tool.cppm

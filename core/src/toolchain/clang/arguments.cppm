@@ -1,4 +1,4 @@
-export module lito.toolchain:clang_arguments;
+export module lito.toolchain:clang.arguments;
 
 import rstd;
 import lito.cpp;

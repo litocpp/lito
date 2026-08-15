@@ -1,7 +1,7 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.toolchain:clang_toolchain;
+export module lito.toolchain:clang.toolchain;
 
 import rstd;
 import lito.error;
@@ -21,11 +21,11 @@ import lito.build.profiling;
 import lito.modules;
 import lito.build.profile;
 import :command;
-import :clang_arguments;
-import :clang_options;
-import :clang_preprocessor_environment;
-import :clang_support;
-import :clang_compile_executor;
+import :clang.arguments;
+import :clang.options;
+import :clang.preprocessor_environment;
+import :clang.support;
+import :clang.compile_executor;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

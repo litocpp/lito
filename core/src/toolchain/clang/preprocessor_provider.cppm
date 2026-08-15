@@ -1,10 +1,10 @@
-export module lito.toolchain:clang_preprocessor_provider;
+export module lito.toolchain:clang.preprocessor_provider;
 
 import rstd;
 import lito.error;
 import lito.frontend;
-import :clang_preprocessor_model;
-import :clang_preprocessor_query;
+import :clang.preprocessor_model;
+import :clang.preprocessor_query;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;

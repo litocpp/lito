@@ -1,4 +1,4 @@
-export module lito.toolchain:clang_options;
+export module lito.toolchain:clang.options;
 
 import rstd;
 import lito.error;
