@@ -86,10 +86,36 @@ struct TargetSourceManifest {
     Vec<ConditionalSourceGroup> conditional_source_groups;
 };
 
+struct BuildToolArchiveManifest {
+    HostInfo host;
+    String   url;
+    String   sha256;
+};
+
+struct BuildToolRequirement {
+    String                        alias;
+    String                        version;
+    PathBuf                       executable;
+    Vec<BuildToolArchiveManifest> archives;
+};
+
+enum class RuntimeResourceRoot
+{
+    Generated,
+};
+
+struct RuntimeResourceManifest {
+    String              name;
+    RuntimeResourceRoot root { RuntimeResourceRoot::Generated };
+    PathBuf             path;
+};
+
 class PackageTargetManifest {
     RSTD_ENUM(PackageTargetManifest,
               (Library, (String name; String archive; TargetSourceManifest source;)),
-              (Binary, (String name; TargetSourceManifest source; bool link_stdlib;)),
+              (Binary,
+               (String name; TargetSourceManifest source; bool link_stdlib;
+                Vec<RuntimeResourceManifest> resources;)),
               (Test,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<TestAttachmentManifest>                    attachments;)),
@@ -144,6 +170,13 @@ auto package_target_attachments(const PackageTargetManifest& target) noexcept
         rstd::addressof(target.as_Test().attachments)));
 }
 
+auto package_target_resources(const PackageTargetManifest& target) noexcept
+    -> Option<ref<Vec<RuntimeResourceManifest>>> {
+    if (! target.is_Binary()) return None();
+    return Some(ref<Vec<RuntimeResourceManifest>>::from_raw_parts(
+        rstd::addressof(target.as_Binary().resources)));
+}
+
 enum class CompileTestOutcome
 {
     Success,
@@ -168,6 +201,7 @@ struct PackageManifest {
     PathBuf                                            manifest_path;
     Option<PathBuf>                                    install_script;
     Option<ProjectProfile>                             profile;
+    Vec<BuildToolRequirement>                          build_tools;
     Vec<PackageTargetManifest>                         targets;
     TargetPredicate                                    target;
     Vec<CompileTestCase>                               compile_tests;

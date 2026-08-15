@@ -13,6 +13,8 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
+inline constexpr auto LOCK_FORMAT_VERSION = u64(7);
+
 struct LockConfig {
     PathBuf path;
 };
@@ -36,6 +38,13 @@ class LockedExternalSource {
               (Archive, (String url; String sha256;)))
 };
 
+struct LockedBuildToolSourceMetadata {
+    String  version;
+    PathBuf executable;
+    String  operating_system;
+    u64     schema_version { u64(1) };
+};
+
 struct LockedPackage {
     String              name;
     Option<String>      version;
@@ -50,6 +59,7 @@ struct LockedExternal {
     String               alias;
     String               provider;
     Vec<String>          architectures;
+    Option<LockedBuildToolSourceMetadata> build_tool;
     LockedExternalSource source;
 };
 

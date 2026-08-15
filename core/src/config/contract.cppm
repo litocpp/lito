@@ -25,6 +25,10 @@ struct InstallConfig {
     Option<PathBuf> root;
 };
 
+struct DocConfig {
+    Option<PathBuf> litodoc_path;
+};
+
 struct ProjectConfig {
     PathBuf                 root;
     LockConfig              lock;
@@ -36,6 +40,7 @@ struct ProjectConfig {
     PkgConfigProviderConfig pkg_config;
     CMakeProviderConfig     cmake;
     InstallConfig           install;
+    DocConfig               doc;
 };
 
 struct ProjectConfigRequest {

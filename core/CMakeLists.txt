@@ -29,6 +29,8 @@ target_sources(
          src/build/contract.cppm
          src/build/toolchain_observer.cppm
          src/build/layout_error_contract.cppm
+         src/build/host_tool_error_contract.cppm
+         src/build/tool_action_error_contract.cppm
          src/build/script_error_contract.cppm
          src/build/error_contract.cppm
          src/platform/contract.cppm
@@ -59,6 +61,7 @@ target_sources(
          src/manifest/convention.cppm
          src/manifest/target_schema.cppm
          src/manifest/dependency_schema.cppm
+         src/manifest/build_tool_schema.cppm
          src/manifest/assembly.cppm
          src/manifest/schema.cppm
          src/manifest/mod.cppm
@@ -133,10 +136,13 @@ target_sources(
          src/toolchain/clang_support.cppm
          src/toolchain/clang_compile_executor.cppm
          src/toolchain/clang_toolchain.cppm
+         src/toolchain/clang_sdk.cppm
          src/toolchain/clang.cppm
          src/toolchain/mod.cppm
          src/build/layout.cppm
+         src/build/host_tool.cppm
          src/build/script.cppm
+         src/build/resource.cppm
          src/build/profiling.cppm
          src/cache/hash.cppm
          src/cache/error_contract.cppm
@@ -152,6 +158,10 @@ target_sources(
          src/build/unit_plan.cppm
          src/build/mod.cppm
          src/command/artifact.cppm
+         src/command/doc_error_contract.cppm
+         src/command/doc_contract.cppm
+         src/command/doc_tool.cppm
+         src/command/doc.cppm
          src/command/test.cppm
          src/command/bench.cppm
          src/command/scan.cppm

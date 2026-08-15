@@ -38,7 +38,7 @@ TEST(Lock, OnlyCurrentLockVersionIsAcceptedByLockStore) {
     ASSERT_TRUE(old_version.is_err());
     auto version_error = rstd::move(old_version).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 6"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("integer 7"_str));
 }
 
 TEST(Lock, OldLockRequiresUpdateMode) {
@@ -52,5 +52,5 @@ TEST(Lock, OldLockRequiresUpdateMode) {
     ASSERT_TRUE(locked.is_err());
     auto error = rstd::move(locked).unwrap_err();
     ASSERT_TRUE(error.is_Schema());
-    EXPECT_TRUE(error.as_Schema().message.as_str().contains("integer 6"_str));
+    EXPECT_TRUE(error.as_Schema().message.as_str().contains("integer 7"_str));
 }

@@ -1,7 +1,6 @@
 export module lito.frontend.result;
 
 import rstd;
-import lito.frontend.lexical;
 
 using namespace rstd::prelude;
 
@@ -9,93 +8,6 @@ using Clone = rstd::clone::Clone;
 
 export namespace lito::frontend
 {
-
-enum class DocumentationCommentKind
-{
-    Outer,
-    Inner,
-};
-
-enum class DeclarationKind
-{
-    Module,
-    Namespace,
-    Record,
-    Enum,
-    Concept,
-    Alias,
-    Function,
-    Variable,
-    Field,
-};
-
-enum class DeclarationAccess
-{
-    Public,
-    Protected,
-    Private,
-};
-
-enum class DocumentationSeverity
-{
-    Warning,
-    Error,
-};
-
-struct DocumentationSpan {
-    rstd::path::PathBuf path;
-    usize               begin_line {};
-    usize               begin_column {};
-    usize               end_line {};
-    usize               end_column {};
-};
-
-struct DocumentationComment {
-    DocumentationCommentKind kind { DocumentationCommentKind::Outer };
-    String                   text;
-    DocumentationSpan        span;
-};
-
-struct DeclarationOutline {
-    DeclarationKind              kind { DeclarationKind::Variable };
-    String                       name;
-    String                       qualified_name;
-    String                       namespace_name;
-    String                       signature;
-    bool                         is_definition { false };
-    bool                         exported { false };
-    DeclarationAccess            access { DeclarationAccess::Public };
-    Option<usize>                parent;
-    Option<String>               group;
-    Option<DocumentationComment> comment;
-    DocumentationSpan            span;
-};
-
-struct DocumentationReexport {
-    String            logical_module;
-    DocumentationSpan span;
-};
-
-struct DocumentationDiagnostic {
-    DocumentationSeverity severity { DocumentationSeverity::Warning };
-    String                code;
-    String                message;
-    DocumentationSpan     span;
-};
-
-struct DocumentationUnit {
-    rstd::path::PathBuf           source;
-    lexical::SharedSourceSnapshot source_snapshot;
-    String                        logical_module;
-    bool                          is_interface { false };
-    Vec<DeclarationOutline>       declarations;
-    Vec<DocumentationReexport>    reexports;
-    Option<DocumentationComment>  module_comment;
-    Vec<DocumentationDiagnostic>  diagnostics;
-    usize                         documented {};
-    usize                         undocumented {};
-    usize                         unsupported {};
-};
 
 struct ProvidedModule : DefaultInClass<ProvidedModule, Clone> {
     String logical_name;

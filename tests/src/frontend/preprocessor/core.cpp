@@ -187,6 +187,12 @@ auto run_preprocessor_test() -> int {
                 "#define LITO_PREFIX LITO_\n"
                 "#define LITO_JOINED 9\n"
                 "LITO_CAT(LITO_PREFIX, JOINED);\n"
+                "#define LITO_MULTILINE_CAT(left, right) left ## right\n"
+                "LITO_MULTILINE_CAT(LITO_,\n"
+                "JOINED);\n"
+                "#define LITO_TOKEN(value) value\n"
+                "#define LITO_EMPTY_PASTE(value, empty) LITO_TOKEN(empty ## value)\n"
+                "LITO_EMPTY_PASTE(LITO_JOINED,);\n"
                 "LITO_LATE\n"
                 "#define LITO_LATE 42\n"
                 "LITO_LATE\n"_str);
@@ -216,7 +222,11 @@ auto run_preprocessor_test() -> int {
     if (builtins.text_queries != usize(1)) return 6;
     if (builtins.query_count != usize(1) || builtins.typed_queries != usize(1)) return 15;
     if (! contains_sequence(result->tokens, "2"_str, "+"_str, "2"_str)) return 7;
-    if (! contains_sequence(result->tokens, "9"_str, ";"_str)) return 11;
+    auto joined = usize {};
+    for (const auto& token : result->tokens) {
+        if (token.text.as_str() == "9"_str) ++joined;
+    }
+    if (joined != usize(3)) return 11;
     if (! contains_token(result->tokens, "LITO_LATE"_str) ||
         ! contains_token(result->tokens, "42"_str)) {
         return 12;

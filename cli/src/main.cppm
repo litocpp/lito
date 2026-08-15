@@ -3,6 +3,7 @@ export module lito.executable;
 import rstd;
 import lito;
 import lito.source.contract;
+import lito.workspace.contract;
 import :cli;
 import lito.command.reporting;
 
@@ -21,6 +22,9 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
         event.kind != lito::BuildEventKind::Fetch && event.kind != lito::BuildEventKind::Scan &&
         event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
+        event.kind != lito::BuildEventKind::BuildToolFetch &&
+        event.kind != lito::BuildEventKind::BuildToolRun &&
+        event.kind != lito::BuildEventKind::GeneratedResource &&
         event.kind != lito::BuildEventKind::CMakeConfigure &&
         event.kind != lito::BuildEventKind::CMakeBuild &&
         event.kind != lito::BuildEventKind::CMakeInstall &&
@@ -76,6 +80,21 @@ void observe_bench(void* raw_context, const lito::BenchEvent& event) noexcept {
     for (const auto& argument : event.arguments) {
         rstd::io::println("  [arg] {}", argument.as_str());
     }
+}
+
+void observe_doc(void* raw_context, const lito::DocEvent& event) noexcept {
+    auto& context = *static_cast<EventContext*>(raw_context);
+    if (! context.verbose && (event.kind == lito::DocEventKind::ToolReuse ||
+                              event.kind == lito::DocEventKind::ExtractReuse)) {
+        return;
+    }
+    rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
+}
+
+auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
+    -> rstd::path::PathBuf {
+    return path.as_path().is_absolute() ? rstd::move(path)
+                                        : rstd::path::PathBuf::from(root).join(path.as_path());
 }
 
 auto build_configuration(lito::ToolchainSpec   toolchain,
@@ -486,6 +505,78 @@ extern "C++" int main() {
             return 1;
         }
         rstd::io::println("{}", json->as_str());
+        return 0;
+    }
+
+    if (invocation.command.is_Doc()) {
+        auto options = rstd::move(invocation.command).as_Doc().options;
+        apply_source_options(project.sources,
+                             project.root.as_path(),
+                             options.offline,
+                             options.frozen,
+                             rstd::move(options.fetch_seeds));
+        auto timing                  = make_timing_output(project.root.as_path(),
+                                                          rstd::move(options.timing_file),
+                                                          options.verbose && ! options.no_timing);
+        auto request                 = lito::DocRequest {};
+        request.build.selection.root = project.root.clone();
+        request.build.environment    = rstd::move(project.environment);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain),
+                                                           project.standard_library,
+                                                           rstd::move(project.build_options));
+        request.build.lock           = rstd::move(project.lock);
+        request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
+        request.build.cmake          = rstd::move(project.cmake);
+        request.build.purpose        = lito::PackageSelectionPurpose::Documentation;
+        request.build.selection.packages = rstd::move(options.packages);
+        request.build.targets            = rstd::move(options.targets);
+        request.build.locked             = options.locked || options.frozen;
+        if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
+        request.build.execution.scan.jobs    = options.jobs;
+        request.build.execution.compile.jobs = options.jobs;
+        request.config                       = rstd::move(project.doc);
+        if (options.output.is_some()) {
+            request.output =
+                project_output_path(project.root.as_path(), rstd::move(options.output).unwrap());
+        }
+        if (options.data_output.is_some()) {
+            request.data_output = project_output_path(project.root.as_path(),
+                                                      rstd::move(options.data_output).unwrap());
+        }
+        if (options.frontend.is_some()) {
+            request.frontend = Some(
+                project_output_path(project.root.as_path(), rstd::move(options.frontend).unwrap()));
+        }
+        request.data_only      = options.data_only;
+        auto event_context     = EventContext { .verbose = options.verbose };
+        request.build.observer = Some(lito::BuildObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe,
+        });
+        request.observer       = Some(lito::DocObserver {
+            .context = rstd::addressof(event_context),
+            .notify  = observe_doc,
+        });
+        auto result            = lito::doc(rstd::move(request));
+        if (result.is_err()) {
+            auto error = rstd::move(result).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        auto summary = rstd::move(result).unwrap();
+        auto emitted = lito::timing_output::emit(summary.build, timing);
+        if (emitted.is_err()) {
+            auto error = rstd::move(emitted).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        rstd::io::println("generated documentation for {} packages in {}: {} extracted, {} reused",
+                          summary.build.selected_packages.len(),
+                          options.data_only ? summary.data_output.as_path()
+                                            : summary.output.as_path(),
+                          summary.extracted,
+                          summary.reused);
         return 0;
     }
 

@@ -305,6 +305,65 @@
       ],
       "additionalProperties": false
     },
+    "runtimeResource": {
+      "type": "object",
+      "required": [
+        "name",
+        "root",
+        "path"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
+        "root": {
+          "enum": [
+            "generated"
+          ]
+        },
+        "path": {
+          "$ref": "#/definitions/relativePath"
+        }
+      },
+      "additionalProperties": false
+    },
+    "binaryTarget": {
+      "type": "object",
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
+        "module": {
+          "$ref": "#/definitions/moduleName"
+        },
+        "sources": {
+          "$ref": "#/definitions/pathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/sourceGroups"
+        },
+        "link-stdlib": {
+          "type": "boolean",
+          "default": true
+        },
+        "resources": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/runtimeResource"
+          }
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/targetSources"
+        }
+      ],
+      "additionalProperties": false
+    },
     "testAttachment": {
       "type": "object",
       "required": [
@@ -528,6 +587,59 @@
       "description": "A full hexadecimal SHA-256 digest.",
       "type": "string",
       "pattern": "^[0-9A-Fa-f]{64}$"
+    },
+    "hostBuildToolArchive": {
+      "type": "object",
+      "required": [
+        "url",
+        "sha256"
+      ],
+      "properties": {
+        "url": {
+          "type": "string",
+          "pattern": "^https://[^#\"\\\\;\\r\\n]+$"
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
+        }
+      },
+      "additionalProperties": false
+    },
+    "hostBuildTool": {
+      "type": "object",
+      "required": [
+        "version",
+        "executable",
+        "archives"
+      ],
+      "properties": {
+        "version": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "executable": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "archives": {
+          "type": "object",
+          "minProperties": 1,
+          "patternProperties": {
+            "^[a-z0-9]+-[A-Za-z0-9_]+$": {
+              "$ref": "#/definitions/hostBuildToolArchive"
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "hostBuildTools": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/hostBuildTool"
+        }
+      },
+      "additionalProperties": false
     },
     "cmakeArchiveVariant": {
       "type": "object",
@@ -1597,7 +1709,7 @@
           "type": "array",
           "minItems": 1,
           "items": {
-            "$ref": "#/definitions/runnableTarget"
+            "$ref": "#/definitions/binaryTarget"
           }
         },
         "test": {
@@ -1631,6 +1743,9 @@
         },
         "external-dependencies": {
           "$ref": "#/definitions/externalDependencies"
+        },
+        "build-tools": {
+          "$ref": "#/definitions/hostBuildTools"
         },
         "profile": {
           "$ref": "#/definitions/projectProfile"

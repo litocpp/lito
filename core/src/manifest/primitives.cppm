@@ -137,7 +137,26 @@ auto package_root_key(ref<str> key) -> bool {
            key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
            key == "dependencies"_str || key == "dev-dependencies"_str ||
            key == "runtime-dependencies"_str || key == "external-dependencies"_str ||
-           key == "profile"_str;
+           key == "build-tools"_str || key == "profile"_str;
+}
+
+auto archive_url_is_valid(ref<str> value) -> bool {
+    return ! value.is_empty() && ! value.starts_with("-"_str) && ! value.contains("#"_str) &&
+           ! value.contains("\""_str) && ! value.contains("\\"_str) &&
+           ! value.contains(";"_str) && ! value.contains("\n"_str) &&
+           ! value.contains("\r"_str);
+}
+
+auto sha256_is_valid(ref<str> value) -> bool {
+    if (value.len() != usize(64)) return false;
+    for (const auto character : value) {
+        const auto ascii = character.to_primitive();
+        if (! ((ascii >= '0' && ascii <= '9') || (ascii >= 'a' && ascii <= 'f') ||
+               (ascii >= 'A' && ascii <= 'F'))) {
+            return false;
+        }
+    }
+    return true;
 }
 
 auto workspace_root_key(ref<str> key) -> bool {

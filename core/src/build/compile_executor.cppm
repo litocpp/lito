@@ -4,6 +4,7 @@ import rstd;
 import lito.error;
 import lito.cpp.bmi;
 import lito.manifest.contract;
+import lito.package.identity;
 import lito.package.target_contract;
 import lito.build.identity;
 import lito.build.plan_contract;
@@ -321,6 +322,76 @@ struct CompileExecutionResult {
     BuildTimingReport          timing;
 };
 
+auto documentation_unit_kind(const ScanResult& scan) -> DocumentationUnitKind {
+    if (scan.provided.is_some()) {
+        if (scan.provided->logical_name.as_str().contains(":"_str)) {
+            return DocumentationUnitKind::ModulePartition;
+        }
+        return scan.provided->is_interface ? DocumentationUnitKind::ModuleInterface
+                                           : DocumentationUnitKind::ModulePartition;
+    }
+    if (scan.implementation_module.is_some()) {
+        return DocumentationUnitKind::ModuleImplementation;
+    }
+    return DocumentationUnitKind::TranslationUnit;
+}
+
+auto materialize_documentation_units(const PackageSpec&          package,
+                                     const Vec<PreparedUnit>&    units,
+                                     const Vec<ScanResult>&      scans,
+                                     const CompilePlan&          plan,
+                                     const Vec<PackageTargetId>& selected_targets)
+    -> BuildResult<Vec<DocumentationBuildUnit>> {
+    if (units.len() != scans.len() || units.len() != plan.nodes.len()) {
+        return compile_failure<Vec<DocumentationBuildUnit>>(
+            "documentation view inputs have inconsistent lengths"_str);
+    }
+    auto result = Vec<DocumentationBuildUnit>::with_capacity(units.len());
+    for (auto unit = UnitId {}; unit < units.len(); ++unit) {
+        const auto target   = units[unit].unit.target;
+        auto       selected = false;
+        for (const auto& candidate : selected_targets) {
+            if (candidate == package.targets[target].id) {
+                selected = true;
+                break;
+            }
+        }
+        if (! selected) continue;
+        if (plan.nodes[unit].invocation.is_none()) {
+            return compile_failure<Vec<DocumentationBuildUnit>>(
+                "documentation view received an unmaterialized invocation"_str);
+        }
+        auto logical_module = Option<String> {};
+        if (scans[unit].provided.is_some()) {
+            logical_module = Some(scans[unit].provided->logical_name.clone());
+        } else if (scans[unit].implementation_module.is_some()) {
+            logical_module = Some(scans[unit].implementation_module->clone());
+        }
+        auto dependencies =
+            Vec<DocumentationBmiDependency>::with_capacity(plan.nodes[unit].dependencies.len());
+        for (const auto& dependency : plan.nodes[unit].dependencies) {
+            dependencies.push(DocumentationBmiDependency {
+                .logical_name      = dependency.logical_name.clone(),
+                .artifact_identity = dependency.artifact.clone(),
+                .path              = dependency.path.clone(),
+            });
+        }
+        result.push(DocumentationBuildUnit {
+            .target          = package.targets[target].id.clone(),
+            .package_root    = package.targets[target].root.clone(),
+            .source          = units[unit].unit.source.clone(),
+            .relative_source = units[unit].unit.relative_source.clone(),
+            .kind            = documentation_unit_kind(scans[unit]),
+            .is_interface    = scans[unit].provided.is_some() && scans[unit].provided->is_interface,
+            .logical_module  = rstd::move(logical_module),
+            .source_identity = units[unit].frontend_analysis->receipt.clone(),
+            .invocation      = plan.nodes[unit].invocation->clone(),
+            .bmi_dependencies = rstd::move(dependencies),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto materialize_compile_plan(const PackageSpec&     package,
                               const BuildLayout&     layout,
                               const ClangToolchain&  toolchain,
@@ -367,6 +438,7 @@ auto materialize_compile_plan(const PackageSpec&     package,
             direct_artifacts.push(DependencyArtifact {
                 .logical_name = artifact.logical_name.clone(),
                 .artifact     = artifact.key.value.clone(),
+                .path         = artifact.path.clone(),
             });
             recipe_dependencies.push(BmiRecipeDependency {
                 .logical_name = artifact.logical_name.clone(),

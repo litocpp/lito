@@ -16,6 +16,7 @@ import lito.manifest;
 import lito.toolchain;
 import lito.build.discovery;
 import lito.build.layout;
+import lito.build.host_tool;
 import lito.system.environment;
 import lito.system.process;
 import lito.system.storage;
@@ -104,6 +105,54 @@ TEST(Manifest, PackageManifestOwnsTypedTargetCollection) {
     ASSERT_EQ(groups->targets.len(), usize(1));
     EXPECT_EQ(lito::package_target_source(groups->targets[usize {}]).discovery,
               lito::SourceDiscoveryMode::Explicit);
+}
+
+TEST(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
+    auto loaded = lito::load_package_manifest(
+        fixture_path("manifest/build-tools/valid"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->build_tools.len(), usize(1));
+    const auto& tool = loaded->build_tools[usize {}];
+    EXPECT_EQ(tool.alias.as_str(), "generator"_str);
+    EXPECT_EQ(tool.version.as_str(), "1.2.3"_str);
+    EXPECT_EQ(tool.executable.as_path(), PathBuf::from("bin/generator"_str).as_path());
+    ASSERT_EQ(tool.archives.len(), usize(2));
+    auto has_x86_64 = false;
+    auto has_aarch64 = false;
+    for (const auto& archive : tool.archives) {
+        EXPECT_EQ(archive.host.os.as_str(), "linux"_str);
+        if (archive.host.architecture.as_str() == "x86_64"_str) has_x86_64 = true;
+        if (archive.host.architecture.as_str() == "aarch64"_str) has_aarch64 = true;
+    }
+    EXPECT_TRUE(has_x86_64);
+    EXPECT_TRUE(has_aarch64);
+
+    ASSERT_EQ(loaded->targets.len(), usize(1));
+    auto resources = lito::package_target_resources(loaded->targets[usize {}]);
+    ASSERT_TRUE(resources.is_some());
+    ASSERT_EQ((**resources).len(), usize(1));
+    EXPECT_EQ((**resources)[usize {}].name.as_str(), "frontend"_str);
+    EXPECT_EQ((**resources)[usize {}].path.as_path(),
+              PathBuf::from("frontend/default"_str).as_path());
+
+    auto selected = lito::select_host_build_tool_archive(
+        tool,
+        lito::HostInfo {
+            .architecture = lito::canonical_architecture("aarch64"_str).unwrap(),
+            .os           = String::make("linux"_str),
+    });
+    ASSERT_TRUE(selected.is_ok());
+    EXPECT_EQ((**selected).sha256.as_str(),
+              "1111111111111111111111111111111111111111111111111111111111111111"_str);
+
+    auto unsupported = lito::select_host_build_tool_archive(
+        tool,
+        lito::HostInfo {
+            .architecture = lito::canonical_architecture("x86_64"_str).unwrap(),
+            .os           = String::make("windows"_str),
+        });
+    ASSERT_TRUE(unsupported.is_err());
+    EXPECT_TRUE(unsupported.unwrap_err().is_UnsupportedHost());
 }
 
 TEST(Manifest, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {

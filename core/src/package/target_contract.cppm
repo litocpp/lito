@@ -54,9 +54,16 @@ struct ResolvedTarget {
     UsageRequirements               usage;
     Vec<CompileTestCase>            compile_tests;
     Vec<TestAttachmentManifest>     attachments;
+    Vec<RuntimeResourceManifest>    runtime_resources;
     Vec<DependencySpec>             dependencies;
     Vec<ResolvedExternalDependency> external_dependencies;
     Option<TestAttachmentTarget>    test_attachment;
+};
+
+struct PackageBuildToolRequirement {
+    String               package;
+    PathBuf              root;
+    BuildToolRequirement requirement;
 };
 
 struct SelectedPackageMetadata {
@@ -74,6 +81,7 @@ struct PackageMetadata {
     String                       default_profile;
     Vec<PackageTargetId>         default_targets;
     Vec<SelectedPackageMetadata> selected_packages;
+    Vec<PackageBuildToolRequirement> build_tools;
     ToolchainSpec                toolchain;
     Vec<ProfileSpec>             profiles;
     Vec<ResolvedTarget>          targets;

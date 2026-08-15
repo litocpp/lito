@@ -251,7 +251,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
     -> DependencyResult<String> {
     auto result = String::make(
         "cmake_minimum_required(VERSION 3.29)\n"
-        "project(lito_cmake_probe LANGUAGES CXX)\n"
+        "project(lito_cmake_probe LANGUAGES C CXX)\n"
         "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
         "set(_LITO_ASSET_RECEIPT \"${CMAKE_BINARY_DIR}/lito-assets-v1.txt\")\n"
         "file(WRITE \"${_LITO_ASSET_RECEIPT}\" \"lito-cmake-assets-v1\\n\")\n"

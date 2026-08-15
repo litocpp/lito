@@ -194,10 +194,18 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
         }
     }
 
-    auto targets = Vec<ResolvedTarget>::make();
+    auto targets     = Vec<ResolvedTarget>::make();
+    auto build_tools = Vec<PackageBuildToolRequirement>::make();
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
+        for (auto& requirement : package.manifest.build_tools) {
+            build_tools.push(PackageBuildToolRequirement {
+                .package     = package.manifest.name.clone(),
+                .root        = package.manifest.root.clone(),
+                .requirement = rstd::move(requirement),
+            });
+        }
         auto public_arguments                    = rstd_try(parse_options(
             argument_parser,
             package.manifest.usage.public_options,
@@ -290,6 +298,9 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                     attachment.conditional_source_groups.clear();
                 }
             }
+            auto runtime_resources = Vec<RuntimeResourceManifest>::make();
+            if (manifest_target.is_Binary())
+                runtime_resources = rstd::move(manifest_target.as_Binary().resources);
             auto target_dependencies = clone_dependencies(dependencies);
             if (development_target(kind)) {
                 for (const auto& dependency : dev_dependencies) {
@@ -315,6 +326,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                 .source_root   = package.manifest.source_root.clone(),
                 .usage         = clone_usage(package.manifest.usage),
                 .attachments   = rstd::move(attachments),
+                .runtime_resources = rstd::move(runtime_resources),
                 .dependencies  = rstd::move(target_dependencies),
                 .external_dependencies =
                     clone_external_dependencies(external_by_package[package_index]),
@@ -497,6 +509,7 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
         .default_profile       = rstd::move(default_profile),
         .default_targets       = rstd::move(default_targets),
         .selected_packages     = rstd::move(selected_packages),
+        .build_tools           = rstd::move(build_tools),
         .toolchain =
             ToolchainSpec {
                 .cc     = configuration.toolchain.cc.clone(),

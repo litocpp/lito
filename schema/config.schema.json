@@ -35,6 +35,9 @@
     },
     "install": {
       "$ref": "#/definitions/install"
+    },
+    "doc": {
+      "$ref": "#/definitions/doc"
     }
   },
   "additionalProperties": false,
@@ -165,6 +168,16 @@
       "properties": {
         "root": {
           "description": "The default installation root, resolved relative to the project root.",
+          "$ref": "#/definitions/nonEmptyString"
+        }
+      },
+      "additionalProperties": false
+    },
+    "doc": {
+      "type": "object",
+      "properties": {
+        "litodoc-path": {
+          "description": "A litodoc source root resolved relative to the project root.",
           "$ref": "#/definitions/nonEmptyString"
         }
       },

@@ -19,6 +19,7 @@ export import lito.build;
 export import lito.command.test;
 export import lito.command.bench;
 export import lito.command.scan;
+export import lito.command.doc;
 export import lito.command.format;
 export import lito.command.update;
 export import lito.install;

@@ -55,7 +55,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG b43cb59cacab5740a35d74d5a5f30c511ed7dbe2)
+  GIT_TAG 1f5d81067e76c2c1d8399e0f2891e795bcc05325)
 FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)

@@ -22,6 +22,19 @@ struct CompilerIdentity {
     u64     size {};
     i64     modified_seconds {};
     u32     modified_nanoseconds {};
+
+    auto clone() const -> CompilerIdentity {
+        return CompilerIdentity {
+            .path                 = path.clone(),
+            .version              = version.clone(),
+            .target               = target.clone(),
+            .resource_directory   = resource_directory.clone(),
+            .build_identity       = build_identity.clone(),
+            .size                 = size,
+            .modified_seconds     = modified_seconds,
+            .modified_nanoseconds = modified_nanoseconds,
+        };
+    }
 };
 
 struct CompileCommandResult {
@@ -39,6 +52,18 @@ struct CompileInvocation {
     PathBuf         final_object;
     Option<PathBuf> staged_bmi;
     Option<PathBuf> final_bmi;
+
+    auto clone() const -> CompileInvocation {
+        return CompileInvocation {
+            .arguments         = arguments.clone(),
+            .working_directory = working_directory.clone(),
+            .identity          = identity.clone(),
+            .staged_object     = staged_object.clone(),
+            .final_object      = final_object.clone(),
+            .staged_bmi        = staged_bmi.is_some() ? Some(staged_bmi->clone()) : None(),
+            .final_bmi         = final_bmi.is_some() ? Some(final_bmi->clone()) : None(),
+        };
+    }
 };
 
 enum class LinkArchiveMode

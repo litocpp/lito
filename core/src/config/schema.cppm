@@ -54,7 +54,7 @@ auto config_table(const Toml& value, ref<str> context) -> ConfigResult<ref<Table
 auto root_config_key(ref<str> key) -> bool {
     return key == "environment"_str || key == "toolchain"_str || key == "pkg-config"_str ||
            key == "cmake"_str || key == "patch"_str || key == "lock"_str || key == "install"_str ||
-           key == "build"_str;
+           key == "build"_str || key == "doc"_str;
 }
 
 auto environment_config_key(ref<str> key) -> bool {
@@ -80,6 +80,10 @@ auto lock_config_key(ref<str> key) -> bool {
 
 auto install_config_key(ref<str> key) -> bool {
     return key == "root"_str;
+}
+
+auto doc_config_key(ref<str> key) -> bool {
+    return key == "litodoc-path"_str;
 }
 
 auto pkg_config_key(ref<str> key) -> bool {
@@ -386,6 +390,41 @@ auto configured_install(const Toml& document, ref<rstd::path::Path> project_root
     return Ok(InstallConfig { .root = Some(rstd::move(root)) });
 }
 
+auto configured_doc(const Toml& document, ref<rstd::path::Path> project_root)
+    -> ConfigResult<DocConfig> {
+    auto value = config_member(document, "doc"_str);
+    if (value.is_none()) return Ok(DocConfig {});
+    auto table = config_table(**value, "config.doc"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.doc"_str, doc_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto path_value = config_member(**value, "litodoc-path"_str);
+    if (path_value.is_none()) return Ok(DocConfig {});
+    auto text = (**path_value).as_str();
+    if (text.is_none() || text->is_empty()) {
+        return config_failure<DocConfig>("config.doc.litodoc-path must be a non-empty string"_str);
+    }
+    auto path = PathBuf::from(*text);
+    if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
+    auto canonical = rstd::fs::canonicalize(path.as_path());
+    if (canonical.is_err()) {
+        return config_io_failure<DocConfig>("resolve config.doc.litodoc-path"_str,
+                                            path.as_path(),
+                                            rstd::move(canonical).unwrap_err());
+    }
+    auto metadata = rstd::fs::metadata(canonical->as_path());
+    if (metadata.is_err()) {
+        return config_io_failure<DocConfig>("inspect config.doc.litodoc-path"_str,
+                                            canonical->as_path(),
+                                            rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_dir()) {
+        return config_failure<DocConfig>(
+            rstd::format("config.doc.litodoc-path '{}' is not a directory", canonical->as_path()));
+    }
+    return Ok(DocConfig { .litodoc_path = Some(rstd::move(canonical).unwrap()) });
+}
+
 auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root)
     -> ConfigResult<PackageSourceConfig> {
     auto patches     = Vec<GitSourcePatch>::make();
@@ -512,9 +551,11 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
     auto cmake         = configured_cmake(document, root.as_path());
     auto install       = configured_install(document, root.as_path());
+    auto doc           = configured_doc(document, root.as_path());
     auto build_options = configured_build_options(document);
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
     if (install.is_err()) return Err(rstd::move(install).unwrap_err());
+    if (doc.is_err()) return Err(rstd::move(doc).unwrap_err());
     if (build_options.is_err()) return Err(rstd::move(build_options).unwrap_err());
 
     return Ok(ProjectConfig {
@@ -528,6 +569,7 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
         .pkg_config       = rstd::move(pkg_config).unwrap(),
         .cmake            = rstd::move(cmake).unwrap(),
         .install          = rstd::move(install).unwrap(),
+        .doc              = rstd::move(doc).unwrap(),
     });
 }
 

@@ -379,6 +379,50 @@ auto parse_library_target(Option<ref<Toml>> value) -> ManifestSchemaResult<Optio
         PackageTargetManifest::Library(rstd::move(name), rstd::move(archive), rstd::move(source))));
 }
 
+auto parse_runtime_resources(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Vec<RuntimeResourceManifest>> {
+    auto result = Vec<RuntimeResourceManifest>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none() || (**entries).is_empty()) {
+        return failure<Vec<RuntimeResourceManifest>>(
+            rstd::format("{}.resources must be a non-empty array of tables", context));
+    }
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto  item_context = rstd::format("{}.resources[{}]", context, index);
+        const auto& item         = (**entries)[index];
+        auto table = rstd_try(table_value(item, item_context.as_str()));
+        rstd_try(reject_unknown(*table, item_context.as_str(), runtime_resource_key));
+        auto name = rstd_try(required_string(item, "name"_str, item_context.as_str()));
+        auto root = rstd_try(required_string(item, "root"_str, item_context.as_str()));
+        auto path = rstd_try(required_string(item, "path"_str, item_context.as_str()));
+        if (! package_name_is_valid(name.as_str())) {
+            return failure<Vec<RuntimeResourceManifest>>(
+                rstd::format("{}.name must be a valid resource name", item_context));
+        }
+        for (const auto& existing : result) {
+            if (existing.name == name.as_str()) {
+                return failure<Vec<RuntimeResourceManifest>>(
+                    rstd::format("{} repeats resource name '{}'", context, name.as_str()));
+            }
+        }
+        if (root.as_str() != "generated"_str) {
+            return failure<Vec<RuntimeResourceManifest>>(
+                rstd::format("{}.root must be 'generated'", item_context));
+        }
+        auto relative = PathBuf::from(rstd::move(path));
+        if (relative.is_empty() || ! relative.as_path().is_safe_relative()) {
+            return failure<Vec<RuntimeResourceManifest>>(
+                rstd::format("{}.path must be a safe non-empty relative path", item_context));
+        }
+        result.push(RuntimeResourceManifest {
+            .name = rstd::move(name),
+            .path = rstd::move(relative),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref<str> key)
     -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
     auto result = Vec<PackageTargetManifest>::make();
@@ -396,8 +440,10 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
         const auto  context = rstd::format("manifest.{}[{}]", key, index);
         const auto& item    = (**entries)[index];
         auto        table   = rstd_try(table_value(item, context.as_str()));
-        rstd_try(reject_unknown(
-            *table, context.as_str(), kind == PackageTargetKind::Test ? test_key : runnable_key));
+        auto allowed = kind == PackageTargetKind::Test
+                           ? test_key
+                           : (kind == PackageTargetKind::Binary ? binary_key : runnable_key);
+        rstd_try(reject_unknown(*table, context.as_str(), allowed));
         auto name = rstd_try(required_string(item, "name"_str, context.as_str()));
         if (! package_name_is_valid(name.as_str())) {
             return failure<Vec<PackageTargetManifest>>(
@@ -421,8 +467,10 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
             link_stdlib = *parsed;
         }
         if (kind == PackageTargetKind::Binary) {
-            result.push(
-                PackageTargetManifest::Binary(rstd::move(name), rstd::move(source), link_stdlib));
+            auto resources = rstd_try(
+                parse_runtime_resources(member(item, "resources"_str), context.as_str()));
+            result.push(PackageTargetManifest::Binary(
+                rstd::move(name), rstd::move(source), link_stdlib, rstd::move(resources)));
         } else if (kind == PackageTargetKind::Benchmark) {
             result.push(PackageTargetManifest::Benchmark(
                 rstd::move(name), rstd::move(source), link_stdlib));

@@ -1,0 +1,9 @@
+[package]
+name = "build-tool-invalid-resource"
+
+[[bin]]
+name = "tool-consumer"
+sources = ["main.cpp"]
+resources = [
+  { name = "frontend", root = "source", path = "frontend/default" },
+]

@@ -158,12 +158,14 @@ auto resolve_project_selection(const PackageSelection&           selection,
 
 struct PreparedBuildProject {
     ClangToolchain       toolchain;
+    BuildPlatform        platform;
     BuildLayout          layout;
     PackageMetadata      metadata;
     ExternalAssetCatalog external_assets;
 };
 
 struct ResolvedProjectMetadata {
+    BuildPlatform        platform;
     BuildLayout          layout;
     PackageMetadata      metadata;
     ExternalAssetCatalog external_assets;
@@ -267,6 +269,7 @@ auto resolve_project_metadata(ResolvedProjectSession            session,
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
     return Ok(ResolvedProjectMetadata {
+        .platform        = rstd::move(session.platform),
         .layout          = rstd::move(layout).unwrap(),
         .metadata        = rstd::move(metadata).unwrap(),
         .external_assets = rstd::move(assets),
@@ -302,6 +305,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession            session,
     auto resolved = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
         .toolchain       = rstd::move(toolchain),
+        .platform        = rstd::move(resolved.platform),
         .layout          = rstd::move(resolved.layout),
         .metadata        = rstd::move(resolved.metadata),
         .external_assets = rstd::move(resolved.external_assets),
@@ -393,6 +397,7 @@ auto prepare_build_project(const PackageSelection&           selection,
     auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
         .toolchain       = rstd::move(toolchain),
+        .platform        = rstd::move(resolved_metadata.platform),
         .layout          = rstd::move(resolved_metadata.layout),
         .metadata        = rstd::move(resolved_metadata.metadata),
         .external_assets = rstd::move(resolved_metadata.external_assets),

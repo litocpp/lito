@@ -8,6 +8,8 @@ import rstd.json;
 import luato;
 import lito.error;
 import lito.build.layout_error_contract;
+import lito.build.host_tool_error_contract;
+import lito.build.tool_action_error_contract;
 import lito.configure_template;
 
 export namespace lito
@@ -17,6 +19,8 @@ class BuildScriptError {
     RSTD_ENUM(BuildScriptError,
               (Layout, (BuildLayoutError source;)),
               (Template, (TemplateError source;)),
+              (HostTool, (HostBuildToolError source;)),
+              (BuildToolAction, (BuildToolActionError source;)),
               (Io,
                (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
@@ -68,6 +72,20 @@ struct Impl<convert::From<lito::TemplateError>, lito::BuildScriptError> {
 };
 
 template<>
+struct Impl<convert::From<lito::HostBuildToolError>, lito::BuildScriptError> {
+    static auto from(lito::HostBuildToolError error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::HostTool(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::BuildToolActionError>, lito::BuildScriptError> {
+    static auto from(lito::BuildToolActionError error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::BuildToolAction(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -77,6 +95,12 @@ struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_Template()) {
             return as<fmt::Display>(error.as_Template().source).fmt(formatter);
+        }
+        if (error.is_HostTool()) {
+            return as<fmt::Display>(error.as_HostTool().source).fmt(formatter);
+        }
+        if (error.is_BuildToolAction()) {
+            return as<fmt::Display>(error.as_BuildToolAction().source).fmt(formatter);
         }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
@@ -119,6 +143,12 @@ struct Impl<error::Error, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_Template()) {
             return Some(dyn<error::Error>::from_ref(error.as_Template().source));
+        }
+        if (error.is_HostTool()) {
+            return Some(dyn<error::Error>::from_ref(error.as_HostTool().source));
+        }
+        if (error.is_BuildToolAction()) {
+            return Some(dyn<error::Error>::from_ref(error.as_BuildToolAction().source));
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

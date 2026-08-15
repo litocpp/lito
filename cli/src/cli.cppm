@@ -42,6 +42,24 @@ struct ScanOptions {
     Vec<PathBuf>             fetch_seeds;
 };
 
+struct DocOptions {
+    Vec<String>              packages;
+    Option<BuildProfileName> profile;
+    Vec<String>              targets;
+    Option<PathBuf>          output;
+    Option<PathBuf>          data_output;
+    Option<PathBuf>          frontend;
+    bool                     data_only {};
+    bool                     locked {};
+    bool                     offline {};
+    bool                     frozen {};
+    Vec<PathBuf>             fetch_seeds;
+    bool                     verbose {};
+    Option<PathBuf>          timing_file;
+    bool                     no_timing {};
+    Option<usize>            jobs;
+};
+
 struct InstallOptions {
     Vec<String>                   packages;
     Option<BuildProfileName>      profile;
@@ -138,6 +156,7 @@ class CliCommand {
               (Install, (InstallOptions options;)),
               (Test, (TestOptions options;)),
               (Bench, (BenchOptions options;)),
+              (Doc, (DocOptions options;)),
               (Scan, (ScanOptions options;)),
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
@@ -294,6 +313,20 @@ struct ScanSchema {
     auto decode(const Matches& matches) const -> rstd::Result<ScanOptions, CliDecodeError>;
 };
 
+struct DocSchema {
+    CommandKey            command;
+    PackageProfileArgs    package;
+    ArgKey<String>        target;
+    ArgKey<String>        output;
+    ArgKey<String>        data_output;
+    ArgKey<String>        frontend;
+    ArgKey<bool>          data_only;
+    SourceAcquisitionArgs source_acquisition;
+    BuildExecutionArgs    execution;
+
+    auto decode(const Matches& matches) const -> rstd::Result<DocOptions, CliDecodeError>;
+};
+
 struct FormatSchema {
     CommandKey     command;
     ArgKey<String> package;
@@ -363,6 +396,7 @@ struct CliSchema {
     InstallSchema install;
     TestSchema    test;
     BenchSchema   bench;
+    DocSchema     doc;
     ScanSchema    scan;
     FormatSchema  format;
     UpdateSchema  update;
@@ -681,6 +715,45 @@ auto make_scan_definition() -> CommandDefinition<ScanSchema> {
     };
 }
 
+auto make_doc_definition() -> CommandDefinition<DocSchema> {
+    auto command = Command::make("doc"_str);
+    command.about("Build package documentation"_str);
+    auto key     = command.key();
+    auto package = add_package_profile_args(command);
+    auto target  = command.add_arg(target_arg());
+    auto output  = command.add_arg(Arg<String>::value("doc-output"_str, string_parser())
+                                       .long_name("output"_str)
+                                       .value_name("DIRECTORY"_str)
+                                       .help("Write the documentation site to a directory"_str));
+    auto data_output = command.add_arg(Arg<String>::value("doc-data-output"_str, string_parser())
+                                           .long_name("data-output"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Write documentation data to a directory"_str));
+    auto frontend    = command.add_arg(Arg<String>::value("doc-frontend"_str, string_parser())
+                                           .long_name("frontend"_str)
+                                           .value_name("DIRECTORY"_str)
+                                           .help("Use a custom documentation frontend"_str));
+    auto data_only   = command.add_arg(Arg<bool>::flag("doc-data-only"_str)
+                                           .long_name("data-only"_str)
+                                           .help("Generate documentation data without a site"_str));
+    auto source_acquisition = add_source_acquisition_args(command);
+    auto execution          = add_build_execution_args(command);
+    return {
+        DocSchema {
+            .command            = key,
+            .package            = rstd::move(package),
+            .target             = target,
+            .output             = output,
+            .data_output        = data_output,
+            .frontend           = frontend,
+            .data_only          = data_only,
+            .source_acquisition = rstd::move(source_acquisition),
+            .execution          = rstd::move(execution),
+        },
+        rstd::move(command),
+    };
+}
+
 auto make_format_definition() -> CommandDefinition<FormatSchema> {
     auto command = Command::make("format"_str);
     command.about("Format package sources"_str);
@@ -801,6 +874,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     auto install = make_install_definition();
     auto test    = make_test_definition();
     auto bench   = make_bench_definition();
+    auto doc     = make_doc_definition();
     auto scan    = make_scan_definition();
     auto format  = make_format_definition();
     auto update  = make_update_definition();
@@ -824,6 +898,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(install.command));
     root.add_subcommand(rstd::move(test.command));
     root.add_subcommand(rstd::move(bench.command));
+    root.add_subcommand(rstd::move(doc.command));
     root.add_subcommand(rstd::move(scan.command));
     root.add_subcommand(rstd::move(format.command));
     root.add_subcommand(rstd::move(update.command));
@@ -838,6 +913,7 @@ auto make_schema() -> rstd::Result<CliSchema, DefinitionError> {
         .install = rstd::move(install.schema),
         .test    = rstd::move(test.schema),
         .bench   = rstd::move(bench.schema),
+        .doc     = rstd::move(doc.schema),
         .scan    = rstd::move(scan.schema),
         .format  = rstd::move(format.schema),
         .update  = rstd::move(update.schema),
@@ -1080,6 +1156,29 @@ auto ScanSchema::decode(const Matches& matches) const -> rstd::Result<ScanOption
     });
 }
 
+auto DocSchema::decode(const Matches& matches) const -> rstd::Result<DocOptions, CliDecodeError> {
+    auto package   = rstd_try(decode_package_profile(matches, this->package));
+    auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
+    auto execution = rstd_try(decode_build_execution(matches, this->execution));
+    return Ok(DocOptions {
+        .packages    = rstd::move(package.packages),
+        .profile     = rstd::move(package.profile),
+        .targets     = rstd_try(string_values(matches, target)),
+        .output      = rstd_try(optional_path(matches, output)),
+        .data_output = rstd_try(optional_path(matches, data_output)),
+        .frontend    = rstd_try(optional_path(matches, frontend)),
+        .data_only   = rstd_try(flag_value(matches, data_only)),
+        .locked      = source.locked,
+        .offline     = source.offline,
+        .frozen      = source.frozen,
+        .fetch_seeds = rstd::move(source.fetch_seeds),
+        .verbose     = execution.verbose,
+        .timing_file = rstd::move(execution.timing_file),
+        .no_timing   = execution.no_timing,
+        .jobs        = rstd::move(execution.jobs),
+    });
+}
+
 auto FormatSchema::decode(const Matches& matches) const
     -> rstd::Result<FormatOptions, CliDecodeError> {
     return Ok(FormatOptions {
@@ -1170,6 +1269,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
     if (auto child = matches.subcommand_matches(schema.bench.command); child.is_some()) {
         auto options = rstd_try(schema.bench.decode(**child));
         return Ok(CliCommand::Bench(rstd::move(options)));
+    }
+    if (auto child = matches.subcommand_matches(schema.doc.command); child.is_some()) {
+        auto options = rstd_try(schema.doc.decode(**child));
+        return Ok(CliCommand::Doc(rstd::move(options)));
     }
     if (auto child = matches.subcommand_matches(schema.scan.command); child.is_some()) {
         auto options = rstd_try(schema.scan.decode(**child));

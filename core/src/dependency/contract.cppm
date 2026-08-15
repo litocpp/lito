@@ -127,11 +127,19 @@ class ResolvedExternalSource {
               (Archive, (String url; String sha256;)))
 };
 
+struct ResolvedBuildToolSourceMetadata {
+    String  version;
+    PathBuf executable;
+    String  operating_system;
+    u64     schema_version { u64(1) };
+};
+
 struct ResolvedExternalSourceRecord {
     String                 package;
     String                 alias;
     String                 provider;
     Vec<Architecture>      architectures;
+    Option<ResolvedBuildToolSourceMetadata> build_tool;
     ResolvedExternalSource source;
 };
 

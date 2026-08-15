@@ -32,6 +32,20 @@ auto runnable_key(ref<str> key) -> bool {
            key == "source-groups"_str || key == "link-stdlib"_str;
 }
 
+auto binary_key(ref<str> key) -> bool { return runnable_key(key) || key == "resources"_str; }
+
+auto runtime_resource_key(ref<str> key) -> bool {
+    return key == "name"_str || key == "root"_str || key == "path"_str;
+}
+
+auto build_tool_key(ref<str> key) -> bool {
+    return key == "version"_str || key == "executable"_str || key == "archives"_str;
+}
+
+auto build_tool_archive_key(ref<str> key) -> bool {
+    return key == "url"_str || key == "sha256"_str;
+}
+
 auto test_key(ref<str> key) -> bool {
     return runnable_key(key) || key == "attach"_str;
 }

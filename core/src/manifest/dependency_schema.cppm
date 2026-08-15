@@ -210,24 +210,10 @@ auto validate_git_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<
 }
 
 auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
-    if (value.is_empty() || value.starts_with("-"_str) || value.contains("#"_str) ||
-        value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
-        value.contains("\n"_str) || value.contains("\r"_str)) {
+    if (! archive_url_is_valid(value)) {
         return failure<empty>(rstd::format("{}.archive is not a valid archive URL", context));
     }
     return Ok(empty {});
-}
-
-auto sha256_is_valid(ref<str> value) -> bool {
-    if (value.len() != usize(64)) return false;
-    for (const auto character : value) {
-        const auto ascii = character.to_primitive();
-        if (! ((ascii >= '0' && ascii <= '9') || (ascii >= 'a' && ascii <= 'f') ||
-               (ascii >= 'A' && ascii <= 'F'))) {
-            return false;
-        }
-    }
-    return true;
 }
 
 auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)

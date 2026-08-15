@@ -540,7 +540,14 @@ private:
     auto materialize_arguments(Vec<Token>& input, const Vec<ArgumentRange>& ranges)
         -> Vec<Vec<Token>> {
         auto arguments = Vec<Vec<Token>>::with_capacity(ranges.len());
-        for (const auto& range : ranges) arguments.push(move_range(input, range.begin, range.end));
+        for (const auto& range : ranges) {
+            auto argument = Vec<Token>::with_capacity(range.end - range.begin);
+            for (auto index = range.begin; index < range.end; ++index) {
+                if (input[index].kind != TokenKind::Newline)
+                    argument.push(rstd::move(input[index]));
+            }
+            arguments.push(rstd::move(argument));
+        }
         return arguments;
     }
 
@@ -656,9 +663,11 @@ private:
 
             if (paste_left) {
                 if (piece.is_empty()) {
-                    if (! result.is_empty() &&
-                        result[result.len() - usize(1)].text.as_str() == ","_str &&
-                        parameter.is_some() && *parameter == fixed) {
+                    if (! result.is_empty() && result[result.len() - usize(1)].text.is_empty()) {
+                        (void)result.pop();
+                    } else if (! result.is_empty() &&
+                               result[result.len() - usize(1)].text.as_str() == ","_str &&
+                               parameter.is_some() && *parameter == fixed) {
                         (void)result.pop();
                     }
                 } else if (! result.is_empty()) {
@@ -672,6 +681,14 @@ private:
                 } else {
                     for (auto& item : piece) result.push(rstd::move(item));
                 }
+            } else if (piece.is_empty() && parameter.is_some() &&
+                       index + usize(1) < macro.replacement.len() &&
+                       macro.replacement[index + usize(1)].text.as_str() == "##"_str) {
+                auto placemarker = clone_token(origin);
+                ++raw_statistics_.synthetic_tokens;
+                placemarker.kind = TokenKind::Punctuation;
+                placemarker.text = String::make();
+                result.push(rstd::move(placemarker));
             } else if (token.text.as_str() != "##"_str) {
                 for (auto& item : piece) result.push(rstd::move(item));
             }

@@ -35,6 +35,12 @@ struct PendingImport {
     bool                        exported { false };
 };
 
+struct SourceParseState {
+    Vec<lexical::Token> candidate;
+    usize               brace_depth {};
+    bool                ignore_statement { false };
+};
+
 auto parse_name(const Vec<lexical::Token>& tokens, usize start, ref<str> context)
     -> lexical::Result<Option<ParsedName>> {
     if (start >= tokens.len()) return Ok(None());
@@ -101,53 +107,55 @@ public:
 
     auto consume(Vec<lexical::Token> tokens) -> lexical::Result<empty> {
         for (auto& token : tokens) {
+            while (states_.len() <= token.expansion.source) states_.emplace_back();
+            auto& state = states_[token.expansion.source];
             if (token.kind == lexical::TokenKind::Newline) continue;
             auto text = token.text.as_str();
             if (text == "{"_str) {
-                ++brace_depth_;
-                candidate_        = Vec<lexical::Token>::make();
-                ignore_statement_ = false;
+                ++state.brace_depth;
+                state.candidate        = Vec<lexical::Token>::make();
+                state.ignore_statement = false;
                 continue;
             }
             if (text == "}"_str) {
-                if (brace_depth_ != usize {}) --brace_depth_;
-                if (brace_depth_ == usize {}) {
-                    candidate_        = Vec<lexical::Token>::make();
-                    ignore_statement_ = false;
+                if (state.brace_depth != usize {}) --state.brace_depth;
+                if (state.brace_depth == usize {}) {
+                    state.candidate        = Vec<lexical::Token>::make();
+                    state.ignore_statement = false;
                 }
                 continue;
             }
-            if (brace_depth_ != usize {}) continue;
+            if (state.brace_depth != usize {}) continue;
 
-            if (ignore_statement_) {
+            if (state.ignore_statement) {
                 if (text == "module"_str || text == "import"_str || text == "export"_str) {
-                    ignore_statement_ = false;
-                    candidate_.push(rstd::move(token));
+                    state.ignore_statement = false;
+                    state.candidate.push(rstd::move(token));
                 } else if (text == ";"_str) {
-                    ignore_statement_ = false;
+                    state.ignore_statement = false;
                 }
                 continue;
             }
-            if (candidate_.is_empty()) {
+            if (state.candidate.is_empty()) {
                 if (text == "module"_str || text == "import"_str || text == "export"_str) {
-                    candidate_.push(rstd::move(token));
+                    state.candidate.push(rstd::move(token));
                 } else if (text != ";"_str) {
-                    ignore_statement_ = true;
+                    state.ignore_statement = true;
                 }
                 continue;
             }
-            if (candidate_.len() == usize(1) &&
-                candidate_[usize {}].text.as_str() == "export"_str && text != "module"_str &&
+            if (state.candidate.len() == usize(1) &&
+                state.candidate[usize {}].text.as_str() == "export"_str && text != "module"_str &&
                 text != "import"_str) {
-                candidate_        = Vec<lexical::Token>::make();
-                ignore_statement_ = text != ";"_str;
+                state.candidate        = Vec<lexical::Token>::make();
+                state.ignore_statement = text != ";"_str;
                 continue;
             }
             auto complete = text == ";"_str;
-            candidate_.push(rstd::move(token));
+            state.candidate.push(rstd::move(token));
             if (complete) {
-                auto parsed = parse_candidate();
-                candidate_  = Vec<lexical::Token>::make();
+                auto parsed     = parse_candidate(state.candidate);
+                state.candidate = Vec<lexical::Token>::make();
                 if (parsed.is_err()) return parsed;
             }
         }
@@ -186,17 +194,17 @@ public:
     }
 
 private:
-    auto parse_candidate() -> lexical::Result<empty> {
+    auto parse_candidate(const Vec<lexical::Token>& candidate) -> lexical::Result<empty> {
         auto declaration = usize {};
-        auto exported    = candidate_[usize {}].text.as_str() == "export"_str;
+        auto exported    = candidate[usize {}].text.as_str() == "export"_str;
         if (exported) declaration = usize(1);
-        if (declaration >= candidate_.len()) return Ok(empty {});
-        auto keyword = candidate_[declaration].text.as_str();
-        if (keyword == "module"_str && declaration + usize(1) < candidate_.len() &&
-            candidate_[declaration + usize(1)].text.as_str() == ";"_str) {
+        if (declaration >= candidate.len()) return Ok(empty {});
+        auto keyword = candidate[declaration].text.as_str();
+        if (keyword == "module"_str && declaration + usize(1) < candidate.len() &&
+            candidate[declaration + usize(1)].text.as_str() == ";"_str) {
             return Ok(empty {});
         }
-        auto parsed = parse_name(candidate_,
+        auto parsed = parse_name(candidate,
                                  declaration + usize(1),
                                  keyword == "module"_str ? "module declaration"_str
                                                          : "import declaration"_str);
@@ -230,7 +238,7 @@ private:
             return Ok(empty {});
         }
         import_names_.insert(logical_name.clone(), imports_.len());
-        const auto& origin = candidate_[declaration];
+        const auto& origin = candidate[declaration];
         imports_.push(PendingImport {
             .logical_name  = rstd::move(logical_name),
             .location      = origin.expansion,
@@ -245,9 +253,7 @@ private:
     String                 declared_;
     ImportIndexMap         import_names_;
     Vec<PendingImport>     imports_;
-    Vec<lexical::Token>    candidate_;
-    usize                  brace_depth_ {};
-    bool                   ignore_statement_ { false };
+    Vec<SourceParseState>  states_;
 };
 
 auto parse_module_dependencies(const preprocessor::PreprocessedTranslationUnit& translation)

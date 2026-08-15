@@ -18,6 +18,7 @@ import :key_schema;
 import :convention;
 import :target_schema;
 import :dependency_schema;
+import :build_tool_schema;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -182,6 +183,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);
     auto runtime_dependencies =
         parse_runtime_dependencies(member(document, "runtime-dependencies"_str));
+    auto build_tools = parse_build_tools(member(document, "build-tools"_str));
     auto external = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
@@ -190,6 +192,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (runtime_dependencies.is_err()) {
         return Err(rstd::move(runtime_dependencies).unwrap_err());
     }
+    if (build_tools.is_err()) return Err(rstd::move(build_tools).unwrap_err());
     if (external.is_err()) return Err(rstd::move(external).unwrap_err());
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_usage = rstd::move(usage).unwrap();
@@ -228,6 +231,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .manifest_path          = rstd::move(path),
             .install_script         = rstd::move(install_script).unwrap(),
             .profile                = rstd::move(profile),
+            .build_tools            = rstd::move(build_tools).unwrap(),
             .targets                = rstd::move(targets),
             .target                 = rstd::move(target).unwrap(),
             .compile_tests          = rstd::move(compile_tests),

@@ -51,6 +51,9 @@ auto selected_by_purpose(ProjectRootRole         role,
     if (purpose == PackageSelectionPurpose::Benchmark) {
         return kind == PackageTargetKind::Benchmark;
     }
+    if (purpose == PackageSelectionPurpose::Documentation) {
+        return kind == PackageTargetKind::Library;
+    }
     if (purpose == PackageSelectionPurpose::Install) {
         return kind == PackageTargetKind::Binary;
     }

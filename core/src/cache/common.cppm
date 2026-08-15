@@ -24,7 +24,7 @@ namespace lito
 {
 
 inline constexpr auto CACHE_VERSION  = u64(3);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v2"_str;
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v3"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
 
 template<typename T>
@@ -247,8 +247,9 @@ export namespace lito
 {
 
 struct DependencyArtifact {
-    String logical_name;
-    String artifact;
+    String  logical_name;
+    String  artifact;
+    PathBuf path;
 };
 
 class CacheEnvironment {

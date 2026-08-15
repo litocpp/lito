@@ -105,6 +105,25 @@ auto collect_external_source_records(ResolvedPackageGraph&             graph,
         git_sources.push(clone_resolved_package_source(package.source));
     }
     for (const auto& package : graph.packages) {
+        for (const auto& tool : package.manifest.build_tools) {
+            for (const auto& archive : tool.archives) {
+                auto architectures = Vec<Architecture>::make();
+                architectures.push(archive.host.architecture.clone());
+                graph.externals.push(ResolvedExternalSourceRecord {
+                    .package       = package.manifest.name.clone(),
+                    .alias         = tool.alias.clone(),
+                    .provider      = rstd::format("build-tool:{}", archive.host.os.as_str()),
+                    .architectures = rstd::move(architectures),
+                    .build_tool = Some(ResolvedBuildToolSourceMetadata {
+                        .version          = tool.version.clone(),
+                        .executable       = tool.executable.clone(),
+                        .operating_system = archive.host.os.clone(),
+                    }),
+                    .source = ResolvedExternalSource::Archive(archive.url.clone(),
+                                                              archive.sha256.clone()),
+                });
+            }
+        }
         for (const auto& declaration : package.manifest.cmake_external_dependencies) {
             if (declaration.source.is_Installed()) continue;
 

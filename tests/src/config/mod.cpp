@@ -104,6 +104,17 @@ TEST(Config, ProjectConfigParsesInstallRootRelativeToProject) {
     EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
+TEST(Config, ProjectConfigResolvesLitodocSourcePath) {
+    auto overrides = Vec<String>::make();
+    overrides.push(String::make("doc.litodoc-path=."_str));
+    auto loaded = lito::load_project_config(
+        fixture_path("config"_str).as_path(),
+        lito::ProjectConfigRequest { .overrides = rstd::move(overrides) });
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->doc.litodoc_path.is_some());
+    EXPECT_EQ(loaded->doc.litodoc_path->as_path(), fixture_path("config"_str).as_path());
+}
+
 TEST(Config, InvalidLockPathsAreRejectedByConfigOwner) {
     constexpr ref<str> cases[] = {
         "config/lock-empty"_str,

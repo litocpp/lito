@@ -1,0 +1,10 @@
+[package]
+name = "build-tool-invalid-executable"
+
+[build-tools.generator]
+version = "1.2.3"
+executable = "../generator"
+
+[build-tools.generator.archives.linux-x86_64]
+url = "https://example.com/generator.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"

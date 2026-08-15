@@ -23,6 +23,7 @@ import lito.modules;
 import lito.cache;
 import lito.build.layout;
 import lito.build.script;
+import lito.build.resource;
 import lito.frontend;
 import lito.build.frontend_analysis;
 import lito.build.frontend_observer;
@@ -244,7 +245,17 @@ auto build_with_environment_impl(const BuildRequest&               request,
                                                        metadata.default_profile.as_str(),
                                                        *script_packages,
                                                        *selected,
-                                                       request.observer));
+                                                       request.observer,
+                                                       project.platform.host,
+                                                       request.cmake,
+                                                       tool_resolver,
+                                                       process_environment,
+                                                       request.sources,
+                                                       execution->jobs));
+    auto runtime_resources = rstd_try(resolve_runtime_resources(metadata,
+                                                                layout,
+                                                                selected_targets,
+                                                                request.observer));
 
     auto scan_span = profiler.span(ScanProbe::Total);
 
@@ -387,6 +398,11 @@ auto build_with_environment_impl(const BuildRequest&               request,
         materialize_compile_plan(package, layout, toolchain, units, scans, module_plan);
     if (materialized.is_err()) {
         return Err(rstd::move(materialized).unwrap_err());
+    }
+    auto documentation_units =
+        materialize_documentation_units(package, units, scans, *materialized, selected_targets);
+    if (documentation_units.is_err()) {
+        return Err(rstd::move(documentation_units).unwrap_err());
     }
     auto executed = execute_compile_plan(package,
                                          units,
@@ -558,11 +574,13 @@ auto build_with_environment_impl(const BuildRequest&               request,
         .package              = package.name.clone(),
         .profile              = package_plan.profile->name.clone(),
         .target               = String::make(toolchain.target()),
+        .language_standard    = request.configuration.language_standard.clone(),
         .output               = PathBuf::from(layout.output()),
         .scanned              = scans.len(),
         .compiled             = compiled,
         .reused               = reused,
         .artifacts            = rstd::move(artifacts),
+        .runtime_resources    = rstd::move(runtime_resources),
         .selected_targets     = rstd::move(selected_targets),
         .selected_packages    = rstd::move(selected_packages),
         .frontend             = frontend_statistics,
@@ -574,6 +592,8 @@ auto build_with_environment_impl(const BuildRequest&               request,
         .compile_tests        = rstd::move(compile_tests),
         .script               = rstd::move(script_report),
         .external_assets      = rstd::move(project.external_assets),
+        .compiler             = toolchain.compiler_identity().clone(),
+        .documentation_units  = rstd::move(documentation_units).unwrap(),
     });
 }
 

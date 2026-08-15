@@ -35,6 +35,12 @@ enum class BuildEventKind
     Strip,
     Configure,
     ConfigureReuse,
+    BuildToolFetch,
+    BuildToolReuse,
+    BuildToolRun,
+    BuildToolRunReuse,
+    GeneratedResource,
+    GeneratedResourceReuse,
     CMakeConfigure,
     CMakeBuild,
     CMakeInstall,
@@ -103,6 +109,14 @@ struct BuiltArtifact {
     PathBuf         package_root;
 };
 
+struct BuiltRuntimeResource {
+    PackageTargetId target;
+    String          name;
+    PathBuf         root;
+    String          identity;
+    Vec<PathBuf>    files;
+};
+
 struct CompileTestExecution {
     String               package;
     String               name;
@@ -132,15 +146,44 @@ struct BuildScriptReport {
     Vec<ConfiguredFile>  files;
 };
 
+enum class DocumentationUnitKind
+{
+    TranslationUnit,
+    ModuleInterface,
+    ModulePartition,
+    ModuleImplementation,
+};
+
+struct DocumentationBmiDependency {
+    String  logical_name;
+    String  artifact_identity;
+    PathBuf path;
+};
+
+struct DocumentationBuildUnit {
+    PackageTargetId                 target;
+    PathBuf                         package_root;
+    PathBuf                         source;
+    PathBuf                         relative_source;
+    DocumentationUnitKind           kind { DocumentationUnitKind::TranslationUnit };
+    bool                            is_interface { false };
+    Option<String>                  logical_module;
+    String                          source_identity;
+    CompileInvocation               invocation;
+    Vec<DocumentationBmiDependency> bmi_dependencies;
+};
+
 struct BuildSummary {
     String                          package;
     String                          profile;
     String                          target;
+    String                          language_standard;
     PathBuf                         output;
     usize                           scanned {};
     usize                           compiled {};
     usize                           reused {};
     Vec<BuiltArtifact>              artifacts;
+    Vec<BuiltRuntimeResource>       runtime_resources;
     Vec<PackageTargetId>            selected_targets;
     Vec<SelectedPackageMetadata>    selected_packages;
     frontend::FrontendStatistics    frontend;
@@ -152,12 +195,31 @@ struct BuildSummary {
     Vec<CompileTestExecution>       compile_tests;
     BuildScriptReport               script;
     ExternalAssetCatalog            external_assets;
+    CompilerIdentity                compiler;
+    Vec<DocumentationBuildUnit>     documentation_units;
 };
 
 } // namespace lito
 
 export namespace rstd
 {
+
+template<>
+struct Impl<fmt::Display, lito::DocumentationUnitKind> : ImplBase<lito::DocumentationUnitKind> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        switch (this->self()) {
+        case lito::DocumentationUnitKind::TranslationUnit:
+            return formatter.write_str("translation-unit"_str);
+        case lito::DocumentationUnitKind::ModuleInterface:
+            return formatter.write_str("module-interface"_str);
+        case lito::DocumentationUnitKind::ModulePartition:
+            return formatter.write_str("module-partition"_str);
+        case lito::DocumentationUnitKind::ModuleImplementation:
+            return formatter.write_str("module-implementation"_str);
+        }
+        __builtin_unreachable();
+    }
+};
 
 template<>
 struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind> {
@@ -175,6 +237,14 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::Strip: name = "strip"_str; break;
         case lito::BuildEventKind::Configure: name = "configure"_str; break;
         case lito::BuildEventKind::ConfigureReuse: name = "configure-reuse"_str; break;
+        case lito::BuildEventKind::BuildToolFetch: name = "build-tool-fetch"_str; break;
+        case lito::BuildEventKind::BuildToolReuse: name = "build-tool-reuse"_str; break;
+        case lito::BuildEventKind::BuildToolRun: name = "build-tool-run"_str; break;
+        case lito::BuildEventKind::BuildToolRunReuse: name = "build-tool-run-reuse"_str; break;
+        case lito::BuildEventKind::GeneratedResource: name = "generated-resource"_str; break;
+        case lito::BuildEventKind::GeneratedResourceReuse:
+            name = "generated-resource-reuse"_str;
+            break;
         case lito::BuildEventKind::CMakeConfigure: name = "cmake-configure"_str; break;
         case lito::BuildEventKind::CMakeBuild: name = "cmake-build"_str; break;
         case lito::BuildEventKind::CMakeInstall: name = "cmake-install"_str; break;

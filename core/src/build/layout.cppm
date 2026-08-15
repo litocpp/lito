@@ -219,6 +219,22 @@ public:
         return join(directory.as_path(), "receipt.json"_str);
     }
 
+    auto build_tool_action_root() const -> PathBuf {
+        return join(output_.as_path(), "lito-build-tools"_str);
+    }
+
+    auto host_build_tool_root() const -> PathBuf {
+        return join(output_.as_path(), "lito-host-tools"_str);
+    }
+
+    auto runtime_resource_receipt(const PackageTargetId& target, ref<str> name) const -> PathBuf {
+        auto root = join(output_.as_path(), "lito-resources"_str);
+        auto directory = target_directory(root.as_path(), target);
+        auto filename = String::make(name);
+        filename.push_str(".receipt"_str);
+        return directory.join(PathBuf::from(rstd::move(filename)).as_path());
+    }
+
     auto object(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
         -> BuildLayoutResult<PathBuf> {
         return source_path(
