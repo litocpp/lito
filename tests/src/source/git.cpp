@@ -26,6 +26,170 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
+TEST(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
+    auto directory = output_root("git-package-owned-external"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto seed     = directory.join(PathBuf::from("seed"_str).as_path());
+    auto upstream = seed.join(PathBuf::from("git/source"_str).as_path());
+    auto package  = upstream.join(PathBuf::from("pkg"_str).as_path());
+    auto shaders  = package.join(PathBuf::from("shaders"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(shaders.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::write_atomic(
+                    upstream.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                    "[workspace]\nname = \"owned-workspace\"\nmembers = [\"pkg\"]\n"_str.as_bytes())
+                    .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(
+            package.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+            "[package]\n"
+            "name = \"owned-fixture\"\n"
+            "version = \"0.1.0\"\n"
+            "\n"
+            "[lib]\n"
+            "name = \"owned-fixture\"\n"
+            "module = \"owned.fixture\"\n"
+            "archive = \"owned.fixture\"\n"
+            "sources = [\"source.cppm\"]\n"
+            "\n"
+            "[external-dependencies.cmake.shader]\n"
+            "find-package = \"FixtureShader\"\n"
+            "path = \"shaders\"\n"
+            "targets = [{ name = \"FixtureShader::shader\", visibility = \"private\" }]\n"_str
+                .as_bytes())
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(package.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
+                               "export module owned.fixture;\n"_str.as_bytes())
+            .is_ok());
+    ASSERT_TRUE(rstd::fs::write_atomic(
+                    shaders.join(PathBuf::from("CMakeLists.txt"_str).as_path()).as_path(),
+                    "cmake_minimum_required(VERSION 3.29)\n"
+                    "project(fixture_shader LANGUAGES CXX)\n"_str.as_bytes())
+                    .is_ok());
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "init"_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
+    ASSERT_TRUE(git_succeeds(
+        upstream.as_path(), "config"_str, "user.email"_str, "lito@example.invalid"_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(), "add"_str, "."_str));
+    ASSERT_TRUE(git_succeeds(upstream.as_path(),
+                             "-c"_str,
+                             "commit.gpgsign=false"_str,
+                             "commit"_str,
+                             "-m"_str,
+                             "upstream"_str));
+    auto commit = git_revision(upstream.as_path(), "HEAD"_str);
+    auto url    = upstream.as_path().to_str();
+    ASSERT_TRUE(commit.is_some());
+    ASSERT_TRUE(url.is_some());
+
+    auto project = directory.join(PathBuf::from("project"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(project.as_path()).is_ok());
+    auto manifest = rstd::format("[package]\n"
+                                 "name = \"owned-consumer\"\n"
+                                 "version = \"0.1.0\"\n"
+                                 "\n"
+                                 "[lib]\n"
+                                 "name = \"owned-consumer\"\n"
+                                 "module = \"owned.consumer\"\n"
+                                 "archive = \"owned.consumer\"\n"
+                                 "sources = [\"source.cppm\"]\n"
+                                 "\n"
+                                 "[dependencies.owned-fixture]\n"
+                                 "git = \"{}\"\n"
+                                 "commit = \"{}\"\n"
+                                 "visibility = \"private\"\n",
+                                 *url,
+                                 commit->as_str());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("lito.toml"_str).as_path()).as_path(),
+                               manifest.as_str().as_bytes())
+            .is_ok());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(project.join(PathBuf::from("source.cppm"_str).as_path()).as_path(),
+                               "export module owned.consumer;\n"_str.as_bytes())
+            .is_ok());
+
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+    auto                     fetch_events = FetchEventCapture { .expected_url = *url };
+    auto                     updated      = lito::update_dependencies(lito::UpdateRequest {
+        .root     = project.clone(),
+        .observer = Some(lito::BuildObserver {
+            .context = rstd::addressof(fetch_events),
+            .notify  = capture_fetch,
+        }),
+    });
+    ASSERT_TRUE(updated.is_ok());
+    EXPECT_EQ(fetch_events.count, usize(1));
+
+    auto locked = lito::load_locked_project(project.as_path());
+    ASSERT_TRUE(locked.is_ok());
+    ASSERT_EQ(locked->externals.len(), usize(1));
+    const auto& external = locked->externals[usize {}];
+    EXPECT_EQ(external.package.as_str(), "owned-fixture"_str);
+    ASSERT_TRUE(external.source.is_Package());
+    EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "pkg/shaders"_str);
+    auto lock_text =
+        rstd::fs::read_to_string(project.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(lock_text.is_ok());
+    EXPECT_FALSE(lock_text->as_str().contains("git/checkouts"_str));
+
+    auto seed_catalog = rstd::format(
+        "{{\"version\":1,\"sources\":[{{\"identity\":\"lito-fetch-v1\\ngit\\n{}\\n{}\","
+        "\"kind\":\"git\",\"path\":\"git/source\"}}]}}",
+        *url,
+        commit->as_str());
+    ASSERT_TRUE(
+        rstd::fs::write_atomic(seed.join(PathBuf::from("catalog.json"_str).as_path()).as_path(),
+                               seed_catalog.as_str().as_bytes())
+            .is_ok());
+    ASSERT_TRUE(clear_output(data_home.as_path()));
+    auto session = lito::load_lock_session(project.as_path(), true);
+    ASSERT_TRUE(session.is_ok());
+    auto options          = session->take_resolution_options();
+    auto external_options = options.clone();
+    auto seeds            = Vec<PathBuf>::make();
+    seeds.push(seed.clone());
+    options.sources = lito::PackageSourceConfig {
+        .fetch_seeds = rstd::move(seeds),
+        .network     = lito::NetworkPolicy::Offline,
+    };
+    external_options.sources = options.sources.clone();
+    auto environment = lito::ResolvedProcessEnvironment::resolve(lito::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver       = lito::ToolResolver(*environment);
+    auto offline_events = FetchEventCapture { .expected_url = *url };
+    auto graph =
+        lito::resolve_package_graph_with_environment(project.as_path(),
+                                                     rstd::move(options),
+                                                     resolver,
+                                                     *environment,
+                                                     usize(1),
+                                                     lito::BuildObserver {
+                                                         .context = rstd::addressof(offline_events),
+                                                         .notify  = capture_fetch,
+                                                     });
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_TRUE(lito::prepare_external_dependency_sources(
+                    *graph, rstd::move(external_options), resolver, *environment)
+                    .is_ok());
+    EXPECT_EQ(offline_events.count, usize {});
+    auto found_package = false;
+    for (const auto& resolved : graph->packages) {
+        if (resolved.manifest.name.as_str() != "owned-fixture"_str) continue;
+        found_package = true;
+        ASSERT_EQ(resolved.cmake_external_dependencies.len(), usize(1));
+        const auto& source = resolved.cmake_external_dependencies[usize {}].source;
+        ASSERT_TRUE(source.is_Directory());
+        EXPECT_TRUE(source.as_Directory().root.as_path().starts_with(shaders.as_path()));
+        EXPECT_TRUE(shaders.as_path().starts_with(source.as_Directory().root.as_path()));
+    }
+    EXPECT_TRUE(found_package);
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
 TEST(GitSource, GitPatchManifestChangesConfiguredLock) {
     auto directory = output_root("git-patch-configured-lock"_str);
     ASSERT_TRUE(clear_output(directory.as_path()));

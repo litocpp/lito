@@ -1,0 +1,26 @@
+{
+  "externals": [
+    {
+      "alias": "shader",
+      "package": "fixture",
+      "provider": "cmake",
+      "source": {
+        "kind": "package",
+        "path": "../shaders"
+      }
+    }
+  ],
+  "packages": [
+    {
+      "dependencies": [],
+      "manifest": "lito.toml",
+      "name": "fixture",
+      "runtime-dependencies": [],
+      "source": {
+        "kind": "path",
+        "path": "."
+      }
+    }
+  ],
+  "version": 8
+}

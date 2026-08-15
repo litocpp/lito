@@ -13,7 +13,7 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
-inline constexpr auto LOCK_FORMAT_VERSION = u64(7);
+inline constexpr auto LOCK_FORMAT_VERSION = u64(8);
 
 struct LockConfig {
     PathBuf path;
@@ -34,6 +34,7 @@ class LockedPackageSource {
 class LockedExternalSource {
     RSTD_ENUM(LockedExternalSource,
               (Path, (PathBuf path;)),
+              (Package, (PathBuf path;)),
               (Git, (String url; GitReference reference; String commit;)),
               (Archive, (String url; String sha256;)))
 };
@@ -55,12 +56,12 @@ struct LockedPackage {
 };
 
 struct LockedExternal {
-    String               package;
-    String               alias;
-    String               provider;
-    Vec<String>          architectures;
+    String                                package;
+    String                                alias;
+    String                                provider;
+    Vec<String>                           architectures;
     Option<LockedBuildToolSourceMetadata> build_tool;
-    LockedExternalSource source;
+    LockedExternalSource                  source;
 };
 
 struct LockedProject {

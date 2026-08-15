@@ -97,6 +97,31 @@ TEST(CMake, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
     EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
 }
 
+TEST(CMake, PackageOwnedPathUsesOneResolvedRelationForLockAndPreparation) {
+    auto directory = fixture_path("dependency/cmake/manifest/package-owned"_str);
+    auto graph     = lito::resolve_package_graph(directory.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto source_count = graph->sources.len();
+
+    ASSERT_TRUE(lito::prepare_external_dependency_sources(*graph, {}).is_ok());
+    ASSERT_EQ(graph->externals.len(), usize(1));
+    const auto& external = graph->externals[usize {}];
+    ASSERT_TRUE(external.source.is_Package());
+    EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "shaders"_str);
+
+    ASSERT_EQ(graph->packages[usize {}].cmake_external_dependencies.len(), usize(1));
+    const auto& prepared = graph->packages[usize {}].cmake_external_dependencies[usize {}];
+    ASSERT_TRUE(prepared.source.is_Directory());
+    EXPECT_TRUE(prepared.source.as_Directory().identity.as_str().starts_with(
+        "lito-package-external-v1\n"_str));
+    auto expected =
+        rstd::fs::canonicalize(directory.join(PathBuf::from("shaders"_str).as_path()).as_path());
+    ASSERT_TRUE(expected.is_ok());
+    EXPECT_TRUE(prepared.source.as_Directory().root.as_path().starts_with(expected->as_path()));
+    EXPECT_TRUE(expected->as_path().starts_with(prepared.source.as_Directory().root.as_path()));
+    EXPECT_EQ(graph->sources.len(), source_count);
+}
+
 TEST(CMake, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
     for (const auto path : INVALID_CMAKE_MANIFESTS) {
         auto loaded = lito::load_manifest_document(fixture_path(path).as_path());

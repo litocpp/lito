@@ -85,3 +85,30 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     EXPECT_TRUE(first->as_str().contains("\"only-arches\""_str));
     EXPECT_TRUE(first->as_str().contains("\"type\": \"inline\""_str));
 }
+
+TEST(Lock, PackageOwnedExternalReusesItsPackageGitFetch) {
+    auto project = lito::LockedProject {};
+    project.packages.push(lito::LockedPackage {
+        .name    = String::make("wavsen"_str),
+        .version = Some(String::make("0.1.0"_str)),
+        .source  = lito::LockedPackageSource::Git(
+            String::make("https://example.invalid/wavsen.git"_str),
+            lito::GitReference {},
+            String::make("0123456789abcdef0123456789abcdef01234567"_str)),
+        .manifest = PathBuf::from("lito.toml"_str),
+    });
+    project.externals.push(lito::LockedExternal {
+        .package       = String::make("wavsen"_str),
+        .alias         = String::make("wavsen-shader"_str),
+        .provider      = String::make("cmake"_str),
+        .architectures = Vec<String>::make(),
+        .source        = lito::LockedExternalSource::Package(PathBuf::from("shaders"_str)),
+    });
+
+    auto exported = lito::flatpak_sources_json(project);
+    ASSERT_TRUE(exported.is_ok());
+    auto git_source = exported->as_str().split_once("\"type\": \"git\""_str);
+    ASSERT_TRUE(git_source.is_some());
+    EXPECT_FALSE(git_source->get<1>().contains("\"type\": \"git\""_str));
+    EXPECT_TRUE(exported->as_str().contains("https://example.invalid/wavsen.git"_str));
+}

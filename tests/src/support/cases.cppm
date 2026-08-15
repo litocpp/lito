@@ -147,6 +147,8 @@ inline constexpr ref<str> INVALID_LOCKS[] = {
     "lock/dangling-dependency"_str,
     "lock/duplicate-package"_str,
     "lock/duplicate-external"_str,
+    "lock/missing-package-external"_str,
+    "lock/unsafe-package-external"_str,
     "lock/unknown-field"_str,
 };
 

@@ -123,6 +123,7 @@ struct CMakeDependencyRequirement {
 class ResolvedExternalSource {
     RSTD_ENUM(ResolvedExternalSource,
               (Path, (PathBuf path;)),
+              (Package, (PathBuf path;)),
               (Git, (String url; GitReference reference; String commit;)),
               (Archive, (String url; String sha256;)))
 };
@@ -135,12 +136,12 @@ struct ResolvedBuildToolSourceMetadata {
 };
 
 struct ResolvedExternalSourceRecord {
-    String                 package;
-    String                 alias;
-    String                 provider;
-    Vec<Architecture>      architectures;
+    String                                  package;
+    String                                  alias;
+    String                                  provider;
+    Vec<Architecture>                       architectures;
     Option<ResolvedBuildToolSourceMetadata> build_tool;
-    ResolvedExternalSource source;
+    ResolvedExternalSource                  source;
 };
 
 struct PkgConfigExternalDependency {

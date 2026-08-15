@@ -131,8 +131,15 @@ auto architecture_json(const FlatpakCandidate& candidate) -> Option<Json> {
 }
 
 auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> {
-    auto candidates = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
-    for (const auto& package : project.packages) {
+    auto candidates      = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
+    auto package_indices = rstd::collections::BTreeMap<String, usize>::make();
+    for (usize index {}; index < project.packages.len(); ++index) {
+        const auto& package = project.packages[index];
+        if (package_indices.contains_key(package.name.as_str())) {
+            return flatpak_failure<Json>(rstd::format(
+                "Flatpak source export found duplicate package '{}'", package.name.as_str()));
+        }
+        package_indices.insert(package.name.clone(), index);
         if (package.source.is_Path()) {
             rstd_try(validate_export_path(package.source.as_Path().path.as_path(),
                                           package.name.as_str()));
@@ -150,6 +157,33 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         if (external.source.is_Path()) {
             rstd_try(
                 validate_export_path(external.source.as_Path().path.as_path(), owner.as_str()));
+            continue;
+        }
+        if (external.source.is_Package()) {
+            const auto& path = external.source.as_Package().path;
+            if (! path.as_path().is_safe_relative()) {
+                return flatpak_failure<Json>(rstd::format(
+                    "Flatpak source export found unsafe package-relative source '{}' for '{}'",
+                    path.as_path(),
+                    owner.as_str()));
+            }
+            auto package_index = package_indices.get(external.package.as_str());
+            if (package_index.is_none()) {
+                return flatpak_failure<Json>(
+                    rstd::format("Flatpak source export cannot resolve package source for '{}'",
+                                 owner.as_str()));
+            }
+            const auto& package = project.packages[**package_index];
+            if (package.source.is_Path()) {
+                auto joined = package.source.as_Path().path.join(path.as_path());
+                rstd_try(validate_export_path(joined.as_path(), owner.as_str()));
+                continue;
+            }
+            const auto& source = package.source.as_Git();
+            rstd_try(add_candidate(candidates,
+                                   git_fetch_identity(source.url.as_str(), source.commit.as_str()),
+                                   external.architectures,
+                                   rstd::format("external '{}'", owner.as_str())));
             continue;
         }
         if (external.source.is_Git()) {

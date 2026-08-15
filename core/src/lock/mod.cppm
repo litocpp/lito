@@ -16,10 +16,10 @@ import lito.platform;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using Json                         = rstd::json::Value;
-using Map                          = rstd::json::Map;
-using Array                        = rstd::json::Array;
-using StringSet                    = rstd::collections::BTreeMap<String, empty>;
+using Json         = rstd::json::Value;
+using Map          = rstd::json::Map;
+using Array        = rstd::json::Array;
+using StringSet    = rstd::collections::BTreeMap<String, empty>;
 using KeyPredicate = bool (*)(ref<str>);
 
 namespace lito
@@ -36,9 +36,8 @@ auto failure(ref<str> message) -> LockResult<T> {
 }
 
 template<typename T>
-auto io_failure(ref<str> operation,
-                ref<rstd::path::Path> path,
-                rstd::io::error::Error source) -> LockResult<T> {
+auto io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
+    -> LockResult<T> {
     return Err(LockError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
@@ -90,6 +89,10 @@ auto external_source_json(const ResolvedExternalSource& source) -> LockResult<Js
         auto path = rstd_try(path_string(source.as_Path().path.as_path()));
         item.insert(String::make("kind"_str), string_json("path"_str));
         item.insert(String::make("path"_str), string_json(path.as_str()));
+    } else if (source.is_Package()) {
+        auto path = rstd_try(path_string(source.as_Package().path.as_path()));
+        item.insert(String::make("kind"_str), string_json("package"_str));
+        item.insert(String::make("path"_str), string_json(path.as_str()));
     } else if (source.is_Git()) {
         item.insert(String::make("commit"_str), string_json(source.as_Git().commit.as_str()));
         item.insert(String::make("kind"_str), string_json("git"_str));
@@ -103,8 +106,7 @@ auto external_source_json(const ResolvedExternalSource& source) -> LockResult<Js
     return Ok(Json::Object(rstd::move(item)));
 }
 
-auto build_tool_metadata_json(const ResolvedBuildToolSourceMetadata& metadata)
-    -> LockResult<Json> {
+auto build_tool_metadata_json(const ResolvedBuildToolSourceMetadata& metadata) -> LockResult<Json> {
     auto executable = rstd_try(path_string(metadata.executable.as_path()));
     auto item       = Map::make();
     item.insert(String::make("executable"_str), string_json(executable.as_str()));
@@ -143,7 +145,7 @@ auto graph_json(const ResolvedPackageGraph& graph) -> LockResult<Json> {
     auto packages = Array::make();
     for (const auto index : package_indices) {
         const auto& package = graph.packages[index];
-        auto dependency_names =
+        auto        dependency_names =
             Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
             dependency_names.push(dependency.name.clone());
@@ -166,8 +168,7 @@ auto graph_json(const ResolvedPackageGraph& graph) -> LockResult<Json> {
         for (const auto& dependency : package.runtime_dependencies) {
             runtime_dependency_names.push(dependency.name.clone());
         }
-        rstd::slice_::sort_unstable(
-            runtime_dependency_names.as_mut_slice().as_mut_ref());
+        rstd::slice_::sort_unstable(runtime_dependency_names.as_mut_slice().as_mut_ref());
         auto runtime_dependencies = Array::make();
         for (const auto& dependency : runtime_dependency_names) {
             runtime_dependencies.push(string_json(dependency.as_str()));
@@ -229,7 +230,8 @@ auto graph_json(const ResolvedPackageGraph& graph) -> LockResult<Json> {
     return Ok(Json::Object(rstd::move(root)));
 }
 
-auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed) -> LockResult<empty> {
+auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed)
+    -> LockResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) {
         return failure<empty>(rstd::format("{} must be an object", context));
@@ -358,7 +360,7 @@ auto validate_reference(const Json& value, ref<str> context, ref<str> commit) ->
     return Ok(empty {});
 }
 
-auto validate_source(const Json& value, ref<str> context, bool archive_allowed)
+auto validate_source(const Json& value, ref<str> context, bool external_source)
     -> LockResult<empty> {
     auto kind = rstd_try(required_string(value, "kind"_str, context));
     if (kind == "path"_str) {
@@ -367,6 +369,15 @@ auto validate_source(const Json& value, ref<str> context, bool archive_allowed)
         if (! valid_lock_source_path(path)) {
             return failure<empty>(
                 rstd::format("{}.path must be a non-empty relative path", context));
+        }
+        return Ok(empty {});
+    }
+    if (kind == "package"_str && external_source) {
+        rstd_try(reject_unknown(value, context, path_source_key));
+        auto path = rstd_try(required_string(value, "path"_str, context));
+        if (path.is_empty() || ! PathBuf::from(path).as_path().is_safe_relative()) {
+            return failure<empty>(
+                rstd::format("{}.path must be a safe non-empty package-relative path", context));
         }
         return Ok(empty {});
     }
@@ -384,7 +395,7 @@ auto validate_source(const Json& value, ref<str> context, bool archive_allowed)
         }
         return validate_reference(*reference, "lock Git reference"_str, commit);
     }
-    if (kind == "archive"_str && archive_allowed) {
+    if (kind == "archive"_str && external_source) {
         rstd_try(reject_unknown(value, context, archive_source_key));
         auto url    = rstd_try(required_string(value, "url"_str, context));
         auto sha256 = rstd_try(required_string(value, "sha256"_str, context));
@@ -407,7 +418,7 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
     auto externals_value = rstd_try(required_member(document, "externals"_str, "lock root"_str));
     auto version         = version_value->as_u64();
     if (version.is_none() || *version != LOCK_FORMAT_VERSION) {
-        return failure<empty>("lock.version must be integer 7"_str);
+        return failure<empty>(rstd::format("lock.version must be integer {}", LOCK_FORMAT_VERSION));
     }
     auto packages  = packages_value->as_array();
     auto externals = externals_value->as_array();
@@ -564,31 +575,28 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
         }
         identities.insert(rstd::move(identity), empty {});
         rstd_try(validate_source(*source, "lock external source"_str, true));
-        auto build_tool          = external.get("build-tool"_str);
+        auto       build_tool    = external.get("build-tool"_str);
         const auto tool_provider = provider.starts_with("build-tool:"_str);
         if (tool_provider != build_tool.is_some()) {
-            return failure<empty>(
-                "lock build-tool external must contain build-tool metadata"_str);
+            return failure<empty>("lock build-tool external must contain build-tool metadata"_str);
         }
         if (build_tool.is_some()) {
-            rstd_try(reject_unknown(**build_tool,
-                                    "lock build-tool metadata"_str,
-                                    build_tool_metadata_key));
-            auto version = rstd_try(required_string(
-                **build_tool, "version"_str, "lock build-tool metadata"_str));
-            auto executable = rstd_try(required_string(
-                **build_tool, "executable"_str, "lock build-tool metadata"_str));
+            rstd_try(reject_unknown(
+                **build_tool, "lock build-tool metadata"_str, build_tool_metadata_key));
+            auto version = rstd_try(
+                required_string(**build_tool, "version"_str, "lock build-tool metadata"_str));
+            auto executable = rstd_try(
+                required_string(**build_tool, "executable"_str, "lock build-tool metadata"_str));
             auto operating_system = rstd_try(required_string(
                 **build_tool, "operating-system"_str, "lock build-tool metadata"_str));
-            auto schema = rstd_try(required_member(
+            auto schema           = rstd_try(required_member(
                 **build_tool, "schema-version"_str, "lock build-tool metadata"_str));
-            auto schema_version = schema->as_u64();
+            auto schema_version   = schema->as_u64();
             if (version.is_empty() || version.trim_ascii() != version) {
                 return failure<empty>(
                     "lock build-tool version must be a non-empty exact value"_str);
             }
-            if (executable.is_empty() ||
-                ! PathBuf::from(executable).as_path().is_safe_relative()) {
+            if (executable.is_empty() || ! PathBuf::from(executable).as_path().is_safe_relative()) {
                 return failure<empty>(
                     "lock build-tool executable must be a safe non-empty relative path"_str);
             }
@@ -623,7 +631,7 @@ auto load_existing(ref<rstd::path::Path> path, bool validate = true) -> LockResu
     if (parsed.is_err()) {
         return Err(LockError::Json(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
-    auto document = rstd::move(parsed).unwrap();
+    auto document      = rstd::move(parsed).unwrap();
     auto version_value = document.get("version"_str);
     if (version_value.is_none()) {
         return failure<Option<Json>>("lock root is missing 'version'"_str);
@@ -633,9 +641,11 @@ auto load_existing(ref<rstd::path::Path> path, bool validate = true) -> LockResu
         return failure<Option<Json>>("lock.version must be an integer"_str);
     }
     if (validate) {
-        auto valid = *version == LOCK_FORMAT_VERSION
-                         ? validate_current_lock(document)
-                         : failure<empty>("lock.version must be integer 7; run lito update"_str);
+        auto valid =
+            *version == LOCK_FORMAT_VERSION
+                ? validate_current_lock(document)
+                : failure<empty>(rstd::format("lock.version must be integer {}; run lito update",
+                                              LOCK_FORMAT_VERSION));
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
     }
     return Ok(Some(rstd::move(document)));
@@ -669,6 +679,9 @@ auto parse_locked_external_source(const Json& value) -> LockedExternalSource {
     if (kind == "path"_str) {
         return LockedExternalSource::Path(PathBuf::from(*(**value.get("path"_str)).as_str()));
     }
+    if (kind == "package"_str) {
+        return LockedExternalSource::Package(PathBuf::from(*(**value.get("path"_str)).as_str()));
+    }
     if (kind == "git"_str) {
         return LockedExternalSource::Git(String::make(*(**value.get("url"_str)).as_str()),
                                          parse_reference(**value.get("reference"_str)),
@@ -680,11 +693,10 @@ auto parse_locked_external_source(const Json& value) -> LockedExternalSource {
 
 auto parse_locked_build_tool_metadata(const Json& value) -> LockedBuildToolSourceMetadata {
     return LockedBuildToolSourceMetadata {
-        .version = String::make(*(**value.get("version"_str)).as_str()),
-        .executable = PathBuf::from(*(**value.get("executable"_str)).as_str()),
-        .operating_system =
-            String::make(*(**value.get("operating-system"_str)).as_str()),
-        .schema_version = *(**value.get("schema-version"_str)).as_u64(),
+        .version          = String::make(*(**value.get("version"_str)).as_str()),
+        .executable       = PathBuf::from(*(**value.get("executable"_str)).as_str()),
+        .operating_system = String::make(*(**value.get("operating-system"_str)).as_str()),
+        .schema_version   = *(**value.get("schema-version"_str)).as_u64(),
     };
 }
 
@@ -698,19 +710,18 @@ auto parse_locked_project(const Json& document) -> LockedProject {
             dependencies.push(String::make(*dependency.as_str()));
         }
         auto runtime_dependencies = Vec<String>::make();
-        for (const auto& dependency :
-             **(**package.get("runtime-dependencies"_str)).as_array()) {
+        for (const auto& dependency : **(**package.get("runtime-dependencies"_str)).as_array()) {
             runtime_dependencies.push(String::make(*dependency.as_str()));
         }
         auto version       = Option<String> {};
         auto version_value = package.get("version"_str);
         if (version_value.is_some()) version = Some(String::make(*(**version_value).as_str()));
         result.packages.push(LockedPackage {
-            .name         = String::make(*(**package.get("name"_str)).as_str()),
-            .version      = rstd::move(version),
-            .source       = parse_locked_package_source(**package.get("source"_str)),
-            .manifest     = PathBuf::from(*(**package.get("manifest"_str)).as_str()),
-            .dependencies = rstd::move(dependencies),
+            .name                 = String::make(*(**package.get("name"_str)).as_str()),
+            .version              = rstd::move(version),
+            .source               = parse_locked_package_source(**package.get("source"_str)),
+            .manifest             = PathBuf::from(*(**package.get("manifest"_str)).as_str()),
+            .dependencies         = rstd::move(dependencies),
             .runtime_dependencies = rstd::move(runtime_dependencies),
         });
     }
@@ -840,9 +851,10 @@ auto load_locked_project(ref<rstd::path::Path> root, const LockConfig& config = 
     auto version = *(**(*loaded).get("version"_str)).as_u64();
     if (version != LOCK_FORMAT_VERSION) {
         return failure<LockedProject>(
-            rstd::format("lock file '{}' uses version {}; run lito update to migrate to version 7",
+            rstd::format("lock file '{}' uses version {}; run lito update to migrate to version {}",
                          destination.as_path(),
-                         version));
+                         version,
+                         LOCK_FORMAT_VERSION));
     }
     return Ok(parse_locked_project(*loaded));
 }
@@ -861,8 +873,8 @@ auto load_lock_session(ref<rstd::path::Path> root,
     auto existing = rstd::move(loaded).unwrap();
     if (existing.is_none()) {
         if (locked) {
-            return failure<LockSession>(
-                rstd::format("--locked requires an existing lock file at '{}'", destination.as_path()));
+            return failure<LockSession>(rstd::format(
+                "--locked requires an existing lock file at '{}'", destination.as_path()));
         }
         auto session         = LockSession {};
         session.root_        = PathBuf::from(root);
@@ -882,10 +894,11 @@ auto load_lock_session(ref<rstd::path::Path> root,
             session.options_     = rstd::move(options);
             return Ok(rstd::move(session));
         }
-        return failure<LockSession>(rstd::format(
-            "lock file '{}' uses version {}; run lito update to migrate to version 7",
-            destination.as_path(),
-            version));
+        return failure<LockSession>(
+            rstd::format("lock file '{}' uses version {}; run lito update to migrate to version {}",
+                         destination.as_path(),
+                         version,
+                         LOCK_FORMAT_VERSION));
     }
     project = Some(parse_locked_project(*existing));
     rstd_try(append_project_pins(options, *project));
@@ -909,7 +922,7 @@ auto load_lock_session(ref<rstd::path::Path> root,
 auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockResult<LockStatus> {
     auto desired_result = graph_json(graph);
     if (desired_result.is_err()) return Err(rstd::move(desired_result).unwrap_err());
-    auto desired           = rstd::move(desired_result).unwrap();
+    auto desired = rstd::move(desired_result).unwrap();
     if (! (graph.root_directory.as_path().starts_with(session.root_.as_path()) &&
            session.root_.as_path().starts_with(graph.root_directory.as_path()))) {
         return failure<LockStatus>("lock session root does not match resolved graph root"_str);
@@ -918,9 +931,8 @@ auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockRe
         if (session.existing_.is_some() && *session.existing_ == desired) {
             return Ok(LockStatus::Unchanged);
         }
-        return failure<LockStatus>(
-            rstd::format("--locked forbids updating stale lock file '{}'",
-                         session.destination_.as_path()));
+        return failure<LockStatus>(rstd::format("--locked forbids updating stale lock file '{}'",
+                                                session.destination_.as_path()));
     }
 
     if (session.existing_.is_some() && *session.existing_ == desired) {
