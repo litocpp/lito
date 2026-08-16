@@ -1,6 +1,0 @@
-[workspace]
-name = "fixture-conventional-overlap-root"
-members = ["library", "tests/runtime"]
-
-[workspace.package]
-version = "0.1.0"

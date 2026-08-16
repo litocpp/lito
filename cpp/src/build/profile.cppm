@@ -19,13 +19,13 @@ export namespace lito::cpp
 {
 
 struct ProfileSpec {
-    String             name;
-    BuildProfileFamily family { BuildProfileFamily::Debug };
-    BmiRequest         bmi;
-    CppCompileOptions  cpp;
+    String              name;
+    BuildProfileFamily  family { BuildProfileFamily::Debug };
+    BmiRequest          bmi;
+    CppCompileOptions   cpp;
     CppLinkRequirements link_requirements;
-    StripMode          strip { StripMode::None };
-    Vec<String>        linker_options;
+    StripMode           strip { StripMode::None };
+    Vec<String>         linker_options;
 };
 
 } // namespace lito::cpp
@@ -74,7 +74,7 @@ auto make_profile_spec(const BuildConfiguration& configuration,
                        const ProjectProfile&     project_profile,
                        const BuildProfileName&   selected_profile,
                        CppArgumentLayer          arguments) -> BuildProfileResult<ProfileSpec> {
-    auto selected = rstd_try(resolve_build_profile(project_profile, selected_profile));
+    auto selected          = rstd_try(resolve_build_profile(project_profile, selected_profile));
     auto link_requirements = CppLinkRequirements {};
     for (const auto& occurrence : arguments.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
@@ -161,14 +161,14 @@ auto make_profile_spec(const BuildConfiguration& configuration,
     auto cpp        = rstd::move(cpp_result).unwrap();
     cpp.codegen.lto = selected.lto;
     return Ok(ProfileSpec {
-        .name           = selected.name.value.clone(),
-        .family         = selected.family,
-        .bmi            = BmiRequest { .representation   = configuration.bmi_mode,
-                                       .source_embedding = configuration.bmi_source_embedding },
-        .cpp            = rstd::move(cpp),
+        .name              = selected.name.value.clone(),
+        .family            = selected.family,
+        .bmi               = BmiRequest { .representation   = configuration.bmi_mode,
+                                          .source_embedding = configuration.bmi_source_embedding },
+        .cpp               = rstd::move(cpp),
         .link_requirements = rstd::move(link_requirements),
-        .strip          = selected.strip,
-        .linker_options = configuration.linker_options.clone(),
+        .strip             = selected.strip,
+        .linker_options    = configuration.linker_options.clone(),
     });
 }
 

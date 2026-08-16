@@ -12,11 +12,11 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
-    auto root_directory   = output_root("install-layout-migration"_str);
-    auto source_directory = output_root("install-layout-migration-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+class InstallLayout : public ProjectFixture {};
+
+TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
+    auto root_directory   = install_root("install-layout-migration"_str);
+    auto source_directory = source_root("install-layout-migration-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto tool     = source_directory.join(PathBuf::from("tool"_str).as_path());
     auto resource = source_directory.join(PathBuf::from("resource.txt"_str).as_path());
@@ -110,16 +110,11 @@ TEST(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
         rstd::fs::exists(root_directory.join(PathBuf::from(".lito"_str).as_path()).as_path())
             .unwrap());
     EXPECT_FALSE(rstd::fs::exists(direct_again->managed_layout->transactions.as_path()).unwrap());
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallLayout, PrefixInstallPublishesAnUntrackedLogicalTree) {
-    auto prefix_directory = output_root("install-prefix"_str);
-    auto source_directory = output_root("install-prefix-source"_str);
-    ASSERT_TRUE(clear_output(prefix_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallLayout, PrefixInstallPublishesAnUntrackedLogicalTree) {
+    auto prefix_directory = install_root("install-prefix"_str);
+    auto source_directory = source_root("install-prefix-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto tool     = source_directory.join(PathBuf::from("tool"_str).as_path());
     auto resource = source_directory.join(PathBuf::from("resource.txt"_str).as_path());
@@ -205,16 +200,11 @@ TEST(InstallLayout, PrefixInstallPublishesAnUntrackedLogicalTree) {
     EXPECT_EQ(replaced->entries[usize {}].action, lito::InstallAction::Replaced);
     EXPECT_EQ(replaced->entries[usize(1)].action, lito::InstallAction::Unchanged);
     EXPECT_EQ(rstd::fs::read_to_string(installed_tool.as_path()).unwrap().as_str(), "second"_str);
-
-    EXPECT_TRUE(clear_output(prefix_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallLayout, ManagedInstallRecoversPreparedTransactionsBeforeCatalogLoad) {
-    auto root_directory   = output_root("install-transaction-recovery"_str);
-    auto source_directory = output_root("install-transaction-recovery-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallLayout, ManagedInstallRecoversPreparedTransactionsBeforeCatalogLoad) {
+    auto root_directory   = install_root("install-transaction-recovery"_str);
+    auto source_directory = source_root("install-transaction-recovery-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto source = source_directory.join(PathBuf::from("tool"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(source.as_path(), "stable"_str.as_bytes()).is_ok());
@@ -271,16 +261,11 @@ TEST(InstallLayout, ManagedInstallRecoversPreparedTransactionsBeforeCatalogLoad)
     ASSERT_TRUE(recovered.is_ok());
     EXPECT_EQ(rstd::fs::read_to_string(installed.as_path()).unwrap().as_str(), "stable"_str);
     EXPECT_FALSE(rstd::fs::exists(layout.transactions.as_path()).unwrap());
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
-    auto root_directory   = output_root("install-invalid-info"_str);
-    auto source_directory = output_root("install-invalid-info-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
+    auto root_directory   = install_root("install-invalid-info"_str);
+    auto source_directory = source_root("install-invalid-info-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto source = source_directory.join(PathBuf::from("tool"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(source.as_path(), "tool"_str.as_bytes()).is_ok());
@@ -326,7 +311,4 @@ TEST(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
     catalog = lito::load_managed_install_catalog(*installed->managed_layout);
     ASSERT_TRUE(catalog.is_err());
     ASSERT_TRUE(catalog.unwrap_err().is_Cause());
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }

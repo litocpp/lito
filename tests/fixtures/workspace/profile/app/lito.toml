@@ -1,8 +1,0 @@
-[package]
-name = "fixture-workspace-profile-app"
-version = { workspace = true }
-
-[[bin]]
-link-stdlib = false
-name = "workspace-profile-app"
-sources = ["main.cpp"]

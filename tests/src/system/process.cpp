@@ -16,9 +16,10 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
-    auto directory = output_root("tool-resolver"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+class SystemProcess : public ProjectFixture {};
+
+TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
+    auto directory = source_root("tool-resolver"_str);
     auto inherited = directory.join(rstd::path::PathBuf::from("inherited"_str).as_path());
     auto first     = directory.join(rstd::path::PathBuf::from("first"_str).as_path());
     auto second    = directory.join(rstd::path::PathBuf::from("second"_str).as_path());
@@ -125,24 +126,26 @@ TEST(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
                                    "test executable"_str);
     ASSERT_TRUE(cached.is_ok());
     EXPECT_EQ(cached->executable.as_path(), inherited_tool.as_path());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(SystemProcess, ProcessExecutionRejectsUnresolvedToolNames) {
+TEST_F(SystemProcess, ProcessExecutionRejectsUnresolvedToolNames) {
     auto environment = lito::system::ResolvedProcessEnvironment::resolve(
-        lito::system::ProcessEnvironmentSpec {}, None(), fixture_path("config"_str).as_path());
+        lito::system::ProcessEnvironmentSpec {}, None(), temp_root());
     ASSERT_TRUE(environment.is_ok());
     auto arguments = strings("lito-unresolved-tool"_str);
     EXPECT_TRUE(lito::system::run_command(arguments, *environment).is_err());
     EXPECT_TRUE(lito::system::run_command_with_input(arguments, ""_str, *environment).is_err());
 }
 
-TEST(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
-    auto project = fixture_path("system/environment/append-path"_str);
+TEST_F(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
+    auto tree = environment_tool_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto materialized = materialize("environment-build"_str, *tree);
+    ASSERT_TRUE(materialized.is_ok());
+    auto project = materialized->root.join(PathBuf::from("append-path"_str).as_path());
     auto config  = lito::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());
-    auto output = output_root("environment-append-path"_str);
-    ASSERT_TRUE(clear_output(output.as_path()));
+    auto output  = source_root("environment-append-path"_str);
     auto request = build_request(
         project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
@@ -150,15 +153,17 @@ TEST(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     auto built                      = lito::build(request);
     ASSERT_TRUE(built.is_ok());
     EXPECT_EQ(artifact_count(*built, lito::cpp::ArtifactKind::Executable), usize(1));
-    EXPECT_TRUE(clear_output(output.as_path()));
 }
 
-TEST(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
-    auto project = fixture_path("system/environment/test-path"_str);
+TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
+    auto tree = environment_tool_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto materialized = materialize("environment-test"_str, *tree);
+    ASSERT_TRUE(materialized.is_ok());
+    auto project = materialized->root.join(PathBuf::from("test-path"_str).as_path());
     auto config  = lito::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());
-    auto output = output_root("environment-test-path"_str);
-    ASSERT_TRUE(clear_output(output.as_path()));
+    auto output  = source_root("environment-test-path"_str);
     auto request = build_request(
         project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
@@ -170,5 +175,4 @@ TEST(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     EXPECT_TRUE(tested->success());
     ASSERT_EQ(tested->executions.len(), usize(1));
     EXPECT_TRUE(tested->executions[usize {}].success());
-    EXPECT_TRUE(clear_output(output.as_path()));
 }

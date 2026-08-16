@@ -1,8 +1,0 @@
-[package]
-name = "fixture-convention-markers"
-version = "0.1.0"
-
-[lib]
-name = "fixture-convention-markers"
-module = "fixture.convention.markers"
-archive = "fixture.convention.markers"

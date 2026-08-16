@@ -1,9 +1,0 @@
-[package]
-name = "cmake-archives-install"
-version = "0.1.0"
-
-[external-dependencies.cmake.fixture]
-find-package = "Fixture"
-integration = "install"
-archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
-targets = [{ name = "Fixture::fixture", visibility = "private" }]

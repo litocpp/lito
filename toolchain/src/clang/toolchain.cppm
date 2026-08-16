@@ -242,16 +242,15 @@ public:
         toolchain::command::push_option(command, "-x"_str);
         toolchain::command::push_option(command, "c++"_str);
         toolchain::command::push_option(command, "-"_str);
-        auto queried = run_command_with_input(
-            command, "#include <version>\n"_str, environment_);
+        auto queried = run_command_with_input(command, "#include <version>\n"_str, environment_);
         if (queried.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(queried).unwrap_err()));
         }
         if (queried->exit_code != i32 {}) {
-            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
-                "cannot resolve selected C++ standard library headers\n{}\n{}",
-                command_text(command).as_str(),
-                queried->standard_error.as_str()));
+            return failure<cpp::ResolvedStandardLibrary>(
+                rstd::format("cannot resolve selected C++ standard library headers\n{}\n{}",
+                             command_text(command).as_str(),
+                             queried->standard_error.as_str()));
         }
 
         auto library_name = options.abi.standard_library == StandardLibrary::Libcxx
@@ -267,7 +266,7 @@ public:
                                : "libstdc++.dylib"_str;
         }
         auto library_command = Vec<String>::make();
-        pushed = toolchain::command::push_path(library_command, compiler_.as_path());
+        pushed               = toolchain::command::push_path(library_command, compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(
             library_command,
@@ -284,42 +283,40 @@ public:
             return Err(rstd::into<ToolchainError>(rstd::move(library).unwrap_err()));
         }
         if (library->exit_code != i32 {}) {
-            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
-                "cannot resolve selected C++ standard library artifact\n{}\n{}",
-                command_text(library_command).as_str(),
-                library->standard_error.as_str()));
+            return failure<cpp::ResolvedStandardLibrary>(
+                rstd::format("cannot resolve selected C++ standard library artifact\n{}\n{}",
+                             command_text(library_command).as_str(),
+                             library->standard_error.as_str()));
         }
         auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
         auto binary_identity  = rstd::format("unresolved:{}", binary_path_text.as_str());
         auto binary_path      = PathBuf::from(binary_path_text.as_str());
         auto binary_metadata  = rstd::fs::metadata(binary_path.as_path());
         if (binary_metadata.is_ok() && binary_metadata->is_file()) {
-            auto modified = binary_metadata->modified();
-            auto timestamp = modified.is_ok() ? modified->as_unix_time()
-                                              : rstd::time::UnixTime {};
+            auto modified  = binary_metadata->modified();
+            auto timestamp = modified.is_ok() ? modified->as_unix_time() : rstd::time::UnixTime {};
             auto canonical = rstd::fs::canonicalize(binary_path.as_path());
             auto identity_path = canonical.is_ok() ? canonical->as_path() : binary_path.as_path();
-            binary_identity = rstd::format("path={}\nsize={}\nmodified={}:{}",
-                                           identity_path,
-                                           binary_metadata->size(),
-                                           timestamp.seconds,
-                                           timestamp.nanoseconds);
+            binary_identity    = rstd::format("path={}\nsize={}\nmodified={}:{}",
+                                              identity_path,
+                                              binary_metadata->size(),
+                                              timestamp.seconds,
+                                              timestamp.nanoseconds);
         }
-        auto thread_backend  = String::make("unknown"_str);
+        auto thread_backend = String::make("unknown"_str);
         if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_PTHREAD"_str) ||
             queried->standard_output.as_str().contains("_GLIBCXX_HAS_GTHREADS"_str)) {
             thread_backend = String::make("pthread"_str);
-        } else if (queried->standard_output.as_str().contains(
-                       "_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
+        } else if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
             thread_backend = String::make("win32"_str);
         }
         auto family = options.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
-                                                                               : "libstdc++"_str;
-        auto headers_identity = rstd::format(
-            "clang-stdlib-headers-v2\nfamily={}\ntarget={}\nmacros-sha256={}",
-            family,
-            target.triple.as_str(),
-            rstd::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
+                                                                              : "libstdc++"_str;
+        auto headers_identity =
+            rstd::format("clang-stdlib-headers-v2\nfamily={}\ntarget={}\nmacros-sha256={}",
+                         family,
+                         target.triple.as_str(),
+                         rstd::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
         auto identity = rstd::format("clang-stdlib-v1\n{}\nbinary={}\nthread-backend={}",
                                      headers_identity.as_str(),
                                      binary_identity.as_str(),
@@ -595,16 +592,16 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(ref<rstd::path::Path>         output_path,
-                         const Vec<PathBuf>&           objects,
-                         const Vec<ResolvedLinkInput>& inputs,
-                         StandardLibrary               standard_library,
-                         const TargetInfo&             target,
-                         bool                          link_stdlib,
-                         lito::CppLto                  lto,
+    auto link_executable(ref<rstd::path::Path>           output_path,
+                         const Vec<PathBuf>&             objects,
+                         const Vec<ResolvedLinkInput>&   inputs,
+                         StandardLibrary                 standard_library,
+                         const TargetInfo&               target,
+                         bool                            link_stdlib,
+                         lito::CppLto                    lto,
                          const cpp::CppLinkRequirements& link_requirements,
-                         const Vec<String>&            linker_options,
-                         ref<rstd::path::Path>         working_directory) const
+                         const Vec<String>&              linker_options,
+                         ref<rstd::path::Path>           working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -675,11 +672,12 @@ public:
                     requirement.source.as_str(),
                     target.triple.as_str()));
             }
-            if (requirement.name.as_str() == "dl"_str && target.os.as_str() == "macos"_str) continue;
+            if (requirement.name.as_str() == "dl"_str && target.os.as_str() == "macos"_str)
+                continue;
             auto option = target.family == TargetFamily::Windows ? requirement.name.clone()
-                                                                  : String::make("-l"_str);
+                                                                 : String::make("-l"_str);
             option.push_str(target.family == TargetFamily::Windows ? ".lib"_str
-                                                                    : requirement.name.as_str());
+                                                                   : requirement.name.as_str());
             command.push(rstd::move(option));
         }
         toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);

@@ -15,19 +15,69 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Update, DependencyUpdateOwnsExplicitLockRefresh) {
+class Update : public ProjectFixture {};
+
+TEST_F(Update, DependencyUpdateOwnsExplicitLockRefresh) {
+    const ProjectFile files[] = {
+        {
+            "lito.toml"_str,
+            R"toml([package]
+name = "fixture-lock-default"
+version = "1.0.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-lock-default"
+sources = ["main.cpp"]
+)toml"_str,
+        },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        {
+            "lito.lock"_str,
+            R"json({
+  "externals": [],
+  "packages": [{
+    "dependencies": [],
+    "manifest": "lito.toml",
+    "name": "fixture-lock-default",
+    "runtime-dependencies": [],
+    "source": { "kind": "path", "path": "." },
+    "version": "1.0.0"
+  }],
+  "version": 1
+})json"_str,
+        },
+    };
+    auto project = materialize("default-update"_str, files);
+    ASSERT_TRUE(project.is_ok());
     auto updated = lito::update_dependencies(lito::UpdateRequest {
-        .root = fixture_path("lock/default-update"_str),
+        .root = project->root.clone(),
     });
     ASSERT_TRUE(updated.is_ok());
     EXPECT_EQ(*updated, lito::LockStatus::Unchanged);
 }
 
-TEST(Update, DependencyUpdateWritesConfiguredLocalLock) {
-    auto source    = fixture_path("config/lock-local"_str);
-    auto directory = output_root("config-lock-local"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
-    ASSERT_TRUE(copy_directory(source.as_path(), directory.as_path()));
+TEST_F(Update, DependencyUpdateWritesConfiguredLocalLock) {
+    const ProjectFile files[] = {
+        { ".lito/config.toml"_str, "[lock]\npath = \".lito/lito.lock\"\n"_str },
+        {
+            "lito.toml"_str,
+            R"toml([package]
+name = "fixture-config-lock-local"
+version = "0.1.0"
+
+[lib]
+name = "fixture-config-lock-local"
+module = "fixture.config.lock.local"
+archive = "fixture.config.lock.local"
+sources = ["source.cppm"]
+)toml"_str,
+        },
+        { "source.cppm"_str, "export module fixture.config.lock.local;\n"_str },
+    };
+    auto project = materialize("config-lock-local"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
 
     auto config = lito::load_project_config(directory.as_path());
     ASSERT_TRUE(config.is_ok());
@@ -58,5 +108,4 @@ TEST(Update, DependencyUpdateWritesConfiguredLocalLock) {
     root_exists = rstd::fs::exists(root_lock.as_path());
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_TRUE(*root_exists);
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }

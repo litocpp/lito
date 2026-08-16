@@ -1,7 +1,0 @@
-[workspace]
-name = "fixture-mixed-workspace"
-members = ["member"]
-
-[package]
-name = "fixture-workspace-mixed"
-version = "0.1.0"

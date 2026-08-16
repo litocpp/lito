@@ -1,7 +1,0 @@
-[package]
-name = "fixture-runtime-workspace-and-path"
-version = "0.1.0"
-
-[runtime-dependencies.helper]
-workspace = true
-path = "../../install-only"

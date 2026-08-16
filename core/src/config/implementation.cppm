@@ -73,7 +73,7 @@ auto resolve_config_location(ref<rstd::path::Path> requested_root) -> ConfigResu
         return document_failure<ConfigLocation>(
             rstd::format("project root '{}' is not a directory", root.as_path()));
     }
-    auto directory = root.join(PathBuf::from(".lito"_str).as_path());
+    auto directory   = root.join(PathBuf::from(".lito"_str).as_path());
     auto shared_path = root.join(PathBuf::from("lito-config.toml"_str).as_path());
     return Ok(ConfigLocation {
         .root        = rstd::move(root),
@@ -106,18 +106,18 @@ auto inspect_ordinary_file(ref<rstd::path::Path> path, ref<str> description) -> 
     return Ok(true);
 }
 
-auto read_config_value(ref<rstd::path::Path> path,
-                       ref<str>              description,
-                       bool                  require_ordinary_file) -> ConfigResult<Option<Toml>> {
+auto read_config_value(ref<rstd::path::Path> path, ref<str> description, bool require_ordinary_file)
+    -> ConfigResult<Option<Toml>> {
     bool exists {};
     if (require_ordinary_file) {
         exists = rstd_try(inspect_ordinary_file(path, description));
     } else {
         auto result = rstd::fs::exists(path);
         if (result.is_err()) {
-            return document_io_failure<Option<Toml>>(rstd::format("inspect {}", description).as_str(),
-                                                      path,
-                                                      rstd::move(result).unwrap_err());
+            return document_io_failure<Option<Toml>>(
+                rstd::format("inspect {}", description).as_str(),
+                path,
+                rstd::move(result).unwrap_err());
         }
         exists = *result;
     }
@@ -125,25 +125,23 @@ auto read_config_value(ref<rstd::path::Path> path,
 
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return document_io_failure<Option<Toml>>(rstd::format("read {}", description).as_str(),
-                                                  path,
-                                                  rstd::move(contents).unwrap_err());
+        return document_io_failure<Option<Toml>>(
+            rstd::format("read {}", description).as_str(), path, rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
         return Err(ConfigError::Parse(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     if (! parsed->is_table()) {
-        return document_failure<Option<Toml>>(
-            rstd::format("{} root must be a table", description));
+        return document_failure<Option<Toml>>(rstd::format("{} root must be a table", description));
     }
     return Ok(Some(rstd::move(parsed).unwrap()));
 }
 
 auto read_config_document(ConfigLocation location, bool require_ordinary_file)
     -> ConfigResult<ConfigDocument> {
-    auto value = rstd_try(read_config_value(
-        location.path.as_path(), "configuration"_str, require_ordinary_file));
+    auto value = rstd_try(
+        read_config_value(location.path.as_path(), "configuration"_str, require_ordinary_file));
     auto document = empty_document(rstd::move(location));
     if (value.is_some()) document.value = rstd::move(value).unwrap();
     return Ok(rstd::move(document));
@@ -177,8 +175,8 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     auto document = empty_document(rstd::move(location));
     if (shared.is_some()) document.value = rstd::move(shared).unwrap();
     if (mode == ConfigLoadMode::LocalDisabled) return Ok(rstd::move(document));
-    auto local = rstd_try(
-        read_config_value(document.location.path.as_path(), "configuration"_str, false));
+    auto local =
+        rstd_try(read_config_value(document.location.path.as_path(), "configuration"_str, false));
     if (local.is_some()) merge_config_value(document.value, *local);
     return Ok(rstd::move(document));
 }

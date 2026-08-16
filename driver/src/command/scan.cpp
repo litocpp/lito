@@ -285,8 +285,7 @@ auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
 }
 
-auto scan_report_json(const ScanReport& report, ScanOutputFormat format)
-    -> CommandResult<String> {
+auto scan_report_json(const ScanReport& report, ScanOutputFormat format) -> CommandResult<String> {
     switch (format) {
     case ScanOutputFormat::Lito: return lito_scan_report_json(report);
     case ScanOutputFormat::P1689: return p1689_scan_report_json(report);

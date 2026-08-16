@@ -1,1 +1,0 @@
-lito.install({})

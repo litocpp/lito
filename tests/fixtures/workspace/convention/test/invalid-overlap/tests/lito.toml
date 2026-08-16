@@ -1,6 +1,0 @@
-[workspace]
-name = "fixture-conventional-overlap-tests"
-members = ["runtime"]
-
-[workspace.package]
-version = "0.1.0"

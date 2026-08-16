@@ -1,8 +1,0 @@
-[package]
-name = "fixture-discovery-cycle"
-version = "0.1.0"
-
-[lib]
-name = "fixture-discovery-cycle"
-module = "fixture.discovery.cycle"
-archive = "fixture.discovery.cycle"

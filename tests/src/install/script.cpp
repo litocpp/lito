@@ -15,8 +15,17 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Install, InstallOnlyManifestOwnsItsConventionalScript) {
-    auto directory = fixture_path("install/manifest/install-only"_str);
+class InstallScript : public ProjectFixture {};
+
+TEST_F(InstallScript, InstallOnlyManifestOwnsItsConventionalScript) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str,
+          "[package]\nname = \"fixture-install-only\"\nversion = \"1.2.3\"\n"_str },
+        { "install.lua"_str, "lito.install({})\n"_str },
+    };
+    auto project = materialize("install-only-manifest"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto loaded    = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_TRUE(loaded->install_script.is_some());
@@ -25,20 +34,59 @@ TEST(Install, InstallOnlyManifestOwnsItsConventionalScript) {
     ASSERT_TRUE(loaded->version.value.is_some());
     EXPECT_EQ(loaded->version.value->as_str(), "1.2.3"_str);
 
-    auto missing = lito::load_package_manifest(
-        fixture_path("install/manifest/install-only-missing-version"_str).as_path());
+    constexpr ProjectFile missing_files[] = {
+        { "lito.toml"_str, "[package]\nname = \"fixture-install-only-missing-version\"\n"_str },
+        { "install.lua"_str, "lito.install({})\n"_str },
+    };
+    auto missing_project = materialize("install-only-missing-version"_str, missing_files);
+    ASSERT_TRUE(missing_project.is_ok());
+    auto missing = lito::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_err());
     EXPECT_TRUE(error_chain_text(missing.unwrap_err()).as_str().contains("version"_str));
 }
 
-TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
+TEST_F(InstallScript, InstallScriptProducesAnOwnedRecipeOnce) {
     auto environment =
         EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT"_str, "fixture-environment"_str);
     auto empty_environment =
         EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY"_str, ""_str);
     auto unset_environment = EnvironmentVariableGuard("LITO_TEST_INSTALL_ENVIRONMENT_UNSET"_str);
-    auto directory         = fixture_path("install/script/recipe"_str);
-    auto manifest          = lito::load_package_manifest(directory.as_path());
+    constexpr ProjectFile recipe_files[] = {
+        { "lito.toml"_str,
+          "[package]\nname = \"fixture-install-script\"\nversion = \"2.4.6\"\n"_str },
+        { "fragment.in"_str, "@NAME@ @VERSION@\n"_str },
+        { "manifest.in"_str,
+          "@FRAGMENT@@PROFILE@ @TARGET@ @ARCH@ @ENVIRONMENT@ @ENVIRONMENT_EMPTY@ @ENVIRONMENT_UNSET@ @ENVIRONMENT_UNSET_COUNT@\n"_str },
+        { "resource.txt"_str, "resource\n"_str },
+        { "install.lua"_str, R"lua(local rendered = lito.render_template({
+    input = "fragment.in",
+    values = { NAME = lito.package_name, VERSION = lito.package_version },
+})
+lito.install({
+    artifacts = {{ target = { kind = "bin", name = "producer" }, destination = "bin/producer" }},
+    external_assets = {{ dependency = "runtime", set = "files", destination = "lib/runtime" }},
+    files = {{ source = "resource.txt", destination = "share/fixture/resource.txt" }},
+    templates = {{
+        input = "manifest.in",
+        destination = "share/fixture/manifest.txt",
+        values = {
+            FRAGMENT = rendered, PROFILE = lito.profile, TARGET = lito.target,
+            ARCH = lito.target_arch,
+            ENVIRONMENT = lito.env("LITO_TEST_INSTALL_ENVIRONMENT"),
+            ENVIRONMENT_EMPTY = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") == "",
+            ENVIRONMENT_UNSET = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_UNSET") == nil,
+            ENVIRONMENT_UNSET_COUNT = select("#", lito.env("LITO_TEST_INSTALL_ENVIRONMENT_UNSET")),
+        },
+    }},
+    inventories = {{ destination = "share/fixture/files.txt",
+                     relative_to = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") }},
+})
+)lua"_str },
+    };
+    auto project = materialize("install-script-recipe"_str, recipe_files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
+    auto manifest  = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
     auto recipe = lito::execute_install_script(install_script_input(*manifest),
@@ -75,14 +123,32 @@ TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
     ASSERT_TRUE(environment_unset_count.is_some());
     EXPECT_EQ((**environment_unset_count).integer(), i64(1));
 
-    constexpr ref<str> binding_errors[] = {
-        "install/script/cross-package"_str,
-        "install/script/duplicate"_str,
-        "install/script/unknown-field"_str,
-        "install/script/wrong-type"_str,
+    struct BindingError {
+        ref<str> name;
+        ref<str> script;
     };
-    for (auto case_path : binding_errors) {
-        auto invalid = lito::load_package_manifest(fixture_path(case_path).as_path());
+    constexpr BindingError binding_errors[] = {
+        { "cross-package"_str, R"lua(lito.install({ artifacts = {{
+    package = "another-package",
+    target = { kind = "bin", name = "tool" },
+    destination = "bin/tool",
+}} })
+)lua"_str },
+        { "duplicate"_str, "lito.install({})\nlito.install({})\n"_str },
+        { "unknown-field"_str, "lito.install({ unsupported = true })\n"_str },
+        { "wrong-type"_str, "lito.install({ files = { \"invalid\" } })\n"_str },
+    };
+    for (const auto& binding_error : binding_errors) {
+        auto manifest_text =
+            rstd::format("[package]\nname = \"fixture-install-script-{}\"\nversion = \"1.0.0\"\n",
+                         binding_error.name);
+        const ProjectFile invalid_files[] = {
+            { "lito.toml"_str, manifest_text.as_str() },
+            { "install.lua"_str, binding_error.script },
+        };
+        auto invalid_project = materialize(binding_error.name, invalid_files);
+        ASSERT_TRUE(invalid_project.is_ok());
+        auto invalid = lito::load_package_manifest(invalid_project->root.as_path());
         ASSERT_TRUE(invalid.is_ok());
         auto executed =
             lito::execute_install_script(install_script_input(*invalid),
@@ -95,8 +161,14 @@ TEST(Install, InstallScriptProducesAnOwnedRecipeOnce) {
         EXPECT_TRUE(executed.unwrap_err().is_Binding());
     }
 
-    auto missing =
-        lito::load_package_manifest(fixture_path("install/script/missing"_str).as_path());
+    constexpr ProjectFile missing_files[] = {
+        { "lito.toml"_str,
+          "[package]\nname = \"fixture-install-script-missing\"\nversion = \"1.0.0\"\n"_str },
+        { "install.lua"_str, "local value = lito.package_name\n"_str },
+    };
+    auto missing_project = materialize("install-script-missing"_str, missing_files);
+    ASSERT_TRUE(missing_project.is_ok());
+    auto missing = lito::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_ok());
     auto unregistered =
         lito::execute_install_script(install_script_input(*missing),

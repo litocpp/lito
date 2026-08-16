@@ -229,14 +229,14 @@ auto resolve_project_metadata(ResolvedProjectSession            session,
                                                             project.graph.profile,
                                                             profile,
                                                             rstd::move(session.build_arguments)));
-    auto standard_library = toolchain.resolve_standard_library(
-        resolved_profile.cpp, session.platform.effective_target);
+    auto standard_library =
+        toolchain.resolve_standard_library(resolved_profile.cpp, session.platform.effective_target);
     if (standard_library.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
     }
     resolved_profile.cpp.abi.resolved_standard_library =
         Some(rstd::move(standard_library).unwrap());
-    auto layout           = BuildLayout::create(
+    auto layout = BuildLayout::create(
         project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());
     if (layout.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));

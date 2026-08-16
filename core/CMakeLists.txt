@@ -69,6 +69,7 @@ target_sources(
          src/source/requirement.cppm
          src/source/resolution.cppm
          src/source/seed.cppm
+         src/source/tree.cppm
          src/system/environment.cppm
          src/system/error.cppm
          src/system/mod.cppm

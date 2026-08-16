@@ -1,8 +1,0 @@
-[package]
-name = "fixture-legacy-target-schema"
-version = "0.1.0"
-module = "fixture.legacy"
-
-[library]
-archive = "fixture-legacy"
-sources = ["lib.cppm"]

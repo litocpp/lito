@@ -1,9 +1,0 @@
-[package]
-name = "fixture-environment-cache"
-version = "0.1.0"
-
-[lib]
-name = "fixture-environment-cache"
-module = "fixture.environment"
-archive = "fixture_environment_cache"
-sources = ["one.cpp", "two.cpp"]

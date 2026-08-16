@@ -254,7 +254,7 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
                              const cpp::SourceDiscoveryPlan& plan,
                              cpp::TargetId                   importer,
                              ref<str>                        logical_name,
-                             FrontendAnalysisService& analysis_service)
+                             FrontendAnalysisService&        analysis_service)
     -> BuildResult<Option<ImportOwner>> {
     auto candidates       = Vec<ImportOwnerCandidate>::make();
     auto highest_priority = usize {};
@@ -712,13 +712,13 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                     }
                     if (owner->is_none()) continue;
                     auto resolved_owner = rstd::move(owner).unwrap().unwrap();
-                    auto enqueued = enqueue_candidate(resolved_owner.target,
-                                                      rstd::move(resolved_owner.source),
-                                                      true,
-                                                      path_names,
-                                                      name_paths,
-                                                      queued,
-                                                      next);
+                    auto enqueued       = enqueue_candidate(resolved_owner.target,
+                                                            rstd::move(resolved_owner.source),
+                                                            true,
+                                                            path_names,
+                                                            name_paths,
+                                                            queued,
+                                                            next);
                     if (enqueued.is_err()) {
                         return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
                     }

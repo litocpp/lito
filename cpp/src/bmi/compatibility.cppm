@@ -147,14 +147,14 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     add_difference(BmiCompatibilityField::StandardLibrary,
                    standard_library_text(provider.abi.standard_library),
                    standard_library_text(consumer.abi.standard_library));
-    auto provider_stdlib_identity = provider.abi.resolved_standard_library.is_some()
-                                        ? provider.abi.resolved_standard_library->headers_identity
-                                              .as_str()
-                                        : "<unresolved>"_str;
-    auto consumer_stdlib_identity = consumer.abi.resolved_standard_library.is_some()
-                                        ? consumer.abi.resolved_standard_library->headers_identity
-                                              .as_str()
-                                        : "<unresolved>"_str;
+    auto provider_stdlib_identity =
+        provider.abi.resolved_standard_library.is_some()
+            ? provider.abi.resolved_standard_library->headers_identity.as_str()
+            : "<unresolved>"_str;
+    auto consumer_stdlib_identity =
+        consumer.abi.resolved_standard_library.is_some()
+            ? consumer.abi.resolved_standard_library->headers_identity.as_str()
+            : "<unresolved>"_str;
     add_difference(BmiCompatibilityField::StandardLibraryIdentity,
                    provider_stdlib_identity,
                    consumer_stdlib_identity);

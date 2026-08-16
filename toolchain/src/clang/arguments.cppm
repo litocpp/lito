@@ -81,9 +81,8 @@ auto normalize_clang_link_arguments(cpp::LinkArgumentSequence input)
             requirements.thread_sources.push(input.source.clone());
             continue;
         }
-        if (token == "-ldl"_str ||
-            (token == "-l"_str && index + usize(1) < input.tokens.len() &&
-             input.tokens[index + usize(1)].as_str() == "dl"_str)) {
+        if (token == "-ldl"_str || (token == "-l"_str && index + usize(1) < input.tokens.len() &&
+                                    input.tokens[index + usize(1)].as_str() == "dl"_str)) {
             requirements.system_libraries.push(cpp::CppSystemLibraryRequirement {
                 .name   = String::make("dl"_str),
                 .source = input.source.clone(),

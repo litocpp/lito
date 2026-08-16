@@ -21,31 +21,6 @@ auto strings(Values... values) -> Vec<String> {
     return result;
 }
 
-auto fixture_path(ref<str> relative) -> PathBuf {
-    auto path = PathBuf::from("fixtures"_str).join(PathBuf::from(relative).as_path());
-    return rstd::fs::canonicalize(path.as_path()).unwrap();
-}
-
-auto repository_path(ref<str> relative) -> PathBuf {
-    auto path = PathBuf::from(".."_str).join(PathBuf::from(relative).as_path());
-    return rstd::fs::canonicalize(path.as_path()).unwrap();
-}
-
-auto project_root() -> PathBuf {
-    return fixture_path("project"_str);
-}
-
-auto output_root(ref<str> name) -> PathBuf {
-    auto directory = rstd::format("lito-test-{}-{}", rstd::process::id(), name);
-    return rstd::env::temp_dir().join(PathBuf::from(directory.as_str()).as_path());
-}
-
-auto clear_output(ref<rstd::path::Path> path) -> bool {
-    auto exists = rstd::fs::exists(path);
-    if (exists.is_err()) return false;
-    return ! *exists || rstd::fs::remove_dir_all(path).is_ok();
-}
-
 template<typename Error>
 auto error_chain_text(const Error& error) -> String {
     auto text   = rstd::format("{}", error);
@@ -118,33 +93,6 @@ auto has_import(const lito::ScanReport& report, ref<str> logical_name) -> bool {
         if (imported.logical_name.as_str() == logical_name) return true;
     }
     return false;
-}
-
-auto copy_directory(ref<rstd::path::Path> source, ref<rstd::path::Path> destination) -> bool {
-    if (rstd::fs::create_dir_all(destination).is_err()) return false;
-    auto opened = rstd::fs::read_dir(source);
-    if (opened.is_err()) return false;
-    auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        auto entry_result = rstd::move(next).unwrap();
-        if (entry_result.is_err()) return false;
-        auto entry = rstd::move(entry_result).unwrap();
-        auto type  = entry.file_type();
-        if (type.is_err()) return false;
-        auto source_path = entry.path();
-        auto relative    = source_path.as_path().strip_prefix(source);
-        if (relative.is_none()) return false;
-        auto destination_path = PathBuf::from(destination).join(*relative);
-        if (type->is_dir()) {
-            if (! copy_directory(source_path.as_path(), destination_path.as_path())) return false;
-            continue;
-        }
-        if (! type->is_file() ||
-            rstd::fs::copy(source_path.as_path(), destination_path.as_path()).is_err()) {
-            return false;
-        }
-    }
-    return true;
 }
 
 } // namespace lito_test

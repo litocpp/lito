@@ -1,8 +1,0 @@
-[package]
-name = "fixture-convention-partition"
-version = "0.1.0"
-
-[lib]
-name = "fixture-convention-partition"
-module = "fixture.convention.partition"
-archive = "fixture.convention.partition"

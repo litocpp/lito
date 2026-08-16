@@ -12,10 +12,118 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
-    auto root   = project_root();
-    auto output = output_root("multi-target"_str);
-    ASSERT_TRUE(clear_output(output.as_path()));
+class BenchCommand : public ProjectFixture {};
+
+auto bench_command_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"bench([workspace]
+name = "bench-command"
+members = ["multi-target", "multi-consumer"]
+
+[workspace.package]
+version = "0.1.0"
+
+[profile]
+exceptions = false
+rtti = false
+)bench"_str },
+        { "multi-target/lito.toml"_str, R"bench([package]
+name = "fixture-multi-target"
+version = { workspace = true }
+
+[lib]
+name = "shared"
+module = "fixture.multi"
+archive = "fixture_multi"
+sources = ["src/lib.cppm"]
+
+[[bin]]
+link-stdlib = false
+name = "shared"
+sources = ["src/main.cpp"]
+
+[[bin]]
+name = "tool"
+sources = ["src/main.cpp"]
+link-stdlib = false
+
+[[test]]
+link-stdlib = false
+name = "shared"
+sources = ["src/main.cpp"]
+
+[[test]]
+name = "unit"
+sources = ["src/main.cpp"]
+link-stdlib = false
+
+[[bench]]
+link-stdlib = false
+name = "shared"
+sources = ["src/main.cpp"]
+
+[[bench]]
+name = "speed"
+sources = ["src/main.cpp"]
+link-stdlib = false
+)bench"_str },
+        { "multi-target/marker.txt"_str, R"bench(benchmark working directory marker
+)bench"_str },
+        { "multi-target/src/lib.cppm"_str, R"bench(export module fixture.multi;
+
+export namespace fixture::multi
+{
+
+auto answer() -> int {
+    return 42;
+}
+
+} // namespace fixture::multi
+)bench"_str },
+        { "multi-target/src/main.cpp"_str, R"bench(#include <cstdio>
+#include <cstring>
+
+import fixture.multi;
+
+int main(int argc, char** argv) {
+    if (fixture::multi::answer() != 42) return 1;
+    if (argc != 2 || std::strcmp(argv[1], "expected-benchmark") != 0) return 2;
+    auto* marker = std::fopen("marker.txt", "r");
+    if (marker == nullptr) return 3;
+    std::fclose(marker);
+    return 0;
+}
+)bench"_str },
+        { "multi-consumer/lito.toml"_str, R"bench([package]
+name = "fixture-multi-consumer"
+version = { workspace = true }
+
+[[bin]]
+link-stdlib = false
+name = "fixture-multi-consumer"
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-multi-target]
+path = "../multi-target"
+visibility = "private"
+)bench"_str },
+        { "multi-consumer/src/main.cpp"_str, R"bench(import fixture.multi;
+
+int main() {
+    return fixture::multi::answer() == 42 ? 0 : 1;
+}
+)bench"_str },
+    };
+    return source_tree(files);
+}
+
+TEST_F(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
+    auto tree = bench_command_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("multi-target"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto root   = project->root.clone();
+    auto output = build_root("multi-target"_str);
 
     auto production = lito::build(
         build_request(root.as_path(), output.as_path(), strings("fixture-multi-target"_str)));
@@ -91,6 +199,4 @@ TEST(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     ASSERT_TRUE(debug_bench.is_ok());
     EXPECT_EQ(debug_bench->build.profile.as_str(), "debug"_str);
     EXPECT_TRUE(debug_bench->executions.is_empty());
-
-    ASSERT_TRUE(clear_output(output.as_path()));
 }

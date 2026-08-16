@@ -1,8 +1,0 @@
-[package]
-name = "fixture-conventional-invalid-kind-root"
-version = "0.1.0"
-
-[[bin]]
-link-stdlib = false
-name = "fixture-conventional-invalid-kind-root"
-sources = ["main.cpp"]

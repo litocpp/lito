@@ -1,9 +1,0 @@
-[package]
-name = "fixture-missing"
-version = "0.1.0"
-
-[lib]
-name = "fixture-missing"
-module = "fixture.missing"
-archive = "fixture.missing"
-sources = ["missing.cppm"]

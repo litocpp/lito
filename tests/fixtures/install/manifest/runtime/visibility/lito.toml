@@ -1,7 +1,0 @@
-[package]
-name = "fixture-runtime-visibility"
-version = "0.1.0"
-
-[runtime-dependencies.helper]
-path = "../../install-only"
-visibility = "private"

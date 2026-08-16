@@ -1,9 +1,0 @@
-[package]
-name = "cmake-archives-empty"
-version = "0.1.0"
-
-[external-dependencies.cmake.fixture]
-find-package = "Fixture"
-integration = "build-tree"
-archives = {}
-targets = [{ name = "Fixture::fixture", visibility = "private" }]

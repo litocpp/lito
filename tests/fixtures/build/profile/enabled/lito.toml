@@ -1,8 +1,0 @@
-[package]
-name = "fixture-profile-enabled"
-version = "0.1.0"
-
-[[bin]]
-link-stdlib = false
-name = "profile-enabled"
-sources = ["main.cpp"]

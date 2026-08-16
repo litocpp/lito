@@ -53,11 +53,10 @@ auto valid_system_library_name(ref<str> name) -> bool {
            ! name.contains("\r"_str);
 }
 
-auto validate_usage(const PackageManifest& package, bool has_link_action)
-    -> PackageResult<empty> {
-    const auto& usage = package.usage;
-    auto validate_definitions = [&](const Vec<String>& definitions,
-                                    ref<str>           field) -> PackageResult<empty> {
+auto validate_usage(const PackageManifest& package, bool has_link_action) -> PackageResult<empty> {
+    const auto& usage                = package.usage;
+    auto        validate_definitions = [&](const Vec<String>& definitions,
+                                           ref<str>           field) -> PackageResult<empty> {
         for (const auto& definition : definitions) {
             if (! is_profile_owned_definition(definition.as_str())) continue;
             return adapter_failure<empty>(
@@ -70,25 +69,25 @@ auto validate_usage(const PackageManifest& package, bool has_link_action)
     rstd_try(validate_definitions(usage.public_definitions, "public-definitions"_str));
     rstd_try(validate_definitions(usage.private_definitions, "private-definitions"_str));
     if (! has_link_action && ! usage.linker_options.is_empty()) {
-        return adapter_failure<empty>(rstd::format(
-            "{} requires a binary, test, or benchmark target",
-            usage_source(package, "usage.linker-options"_str).as_str()));
+        return adapter_failure<empty>(
+            rstd::format("{} requires a binary, test, or benchmark target",
+                         usage_source(package, "usage.linker-options"_str).as_str()));
     }
     for (auto index = usize {}; index < usage.linker_options.len(); ++index) {
         const auto& option = usage.linker_options[index];
         if (option.as_str() == "-pthread"_str) {
-            return adapter_failure<empty>(rstd::format(
-                "{} option '-pthread' must be declared as usage.threads",
-                usage_source(package, "usage.linker-options"_str).as_str()));
+            return adapter_failure<empty>(
+                rstd::format("{} option '-pthread' must be declared as usage.threads",
+                             usage_source(package, "usage.linker-options"_str).as_str()));
         }
         if (! option.as_str().starts_with("-stdlib="_str) && option.as_str() != "-nostdlib++"_str &&
             ! is_profile_owned_linker_option(option.as_str())) {
             continue;
         }
-        return adapter_failure<empty>(rstd::format(
-            "{} option '{}' overrides a Lito-owned setting",
-            usage_source(package, "usage.linker-options"_str).as_str(),
-            option.as_str()));
+        return adapter_failure<empty>(
+            rstd::format("{} option '{}' overrides a Lito-owned setting",
+                         usage_source(package, "usage.linker-options"_str).as_str(),
+                         option.as_str()));
     }
     return Ok(empty {});
 }
@@ -123,11 +122,10 @@ auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
     return result;
 }
 
-auto usage_link_requirements(const PackageManifest&  package,
-                             const CppArgumentLayer& arguments)
+auto usage_link_requirements(const PackageManifest& package, const CppArgumentLayer& arguments)
     -> PackageResult<CppLinkRequirements> {
-    const auto& usage = package.usage;
-    auto result = CppLinkRequirements {};
+    const auto& usage  = package.usage;
+    auto        result = CppLinkRequirements {};
     if (usage.threads) {
         result.posix_threads = true;
         result.thread_sources.push(usage_source(package, "usage.threads"_str));
@@ -139,10 +137,10 @@ auto usage_link_requirements(const PackageManifest&  package,
     }
     for (const auto& library : usage.system_libraries) {
         if (! valid_system_library_name(library.as_str())) {
-            return adapter_failure<CppLinkRequirements>(rstd::format(
-                "{} contains invalid logical library name '{}'",
-                usage_source(package, "usage.system-libraries"_str).as_str(),
-                library.as_str()));
+            return adapter_failure<CppLinkRequirements>(
+                rstd::format("{} contains invalid logical library name '{}'",
+                             usage_source(package, "usage.system-libraries"_str).as_str(),
+                             library.as_str()));
         }
         result.system_libraries.push(CppSystemLibraryRequirement {
             .name   = library.clone(),
@@ -352,19 +350,18 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                 .requirement = rstd::move(requirement),
             });
         }
-        auto arguments = rstd_try(parse_options(
-            argument_parser,
-            package.manifest.usage.options,
-            usage_source(package.manifest, "usage.options"_str)));
+        auto arguments =
+            rstd_try(parse_options(argument_parser,
+                                   package.manifest.usage.options,
+                                   usage_source(package.manifest, "usage.options"_str)));
         if (package.manifest.usage.threads) {
             arguments.occurrences.push(CppCompilerArgumentOccurrence {
                 .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
-                .source = usage_source(package.manifest, "usage.threads"_str),
+                .source   = usage_source(package.manifest, "usage.threads"_str),
             });
         }
         auto interface_arguments = promoted_arguments(arguments);
-        auto link_requirements =
-            rstd_try(usage_link_requirements(package.manifest, arguments));
+        auto link_requirements   = rstd_try(usage_link_requirements(package.manifest, arguments));
         auto compile_tests =
             Vec<ResolvedCompileTestCase>::with_capacity(package.manifest.compile_tests.len());
         for (const auto& test : package.manifest.compile_tests) {
@@ -479,10 +476,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                 .source        = rstd::move(source),
                 .root          = package.manifest.root.clone(),
                 .source_root   = package.manifest.source_root.clone(),
-                .usage = clone_usage(package.manifest.usage,
-                                     arguments,
-                                     interface_arguments,
-                                     link_requirements),
+                .usage         = clone_usage(
+                    package.manifest.usage, arguments, interface_arguments, link_requirements),
                 .attachments       = rstd::move(attachments),
                 .runtime_resources = rstd::move(runtime_resources),
                 .dependencies      = rstd::move(target_dependencies),
@@ -523,10 +518,8 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                     },
                 .root        = package.manifest.root.clone(),
                 .source_root = package.manifest.source_root.clone(),
-                .usage = clone_usage(package.manifest.usage,
-                                     arguments,
-                                     interface_arguments,
-                                     link_requirements),
+                .usage       = clone_usage(
+                    package.manifest.usage, arguments, interface_arguments, link_requirements),
                 .compile_tests = rstd::move(compile_tests),
                 .dependencies  = rstd::move(compile_dependencies),
                 .external_dependencies =

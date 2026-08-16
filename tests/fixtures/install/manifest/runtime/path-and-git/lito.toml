@@ -1,7 +1,0 @@
-[package]
-name = "fixture-runtime-path-and-git"
-version = "0.1.0"
-
-[runtime-dependencies.helper]
-path = "../../install-only"
-git = "https://example.invalid/runtime-helper.git"

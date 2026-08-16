@@ -1,9 +1,0 @@
-[package]
-name = "fixture-source-root-descendant"
-version = "0.1.0"
-source-root = "src"
-
-[[bin]]
-link-stdlib = false
-name = "fixture-source-root-descendant"
-sources = ["main.cpp"]

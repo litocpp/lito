@@ -15,9 +15,45 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(CMake, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
-    auto loaded =
-        lito::load_package_manifest(fixture_path("dependency/cmake/manifest/valid"_str).as_path());
+class CMakeManifest : public ProjectFixture {
+protected:
+    auto manifest_project(ref<str> name, ref<str> contents)
+        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        const ProjectFile files[] = {
+            { .path = "lito.toml"_str, .contents = contents },
+        };
+        return materialize(name, files);
+    }
+};
+
+TEST_F(CMakeManifest, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "cmake-valid"
+version = "0.1.0"
+[lib]
+name = "cmake-valid"
+module = "cmake_valid"
+archive = "cmake_valid"
+[external-dependencies.cmake.vulkan]
+find-package = "Vulkan"
+targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
+[external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+path = "package"
+config-directory = "lib/cmake/LitoFixture"
+cache = { LITO_FIXTURE_OPTION = true }
+targets = [
+  { name = "LitoFixture::fixture", visibility = "private" },
+  { name = "LitoFixture::headers", visibility = "public" },
+  { name = "LitoFixture::order", visibility = "link" },
+]
+)"_str },
+        { "package/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
+    };
+    auto project = materialize("valid"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->dependencies.is_empty());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(2));
@@ -46,8 +82,7 @@ TEST(CMake, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
     EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
               "lib/cmake/LitoFixture"_str);
 
-    auto graph =
-        lito::resolve_package_graph(fixture_path("dependency/cmake/manifest/valid"_str).as_path());
+    auto graph = lito::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     auto external = lito::prepare_external_dependency_sources(*graph, {});
@@ -62,8 +97,28 @@ TEST(CMake, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
     EXPECT_FALSE(resolved.source.as_Directory().root.as_path().to_str().unwrap().is_empty());
 }
 
-TEST(CMake, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
-    auto directory = fixture_path("dependency/cmake/manifest/build-tree"_str);
+TEST_F(CMakeManifest, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "cmake-build-tree"
+version = "0.1.0"
+[lib]
+name = "cmake-build-tree"
+module = "cmake_build_tree"
+archive = "cmake_build_tree"
+[external-dependencies.cmake.fixture]
+find-package = "LitoBuildTree"
+path = "project"
+integration = "build-tree"
+adapter = "adapter.cmake"
+targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
+)"_str },
+        { "adapter.cmake"_str, "set(LitoBuildTree_VERSION \"4.5.6\")\n"_str },
+        { "project/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
+    };
+    auto project = materialize("build-tree-manifest"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto loaded    = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
@@ -85,8 +140,26 @@ TEST(CMake, CMakeBuildTreeManifestIsTypedAndAdapterIsResolvedByPackageOwner) {
     EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
 }
 
-TEST(CMake, PackageOwnedPathUsesOneResolvedRelationForLockAndPreparation) {
-    auto directory = fixture_path("dependency/cmake/manifest/package-owned"_str);
+TEST_F(CMakeManifest, PackageOwnedPathUsesOneResolvedRelationForLockAndPreparation) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "cmake-package-owned"
+version = "0.1.0"
+[lib]
+name = "cmake-package-owned"
+module = "cmake.package_owned"
+archive = "cmake.package_owned"
+[external-dependencies.cmake.shader]
+find-package = "FixtureShader"
+path = "shaders"
+targets = [{ name = "FixtureShader::shader", visibility = "private" }]
+)"_str },
+        { "shaders/CMakeLists.txt"_str,
+          "cmake_minimum_required(VERSION 3.28)\nproject(FixtureShader)\n"_str },
+    };
+    auto project = materialize("package-owned"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     auto source_count = graph->sources.len();
@@ -111,16 +184,103 @@ TEST(CMake, PackageOwnedPathUsesOneResolvedRelationForLockAndPreparation) {
     EXPECT_EQ(graph->sources.len(), source_count);
 }
 
-TEST(CMake, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
-    for (const auto path : INVALID_CMAKE_MANIFESTS) {
-        auto loaded = lito::load_manifest_document(fixture_path(path).as_path());
+TEST_F(CMakeManifest, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
+    struct InvalidManifest {
+        ref<str> name;
+        ref<str> dependency;
+    };
+    constexpr InvalidManifest manifests[] = {
+        { "adapter-install"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+path = "package"
+adapter = "adapter.cmake"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "archive-missing-sha"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+archive = "https://example.com/fixture.tar.gz"
+integration = "build-tree"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "build-tree-installed"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+integration = "build-tree"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "config-directory-parent"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+path = "package"
+config-directory = "../LitoFixture"
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "duplicate-target"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+targets = [
+  { name = "LitoFixture::fixture", visibility = "private" },
+  { name = "LitoFixture::fixture", visibility = "public" },
+]
+)"_str },
+        { "empty-targets"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+targets = []
+)"_str },
+        { "installed-cache"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+cache = { LITO_FIXTURE_OPTION = true }
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "installed-config-directory"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+config-directory = "lib/cmake/LitoFixture"
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "legacy-dependency"_str, R"([dependencies.fixture]
+cmake = "LitoFixture"
+target = "LitoFixture::fixture"
+)"_str },
+        { "missing-target"_str, R"([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+)"_str },
+        { "provider-mix"_str, R"([external-dependencies.fixture]
+module = "lito-fixture"
+)"_str },
+        { "unsafe-target"_str, R"toml([external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+targets = [{ name = "LitoFixture::fixture)", visibility = "private" }]
+)toml"_str },
+    };
+    for (const auto& manifest : manifests) {
+        auto contents = rstd::format("[package]\nname = \"cmake-{}\"\nversion = \"0.1.0\"\n{}",
+                                     manifest.name,
+                                     manifest.dependency);
+        auto project  = manifest_project(manifest.name, contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
-TEST(CMake, CMakeArchitectureArchivesManifestIsTyped) {
-    auto loaded = lito::load_package_manifest(
-        fixture_path("dependency/cmake/manifest/architecture-archives"_str).as_path());
+TEST_F(CMakeManifest, CMakeArchitectureArchivesManifestIsTyped) {
+    auto project = manifest_project("architecture-archives"_str, R"([package]
+name = "cmake-architecture-archives"
+version = "0.1.0"
+[lib]
+name = "cmake-architecture-archives"
+module = "cmake_architecture_archives"
+archive = "cmake_architecture_archives"
+[external-dependencies.cmake.fixture]
+find-package = "Fixture"
+integration = "build-tree"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+[external-dependencies.cmake.fixture.archives.x86_64]
+archive = "https://example.com/fixture-linux64.tar.gz"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+[external-dependencies.cmake.fixture.archives.aarch64]
+archive = "https://example.com/fixture-linuxarm64.tar.gz"
+sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& source = loaded->cmake_external_dependencies[usize {}].source;
@@ -134,15 +294,53 @@ TEST(CMake, CMakeArchitectureArchivesManifestIsTyped) {
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str);
 }
 
-TEST(CMake, CMakeArchitectureArchivesInvalidManifestsAreRejected) {
-    for (const auto path : INVALID_CMAKE_ARCHITECTURE_ARCHIVE_MANIFESTS) {
-        auto loaded = lito::load_manifest_document(fixture_path(path).as_path());
-        if (loaded.is_ok()) rstd::io::eprintln("unexpected valid manifest: {}", path);
+TEST_F(CMakeManifest, CMakeArchitectureArchivesInvalidManifestsAreRejected) {
+    struct InvalidArchiveManifest {
+        ref<str> name;
+        ref<str> source;
+    };
+    constexpr InvalidArchiveManifest manifests[] = {
+        { "archives-empty"_str, "archives = {}"_str },
+        { "archives-git-mix"_str, R"(git = "https://example.com/fixture.git"
+archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-install"_str, R"(integration = "install"
+archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-invalid-sha"_str,
+          R"(archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "invalid" } })"_str },
+        { "archives-invalid-url"_str,
+          R"(archives = { x86_64 = { archive = "-unsafe", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-missing-archive"_str,
+          R"(archives = { x86_64 = { sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-missing-sha"_str,
+          R"(archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz" } })"_str },
+        { "archives-noncanonical-architecture"_str,
+          R"(archives = { arm64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-path-mix"_str, R"(path = "package"
+archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+        { "archives-source-mix"_str, R"(archive = "https://example.com/fixture.tar.gz"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } })"_str },
+        { "archives-unknown-field"_str,
+          R"(archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", platform = "linux" } })"_str },
+        { "archives-unsafe-architecture"_str,
+          R"(archives = { "x86/64" = { archive = "https://example.com/fixture.tar.gz", sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } })"_str },
+    };
+    for (const auto& manifest : manifests) {
+        auto contents =
+            rstd::format("[package]\nname = \"cmake-{}\"\nversion = \"0.1.0\"\n"
+                         "[external-dependencies.cmake.fixture]\nfind-package = \"Fixture\"\n"
+                         "integration = \"build-tree\"\ntargets = [{{ name = \"Fixture::fixture\", "
+                         "visibility = \"private\" }}]\n{}\n",
+                         manifest.name,
+                         manifest.source);
+        auto project = manifest_project(manifest.name, contents.as_str());
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
-TEST(CMake, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
+TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto variants = Vec<lito::CMakeArchiveVariant>::make();
     variants.push(lito::CMakeArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
@@ -194,7 +392,8 @@ TEST(CMake, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto cross_cmake = resolve_cmake_fixtures(declarations,
                                               default_profile(*parser),
                                               explicit_platform("aarch64-unknown-linux-gnu"_str),
-                                              *parser);
+                                              *parser,
+                                              build_root("cross-cmake"_str).as_path());
     ASSERT_TRUE(cross_cmake.is_err());
     auto cross_error = rstd::move(cross_cmake).unwrap_err();
     EXPECT_TRUE(error_chain_text(cross_error)
@@ -202,8 +401,40 @@ TEST(CMake, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
                     .contains("without an explicit CMake toolchain file"_str));
 }
 
-TEST(CMake, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) {
-    auto directory = fixture_path("workspace/architecture-archives"_str);
+TEST_F(CMakeManifest, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-workspace-architecture-archives"
+members = ["app"]
+default-members = ["app"]
+[workspace.package]
+version = "0.1.0"
+[workspace.external-dependencies.cmake.fixture]
+find-package = "Fixture"
+integration = "build-tree"
+[workspace.external-dependencies.cmake.fixture.archives.x86_64]
+archive = "https://example.com/fixture-linux64.tar.gz"
+sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+[workspace.external-dependencies.cmake.fixture.archives.aarch64]
+archive = "https://example.com/fixture-linuxarm64.tar.gz"
+sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+)"_str },
+        { "app/lito.toml"_str, R"([package]
+name = "fixture-workspace-architecture-archives-app"
+version.workspace = true
+[[bin]]
+link-stdlib = false
+name = "fixture-workspace-architecture-archives-app"
+sources = ["main.cpp"]
+[external-dependencies.cmake.fixture]
+workspace = true
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "app/main.cpp"_str, "int main() { return 0; }\n"_str },
+    };
+    auto project = materialize("architecture-workspace"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto document  = lito::load_manifest_document(directory.as_path());
     ASSERT_TRUE(document.is_ok());
     ASSERT_TRUE(document->workspace.is_some());
@@ -233,7 +464,7 @@ TEST(CMake, CMakeArchitectureArchivesSurviveWorkspaceInheritanceAndPreparation) 
     EXPECT_EQ(graph->sources.len(), source_count);
 }
 
-TEST(CMake, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
+TEST_F(CMakeManifest, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     auto compiler_default = pkg_config_target();
     auto host             = lito::system::HostInfo {
         .architecture = compiler_default.architecture.clone(),
@@ -262,9 +493,20 @@ TEST(CMake, BuildPlatformMakesNativeAndExplicitTargetIntentObservable) {
     EXPECT_EQ(explicit_cross->effective_target.architecture.as_str(), "aarch64"_str);
 }
 
-TEST(CMake, CMakeManifestAcceptsUnnamespacedTargets) {
-    auto loaded = lito::load_package_manifest(
-        fixture_path("dependency/cmake/manifest/unnamespaced-target"_str).as_path());
+TEST_F(CMakeManifest, CMakeManifestAcceptsUnnamespacedTargets) {
+    auto project = manifest_project("unnamespaced-target"_str, R"([package]
+name = "cmake-unnamespaced-target"
+version = "0.1.0"
+[lib]
+name = "cmake-unnamespaced-target"
+module = "cmake_unnamespaced_target"
+archive = "cmake_unnamespaced_target"
+[external-dependencies.cmake.quickjs]
+find-package = "qjs"
+targets = [{ name = "qjs", visibility = "private" }]
+)"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& requirement = loaded->cmake_external_dependencies[usize {}];

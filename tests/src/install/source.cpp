@@ -15,9 +15,15 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Install, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
-    auto directory = fixture_path("project/multi-target"_str);
-    auto workspace = fixture_path("project"_str);
+class InstallSource : public ProjectFixture {};
+
+TEST_F(InstallSource, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
+    auto tree = install_selection_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("install-source-workspace"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto workspace = project->root.clone();
+    auto directory = workspace.join(PathBuf::from("multi-target"_str).as_path());
     auto source    = lito::resolve_install_source(
         lito::InstallSourceRequirement::LocalProject(directory.clone()));
     ASSERT_TRUE(source.is_ok());
@@ -67,7 +73,7 @@ TEST(Install, InstallSourceAndConfiguredRootAreOwnedByInstallDomain) {
     EXPECT_EQ(managed->path(), directory.join(PathBuf::from("managed"_str).as_path()).as_path());
 }
 
-TEST(Install, InstallPackageIdentityUsesNameAndExactSourceIdentity) {
+TEST_F(InstallSource, InstallPackageIdentityUsesNameAndExactSourceIdentity) {
     auto first        = lito::install_package_id("fixture-tool"_str, "path+/workspace/tool"_str);
     auto repeated     = lito::install_package_id("fixture-tool"_str, "path+/workspace/tool"_str);
     auto other_name   = lito::install_package_id("fixture-other"_str, "path+/workspace/tool"_str);
@@ -82,8 +88,27 @@ TEST(Install, InstallPackageIdentityUsesNameAndExactSourceIdentity) {
     EXPECT_NE(first->as_str(), other_source->as_str());
 }
 
-TEST(Install, WorkspaceAndMemberInstallUseTheSameSource) {
-    auto workspace        = fixture_path("workspace/profile"_str);
+TEST_F(InstallSource, WorkspaceAndMemberInstallUseTheSameSource) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-workspace-profile"
+members = ["app"]
+[workspace.package]
+version = "0.1.0"
+)"_str },
+        { "app/lito.toml"_str, R"([package]
+name = "fixture-workspace-profile-app"
+version = { workspace = true }
+[[bin]]
+link-stdlib = false
+name = "workspace-profile-app"
+sources = ["main.cpp"]
+)"_str },
+        { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto project = materialize("workspace-profile"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto workspace        = project->root.clone();
     auto member           = workspace.join(PathBuf::from("app"_str).as_path());
     auto workspace_source = lito::resolve_install_source(
         lito::InstallSourceRequirement::LocalProject(workspace.clone()));

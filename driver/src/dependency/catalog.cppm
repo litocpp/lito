@@ -189,7 +189,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
         if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
         auto dependency = rstd::move(usage).unwrap();
         auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
-        dependency.link_arguments  = rstd::move(normalized.arguments);
+        dependency.link_arguments    = rstd::move(normalized.arguments);
         dependency.link_requirements = rstd::move(normalized.requirements);
         result.packages[binding.catalog].dependencies.push(rstd::move(dependency));
         auto snapshot = snapshots.get(*key_text);

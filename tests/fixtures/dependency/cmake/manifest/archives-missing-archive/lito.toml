@@ -1,9 +1,0 @@
-[package]
-name = "cmake-archives-missing-archive"
-version = "0.1.0"
-
-[external-dependencies.cmake.fixture]
-find-package = "Fixture"
-integration = "build-tree"
-archives = { x86_64 = { sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
-targets = [{ name = "Fixture::fixture", visibility = "private" }]

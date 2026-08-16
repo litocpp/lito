@@ -15,9 +15,15 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(CMake, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
+class CMakePlan : public ProjectFixture {};
+
+TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
+    auto tree = cmake_package_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-package"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
     auto platform = native_platform();
     auto targets  = Vec<lito::CMakeTargetRequirement>::make();
     targets.push(lito::CMakeTargetRequirement {
@@ -27,14 +33,12 @@ TEST(CMake, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
         .alias   = String::make("planner-fixture"_str),
         .package = String::make("Fixture"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            fixture_path("dependency/cmake/project/package"_str),
-            String::make("lito-test-cmake-planner-pure-v1"_str),
-            false),
+            project->root.clone(), String::make("lito-test-cmake-planner-pure-v1"_str), false),
         .targets = rstd::move(targets),
     };
     auto requirement = lito::resolve_cmake_requirement_for_platform(prepared, platform);
     ASSERT_TRUE(requirement.is_ok());
-    auto work_root = output_root("cmake-planner-work"_str);
+    auto work_root = build_root("cmake-planner-work"_str);
     auto first     = lito::plan_cmake_package(*requirement,
                                               fixture_cmake(),
                                               configuration(),

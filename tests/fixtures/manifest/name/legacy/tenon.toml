@@ -1,8 +1,0 @@
-[package]
-name = "legacy-manifest"
-version = "0.1.0"
-
-[lib]
-name = "legacy-manifest"
-module = "fixture.manifest.legacy"
-archive = "fixture.manifest.legacy"

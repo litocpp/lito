@@ -48,7 +48,7 @@ auto parse_scan_output_format(ref<str> name) -> CommandResult<ScanOutputFormat>;
 auto scan(const ScanRequest& request) -> CommandResult<ScanReport>;
 auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String>;
 auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String>;
-auto scan_report_json(const ScanReport& report,
-                      ScanOutputFormat format = ScanOutputFormat::Lito) -> CommandResult<String>;
+auto scan_report_json(const ScanReport& report, ScanOutputFormat format = ScanOutputFormat::Lito)
+    -> CommandResult<String>;
 
 } // namespace lito

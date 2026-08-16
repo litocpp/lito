@@ -1,8 +1,0 @@
-[package]
-name = "fixture-environment-build"
-version = "0.1.0"
-
-[[bin]]
-link-stdlib = false
-name = "fixture-environment-build"
-sources = ["src/main.cpp"]

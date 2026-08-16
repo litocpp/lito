@@ -1,9 +1,0 @@
-[package]
-name = "cmake-archives-invalid-sha"
-version = "0.1.0"
-
-[external-dependencies.cmake.fixture]
-find-package = "Fixture"
-integration = "build-tree"
-archives = { x86_64 = { archive = "https://example.com/fixture.tar.gz", sha256 = "invalid" } }
-targets = [{ name = "Fixture::fixture", visibility = "private" }]

@@ -55,7 +55,7 @@ struct CppRequirementApplications {
 
 struct CppRequirementSemantics {
     CppRequirementApplications applications;
-    CppCompatibilityDomain      domain { CppCompatibilityDomain::Target };
+    CppCompatibilityDomain     domain { CppCompatibilityDomain::Target };
     CppRequirementMergePolicy  merge { CppRequirementMergePolicy::Exact };
 };
 
@@ -445,8 +445,7 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
         result.target.sysroot = Some(input.target.sysroot->clone());
     }
     if (input.abi.resolved_standard_library.is_some()) {
-        result.abi.resolved_standard_library =
-            Some(input.abi.resolved_standard_library->clone());
+        result.abi.resolved_standard_library = Some(input.abi.resolved_standard_library->clone());
     }
     result.target.features = as<Clone>(input.target.features).clone();
     return result;

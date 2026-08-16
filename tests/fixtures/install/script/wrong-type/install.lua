@@ -1,3 +1,0 @@
-lito.install({
-    files = { "invalid" },
-})

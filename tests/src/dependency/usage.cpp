@@ -59,8 +59,8 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
 
     auto parsed = parser->parse(strings("-pthread"_str), "static library usage"_str);
     ASSERT_TRUE(parsed.is_ok());
-    metadata->targets[usize {}].usage.arguments = as<Clone>(*parsed).clone();
-    metadata->targets[usize {}].usage.interface_arguments = rstd::move(parsed).unwrap();
+    metadata->targets[usize {}].usage.arguments                       = as<Clone>(*parsed).clone();
+    metadata->targets[usize {}].usage.interface_arguments             = rstd::move(parsed).unwrap();
     metadata->targets[usize {}].usage.link_requirements.posix_threads = true;
     metadata->targets[usize {}].usage.link_requirements.thread_sources.push(
         String::make("static library usage"_str));
@@ -70,8 +70,7 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
             .source = String::make("static library usage"_str),
         });
 
-    auto planned =
-        lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
     EXPECT_TRUE(planned->contexts[usize {}].cpp.threading.posix);
     EXPECT_TRUE(planned->contexts[usize(1)].cpp.threading.posix);
@@ -98,13 +97,12 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
     auto metadata = external_usage_metadata(lito::DependencyVisibility::Private, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
-    metadata->profiles[usize {}].cpp.threading.posix = true;
+    metadata->profiles[usize {}].cpp.threading.posix             = true;
     metadata->profiles[usize {}].link_requirements.posix_threads = true;
     metadata->profiles[usize {}].link_requirements.thread_sources.push(
         String::make("build.options"_str));
 
-    auto planned =
-        lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
     EXPECT_TRUE(planned->link_requirements[usize(1)].posix_threads);
 }
@@ -119,8 +117,7 @@ TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
     ASSERT_TRUE(parsed.is_ok());
     metadata->targets[usize {}].usage.arguments = rstd::move(parsed).unwrap();
 
-    auto planned =
-        lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_err());
     auto error = rstd::move(planned).unwrap_err();
     ASSERT_TRUE(error.is_Message());

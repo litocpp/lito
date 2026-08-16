@@ -12,11 +12,11 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
-    auto root_directory   = output_root("install-store"_str);
-    auto source_directory = output_root("install-store-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+class InstallStore : public ProjectFixture {};
+
+TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
+    auto root_directory   = install_root("install-store"_str);
+    auto source_directory = source_root("install-store-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto first_source = source_directory.join(PathBuf::from("tool"_str).as_path());
     auto old_source   = source_directory.join(PathBuf::from("old"_str).as_path());
@@ -146,16 +146,11 @@ TEST(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     auto forced_contents = rstd::fs::read_to_string(unmanaged.as_path());
     ASSERT_TRUE(forced_contents.is_ok());
     EXPECT_EQ(forced_contents->as_str(), "external"_str);
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
-    auto root_directory   = output_root("install-store-batch"_str);
-    auto source_directory = output_root("install-store-batch-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
+    auto root_directory   = install_root("install-store-batch"_str);
+    auto source_directory = source_root("install-store-batch-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
 
     const auto package = [&](ref<str> name, ref<str> binary_name, ref<str> contents) {
@@ -264,16 +259,11 @@ TEST(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
     EXPECT_FALSE(rstd::fs::exists(
                      layout.bin_directory.join(PathBuf::from("collision"_str).as_path()).as_path())
                      .unwrap());
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) {
-    auto root_directory   = output_root("install-store-runtime-rollback"_str);
-    auto source_directory = output_root("install-store-runtime-rollback-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) {
+    auto root_directory   = install_root("install-store-runtime-rollback"_str);
+    auto source_directory = source_root("install-store-runtime-rollback-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
 
     const auto package = [&](ref<str> name, ref<str> destination, ref<str> contents) {
@@ -334,16 +324,11 @@ TEST(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) {
                   .unwrap()
                   .as_str(),
               "runtime"_str);
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallStore, InstallStorePublishesNestedGenericEntries) {
-    auto root_directory   = output_root("install-store-generic"_str);
-    auto source_directory = output_root("install-store-generic-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallStore, InstallStorePublishesNestedGenericEntries) {
+    auto root_directory   = install_root("install-store-generic"_str);
+    auto source_directory = source_root("install-store-generic-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
     auto source = source_directory.join(PathBuf::from("runtime.so"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(source.as_path(), "runtime"_str.as_bytes()).is_ok());
@@ -411,6 +396,4 @@ TEST(InstallStore, InstallStorePublishesNestedGenericEntries) {
     EXPECT_EQ(catalog->packages[usize {}].layout,
               lito::InstallManagedPackageLayout::IsolatedPrefix);
     EXPECT_EQ(catalog->packages[usize {}].entries.len(), usize(2));
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }

@@ -1,7 +1,0 @@
-[workspace]
-name = "fixture-workspace-dependency-definition-visibility"
-members = ["member"]
-
-[workspace.dependencies.member]
-path = "member"
-visibility = "private"

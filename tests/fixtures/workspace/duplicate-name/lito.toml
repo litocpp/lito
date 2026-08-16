@@ -1,6 +1,0 @@
-[workspace]
-name = "fixture-duplicate-name"
-members = ["one", "two"]
-
-[workspace.package]
-version = "0.1.0"

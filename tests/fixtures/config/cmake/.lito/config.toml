@@ -1,4 +1,0 @@
-[cmake]
-executable = "custom-cmake"
-generator = "Unix Makefiles"
-search-path = ["."]

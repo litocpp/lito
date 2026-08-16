@@ -10,3 +10,4 @@ export import :source.event;
 export import :source.acquisition;
 export import :source.seed;
 export import :source.manager;
+export import :source.tree;

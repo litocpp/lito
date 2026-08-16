@@ -314,10 +314,7 @@ auto resolve_modules(const PackagePlan&       package,
                     package.package->targets[provider_target].id.name.as_str()));
             }
             if (directly_visible(package, importer_target, provider_target) ||
-                publicly_reexported(package,
-                                    public_target_units,
-                                    importer_target,
-                                    provider_unit)) {
+                publicly_reexported(package, public_target_units, importer_target, provider_unit)) {
                 continue;
             }
             if (package.package->targets[importer_target].test_attachment.is_some() &&

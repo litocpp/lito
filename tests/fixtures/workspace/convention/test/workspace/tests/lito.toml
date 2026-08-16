@@ -1,3 +1,0 @@
-[workspace]
-name = "fixture-conventional-test-workspace"
-members = ["runtime", "compile"]

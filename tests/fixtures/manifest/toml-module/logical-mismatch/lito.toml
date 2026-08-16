@@ -1,8 +1,0 @@
-[package]
-name = "fixture-convention-mismatch"
-version = "0.1.0"
-
-[lib]
-name = "fixture-convention-mismatch"
-module = "fixture.convention.mismatch"
-archive = "fixture.convention.mismatch"

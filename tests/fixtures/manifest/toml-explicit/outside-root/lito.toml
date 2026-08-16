@@ -1,9 +1,0 @@
-[package]
-name = "fixture-outside"
-version = "0.1.0"
-
-[lib]
-name = "fixture-outside"
-module = "fixture.outside"
-archive = "fixture.outside"
-sources = ["../../../../demo/manifest-lock/demo-base/src/lib.cppm"]

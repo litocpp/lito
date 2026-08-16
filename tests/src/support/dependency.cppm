@@ -12,6 +12,7 @@ import lito.system;
 import lito.toolchain.cmake;
 import lito.toolchain;
 import lito.test.base_support;
+import lito.test.support.project;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -69,15 +70,6 @@ auto default_profile(const lito::cpp::CppArgumentParser& parser) -> lito::cpp::P
     return rstd::move(profile).unwrap();
 }
 
-auto fixture_pkg_config() -> lito::PkgConfigProviderConfig {
-    auto library_paths = Vec<rstd::path::PathBuf>::make();
-    library_paths.push(fixture_path("dependency/pkg-config/provider"_str));
-    return lito::PkgConfigProviderConfig {
-        .executable    = rstd::path::PathBuf::from("pkg-config"_str),
-        .library_paths = rstd::move(library_paths),
-    };
-}
-
 auto fixture_cmake() -> lito::CMakeProviderConfig {
     return lito::CMakeProviderConfig {
         .executable = rstd::path::PathBuf::from("cmake"_str),
@@ -85,10 +77,90 @@ auto fixture_cmake() -> lito::CMakeProviderConfig {
     };
 }
 
+auto cmake_package_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
+project(LitoFixture VERSION 1.2.3 LANGUAGES CXX)
+include(CMakePackageConfigHelpers)
+include(GNUInstallDirs)
+if(DEFINED LITO_FIXTURE_CONFIGURE_COUNT)
+  file(APPEND "${LITO_FIXTURE_CONFIGURE_COUNT}" "configure\n")
+endif()
+add_library(lito_fixture STATIC src/fixture.cpp)
+set_target_properties(lito_fixture PROPERTIES EXPORT_NAME fixture)
+target_compile_features(lito_fixture PUBLIC cxx_std_20)
+target_compile_definitions(lito_fixture INTERFACE LITO_CMAKE_USAGE=1)
+target_include_directories(lito_fixture PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:${CMAKE_INSTALL_INCLUDEDIR}>)
+add_library(lito_fixture_headers INTERFACE)
+set_target_properties(lito_fixture_headers PROPERTIES EXPORT_NAME headers)
+target_compile_definitions(lito_fixture_headers INTERFACE LITO_CMAKE_HEADERS=1)
+add_library(lito_fixture_order INTERFACE)
+set_target_properties(lito_fixture_order PROPERTIES EXPORT_NAME order)
+target_link_options(lito_fixture_order INTERFACE "LINKER:--as-needed")
+install(TARGETS lito_fixture lito_fixture_headers lito_fixture_order
+  EXPORT LitoFixtureTargets
+  ARCHIVE DESTINATION ${CMAKE_INSTALL_LIBDIR}
+  INCLUDES DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(DIRECTORY include/ DESTINATION ${CMAKE_INSTALL_INCLUDEDIR})
+install(FILES runtime/runtime.bin DESTINATION share/lito-fixture/runtime)
+install(FILES resources/nested/resource.dat DESTINATION share/lito-fixture/resources/nested)
+install(EXPORT LitoFixtureTargets FILE LitoFixtureTargets.cmake
+  NAMESPACE LitoFixture:: DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LitoFixture)
+configure_package_config_file(cmake/LitoFixtureConfig.cmake.in
+  ${CMAKE_CURRENT_BINARY_DIR}/LitoFixtureConfig.cmake
+  INSTALL_DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LitoFixture)
+write_basic_package_version_file(${CMAKE_CURRENT_BINARY_DIR}/LitoFixtureConfigVersion.cmake
+  VERSION ${PROJECT_VERSION} COMPATIBILITY SameMajorVersion)
+install(FILES ${CMAKE_CURRENT_BINARY_DIR}/LitoFixtureConfig.cmake
+  ${CMAKE_CURRENT_BINARY_DIR}/LitoFixtureConfigVersion.cmake
+  DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LitoFixture)
+)"_str },
+        { "cmake/LitoFixtureConfig.cmake.in"_str, R"(@PACKAGE_INIT@
+include("${CMAKE_CURRENT_LIST_DIR}/LitoFixtureTargets.cmake")
+if(COMMAND lito_export_asset_set)
+  lito_export_asset_set(NAME runtime ROOT "${PACKAGE_PREFIX_DIR}/share/lito-fixture/runtime"
+    FILES runtime.bin)
+  lito_export_asset_set(NAME runtime ROOT "${PACKAGE_PREFIX_DIR}/share/lito-fixture/resources"
+    FILES nested/resource.dat)
+endif()
+)"_str },
+        { "include/lito_fixture.hpp"_str, "#pragma once\nint lito_fixture_value();\n"_str },
+        { "src/fixture.cpp"_str,
+          "#include <lito_fixture.hpp>\nint lito_fixture_value() { return 42; }\n"_str },
+        { "runtime/runtime.bin"_str, "runtime\n"_str },
+        { "resources/nested/resource.dat"_str, "resource\n"_str },
+    };
+    return source_tree(files);
+}
+
+auto cmake_build_tree_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
+project(LitoBuildTree VERSION 4.5.6 LANGUAGES CXX)
+add_library(lito_build_tree STATIC src/fixture.cpp)
+target_compile_features(lito_build_tree PUBLIC cxx_std_20)
+target_compile_definitions(lito_build_tree INTERFACE LITO_CMAKE_BUILD_TREE_USAGE=1)
+target_include_directories(lito_build_tree PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+)"_str },
+        { "include/lito_build_tree.hpp"_str, "#pragma once\nint lito_build_tree_fixture();\n"_str },
+        { "src/fixture.cpp"_str,
+          "#include <lito_build_tree.hpp>\nint lito_build_tree_fixture() { return 42; }\n"_str },
+        { "adapter.cmake"_str, R"(if(NOT TARGET LitoBuildTree::fixture)
+  add_library(LitoBuildTree::fixture ALIAS lito_build_tree)
+endif()
+set(LitoBuildTree_VERSION "4.5.6")
+)"_str },
+    };
+    return source_tree(files);
+}
+
 auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
                             const lito::cpp::ProfileSpec&                        profile,
                             const lito::system::BuildPlatform&                   platform,
                             const lito::cpp::CppArgumentParser&                  parser,
+                            ref<rstd::path::Path>                                work_root,
                             usize                                                jobs   = usize(1),
                             Vec<lito::ExternalAssetSet>*                         assets = nullptr)
     -> lito::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
@@ -106,9 +178,8 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
     provider.executable = rstd::move(tool).unwrap().executable;
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
-    provider       = rstd::move(identified).unwrap();
-    auto result    = Vec<lito::cpp::ResolvedExternalDependency>::make();
-    auto work_root = output_root("cmake-fixture-work"_str);
+    provider    = rstd::move(identified).unwrap();
+    auto result = Vec<lito::cpp::ResolvedExternalDependency>::make();
     for (const auto& declaration : declarations) {
         auto requirement = lito::resolve_cmake_requirement_for_platform(declaration, platform);
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
@@ -129,7 +200,7 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                                              profile,
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
-                                             work_root.as_path(),
+                                             work_root,
                                              jobs);
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto snapshot = lito::execute_cmake_package(*plan, *environment);

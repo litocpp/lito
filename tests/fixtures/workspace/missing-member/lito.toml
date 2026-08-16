@@ -1,3 +1,0 @@
-[workspace]
-name = "fixture-missing-member"
-members = ["missing"]

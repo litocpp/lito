@@ -3,46 +3,104 @@
 import rstd;
 import rstd.test;
 import lito.core;
-import lito.system;
-import lito.toolchain.cmake;
 import lito.driver;
-import lito.toolchain;
 import lito.test.support;
 
 using namespace rstd::prelude;
-using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Workspace, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
-    auto missing =
-        lito::load_manifest_document(fixture_path("workspace/name-missing"_str).as_path());
+class Workspace : public ProjectFixture {
+protected:
+    auto manifest(ref<str> name, ref<str> contents)
+        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        const ProjectFile files[] = {
+            { "lito.toml"_str, contents },
+        };
+        return materialize(name, files);
+    }
+};
+
+TEST_F(Workspace, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
+    auto missing_project = manifest("name-missing"_str, "[workspace]\nmembers = []\n"_str);
+    ASSERT_TRUE(missing_project.is_ok());
+    auto missing = lito::load_manifest_document(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_err());
     auto missing_error = rstd::move(missing).unwrap_err();
     EXPECT_TRUE(error_chain_text(missing_error).as_str().contains("missing 'name'"_str));
 
-    auto invalid =
-        lito::load_manifest_document(fixture_path("workspace/name-invalid"_str).as_path());
+    auto invalid_project =
+        manifest("name-invalid"_str, "[workspace]\nname = \"fixture.invalid\"\nmembers = []\n"_str);
+    ASSERT_TRUE(invalid_project.is_ok());
+    auto invalid = lito::load_manifest_document(invalid_project->root.as_path());
     ASSERT_TRUE(invalid.is_err());
     auto invalid_error = rstd::move(invalid).unwrap_err();
     EXPECT_TRUE(error_chain_text(invalid_error).as_str().contains("workspace.name"_str));
 
-    auto valid = lito::load_manifest_document(repository_path("demo/workspace"_str).as_path());
+    const ProjectFile valid_files[] = {
+        { "lito.toml"_str, "[workspace]\nname = \"demo-workspace\"\nmembers = [\"app\"]\n"_str },
+        {
+            "app/lito.toml"_str,
+            R"toml([package]
+name = "demo-app"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "demo-app"
+sources = ["main.cpp"]
+)toml"_str,
+        },
+    };
+    auto valid_project = materialize("name-valid"_str, valid_files);
+    ASSERT_TRUE(valid_project.is_ok());
+    auto valid = lito::load_manifest_document(valid_project->root.as_path());
     ASSERT_TRUE(valid.is_ok());
     ASSERT_TRUE(valid->workspace.is_some());
     EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
 }
 
-TEST(Workspace, DevelopmentDependenciesHavePrivateDistinctScope) {
-    auto visibility = lito::load_package_manifest(
-        fixture_path("workspace/dev-dependency-visibility"_str).as_path());
+TEST_F(Workspace, DevelopmentDependenciesHavePrivateDistinctScope) {
+    auto visibility_project = manifest("dev-visibility"_str, R"toml([package]
+name = "fixture-dev-dependency-visibility"
+version = "0.1.0"
+
+[lib]
+name = "fixture-dev-dependency-visibility"
+module = "fixture.dev_dependency_visibility"
+archive = "fixture-dev-dependency-visibility"
+sources = ["lib.cppm"]
+
+[dev-dependencies.helper]
+path = "helper"
+visibility = "private"
+)toml"_str);
+    ASSERT_TRUE(visibility_project.is_ok());
+    auto visibility = lito::load_package_manifest(visibility_project->root.as_path());
     ASSERT_TRUE(visibility.is_err());
     auto visibility_error = rstd::move(visibility).unwrap_err();
     EXPECT_TRUE(error_chain_text(visibility_error).as_str().contains("visibility"_str));
 
-    auto duplicate = lito::load_package_manifest(
-        fixture_path("workspace/dev-dependency-duplicate"_str).as_path());
+    auto duplicate_project = manifest("dev-duplicate"_str, R"toml([package]
+name = "fixture-dev-dependency-duplicate"
+version = "0.1.0"
+
+[lib]
+name = "fixture-dev-dependency-duplicate"
+module = "fixture.dev_dependency_duplicate"
+archive = "fixture-dev-dependency-duplicate"
+sources = ["lib.cppm"]
+
+[dependencies.helper]
+path = "helper"
+visibility = "private"
+
+[dev-dependencies.helper]
+path = "helper"
+)toml"_str);
+    ASSERT_TRUE(duplicate_project.is_ok());
+    auto duplicate = lito::load_package_manifest(duplicate_project->root.as_path());
     ASSERT_TRUE(duplicate.is_err());
     auto duplicate_error = rstd::move(duplicate).unwrap_err();
     EXPECT_TRUE(error_chain_text(duplicate_error)
@@ -50,10 +108,89 @@ TEST(Workspace, DevelopmentDependenciesHavePrivateDistinctScope) {
                     .contains("both dependencies and dev-dependencies"_str));
 }
 
-TEST(Workspace, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
-    auto directory = fixture_path("workspace/inherited-dependencies"_str);
-    auto member    = lito::load_package_manifest(
-        fixture_path("workspace/inherited-dependencies/app"_str).as_path());
+TEST_F(Workspace, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
+    const ProjectFile files[] = {
+        {
+            "lito.toml"_str,
+            R"toml([workspace]
+name = "fixture-workspace-inherited"
+members = ["library", "app"]
+default-members = ["app"]
+
+[workspace.package]
+version = "0.1.0"
+
+[workspace.dependencies.fixture-workspace-inherited-library]
+path = "library"
+
+[workspace.external-dependencies.pkg-config.curl]
+module = "libcurl"
+version = ">= 7.86.0"
+static = true
+
+[workspace.external-dependencies.cmake.fixture]
+find-package = "LitoFixture"
+path = "cmake-package"
+integration = "build-tree"
+adapter = "fixture-adapter.cmake"
+)toml"_str,
+        },
+        {
+            "library/lito.toml"_str,
+            R"toml([package]
+name = "fixture-workspace-inherited-library"
+version.workspace = true
+
+[lib]
+name = "fixture-workspace-inherited-library"
+module = "fixture.workspace_inherited"
+archive = "fixture-workspace-inherited-library"
+sources = ["library.cppm"]
+)toml"_str,
+        },
+        { "library/library.cppm"_str, "export module fixture.workspace_inherited;\n"_str },
+        {
+            "app/lito.toml"_str,
+            R"toml([package]
+name = "fixture-workspace-inherited-app"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-workspace-inherited-app"
+sources = ["main.cpp"]
+
+[dependencies.fixture-workspace-inherited-library]
+workspace = true
+visibility = "private"
+
+[external-dependencies.pkg-config.curl]
+workspace = true
+visibility = "public"
+
+[external-dependencies.cmake.fixture]
+workspace = true
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)toml"_str,
+        },
+        { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "cmake-package/CMakeLists.txt"_str,
+          "cmake_minimum_required(VERSION 3.28)\nproject(LitoFixture)\n"_str },
+        {
+            "fixture-adapter.cmake"_str,
+            R"cmake(if(NOT TARGET LitoFixture::fixture)
+  add_library(LitoFixture::fixture ALIAS lito_fixture)
+endif()
+
+set(LitoFixture_VERSION "1.2.3")
+)cmake"_str,
+        },
+    };
+    auto project = materialize("inherited-dependencies"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
+    auto app_path  = directory.join(PathBuf::from("app"_str).as_path());
+    auto member    = lito::load_package_manifest(app_path.as_path());
     ASSERT_TRUE(member.is_ok());
     EXPECT_TRUE(member->dependencies.is_empty());
     EXPECT_TRUE(member->pkg_config_external_dependencies.is_empty());
@@ -111,13 +248,12 @@ TEST(Workspace, WorkspaceDependenciesAreDeclaredOnceAndMaterializedForMembers) {
     const auto& resolved = prepared_sources->dependencies[usize {}].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.source.as_Directory().root.as_path(),
-              fixture_path("dependency/cmake/project/package"_str).as_path());
+              directory.join(PathBuf::from("cmake-package"_str).as_path()).as_path());
     ASSERT_TRUE(resolved.adapter.is_some());
     EXPECT_EQ(resolved.adapter->as_path(),
-              fixture_path("workspace/inherited-dependencies/fixture-adapter.cmake"_str).as_path());
+              directory.join(PathBuf::from("fixture-adapter.cmake"_str).as_path()).as_path());
 
-    auto member_graph = lito::resolve_package_graph(
-        fixture_path("workspace/inherited-dependencies/app"_str).as_path());
+    auto member_graph = lito::resolve_package_graph(app_path.as_path());
     ASSERT_TRUE(member_graph.is_ok());
     EXPECT_TRUE(member_graph->root_is_workspace);
     ASSERT_EQ(member_graph->packages.len(), usize(2));

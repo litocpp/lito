@@ -19,16 +19,6 @@ using PathBuf = rstd::path::PathBuf;
 
 export namespace lito_test
 {
-auto locked_graph_is_current(ref<str> relative) -> bool {
-    auto directory = fixture_path(relative);
-    auto session   = lito::load_lock_session(directory.as_path(), true);
-    if (session.is_err()) return false;
-    auto options = session->take_resolution_options();
-    auto graph   = lito::resolve_package_graph(directory.as_path(), rstd::move(options));
-    if (graph.is_err()) return false;
-    return lito::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
-}
-
 auto git_revision(ref<rstd::path::Path> repository, ref<str> revision) -> Option<String> {
     auto command = rstd::process::Command::make("git"_str);
     command.arg("-C"_str).arg(repository.as_os_str()).arg("rev-parse"_str).arg(revision);
@@ -50,7 +40,9 @@ auto git_succeeds(ref<rstd::path::Path> repository, Arguments... arguments) -> b
     return status.is_ok() && status->success();
 }
 
-auto external_git_graph(ref<str> url, lito::GitReference reference) -> lito::ResolvedPackageGraph {
+auto external_git_graph(ref<str>              url,
+                        ref<rstd::path::Path> root_directory,
+                        lito::GitReference    reference) -> lito::ResolvedPackageGraph {
     auto declarations = Vec<lito::CMakeDependencyRequirement>::make();
     declarations.push(lito::CMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
@@ -66,7 +58,7 @@ auto external_git_graph(ref<str> url, lito::GitReference reference) -> lito::Res
             },
     });
     return lito::ResolvedPackageGraph {
-        .root_directory = fixture_path("project"_str),
+        .root_directory = PathBuf::from(root_directory),
         .packages       = rstd::move(packages),
     };
 }

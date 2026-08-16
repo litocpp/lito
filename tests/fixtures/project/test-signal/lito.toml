@@ -1,8 +1,0 @@
-[package]
-name = "fixture-test-signal"
-version = { workspace = true }
-
-[[test]]
-link-stdlib = false
-name = "fixture-test-signal"
-sources = ["src/main.cpp"]

@@ -15,9 +15,215 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritance) {
-    auto graph = lito::resolve_package_graph(
-        fixture_path("workspace/convention/test/workspace-package"_str).as_path());
+auto associated_workspace_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-associated-workspace"
+members = ["library"]
+default-members = ["library"]
+[workspace.package]
+version = "0.1.0"
+[workspace.dependencies.fixture-associated-workspace-library]
+path = "library"
+[workspace.dependencies.fixture-associated-workspace-bench-helper]
+path = "bench-helper"
+)"_str },
+        { "library/lito.toml"_str, R"([package]
+name = "fixture-associated-workspace-library"
+version.workspace = true
+[lib]
+name = "fixture-associated-workspace-library"
+module = "fixture.associated.workspace"
+archive = "fixture.associated.workspace"
+sources = ["lib.cppm"]
+[dev-dependencies.fixture-associated-workspace-bench-helper]
+workspace = true
+)"_str },
+        { "library/lib.cppm"_str, "export module fixture.associated.workspace;\n"_str },
+        { "library/benches/speed.cpp"_str,
+          "import fixture.associated.workspace;\nimport fixture.associated.workspace.bench_helper;\n"_str },
+        { "bench-helper/lito.toml"_str, R"([package]
+name = "fixture-associated-workspace-bench-helper"
+version = "0.1.0"
+[lib]
+name = "fixture-associated-workspace-bench-helper"
+module = "fixture.associated.workspace.bench_helper"
+archive = "fixture.associated.workspace.bench-helper"
+sources = ["lib.cppm"]
+)"_str },
+        { "bench-helper/lib.cppm"_str,
+          "export module fixture.associated.workspace.bench_helper;\n"_str },
+        { "tests/lito.toml"_str, R"([package]
+name = "fixture-associated-workspace-test"
+version.workspace = true
+[[test]]
+link-stdlib = false
+name = "fixture-associated-workspace-test"
+sources = ["main.cpp"]
+[dependencies.fixture-associated-workspace-library]
+workspace = true
+visibility = "private"
+)"_str },
+        { "tests/main.cpp"_str, "import fixture.associated.workspace;\n"_str },
+        { "benches/lito.toml"_str, R"([package]
+name = "fixture-associated-workspace-benchmark"
+version = "0.1.0"
+[[bench]]
+link-stdlib = false
+name = "fixture-associated-workspace-benchmark"
+sources = ["main.cpp"]
+[dependencies.fixture-associated-workspace-library]
+path = "../library"
+visibility = "private"
+)"_str },
+        { "benches/main.cpp"_str, "import fixture.associated.workspace;\n"_str },
+    };
+    return source_tree(files);
+}
+
+auto benchmark_only_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str,
+          "[package]\nname = \"fixture-conventional-benchmark-only\"\nversion = \"0.1.0\"\n"_str },
+        { "benches/only.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    return source_tree(files);
+}
+
+auto associated_package_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "fixture-conventional-library"
+version = "0.1.0"
+[lib]
+name = "fixture-conventional-library"
+module = "fixture.conventional"
+archive = "fixture-conventional"
+sources = ["src/lib.cppm"]
+[dev-dependencies.fixture-conventional-bench-helper]
+path = "bench-helper"
+)"_str },
+        { "src/lib.cppm"_str, "export module fixture.conventional;\n"_str },
+        { "bench-helper/lito.toml"_str, R"([package]
+name = "fixture-conventional-bench-helper"
+version = "0.1.0"
+[lib]
+name = "fixture-conventional-bench-helper"
+module = "fixture.conventional.bench_helper"
+archive = "fixture.conventional.bench-helper"
+sources = ["lib.cppm"]
+)"_str },
+        { "bench-helper/lib.cppm"_str, "export module fixture.conventional.bench_helper;\n"_str },
+        { "benches/speed.cpp"_str,
+          "import fixture.conventional;\nimport fixture.conventional.bench_helper;\n"_str },
+        { "benches/multi/main.cpp"_str, "import fixture.conventional.multi;\n"_str },
+        { "benches/multi/support.cppm"_str, "export module fixture.conventional.multi;\n"_str },
+        { "tests/lito.toml"_str, R"([package]
+name = "fixture-conventional-test"
+[[test]]
+link-stdlib = false
+name = "fixture-conventional-test"
+sources = ["main.cpp"]
+[dependencies.fixture-conventional-library]
+path = ".."
+visibility = "private"
+)"_str },
+        { "tests/main.cpp"_str, "import fixture.conventional;\n"_str },
+    };
+    return source_tree(files);
+}
+
+auto associated_test_workspace_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-conventional-workspace"
+members = ["library"]
+[workspace.package]
+version = "0.1.0"
+)"_str },
+        { "library/lito.toml"_str, R"([package]
+name = "fixture-conventional-workspace-library"
+version.workspace = true
+[lib]
+name = "fixture-conventional-workspace-library"
+module = "fixture.conventional.workspace"
+archive = "fixture-conventional-workspace"
+sources = ["src/lib.cppm"]
+)"_str },
+        { "library/src/lib.cppm"_str, "export module fixture.conventional.workspace;\n"_str },
+        { "tests/lito.toml"_str, R"([workspace]
+name = "fixture-conventional-test-workspace"
+members = ["runtime", "compile"]
+)"_str },
+        { "tests/runtime/lito.toml"_str, R"([package]
+name = "fixture-conventional-workspace-test"
+[[test]]
+link-stdlib = false
+name = "fixture-conventional-workspace-test"
+sources = ["main.cpp"]
+[dependencies.fixture-conventional-workspace-library]
+path = "../../library"
+visibility = "private"
+)"_str },
+        { "tests/runtime/main.cpp"_str, "import fixture.conventional.workspace;\n"_str },
+        { "tests/compile/lito.toml"_str, R"([package]
+name = "fixture-conventional-workspace-compile-test"
+[compile-test]
+[[compile-test.cases]]
+name = "AssociatedWorkspace.Success"
+source = "pass.cpp"
+outcome = "success"
+[dependencies.fixture-conventional-workspace-library]
+path = "../../library"
+visibility = "private"
+)"_str },
+        { "tests/compile/pass.cpp"_str, "import fixture.conventional.workspace;\n"_str },
+    };
+    return source_tree(files);
+}
+
+auto dependency_boundary_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "root/lito.toml"_str, R"([package]
+name = "fixture-conventional-boundary-root"
+version = "0.1.0"
+[[bin]]
+link-stdlib = false
+name = "fixture-conventional-boundary-root"
+sources = ["main.cpp"]
+[dependencies.fixture-conventional-boundary-dependency]
+path = "../dependency"
+visibility = "private"
+)"_str },
+        { "dependency/lito.toml"_str, R"([package]
+name = "fixture-conventional-boundary-dependency"
+version = "0.1.0"
+[lib]
+name = "fixture-conventional-boundary-dependency"
+module = "fixture.conventional.boundary"
+archive = "fixture-conventional-boundary"
+sources = ["lib.cppm"]
+)"_str },
+        { "dependency/tests/lito.toml"_str, R"([package]
+name = "fixture-conventional-boundary-dependency-test"
+version = "0.1.0"
+[[test]]
+link-stdlib = false
+name = "fixture-conventional-boundary-dependency-test"
+sources = ["main.cpp"]
+)"_str },
+    };
+    return source_tree(files);
+}
+
+class WorkspaceConvention : public ProjectFixture {};
+
+TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritance) {
+    auto tree = associated_workspace_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("associated-workspace"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
 
     auto associated = false;
@@ -39,8 +245,12 @@ TEST(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritance
     }
 }
 
-TEST(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies) {
-    auto directory = fixture_path("workspace/convention/test/workspace-package"_str);
+TEST_F(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies) {
+    auto tree = associated_workspace_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("associated-workspace"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
 
@@ -95,7 +305,7 @@ TEST(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies) {
                               "fixture-associated-workspace-bench-helper"_str));
 
     auto standalone = lito::resolve_package_graph(
-        fixture_path("workspace/convention/test/workspace-package/benches"_str).as_path());
+        directory.join(PathBuf::from("benches"_str).as_path()).as_path());
     ASSERT_TRUE(standalone.is_ok());
     ASSERT_EQ(standalone->roots.len(), usize(1));
     EXPECT_EQ(standalone->roots[usize {}].name.as_str(),
@@ -103,8 +313,12 @@ TEST(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies) {
     EXPECT_EQ(standalone->roots[usize {}].role, lito::ProjectRootRole::PrimaryPackage);
 }
 
-TEST(WorkspaceConvention, PackageOnlyManifestDiscoversConventionalBenchmark) {
-    auto directory = fixture_path("workspace/convention/benchmark/package-only"_str);
+TEST_F(WorkspaceConvention, PackageOnlyManifestDiscoversConventionalBenchmark) {
+    auto tree = benchmark_only_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("benchmark-only"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto package   = lito::load_package_manifest(directory.as_path());
     ASSERT_TRUE(package.is_ok());
     ASSERT_EQ(package->targets.len(), usize(1));
@@ -124,8 +338,12 @@ TEST(WorkspaceConvention, PackageOnlyManifestDiscoversConventionalBenchmark) {
     EXPECT_TRUE(production.is_err());
 }
 
-TEST(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
-    auto directory = fixture_path("workspace/convention/test/package"_str);
+TEST_F(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
+    auto tree = associated_package_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("associated-package"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(2));
@@ -204,8 +422,12 @@ TEST(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
     EXPECT_TRUE(test_as_production.is_err());
 }
 
-TEST(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
-    auto directory = fixture_path("workspace/convention/test/workspace"_str);
+TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
+    auto tree = associated_test_workspace_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("associated-test-workspace"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
     auto graph     = lito::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(3));
@@ -239,9 +461,13 @@ TEST(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
         contains_name(tests->selected_package_names, "fixture-conventional-workspace-library"_str));
 }
 
-TEST(WorkspaceConvention, DependencyTestsAreNotAssociatedWithTheRootProject) {
-    auto graph = lito::resolve_package_graph(
-        fixture_path("workspace/convention/test/dependency-boundary/root"_str).as_path());
+TEST_F(WorkspaceConvention, DependencyTestsAreNotAssociatedWithTheRootProject) {
+    auto tree = dependency_boundary_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("dependency-boundary"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto root  = project->root.join(PathBuf::from("root"_str).as_path());
+    auto graph = lito::resolve_package_graph(root.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(1));
     EXPECT_EQ(graph->roots[usize {}].name.as_str(), "fixture-conventional-boundary-root"_str);

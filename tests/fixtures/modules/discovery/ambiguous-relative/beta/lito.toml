@@ -1,8 +1,0 @@
-[package]
-name = "fixture-ambiguous-beta"
-version = "0.1.0"
-
-[lib]
-name = "fixture-ambiguous-beta"
-module = "fixture.beta"
-archive = "fixture.ambiguous.beta"

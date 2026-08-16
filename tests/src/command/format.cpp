@@ -12,12 +12,14 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(FormatCommand, FormatCheckReportsWithoutChangingSources) {
-    auto base    = output_root("format-check"_str);
-    auto fixture = base.join(PathBuf::from("fixture"_str).as_path());
-    ASSERT_TRUE(clear_output(base.as_path()));
-    ASSERT_TRUE(copy_directory(fixture_path("system/environment/append-path"_str).as_path(),
-                               fixture.as_path()));
+class FormatCommand : public ProjectFixture {};
+
+TEST_F(FormatCommand, FormatCheckReportsWithoutChangingSources) {
+    auto tree = environment_tool_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto materialized = materialize("format-check"_str, *tree);
+    ASSERT_TRUE(materialized.is_ok());
+    auto fixture = materialized->root.join(PathBuf::from("append-path"_str).as_path());
 
     auto           source      = fixture.join(PathBuf::from("src/main.cpp"_str).as_path());
     constexpr auto unformatted = "auto main()->int{return 0;}\n"_str;
@@ -64,5 +66,4 @@ TEST(FormatCommand, FormatCheckReportsWithoutChangingSources) {
     });
     ASSERT_TRUE(clean.is_ok());
     EXPECT_TRUE(clean->success());
-    EXPECT_TRUE(clear_output(base.as_path()));
 }

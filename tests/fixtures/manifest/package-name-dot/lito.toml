@@ -1,9 +1,0 @@
-[package]
-name = "fixture.package.dot"
-version = "0.1.0"
-
-[lib]
-name = "fixture.package.dot"
-module = "fixture.package.dot"
-archive = "fixture.package.dot"
-sources = ["source.cppm"]

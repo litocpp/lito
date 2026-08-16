@@ -12,13 +12,114 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
-    auto base = output_root("scan-cache"_str);
-    clear_output(base.as_path());
-    auto fixture = base.join(PathBuf::from("fixture"_str).as_path());
-    auto output  = base.join(PathBuf::from("output"_str).as_path());
-    auto source  = fixture_path("cache/scan"_str);
-    ASSERT_TRUE(copy_directory(source.as_path(), fixture.as_path()));
+class ScanCache : public ProjectFixture {};
+
+auto scan_cache_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    const ProjectFile files[] = {
+        { "high/unused.hpp"_str, R"cache(#pragma once
+)cache"_str },
+        { "lito.toml"_str, R"cache([package]
+name = "fixture-scan-cache"
+version = "0.1.0"
+
+[lib]
+name = "fixture-scan-cache"
+module = "fixture.scan.cache"
+archive = "fixture.scan.cache"
+
+[usage]
+private-include-directories = ["high", "mid", "low"]
+)cache"_str },
+        { "low/choice.hpp"_str, R"cache(#pragma once
+
+#define LITO_LOW_VALUE 1
+)cache"_str },
+        { "mid/choice.hpp"_str, R"cache(#pragma once
+
+#include_next <choice.hpp>
+
+#define LITO_MID_VALUE      (10 + LITO_LOW_VALUE)
+#define LITO_SELECTED_VALUE LITO_MID_VALUE
+)cache"_str },
+        { "src/lib.cppm"_str, R"cache(module;
+
+#include <choice.hpp>
+
+#if __has_include(<optional.hpp>)
+#include <optional.hpp>
+#else
+#define LITO_OPTIONAL_VALUE 0
+#endif
+
+export module fixture.scan.cache;
+
+export auto scan_cache_value() -> int {
+    return LITO_SELECTED_VALUE + LITO_OPTIONAL_VALUE;
+}
+)cache"_str },
+        { "staged/choice-low.hpp"_str, R"cache(#pragma once
+
+#define LITO_LOW_VALUE 2
+)cache"_str },
+        { "staged/choice.hpp"_str, R"cache(#pragma once
+
+#include_next <choice.hpp>
+
+#undef LITO_SELECTED_VALUE
+#define LITO_SELECTED_VALUE (100 + LITO_MID_VALUE)
+)cache"_str },
+        { "staged/lib.cppm"_str, R"cache(module;
+
+#include <choice.hpp>
+
+#if __has_include(<optional.hpp>)
+#include <optional.hpp>
+#else
+#define LITO_OPTIONAL_VALUE 0
+#endif
+
+export module fixture.scan.cache;
+
+export auto scan_cache_value() -> int {
+    return LITO_SELECTED_VALUE + LITO_OPTIONAL_VALUE + 1;
+}
+)cache"_str },
+        { "staged/optional.hpp"_str, R"cache(#pragma once
+
+#define LITO_OPTIONAL_VALUE 1000
+)cache"_str },
+    };
+    return source_tree(files);
+}
+
+auto dynamic_cache_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"cache([package]
+name = "fixture-scan-cache-dynamic"
+version = "0.1.0"
+
+[lib]
+name = "fixture-scan-cache-dynamic"
+module = "fixture.scan.cache.dynamic"
+archive = "fixture.scan.cache.dynamic"
+)cache"_str },
+        { "src/lib.cppm"_str, R"cache(export module fixture.scan.cache.dynamic;
+
+export auto scan_cache_date() -> const char* {
+    return __DATE__;
+}
+)cache"_str },
+    };
+    return source_tree(files);
+}
+
+TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
+    auto tree = scan_cache_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("scan-cache"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto fixture = project->root.clone();
+    auto output  = build_root("scan-cache"_str);
 
     auto cold =
         lito::build(build_request(fixture.as_path(), output.as_path(), Vec<String>::make()));
@@ -74,15 +175,13 @@ TEST(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     ASSERT_TRUE(changed_bmis.is_some());
     EXPECT_EQ(*changed_bmis, usize(1));
 
-    clear_output(base.as_path());
-
-    auto dynamic_base = output_root("scan-cache-dynamic"_str);
-    clear_output(dynamic_base.as_path());
-    auto dynamic_fixture = dynamic_base.join(PathBuf::from("fixture"_str).as_path());
-    auto dynamic_output  = dynamic_base.join(PathBuf::from("output"_str).as_path());
-    auto dynamic_source  = fixture_path("cache/dynamic"_str);
-    ASSERT_TRUE(copy_directory(dynamic_source.as_path(), dynamic_fixture.as_path()));
-    auto dynamic_cold = lito::build(
+    auto dynamic_tree = dynamic_cache_tree();
+    ASSERT_TRUE(dynamic_tree.is_ok());
+    auto dynamic_project = materialize("scan-cache-dynamic"_str, *dynamic_tree);
+    ASSERT_TRUE(dynamic_project.is_ok());
+    auto dynamic_fixture = dynamic_project->root.clone();
+    auto dynamic_output  = build_root("scan-cache-dynamic"_str);
+    auto dynamic_cold    = lito::build(
         build_request(dynamic_fixture.as_path(), dynamic_output.as_path(), Vec<String>::make()));
     ASSERT_TRUE(dynamic_cold.is_ok());
     auto dynamic_warm = lito::build(
@@ -91,5 +190,4 @@ TEST(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(dynamic_warm->frontend.persistent_scan_hits, usize {});
     EXPECT_EQ(dynamic_warm->frontend.persistent_scan_uncacheable, usize(1));
     EXPECT_EQ(dynamic_warm->frontend.analyze_builds, usize(1));
-    clear_output(dynamic_base.as_path());
 }

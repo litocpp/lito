@@ -15,10 +15,11 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(SourceSeed, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
-    auto directory = output_root("fetch-seed-catalog"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
-    auto payload = directory.join(PathBuf::from("git/source"_str).as_path());
+class SourceSeed : public ProjectFixture {};
+
+TEST_F(SourceSeed, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
+    auto directory = cache_root("fetch-seed-catalog"_str);
+    auto payload   = directory.join(PathBuf::from("git/source"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(payload.as_path()).is_ok());
     auto catalog = directory.join(PathBuf::from("catalog.json"_str).as_path());
     auto contents =
@@ -48,13 +49,11 @@ TEST(SourceSeed, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
                   "\"kind\":\"git\",\"path\":\"../source\"}]}"_str;
     ASSERT_TRUE(rstd::fs::write_atomic(catalog.as_path(), unsafe.as_bytes()).is_ok());
     EXPECT_TRUE(lito::load_fetch_seed_catalog(directory.as_path()).is_err());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) {
-    auto directory = output_root("offline-git-seed"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
-    auto checkout = directory.join(PathBuf::from("git/source"_str).as_path());
+TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) {
+    auto directory = cache_root("offline-git-seed"_str);
+    auto checkout  = directory.join(PathBuf::from("git/source"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(checkout.as_path()).is_ok());
     ASSERT_TRUE(git_succeeds(checkout.as_path(), "init"_str));
     ASSERT_TRUE(git_succeeds(checkout.as_path(), "config"_str, "user.name"_str, "Lito Test"_str));
@@ -150,5 +149,4 @@ TEST(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) 
     ASSERT_TRUE(direct.is_ok());
     EXPECT_EQ(direct->root.as_path(), checkout.as_path());
     EXPECT_EQ(events.count, usize {});
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }

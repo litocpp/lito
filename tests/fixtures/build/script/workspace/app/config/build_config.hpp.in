@@ -1,3 +1,0 @@
-#pragma once
-
-#define FIXTURE_WORKSPACE_PROFILE "@PROFILE@"

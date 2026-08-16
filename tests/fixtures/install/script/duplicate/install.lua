@@ -1,2 +1,0 @@
-lito.install({})
-lito.install({})

@@ -16,13 +16,61 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Config, RemovedConfigFieldsAreRejectedByConfigOwner) {
-    auto loaded = lito::load_project_config(fixture_path("config/removed-scanner"_str).as_path());
+constexpr auto removed_scanner_config        = "[toolchain]\nscanner = \"clang-scan-deps\"\n"_str;
+constexpr auto toolchain_config              = R"toml([toolchain]
+cc = "custom-cc"
+cxx = "custom-cxx"
+ld = "custom-ld"
+ar = "custom-ar"
+strip = "custom-strip"
+format = "custom-format"
+stdlib = "libstdc++"
+)toml"_str;
+constexpr auto toolchain_legacy_config       = "[toolchain]\ncompiler = \"custom-cxx\"\n"_str;
+constexpr auto environment_valid_config      = "[environment]\nappend-path = [\".\", \"..\"]\n"_str;
+constexpr auto environment_empty_config      = "[environment]\nappend-path = []\n"_str;
+constexpr auto lock_local_config             = "[lock]\npath = \".lito/lito.lock\"\n"_str;
+constexpr auto lock_missing_path_config      = "[lock]\n"_str;
+constexpr auto pkg_config_config             = R"toml([pkg-config]
+executable = "pkg-config"
+search-path = ["."]
+library-path = ["."]
+sysroot = "."
+)toml"_str;
+constexpr auto pkg_config_search_only_config = "[pkg-config]\nsearch-path = [\".\"]\n"_str;
+constexpr auto cmake_config                  = R"toml([cmake]
+executable = "custom-cmake"
+generator = "Unix Makefiles"
+search-path = ["."]
+)toml"_str;
+
+class Config : public ProjectFixture {
+protected:
+    auto config(ref<str> name, ref<str> contents)
+        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        const ProjectFile files[] = {
+            { ".lito/config.toml"_str, contents },
+        };
+        return materialize(name, files);
+    }
+
+    auto empty_project(ref<str> name) -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        auto tree = lito::SourceTree::make();
+        return materialize(name, tree);
+    }
+};
+
+TEST_F(Config, RemovedConfigFieldsAreRejectedByConfigOwner) {
+    auto project = config("removed-scanner"_str, removed_scanner_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_project_config(project->root.as_path());
     EXPECT_TRUE(loaded.is_err());
 }
 
-TEST(Config, ToolchainConfigurationUsesCommandLineNames) {
-    auto loaded = lito::load_project_config(fixture_path("config/toolchain"_str).as_path());
+TEST_F(Config, ToolchainConfigurationUsesCommandLineNames) {
+    auto project = config("toolchain"_str, toolchain_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("custom-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("custom-cxx"_str).as_path());
@@ -32,17 +80,20 @@ TEST(Config, ToolchainConfigurationUsesCommandLineNames) {
     EXPECT_EQ(loaded->toolchain.format.as_path(), PathBuf::from("custom-format"_str).as_path());
     EXPECT_EQ(loaded->standard_library, lito::StandardLibrary::Libstdcxx);
 
-    auto legacy = lito::load_project_config(fixture_path("config/toolchain-legacy"_str).as_path());
+    auto legacy_project = config("toolchain-legacy"_str, toolchain_legacy_config);
+    ASSERT_TRUE(legacy_project.is_ok());
+    auto legacy = lito::load_project_config(legacy_project->root.as_path());
     EXPECT_TRUE(legacy.is_err());
 
-    auto defaults = lito::load_project_config(fixture_path("config"_str).as_path());
+    auto default_project = empty_project("defaults"_str);
+    ASSERT_TRUE(default_project.is_ok());
+    auto defaults = lito::load_project_config(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_EQ(defaults->standard_library, lito::StandardLibrary::Libcxx);
 }
 
-TEST(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
-    auto directory = output_root("config-shared-layer"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
+    auto directory       = source_root("config-shared-layer"_str);
     auto local_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(local_directory.as_path()).is_ok());
     auto shared = directory.join(PathBuf::from("lito-config.toml"_str).as_path());
@@ -76,29 +127,35 @@ TEST(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     EXPECT_EQ(shared_only->standard_library, lito::StandardLibrary::Libstdcxx);
     EXPECT_EQ(shared_only->cmake.generator.as_str(), "Ninja"_str);
     EXPECT_TRUE(shared_only->cmake.search_paths.is_empty());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Config, EnvironmentAppendPathBelongsToProjectConfig) {
-    auto loaded = lito::load_project_config(fixture_path("config/environment-valid"_str).as_path());
+TEST_F(Config, EnvironmentAppendPathBelongsToProjectConfig) {
+    auto valid_project = config("environment-valid"_str, environment_valid_config);
+    ASSERT_TRUE(valid_project.is_ok());
+    auto loaded = lito::load_project_config(valid_project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->environment.append_path.len(), usize(2));
-    EXPECT_EQ(loaded->environment.append_path[usize {}].as_path(),
-              fixture_path("config/environment-valid"_str).as_path());
+    EXPECT_EQ(loaded->environment.append_path[usize {}].as_path(), valid_project->root.as_path());
     EXPECT_EQ(loaded->environment.append_path[usize(1)].as_path(),
-              fixture_path("config"_str).as_path());
+              valid_project->root.as_path().parent().unwrap());
 
-    auto empty = lito::load_project_config(fixture_path("config/environment-empty"_str).as_path());
+    auto empty_project_root = config("environment-empty"_str, environment_empty_config);
+    ASSERT_TRUE(empty_project_root.is_ok());
+    auto empty = lito::load_project_config(empty_project_root->root.as_path());
     ASSERT_TRUE(empty.is_ok());
     EXPECT_TRUE(empty->environment.append_path.is_empty());
 
-    auto unconfigured = lito::load_project_config(fixture_path("config"_str).as_path());
+    auto unconfigured_project = empty_project("environment-unconfigured"_str);
+    ASSERT_TRUE(unconfigured_project.is_ok());
+    auto unconfigured = lito::load_project_config(unconfigured_project->root.as_path());
     ASSERT_TRUE(unconfigured.is_ok());
     EXPECT_TRUE(unconfigured->environment.append_path.is_empty());
 }
 
-TEST(Config, LockPathBelongsToProjectConfig) {
-    auto root_path = fixture_path("config/lock-local"_str);
+TEST_F(Config, LockPathBelongsToProjectConfig) {
+    auto project = config("lock-local"_str, lock_local_config);
+    ASSERT_TRUE(project.is_ok());
+    auto root_path = project->root.clone();
     auto loaded    = lito::load_project_config(root_path.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->lock.path.as_path(),
@@ -110,7 +167,9 @@ TEST(Config, LockPathBelongsToProjectConfig) {
     EXPECT_EQ(disabled->lock.path.as_path(),
               root_path.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
 
-    auto invalid_root = fixture_path("config/lock-missing-path"_str);
+    auto invalid_project = config("lock-missing-path"_str, lock_missing_path_config);
+    ASSERT_TRUE(invalid_project.is_ok());
+    auto invalid_root = invalid_project->root.clone();
     auto ignored =
         lito::load_project_config(invalid_root.as_path(), lito::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(ignored.is_ok());
@@ -118,9 +177,8 @@ TEST(Config, LockPathBelongsToProjectConfig) {
               invalid_root.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
 }
 
-TEST(Config, ProjectConfigParsesInstallRootRelativeToProject) {
-    auto directory = output_root("install-config"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, ProjectConfigParsesInstallRootRelativeToProject) {
+    auto directory        = source_root("install-config"_str);
     auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
     auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
@@ -131,45 +189,63 @@ TEST(Config, ProjectConfigParsesInstallRootRelativeToProject) {
     ASSERT_TRUE(loaded->install.root.is_some());
     EXPECT_EQ(loaded->install.root->as_path(),
               directory.join(PathBuf::from("tools"_str).as_path()).as_path());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Config, ProjectConfigResolvesLitodocSourcePath) {
+TEST_F(Config, ProjectConfigResolvesLitodocSourcePath) {
+    auto project = empty_project("litodoc-source"_str);
+    ASSERT_TRUE(project.is_ok());
     auto overrides = Vec<String>::make();
     overrides.push(String::make("doc.litodoc-path=."_str));
     auto loaded = lito::load_project_config(
-        fixture_path("config"_str).as_path(),
-        lito::ProjectConfigRequest { .overrides = rstd::move(overrides) });
+        project->root.as_path(), lito::ProjectConfigRequest { .overrides = rstd::move(overrides) });
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_TRUE(loaded->doc.litodoc_path.is_some());
-    EXPECT_EQ(loaded->doc.litodoc_path->as_path(), fixture_path("config"_str).as_path());
+    EXPECT_EQ(loaded->doc.litodoc_path->as_path(), project->root.as_path());
 }
 
-TEST(Config, InvalidLockPathsAreRejectedByConfigOwner) {
-    constexpr ref<str> cases[] = {
-        "config/lock-empty"_str,
-        "config/lock-missing-path"_str,
-        "config/lock-missing-parent"_str,
-        "config/lock-directory"_str,
+TEST_F(Config, InvalidLockPathsAreRejectedByConfigOwner) {
+    struct ConfigCase {
+        ref<str> name;
+        ref<str> contents;
     };
-    for (const auto path : cases) {
-        EXPECT_TRUE(lito::load_project_config(fixture_path(path).as_path()).is_err());
+    constexpr ConfigCase cases[] = {
+        { "lock-empty"_str, "[lock]\npath = \"\"\n"_str },
+        { "lock-missing-path"_str, "[lock]\n"_str },
+        { "lock-missing-parent"_str, "[lock]\npath = \".local/lito.lock\"\n"_str },
+        { "lock-directory"_str, "[lock]\npath = \".lito\"\n"_str },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto project = config(item.name, item.contents);
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::load_project_config(project->root.as_path()).is_err());
     }
 }
 
-TEST(Config, InvalidEnvironmentAppendPathIsRejectedByConfigOwner) {
-    constexpr ref<str> cases[] = {
-        "config/environment-wrong-type"_str, "config/environment-empty-entry"_str,
-        "config/environment-missing"_str,    "config/environment-file"_str,
-        "config/environment-unknown"_str,
+TEST_F(Config, InvalidEnvironmentAppendPathIsRejectedByConfigOwner) {
+    struct ConfigCase {
+        ref<str> name;
+        ref<str> contents;
     };
-    for (const auto path : cases) {
-        EXPECT_TRUE(lito::load_project_config(fixture_path(path).as_path()).is_err());
+    constexpr ConfigCase cases[] = {
+        { "environment-wrong-type"_str, "[environment]\nappend-path = \"tools\"\n"_str },
+        { "environment-empty-entry"_str, "[environment]\nappend-path = [\"\"]\n"_str },
+        { "environment-missing"_str, "[environment]\nappend-path = [\"missing\"]\n"_str },
+        { "environment-file"_str, "[environment]\nappend-path = [\".lito/config.toml\"]\n"_str },
+        { "environment-unknown"_str, "[environment]\nappend-path = []\nprepend-path = []\n"_str },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto project = config(item.name, item.contents);
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::load_project_config(project->root.as_path()).is_err());
     }
 }
 
-TEST(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
-    auto loaded = lito::load_project_config(fixture_path("config/pkg-config"_str).as_path());
+TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
+    auto project = config("pkg-config"_str, pkg_config_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->pkg_config.target_configured);
     EXPECT_EQ(loaded->pkg_config.executable.as_path().to_str().unwrap(), "pkg-config"_str);
@@ -177,25 +253,26 @@ TEST(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     EXPECT_EQ(loaded->pkg_config.library_paths.len(), usize(1));
     EXPECT_TRUE(loaded->pkg_config.sysroot.is_some());
 
-    auto search_only =
-        lito::load_project_config(fixture_path("config/pkg-config-search-only"_str).as_path());
+    auto search_project = config("pkg-config-search-only"_str, pkg_config_search_only_config);
+    ASSERT_TRUE(search_project.is_ok());
+    auto search_only = lito::load_project_config(search_project->root.as_path());
     ASSERT_TRUE(search_only.is_ok());
     EXPECT_FALSE(search_only->pkg_config.target_configured);
 }
 
-TEST(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
-    auto loaded = lito::load_project_config(fixture_path("config/cmake"_str).as_path());
+TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
+    auto project = config("cmake"_str, cmake_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->cmake.executable.as_path().to_str().unwrap(), "custom-cmake"_str);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
-    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(),
-              fixture_path("config/cmake"_str).as_path());
+    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), project->root.as_path());
 }
 
-TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
-    auto directory = output_root("config-runtime-overrides"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
+    auto directory        = source_root("config-runtime-overrides"_str);
     auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
     auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
@@ -259,12 +336,10 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(patched->sources.patches[usize {}].git.as_str(),
               "https://example.com/source?a=b"_str);
     EXPECT_EQ(patched->sources.patches[usize {}].path.as_path(), patch_directory.as_path());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Config, RuntimeOverridesRejectKeyStructureConflicts) {
-    auto directory = output_root("config-runtime-conflict"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, RuntimeOverridesRejectKeyStructureConflicts) {
+    auto directory        = source_root("config-runtime-conflict"_str);
     auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
     auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
@@ -277,12 +352,10 @@ TEST(Config, RuntimeOverridesRejectKeyStructureConflicts) {
                                                 .overrides = rstd::move(overrides),
                                             });
     EXPECT_TRUE(loaded.is_err());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
-    auto directory = output_root("config-persistence"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
+    auto directory = source_root("config-persistence"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
 
     auto path = lito::project_config_path(directory.as_path());
@@ -328,12 +401,10 @@ TEST(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
     auto missing =
         lito::get_persisted_config(directory.as_path(), Some(String::make("lock.path"_str)));
     EXPECT_TRUE(missing.is_err());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Config, PersistedConfigRejectsSymlinkFiles) {
-    auto directory = output_root("config-symlink"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Config, PersistedConfigRejectsSymlinkFiles) {
+    auto directory        = source_root("config-symlink"_str);
     auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
     auto target = directory.join(PathBuf::from("target.toml"_str).as_path());
@@ -349,5 +420,4 @@ TEST(Config, PersistedConfigRejectsSymlinkFiles) {
     auto unchanged = rstd::fs::read_to_string(target.as_path());
     ASSERT_TRUE(unchanged.is_ok());
     EXPECT_EQ(unchanged->as_str(), "[lock]\npath = \"safe.lock\"\n"_str);
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }

@@ -1,7 +1,0 @@
-[workspace]
-name = "fixture-shared-source-root"
-members = ["packages/library", "packages/app"]
-default-members = ["packages/app"]
-
-[workspace.package]
-version = "0.1.0"

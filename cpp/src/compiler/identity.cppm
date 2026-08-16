@@ -33,8 +33,7 @@ auto push_identity(String& output, ref<str> key, ref<str> value) -> void;
 auto standard_library_mode_macro(ref<str> name) -> bool {
     return name == "_GLIBCXX_USE_CXX11_ABI"_str || name == "_GLIBCXX_DEBUG"_str ||
            name == "_GLIBCXX_ASSERTIONS"_str || name == "_GLIBCXX_PARALLEL"_str ||
-           name == "_LIBCPP_HARDENING_MODE"_str ||
-           name == "_LIBCPP_ASSERTION_SEMANTIC"_str;
+           name == "_LIBCPP_HARDENING_MODE"_str || name == "_LIBCPP_ASSERTION_SEMANTIC"_str;
 }
 
 auto standard_library_abi_macro(ref<str> name) -> bool {
@@ -166,8 +165,7 @@ constexpr auto cpp_abi_compatibility_field_name(CppAbiCompatibilityField field) 
     case CppAbiCompatibilityField::StandardLibrary: return "standard library"_str;
     case CppAbiCompatibilityField::StandardLibraryHeaders:
         return "resolved standard library headers"_str;
-    case CppAbiCompatibilityField::StandardLibraryModes:
-        return "standard library ABI modes"_str;
+    case CppAbiCompatibilityField::StandardLibraryModes: return "standard library ABI modes"_str;
     case CppAbiCompatibilityField::AbiModes: return "C++ ABI modes"_str;
     case CppAbiCompatibilityField::Target: return "target"_str;
     case CppAbiCompatibilityField::TargetFeatures: return "target ABI features"_str;
@@ -191,7 +189,7 @@ auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String 
     push_identity(result,
                   "stdlib"_str,
                   options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
-                                                                               : "libc++"_str);
+                                                                             : "libc++"_str);
     if (options.abi.resolved_standard_library.is_some()) {
         push_identity(result,
                       "resolved-stdlib"_str,
@@ -205,9 +203,8 @@ auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String 
         push_identity(result, "target"_str, options.target.target->as_str());
     }
     result.push_str(family_options_identity("target"_str, options.target.features).as_str());
-    result.push_str(string_options_identity("instrumentation"_str,
-                                            options.codegen.instrumentation)
-                        .as_str());
+    result.push_str(
+        string_options_identity("instrumentation"_str, options.codegen.instrumentation).as_str());
     result.push_str(standard_library_macro_identity(options, true).as_str());
     return result;
 }
@@ -216,9 +213,8 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
                                  const CppCompileOptions& consumer)
     -> Option<CppAbiCompatibilityDifference> {
     const auto difference = [](CppAbiCompatibilityField field,
-                               ref<str>                  provider_value,
-                               ref<str>                  consumer_value)
-        -> Option<CppAbiCompatibilityDifference> {
+                               ref<str>                 provider_value,
+                               ref<str> consumer_value) -> Option<CppAbiCompatibilityDifference> {
         if (provider_value == consumer_value) return None();
         return Some(CppAbiCompatibilityDifference {
             .field    = field,
@@ -237,19 +233,18 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
     auto consumer_headers = consumer.abi.resolved_standard_library.is_some()
                                 ? consumer.abi.resolved_standard_library->headers_identity.as_str()
                                 : "<unresolved>"_str;
-    found = difference(CppAbiCompatibilityField::StandardLibraryHeaders,
-                       provider_headers,
-                       consumer_headers);
+    found                 = difference(
+        CppAbiCompatibilityField::StandardLibraryHeaders, provider_headers, consumer_headers);
     if (found.is_some()) return found;
     auto provider_stdlib_modes = standard_library_macro_identity(provider, true);
     auto consumer_stdlib_modes = standard_library_macro_identity(consumer, true);
-    found = difference(CppAbiCompatibilityField::StandardLibraryModes,
-                       provider_stdlib_modes.as_str(),
-                       consumer_stdlib_modes.as_str());
+    found                      = difference(CppAbiCompatibilityField::StandardLibraryModes,
+                                            provider_stdlib_modes.as_str(),
+                                            consumer_stdlib_modes.as_str());
     if (found.is_some()) return found;
     auto provider_abi = family_options_identity("abi"_str, provider.abi.modes);
     auto consumer_abi = family_options_identity("abi"_str, consumer.abi.modes);
-    found = difference(
+    found             = difference(
         CppAbiCompatibilityField::AbiModes, provider_abi.as_str(), consumer_abi.as_str());
     if (found.is_some()) return found;
     auto provider_target = provider.target.target.is_some() ? provider.target.target->as_str()
@@ -260,9 +255,9 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
     if (found.is_some()) return found;
     auto provider_features = family_options_identity("target"_str, provider.target.features);
     auto consumer_features = family_options_identity("target"_str, consumer.target.features);
-    found = difference(CppAbiCompatibilityField::TargetFeatures,
-                       provider_features.as_str(),
-                       consumer_features.as_str());
+    found                  = difference(CppAbiCompatibilityField::TargetFeatures,
+                                        provider_features.as_str(),
+                                        consumer_features.as_str());
     if (found.is_some()) return found;
     auto provider_instrumentation =
         string_options_identity("instrumentation"_str, provider.codegen.instrumentation);
@@ -402,7 +397,7 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
     auto consumer_macros = macro_states(consumer.preprocessor.macros);
     auto values          = required_macros.into_iter();
     while (auto value = values.next()) {
-        auto entry    = rstd::move(value).unwrap();
+        auto entry = rstd::move(value).unwrap();
         if (standard_library_mode_macro(entry.template get<0>().as_str())) continue;
         auto consumer = consumer_macros.get(entry.template get<0>().as_str());
         if (consumer.is_none() || (**consumer).as_str() != entry.template get<1>().as_str()) {

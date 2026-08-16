@@ -1,8 +1,0 @@
-[package]
-name = "fixture-discovery-lib"
-version = "0.1.0"
-
-[lib]
-name = "fixture-discovery-lib"
-module = "fixture.discovery.lib"
-archive = "fixture.discovery.lib"

@@ -15,10 +15,18 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Install, InstallPurposeSelectsWorkspaceBinaries) {
-    auto directory = fixture_path("project"_str);
+class InstallSelection : public ProjectFixture {};
+
+TEST_F(InstallSelection, InstallPurposeSelectsWorkspaceBinaries) {
+    auto selection_tree = install_selection_project_tree();
+    ASSERT_TRUE(selection_tree.is_ok());
+    auto selection_project = materialize("install-selection"_str, *selection_tree);
+    ASSERT_TRUE(selection_project.is_ok());
+    auto directory = selection_project->root.clone();
     auto package   = lito::resolve_package_selection(
-        lito::PackageSelection { .root = fixture_path("project/multi-target"_str) },
+        lito::PackageSelection {
+            .root = directory.join(PathBuf::from("multi-target"_str).as_path()),
+        },
         lito::PackageSelectionPurpose::Install);
     ASSERT_TRUE(package.is_ok());
     ASSERT_EQ(package->selected_root_names.len(), usize(3));
@@ -26,17 +34,66 @@ TEST(Install, InstallPurposeSelectsWorkspaceBinaries) {
     EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-multi-target"_str));
     EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-test-app"_str));
 
+    constexpr ProjectFile profile_files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-workspace-profile"
+members = ["app"]
+[workspace.package]
+version = "0.1.0"
+)"_str },
+        { "app/lito.toml"_str, R"([package]
+name = "fixture-workspace-profile-app"
+version = { workspace = true }
+[[bin]]
+link-stdlib = false
+name = "workspace-profile-app"
+sources = ["main.cpp"]
+)"_str },
+        { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto profile_project = materialize("workspace-profile"_str, profile_files);
+    ASSERT_TRUE(profile_project.is_ok());
     auto workspace = lito::resolve_package_selection(
-        lito::PackageSelection { .root = fixture_path("workspace/profile"_str) },
+        lito::PackageSelection { .root = profile_project->root.clone() },
         lito::PackageSelectionPurpose::Install);
     ASSERT_TRUE(workspace.is_ok());
     ASSERT_EQ(workspace->selected_root_names.len(), usize(1));
     EXPECT_EQ(workspace->selected_root_names[usize {}].as_str(),
               "fixture-workspace-profile-app"_str);
 
-    auto member = lito::resolve_package_selection(
-        lito::PackageSelection { .root = fixture_path("build/script/workspace/app"_str) },
-        lito::PackageSelectionPurpose::Install);
+    constexpr ProjectFile workspace_files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-configure-workspace"
+members = ["app", "other"]
+default-members = ["app", "other"]
+[workspace.package]
+version = "0.1.0"
+)"_str },
+        { "app/lito.toml"_str, R"([package]
+name = "fixture-configure-workspace-app"
+version = { workspace = true }
+[[bin]]
+link-stdlib = false
+name = "configure-workspace"
+sources = ["src/main.cpp"]
+)"_str },
+        { "app/src/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "other/lito.toml"_str, R"([package]
+name = "fixture-configure-workspace-other"
+version = { workspace = true }
+[[bin]]
+link-stdlib = false
+name = "configure-other"
+sources = ["src/main.cpp"]
+)"_str },
+        { "other/src/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto configure_project = materialize("configure-workspace"_str, workspace_files);
+    ASSERT_TRUE(configure_project.is_ok());
+    auto member_root = configure_project->root.join(PathBuf::from("app"_str).as_path());
+    auto member =
+        lito::resolve_package_selection(lito::PackageSelection { .root = member_root.clone() },
+                                        lito::PackageSelectionPurpose::Install);
     ASSERT_TRUE(member.is_ok());
     ASSERT_EQ(member->selected_root_names.len(), usize(2));
     EXPECT_TRUE(contains_name(member->selected_root_names, "fixture-configure-workspace-app"_str));
@@ -45,7 +102,7 @@ TEST(Install, InstallPurposeSelectsWorkspaceBinaries) {
 
     auto selected_member = lito::resolve_package_selection(
         lito::PackageSelection {
-            .root     = fixture_path("build/script/workspace/app"_str),
+            .root     = member_root.clone(),
             .packages = strings("fixture-configure-workspace-app"_str),
         },
         lito::PackageSelectionPurpose::Install);
@@ -96,9 +153,28 @@ TEST(Install, InstallPurposeSelectsWorkspaceBinaries) {
     ASSERT_EQ(all->selected_root_names.len(), usize(3));
 }
 
-TEST(Install, RuntimeDependenciesAreInstallOnlyAndDependencyFirst) {
-    auto explicit_manifest = lito::load_package_manifest(
-        fixture_path("install/manifest/runtime/explicit"_str).as_path());
+TEST_F(InstallSelection, RuntimeDependenciesAreInstallOnlyAndDependencyFirst) {
+    constexpr ProjectFile explicit_files[] = {
+        { "explicit/lito.toml"_str, R"([package]
+name = "fixture-runtime-explicit"
+version = "0.1.0"
+[runtime-dependencies.git-helper]
+git = "https://example.invalid/runtime-helper.git"
+commit = "0123456789abcdef0123456789abcdef01234567"
+[runtime-dependencies.path-helper]
+path = "../install-only"
+)"_str },
+        { "explicit/install.lua"_str, "lito.install({})\n"_str },
+        { "explicit/resource.txt"_str, "fixture\n"_str },
+        { "install-only/lito.toml"_str,
+          "[package]\nname = \"fixture-install-only\"\nversion = \"1.2.3\"\n"_str },
+        { "install-only/install.lua"_str, "lito.install({})\n"_str },
+        { "install-only/resource.txt"_str, "fixture\n"_str },
+    };
+    auto explicit_project = materialize("runtime-explicit-projects"_str, explicit_files);
+    ASSERT_TRUE(explicit_project.is_ok());
+    auto explicit_directory = explicit_project->root.join(PathBuf::from("explicit"_str).as_path());
+    auto explicit_manifest  = lito::load_package_manifest(explicit_directory.as_path());
     ASSERT_TRUE(explicit_manifest.is_ok());
     ASSERT_EQ(explicit_manifest->runtime_dependencies.len(), usize(2));
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(), "git-helper"_str);
@@ -108,7 +184,54 @@ TEST(Install, RuntimeDependenciesAreInstallOnlyAndDependencyFirst) {
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(), "path-helper"_str);
     EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.is_Path());
 
-    auto directory = fixture_path("install/runtime"_str);
+    constexpr ProjectFile runtime_files[] = {
+        { "lito.toml"_str, R"([workspace]
+name = "fixture-runtime-dependency"
+members = ["app", "helper", "leaf"]
+[workspace.package]
+version = "1.0.0"
+[workspace.dependencies.helper]
+path = "helper"
+[workspace.dependencies.leaf]
+path = "leaf"
+)"_str },
+        { "app/lito.toml"_str, R"([package]
+name = "fixture-runtime-app"
+version.workspace = true
+[[bin]]
+link-stdlib = false
+name = "runtime-app"
+sources = ["main.cpp"]
+[runtime-dependencies.helper]
+workspace = true
+[runtime-dependencies.leaf]
+workspace = true
+)"_str },
+        { "app/main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "helper/lito.toml"_str, R"([package]
+name = "helper"
+version.workspace = true
+[[bin]]
+link-stdlib = false
+name = "runtime-helper"
+sources = ["main.cpp"]
+[runtime-dependencies.leaf]
+workspace = true
+)"_str },
+        { "helper/main.cpp"_str, "int main() { return 0; }\n"_str },
+        { "leaf/lito.toml"_str, R"([package]
+name = "leaf"
+version.workspace = true
+[[bin]]
+link-stdlib = false
+name = "runtime-leaf"
+sources = ["main.cpp"]
+)"_str },
+        { "leaf/main.cpp"_str, "int main() { return 0; }\n"_str },
+    };
+    auto runtime_project = materialize("runtime-dependencies"_str, runtime_files);
+    ASSERT_TRUE(runtime_project.is_ok());
+    auto directory = runtime_project->root.clone();
     auto build     = lito::resolve_package_selection(
         lito::PackageSelection {
             .root     = directory.clone(),

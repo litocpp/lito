@@ -1,7 +1,0 @@
-[workspace]
-name = "fixture-configure-workspace"
-members = ["app", "other"]
-default-members = ["app", "other"]
-
-[workspace.package]
-version = "0.1.0"

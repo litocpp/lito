@@ -16,11 +16,16 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
+class CMakeProvider : public ProjectFixture {};
+
+TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto count_directory = output_root("cmake-provider-count"_str);
-    ASSERT_TRUE(clear_output(count_directory.as_path()));
+    auto tree = cmake_package_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-package"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto count_directory = cache_root("cmake-provider-count"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(count_directory.as_path()).is_ok());
     auto count_path =
         count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
@@ -48,9 +53,7 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoFixture"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            fixture_path("dependency/cmake/project/package"_str),
-            String::make("lito-test-cmake-fixture-v4"_str),
-            true),
+            project->root.clone(), String::make("lito-test-cmake-fixture-v4"_str), true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
@@ -60,6 +63,7 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                               default_profile(*parser),
                                               native_platform(),
                                               *parser,
+                                              build_root("cmake-fixture-work"_str).as_path(),
                                               usize(1),
                                               rstd::addressof(cold_assets));
     if (resolved.is_err()) {
@@ -114,6 +118,7 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                               default_profile(*parser),
                                               native_platform(),
                                               *parser,
+                                              build_root("cmake-fixture-work"_str).as_path(),
                                               usize(1),
                                               rstd::addressof(warm_assets));
     ASSERT_TRUE(warm.is_ok());
@@ -130,8 +135,11 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(warm_count->as_str(), "configure\n"_str);
     declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
     declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
-    auto queried_again =
-        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
+    auto queried_again = resolve_cmake_fixtures(declarations,
+                                                default_profile(*parser),
+                                                native_platform(),
+                                                *parser,
+                                                build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(second_count.is_ok());
@@ -141,8 +149,11 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .name  = String::make("LITO_FIXTURE_VARIANT"_str),
         .value = String::make("ON"_str),
     });
-    auto installed_again =
-        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
+    auto installed_again = resolve_cmake_fixtures(declarations,
+                                                  default_profile(*parser),
+                                                  native_platform(),
+                                                  *parser,
+                                                  build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(third_count.is_ok());
@@ -156,18 +167,24 @@ TEST(CMake, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
                                                          build_profile("debug"_str),
                                                          *parser);
     ASSERT_TRUE(disabled_profile.is_ok());
-    auto profile_variant =
-        resolve_cmake_fixtures(declarations, *disabled_profile, native_platform(), *parser);
+    auto profile_variant = resolve_cmake_fixtures(declarations,
+                                                  *disabled_profile,
+                                                  native_platform(),
+                                                  *parser,
+                                                  build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(profile_variant.is_ok());
     auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(fourth_count.is_ok());
     EXPECT_EQ(fourth_count->as_str(), "configure\nconfigure\nconfigure\n"_str);
-    EXPECT_TRUE(clear_output(count_directory.as_path()));
 }
 
-TEST(CMake, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
+TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
+    auto tree = cmake_build_tree_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-build-tree"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
     auto targets = Vec<lito::CMakeTargetRequirement>::make();
     targets.push(lito::CMakeTargetRequirement {
         .name       = String::make("LitoBuildTree::fixture"_str),
@@ -178,16 +195,17 @@ TEST(CMake, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoBuildTree"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            fixture_path("dependency/cmake/project/build-tree"_str),
-            String::make("lito-test-cmake-build-tree-v1"_str),
-            false),
+            project->root.clone(), String::make("lito-test-cmake-build-tree-v1"_str), false),
         .integration = lito::CMakeIntegration::BuildTree,
-        .adapter     = Some(fixture_path("dependency/cmake/manifest/build-tree/adapter.cmake"_str)),
+        .adapter     = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets     = rstd::move(targets),
     });
-    auto target = pkg_config_target();
-    auto resolved =
-        resolve_cmake_fixtures(declarations, default_profile(*parser), native_platform(), *parser);
+    auto target   = pkg_config_target();
+    auto resolved = resolve_cmake_fixtures(declarations,
+                                           default_profile(*parser),
+                                           native_platform(),
+                                           *parser,
+                                           build_root("cmake-build-tree-work"_str).as_path());
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error);

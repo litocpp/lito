@@ -1,9 +1,0 @@
-[package]
-name = "fixture-same-dependency"
-version = "0.2.0"
-
-[lib]
-name = "fixture-same-dependency"
-module = "fixture.same.dependency"
-archive = "fixture.same.two"
-sources = ["source.cppm"]

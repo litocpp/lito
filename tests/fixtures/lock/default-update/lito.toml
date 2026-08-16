@@ -1,8 +1,0 @@
-[package]
-name = "fixture-lock-default"
-version = "1.0.0"
-
-[[bin]]
-link-stdlib = false
-name = "fixture-lock-default"
-sources = ["main.cpp"]

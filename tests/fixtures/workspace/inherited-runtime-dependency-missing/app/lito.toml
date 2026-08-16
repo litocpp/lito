@@ -1,6 +1,0 @@
-[package]
-name = "fixture-inherited-runtime-dependency-missing-app"
-version.workspace = true
-
-[runtime-dependencies.missing]
-workspace = true

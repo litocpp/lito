@@ -181,8 +181,8 @@ auto visit_target(const PackageMetadata& package,
 }
 
 auto resolve_import_requirements(const PackageMetadata& package,
-                                 const Vec<TargetId>&    target_order,
-                                 Vec<CompileContext>&    contexts) -> PackageResult<empty> {
+                                 const Vec<TargetId>&   target_order,
+                                 Vec<CompileContext>&   contexts) -> PackageResult<empty> {
     if (contexts.len() != package.targets.len()) {
         return plan_failure<empty>("import requirement contexts do not match package targets"_str);
     }
@@ -464,13 +464,13 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
     auto profile      = selection.profile;
     auto target_order = rstd::move(selection.target_order);
 
-    auto public_usage    = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
-    auto public_targets  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto contexts        = Vec<CompileContext>::with_capacity(package.targets.len());
-    auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
-    auto link_inputs     = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
+    auto public_usage      = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
+    auto public_targets    = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto contexts          = Vec<CompileContext>::with_capacity(package.targets.len());
+    auto visible_targets   = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto link_inputs       = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
     auto link_requirements = Vec<CppLinkRequirements>::with_capacity(package.targets.len());
-    auto linker_options  = Vec<Vec<String>>::with_capacity(package.targets.len());
+    auto linker_options    = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
         public_targets.emplace_back();
@@ -626,8 +626,8 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto dependency_order = Vec<TargetId>::make();
         auto ordered          = visit_target(package, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
-        auto& inputs = link_inputs[target];
-        auto& requirements = link_requirements[target];
+        auto& inputs               = link_inputs[target];
+        auto& requirements         = link_requirements[target];
         requirements.posix_threads = contexts[target].cpp.threading.posix;
         append_unique(requirements, package.profiles[profile].link_requirements);
         append_unique(requirements, package.targets[target].usage.link_requirements);
@@ -702,15 +702,15 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
         }
     }
     return Ok(PackagePlan {
-        .package         = rstd::addressof(package),
-        .profile         = rstd::addressof(package.profiles[discovery.profile]),
-        .target_order    = rstd::move(discovery.target_order),
-        .contexts        = rstd::move(discovery.contexts),
-        .public_targets  = rstd::move(discovery.public_targets),
-        .visible_targets = rstd::move(discovery.visible_targets),
-        .link_inputs     = rstd::move(discovery.link_inputs),
+        .package           = rstd::addressof(package),
+        .profile           = rstd::addressof(package.profiles[discovery.profile]),
+        .target_order      = rstd::move(discovery.target_order),
+        .contexts          = rstd::move(discovery.contexts),
+        .public_targets    = rstd::move(discovery.public_targets),
+        .visible_targets   = rstd::move(discovery.visible_targets),
+        .link_inputs       = rstd::move(discovery.link_inputs),
         .link_requirements = rstd::move(discovery.link_requirements),
-        .linker_options  = rstd::move(discovery.linker_options),
+        .linker_options    = rstd::move(discovery.linker_options),
     });
 }
 

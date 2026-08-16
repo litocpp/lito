@@ -702,9 +702,9 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
     auto options = string_array(member(**value, "options"_str), "usage.options"_str);
     auto linker_options =
         string_array(member(**value, "linker-options"_str), "usage.linker-options"_str);
-    auto system_libraries = string_array(member(**value, "system-libraries"_str),
-                                         "usage.system-libraries"_str);
-    auto threads = false;
+    auto system_libraries =
+        string_array(member(**value, "system-libraries"_str), "usage.system-libraries"_str);
+    auto threads          = false;
     auto declared_threads = member(**value, "threads"_str);
     if (declared_threads.is_some()) {
         auto parsed = (**declared_threads).as_bool();
@@ -721,13 +721,13 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
     if (options.is_err()) return Err(rstd::move(options).unwrap_err());
     if (linker_options.is_err()) return Err(rstd::move(linker_options).unwrap_err());
     if (system_libraries.is_err()) return Err(rstd::move(system_libraries).unwrap_err());
-    auto public_include_values        = rstd::move(public_includes).unwrap();
-    auto private_include_values       = rstd::move(private_includes).unwrap();
-    auto public_definition_values     = rstd::move(public_definitions).unwrap();
-    auto private_definition_values    = rstd::move(private_definitions).unwrap();
-    auto option_values         = rstd::move(options).unwrap();
-    auto linker_option_values  = rstd::move(linker_options).unwrap();
-    auto system_library_values = rstd::move(system_libraries).unwrap();
+    auto public_include_values     = rstd::move(public_includes).unwrap();
+    auto private_include_values    = rstd::move(private_includes).unwrap();
+    auto public_definition_values  = rstd::move(public_definitions).unwrap();
+    auto private_definition_values = rstd::move(private_definitions).unwrap();
+    auto option_values             = rstd::move(options).unwrap();
+    auto linker_option_values      = rstd::move(linker_options).unwrap();
+    auto system_library_values     = rstd::move(system_libraries).unwrap();
     return Ok(DeclaredUsageRequirements {
         .public_include_directories             = rstd::move(public_include_values.physical),
         .private_include_directories            = rstd::move(private_include_values.physical),

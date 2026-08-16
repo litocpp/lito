@@ -1,9 +1,0 @@
-[package]
-name = "fixture-actual"
-version = "0.1.0"
-
-[lib]
-name = "fixture-actual"
-module = "fixture.actual"
-archive = "fixture.actual"
-sources = ["source.cppm"]

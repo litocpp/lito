@@ -15,9 +15,10 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
-    auto directory = output_root("source-cache-layout"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+class Source : public ProjectFixture {};
+
+TEST_F(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
+    auto directory = cache_root("source-cache-layout"_str);
     auto data_home = directory.join(PathBuf::from("data"_str).as_path());
     auto data_text = data_home.as_path().to_str();
     ASSERT_TRUE(data_text.is_some());
@@ -76,12 +77,10 @@ TEST(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
     ASSERT_TRUE(rstd::fs::remove_file(lock.as_path()).is_ok());
     ASSERT_TRUE(rstd::fs::create_dir(lock.as_path()).is_ok());
     EXPECT_TRUE(root->acquire_source_cache().is_err());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Source, RelativeDataHomeFallsBackToHomeDataDirectory) {
-    auto directory = output_root("source-cache-home-fallback"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
+TEST_F(Source, RelativeDataHomeFallsBackToHomeDataDirectory) {
+    auto directory = cache_root("source-cache-home-fallback"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
     auto home_text = directory.as_path().to_str();
     ASSERT_TRUE(home_text.is_some());
@@ -92,13 +91,11 @@ TEST(Source, RelativeDataHomeFallsBackToHomeDataDirectory) {
     ASSERT_TRUE(root.is_ok());
     auto expected = directory.join(PathBuf::from(".local/share/lito"_str).as_path());
     EXPECT_EQ(root->root(), expected.as_path());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }
 
-TEST(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
-    auto directory = output_root("archive-profile-materialization"_str);
-    ASSERT_TRUE(clear_output(directory.as_path()));
-    auto package = directory.join(PathBuf::from("input/package"_str).as_path());
+TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
+    auto directory = cache_root("archive-profile-materialization"_str);
+    auto package   = directory.join(PathBuf::from("input/package"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(package.as_path()).is_ok());
     auto payload = package.join(PathBuf::from("payload.txt"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(payload.as_path(), "archive fixture\n"_str.as_bytes()).is_ok());
@@ -217,5 +214,4 @@ TEST(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_FALSE(
         rstd::fs::exists(debug_output.join(PathBuf::from("CACHEDIR.TAG"_str).as_path()).as_path())
             .unwrap());
-    EXPECT_TRUE(clear_output(directory.as_path()));
 }

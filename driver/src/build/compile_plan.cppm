@@ -217,8 +217,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
                               const cpp::ModulePlan&      modules) -> BuildResult<CompilePlan> {
     if (scans.len() != units.len() || modules.direct_inputs.len() != units.len() ||
         modules.resolved_inputs.len() != units.len() ||
-        modules.public_inputs.len() != units.len() ||
-        modules.compile_order.len() != units.len()) {
+        modules.public_inputs.len() != units.len() || modules.compile_order.len() != units.len()) {
         return compile_failure<CompilePlan>("compile plan inputs have inconsistent lengths"_str);
     }
 

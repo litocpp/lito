@@ -1,9 +1,0 @@
-[package]
-name = "fixture-test-lib"
-version = { workspace = true }
-
-[lib]
-name = "fixture-test-lib"
-module = "fixture.test.lib"
-archive = "fixture_test_lib"
-sources = ["src/lib.cppm"]

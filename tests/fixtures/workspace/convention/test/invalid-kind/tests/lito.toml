@@ -1,9 +1,0 @@
-[package]
-name = "fixture-conventional-invalid-kind-test"
-version = "0.1.0"
-
-[lib]
-name = "fixture-conventional-invalid-kind-test"
-module = "fixture.conventional.invalid_kind"
-archive = "fixture-conventional-invalid-kind"
-sources = ["lib.cppm"]

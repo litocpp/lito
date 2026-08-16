@@ -147,13 +147,13 @@ auto resolve_pkg_config_dependencies(
         });
         auto normalized = normalize_clang_link_arguments(snapshot.link_arguments.clone());
         result.push(cpp::ResolvedExternalDependency {
-            .alias          = declaration.alias.clone(),
-            .provider       = String::make("pkg-config"_str),
-            .version        = snapshot.version.clone(),
-            .targets        = rstd::move(targets),
-            .link_arguments = rstd::move(normalized.arguments),
+            .alias             = declaration.alias.clone(),
+            .provider          = String::make("pkg-config"_str),
+            .version           = snapshot.version.clone(),
+            .targets           = rstd::move(targets),
+            .link_arguments    = rstd::move(normalized.arguments),
             .link_requirements = rstd::move(normalized.requirements),
-            .identity       = snapshot.identity.clone(),
+            .identity          = snapshot.identity.clone(),
         });
     }
     return Ok(rstd::move(result));

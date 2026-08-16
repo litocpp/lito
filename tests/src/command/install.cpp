@@ -12,13 +12,44 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(InstallCommand, InstallBuildConsumesTheResolvedProject) {
-    auto base    = output_root("install-resolved-project"_str);
-    auto fixture = base.join(PathBuf::from("project"_str).as_path());
-    auto output  = base.join(PathBuf::from("output"_str).as_path());
-    ASSERT_TRUE(clear_output(base.as_path()));
-    ASSERT_TRUE(copy_directory(fixture_path("build/script/configure-file"_str).as_path(),
-                               fixture.as_path()));
+class InstallCommand : public ProjectFixture {};
+
+TEST_F(InstallCommand, InstallBuildConsumesTheResolvedProject) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "fixture-configure-file"
+version = "0.1.0"
+[[bin]]
+link-stdlib = false
+name = "configure-file"
+sources = ["src/main.cpp"]
+[usage]
+private-include-directories = [{ path = "include", root = "generated" }]
+)"_str },
+        { "build.lua"_str, R"(lito.configure_file({
+    package = "fixture-configure-file",
+    input = "config/build_config.hpp.in",
+    output = "include/fixture/build_config.hpp",
+    values = { PROFILE = lito.profile, ENABLE_TRACE = false, ABI_REVISION = 3,
+               LITERAL = "@NOT_RECURSIVE@" },
+})
+)"_str },
+        { "config/build_config.hpp.in"_str, R"(#pragma once
+#define FIXTURE_PROFILE "@PROFILE@"
+#define FIXTURE_ENABLE_TRACE @ENABLE_TRACE@
+#define FIXTURE_ABI_REVISION @ABI_REVISION@
+#define FIXTURE_LITERAL "@LITERAL@"
+)"_str },
+        { "src/main.cpp"_str, R"(#include <fixture/build_config.hpp>
+static_assert(FIXTURE_ABI_REVISION == 3);
+static_assert(! FIXTURE_ENABLE_TRACE);
+int main() { return FIXTURE_PROFILE[0] == 'r' ? 0 : 1; }
+)"_str },
+    };
+    auto project = materialize("install-resolved-project"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto fixture = project->root.clone();
+    auto output  = build_root("install-resolved-project"_str);
 
     auto source =
         lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(fixture.clone()));
@@ -35,22 +66,33 @@ TEST(InstallCommand, InstallBuildConsumesTheResolvedProject) {
     request.purpose = lito::PackageSelectionPurpose::Install;
     request.targets = strings("bin:configure-file"_str);
     auto built = lito::build_resolved_project(rstd::move(request), rstd::move(resolved.project));
-    ASSERT_TRUE(built.is_ok());
+    if (built.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(built.unwrap_err()));
+        FAIL();
+        return;
+    }
     ASSERT_EQ(built->selected_targets.len(), usize(1));
     EXPECT_EQ(built->selected_targets[usize {}].package.as_str(), "fixture-configure-file"_str);
     EXPECT_EQ(built->selected_targets[usize {}].kind, lito::PackageTargetKind::Binary);
-
-    EXPECT_TRUE(clear_output(base.as_path()));
 }
 
-TEST(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
-    auto base    = output_root("install-only"_str);
-    auto fixture = base.join(PathBuf::from("project"_str).as_path());
-    auto output  = base.join(PathBuf::from("output"_str).as_path());
-    auto install = base.join(PathBuf::from("install"_str).as_path());
-    ASSERT_TRUE(clear_output(base.as_path()));
-    ASSERT_TRUE(copy_directory(fixture_path("install/manifest/install-only"_str).as_path(),
-                               fixture.as_path()));
+TEST_F(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str,
+          "[package]\nname = \"fixture-install-only\"\nversion = \"1.2.3\"\n"_str },
+        { "install.lua"_str, R"(lito.install({
+    files = {
+        { source = "resource.txt", destination = "share/fixture/resource.txt" },
+    },
+})
+)"_str },
+        { "resource.txt"_str, "fixture\n"_str },
+    };
+    auto project = materialize("install-only"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto fixture = project->root.clone();
+    auto output  = build_root("install-only"_str);
+    auto install = install_root("install-only"_str);
 
     auto source =
         lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(fixture.clone()));
@@ -84,15 +126,11 @@ TEST(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
             .join(PathBuf::from(catalog->packages[usize {}].identity.id.as_str()).as_path())
             .join(PathBuf::from("share/fixture/resource.txt"_str).as_path());
     EXPECT_EQ(rstd::fs::read_to_string(resource.as_path()).unwrap().as_str(), "fixture\n"_str);
-
-    EXPECT_TRUE(clear_output(base.as_path()));
 }
 
-TEST(InstallCommand, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
-    auto root_directory   = output_root("install-store-concurrent"_str);
-    auto source_directory = output_root("install-store-concurrent-source"_str);
-    ASSERT_TRUE(clear_output(root_directory.as_path()));
-    ASSERT_TRUE(clear_output(source_directory.as_path()));
+TEST_F(InstallCommand, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
+    auto root_directory   = install_root("install-store-concurrent"_str);
+    auto source_directory = source_root("install-store-concurrent-source"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
 
     const auto request = [&](ref<str> package_name, ref<str> binary_name) {
@@ -161,17 +199,16 @@ TEST(InstallCommand, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
                   .unwrap()
                   .as_str(),
               "beta"_str);
-
-    EXPECT_TRUE(clear_output(root_directory.as_path()));
-    EXPECT_TRUE(clear_output(source_directory.as_path()));
 }
 
-TEST(InstallCommand, InstallRequiresEveryExplicitPackageToMatchTheBinaryFilter) {
-    auto root    = project_root();
-    auto output  = output_root("install-package-filter-build"_str);
-    auto install = output_root("install-package-filter-root"_str);
-    ASSERT_TRUE(clear_output(output.as_path()));
-    ASSERT_TRUE(clear_output(install.as_path()));
+TEST_F(InstallCommand, InstallRequiresEveryExplicitPackageToMatchTheBinaryFilter) {
+    auto tree = install_selection_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("install-selection"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto root    = project->root.clone();
+    auto output  = build_root("install-package-filter-build"_str);
+    auto install = install_root("install-package-filter-root"_str);
     auto source =
         lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(root.clone()));
     ASSERT_TRUE(source.is_ok());
@@ -191,6 +228,4 @@ TEST(InstallCommand, InstallRequiresEveryExplicitPackageToMatchTheBinaryFilter) 
     EXPECT_TRUE(error.as_Message().message.as_str().contains(
         "package 'fixture-multi-consumer' has no selected installable binaries"_str));
     EXPECT_FALSE(rstd::fs::exists(install.as_path()).unwrap());
-
-    EXPECT_TRUE(clear_output(output.as_path()));
 }

@@ -12,10 +12,47 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-TEST(BuildEnvironment, EnvironmentIsSharedWithinBuild) {
-    auto root   = project_root();
-    auto output = output_root("environment"_str);
-    clear_output(output.as_path());
+class BuildEnvironment : public ProjectFixture {};
+
+TEST_F(BuildEnvironment, EnvironmentIsSharedWithinBuild) {
+    const ProjectFile files[] = {
+        {
+            "lito.toml"_str,
+            R"toml([package]
+name = "fixture-environment-cache"
+version = "0.1.0"
+
+[lib]
+name = "fixture-environment-cache"
+module = "fixture.environment"
+archive = "fixture_environment_cache"
+sources = ["one.cpp", "two.cpp"]
+)toml"_str,
+        },
+        { "shared.hpp"_str, "inline constexpr int fixture_environment_shared = 0;\n"_str },
+        {
+            "one.cpp"_str,
+            R"cpp(#include "shared.hpp"
+
+extern "C" auto fixture_environment_one() -> int {
+    return 1 + fixture_environment_shared;
+}
+)cpp"_str,
+        },
+        {
+            "two.cpp"_str,
+            R"cpp(#include "shared.hpp"
+
+extern "C" auto fixture_environment_two() -> int {
+    return 2 + fixture_environment_shared;
+}
+)cpp"_str,
+        },
+    };
+    auto project = materialize("environment"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto root   = project->root.clone();
+    auto output = build_root("environment"_str);
     auto request =
         build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
     request.execution.scan.jobs    = Some(usize(2));
@@ -70,5 +107,4 @@ TEST(BuildEnvironment, EnvironmentIsSharedWithinBuild) {
     EXPECT_TRUE(contents->as_str().contains("compile execution"_str));
     EXPECT_TRUE(contents->as_str().contains("build.compile"_str));
     EXPECT_TRUE(contents->as_str().contains("aggregate timing"_str));
-    clear_output(output.as_path());
 }

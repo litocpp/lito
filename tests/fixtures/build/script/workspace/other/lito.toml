@@ -1,8 +1,0 @@
-[package]
-name = "fixture-configure-workspace-other"
-version = { workspace = true }
-
-[[bin]]
-link-stdlib = false
-name = "configure-other"
-sources = ["src/main.cpp"]

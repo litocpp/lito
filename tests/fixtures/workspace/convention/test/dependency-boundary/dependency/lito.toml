@@ -1,9 +1,0 @@
-[package]
-name = "fixture-conventional-boundary-dependency"
-version = "0.1.0"
-
-[lib]
-name = "fixture-conventional-boundary-dependency"
-module = "fixture.conventional.boundary"
-archive = "fixture-conventional-boundary"
-sources = ["lib.cppm"]

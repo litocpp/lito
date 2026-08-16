@@ -15,10 +15,15 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-TEST(BuildProfile, BuildProfileOwnsOptimizationAndDebugDefinitions) {
-    auto directory = fixture_path("build/profile"_str);
-    auto output    = output_root("profile"_str);
-    ASSERT_TRUE(clear_output(output.as_path()));
+class BuildProfileExecution : public ProjectFixture {};
+
+TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
+    auto tree = build_profile_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("profile"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto directory = project->root.clone();
+    auto output    = build_root("profile"_str);
 
     auto debug =
         lito::build(build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
@@ -42,5 +47,4 @@ TEST(BuildProfile, BuildProfileOwnsOptimizationAndDebugDefinitions) {
                               .status();
     ASSERT_TRUE(release_status.is_ok());
     EXPECT_TRUE(release_status->success());
-    EXPECT_TRUE(clear_output(output.as_path()));
 }
