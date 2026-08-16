@@ -8,8 +8,6 @@ import lito.core;
 import lito.cpp;
 import :build.event;
 import :build.layout;
-import :build.source_observer;
-import :build.cmake_observer;
 import lito.system;
 import lito.toolchain.clang;
 import lito.toolchain.cmake;

@@ -1,6 +1,8 @@
 export module lito.driver:build.event;
 
 import rstd;
+import lito.core;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -97,3 +99,14 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
 };
 
 } // namespace rstd
+
+namespace lito
+{
+
+auto source_observer(const BuildEventSink& observer) noexcept -> SourceEventSink;
+auto source_observer(const Option<BuildEventSink>& observer) noexcept -> SourceEventSink;
+auto cmake_observer(const Option<BuildEventSink>& observer) noexcept -> Option<ToolchainEventSink>;
+auto emit_build_toolchain(const Option<BuildEventSink>& observer,
+                          const ClangToolchain&         toolchain) noexcept -> void;
+
+} // namespace lito

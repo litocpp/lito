@@ -8,7 +8,6 @@ import rstd.json;
 import lito.core;
 import :build.event;
 import :build.layout;
-import :build.source_observer;
 import :build.host_tool_error;
 import lito.cpp;
 import lito.system;

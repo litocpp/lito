@@ -7,7 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import :build;
-import :build.source_observer;
+import :build.event;
 import :build.resource;
 import :command.doc.event;
 import :command.doc.request;

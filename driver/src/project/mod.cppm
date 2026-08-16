@@ -8,8 +8,6 @@ import lito.core;
 import :project.error;
 import lito.cpp;
 import :build.event;
-import :build.toolchain_observer;
-import :build.source_observer;
 import :build.layout;
 import :dependency.catalog;
 import :dependency.preparation;

@@ -1,6 +1,17 @@
 add_library(lito.driver STATIC)
 target_compile_features(lito.driver PUBLIC cxx_std_20)
-target_sources(lito.driver PRIVATE src/dependency/external_source.cpp)
+target_sources(
+  lito.driver
+  PRIVATE src/build/discovery.cpp
+          src/build/event.cpp
+          src/build/mod.cpp
+          src/command/doc.cpp
+          src/command/format.cpp
+          src/command/install.cpp
+          src/command/scan.cpp
+          src/command/update.cpp
+          src/dependency/external_source.cpp
+          src/install/store.cpp)
 target_sources(
   lito.driver
   PUBLIC FILE_SET
@@ -65,15 +76,15 @@ target_sources(
          src/install/store/model.cppm
          src/lib.cppm
          src/project/error.cppm
-         src/build/cmake_observer.cppm
          src/build/compile_test.cppm
+         src/build/compile_plan.cppm
+         src/build/package_discovery.cppm
          src/build/frontend_analysis.cppm
          src/build/frontend_observer.cppm
          src/build/resource.cppm
          src/build/scan_executor.cppm
          src/build/script.cppm
-         src/build/source_observer.cppm
-         src/build/toolchain_observer.cppm
+         src/build/prepared_project.cppm
          src/build/unit_plan.cppm
          src/cache/common.cppm
          src/cache/compile.cppm

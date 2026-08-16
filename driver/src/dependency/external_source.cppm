@@ -9,7 +9,6 @@ import rstd;
 import lito.core;
 import lito.toolchain.cmake;
 import :build.event;
-import :build.source_observer;
 import lito.system;
 
 using namespace rstd::prelude;
