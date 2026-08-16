@@ -4,7 +4,7 @@ members = ["frontend", "core", "cpp", "toolchain", "driver", "cli", "tests"]
 default-members = ["cli"]
 
 [workspace.package]
-version = "0.2.0"
+version = "0.2.1"
 
 [workspace.dependencies.lito-frontend]
 path = "frontend"

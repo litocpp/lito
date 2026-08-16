@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.2.0
+  VERSION 0.2.1
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
