@@ -80,6 +80,7 @@ struct CMakeDependencyRequirement {
     String                      package;
     CMakeDependencySource       source;
     CMakeIntegration            integration { CMakeIntegration::Install };
+    bool                        add_subdirectory { true };
     Option<PathBuf>             adapter;
     Option<PathBuf>             config_directory;
     Vec<CMakeCacheEntry>        cache;
@@ -103,12 +104,13 @@ struct CMakeDependencyRequirement {
             });
         }
         auto result = CMakeDependencyRequirement {
-            .alias       = alias.clone(),
-            .package     = package.clone(),
-            .source      = source.clone(),
-            .integration = integration,
-            .cache       = rstd::move(cache_copy),
-            .targets     = rstd::move(target_copy),
+            .alias            = alias.clone(),
+            .package          = package.clone(),
+            .source           = source.clone(),
+            .integration      = integration,
+            .add_subdirectory = add_subdirectory,
+            .cache            = rstd::move(cache_copy),
+            .targets          = rstd::move(target_copy),
         };
         if (adapter.is_some()) result.adapter = Some(adapter->clone());
         if (config_directory.is_some()) result.config_directory = Some(config_directory->clone());

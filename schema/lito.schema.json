@@ -1121,6 +1121,9 @@
             "build-tree"
           ]
         },
+        "add-subdirectory": {
+          "type": "boolean"
+        },
         "adapter": {
           "$ref": "#/definitions/relativePath"
         },
@@ -1404,6 +1407,46 @@
               "not": {
                 "required": [
                   "adapter"
+                ]
+              }
+            },
+            {
+              "required": [
+                "integration"
+              ],
+              "properties": {
+                "integration": {
+                  "enum": [
+                    "build-tree"
+                  ]
+                }
+              }
+            }
+          ]
+        },
+        {
+          "if": {
+            "required": [
+              "add-subdirectory"
+            ],
+            "properties": {
+              "add-subdirectory": {
+                "const": false
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "adapter"
+            ]
+          }
+        },
+        {
+          "anyOf": [
+            {
+              "not": {
+                "required": [
+                  "add-subdirectory"
                 ]
               }
             },

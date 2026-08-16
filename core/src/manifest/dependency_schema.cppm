@@ -636,8 +636,9 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     auto archives    = parse_cmake_archive_variants(member(specification, "archives"_str), context);
     auto sha256      = optional_string(specification, "sha256"_str, context);
     auto integration = optional_string(specification, "integration"_str, context);
-    auto adapter     = optional_string(specification, "adapter"_str, context);
-    auto config_directory = optional_string(specification, "config-directory"_str, context);
+    auto add_subdirectory_value = member(specification, "add-subdirectory"_str);
+    auto adapter                = optional_string(specification, "adapter"_str, context);
+    auto config_directory       = optional_string(specification, "config-directory"_str, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     if (git.is_err()) return Err(rstd::move(git).unwrap_err());
@@ -693,10 +694,27 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} build-tree integration cannot use config-directory", context));
     }
+    auto add_subdirectory = true;
+    if (add_subdirectory_value.is_some()) {
+        auto parsed = (**add_subdirectory_value).as_bool();
+        if (parsed.is_none()) {
+            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
+                rstd::format("{}.add-subdirectory must be a boolean", context));
+        }
+        if (integration_kind != CMakeIntegration::BuildTree) {
+            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
+                rstd::format("{}.add-subdirectory requires build-tree integration", context));
+        }
+        add_subdirectory = *parsed;
+    }
     auto adapter_value = rstd::move(adapter).unwrap();
     if (adapter_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.adapter requires build-tree integration", context));
+    }
+    if (! add_subdirectory && adapter_value.is_none()) {
+        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
+            rstd::format("{}.add-subdirectory = false requires an adapter", context));
     }
     auto hash_value = rstd::move(sha256).unwrap();
     if (archive_value.is_some() != hash_value.is_some()) {
@@ -751,6 +769,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         .package          = rstd::move(package).unwrap(),
         .source           = rstd::move(source),
         .integration      = integration_kind,
+        .add_subdirectory = add_subdirectory,
         .adapter          = rstd::move(adapter_path),
         .config_directory = rstd::move(directory),
         .cache            = rstd::move(cache).unwrap(),
@@ -802,6 +821,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
             .package          = rstd::move(value.package),
             .source           = rstd::move(value.source),
             .integration      = value.integration,
+            .add_subdirectory = value.add_subdirectory,
             .adapter          = rstd::move(value.adapter),
             .config_directory = rstd::move(value.config_directory),
             .cache            = rstd::move(value.cache),

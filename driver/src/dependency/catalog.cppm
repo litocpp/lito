@@ -153,7 +153,10 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
             }
             bindings[archive_bindings[index]].requirement.source =
                 ResolvedCMakeDependencySource::Directory(
-                    rstd::move(acquired.root), rstd::move(acquired.identity), *has_project, true);
+                    rstd::move(acquired.root),
+                    rstd::move(acquired.identity),
+                    bindings[archive_bindings[index]].requirement.add_subdirectory && *has_project,
+                    true);
         }
     }
 

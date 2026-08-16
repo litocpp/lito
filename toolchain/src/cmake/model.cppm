@@ -207,6 +207,7 @@ auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requireme
         .package          = requirement.package.clone(),
         .source           = clone_cmake_source(requirement.source),
         .integration      = requirement.integration,
+        .add_subdirectory = requirement.add_subdirectory,
         .adapter_identity = requirement.adapter_identity.clone(),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
@@ -279,6 +280,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(query_recipe,
                     requirement.integration == CMakeIntegration::BuildTree ? "build-tree"_str
                                                                            : "install"_str);
+    append_identity(query_recipe,
+                    requirement.add_subdirectory ? "add-subdirectory"_str
+                                                 : "adapter-owned-source"_str);
     if (requirement.adapter.is_some()) {
         auto adapter_path = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
         if (adapter_path.is_err()) return Err(rstd::move(adapter_path).unwrap_err());

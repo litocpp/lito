@@ -196,9 +196,10 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         .package = String::make("LitoBuildTree"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
             project->root.clone(), String::make("lito-test-cmake-build-tree-v1"_str), false),
-        .integration = lito::CMakeIntegration::BuildTree,
-        .adapter     = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
-        .targets     = rstd::move(targets),
+        .integration      = lito::CMakeIntegration::BuildTree,
+        .add_subdirectory = false,
+        .adapter          = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
+        .targets          = rstd::move(targets),
     });
     auto target   = pkg_config_target();
     auto resolved = resolve_cmake_fixtures(declarations,

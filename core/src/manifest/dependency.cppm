@@ -59,6 +59,7 @@ struct WorkspaceCMakeExternalDependencyDefinition {
     String                package;
     CMakeDependencySource source;
     CMakeIntegration      integration { CMakeIntegration::Install };
+    bool                  add_subdirectory { true };
     Option<PathBuf>       adapter;
     Option<PathBuf>       config_directory;
     Vec<CMakeCacheEntry>  cache;

@@ -132,6 +132,7 @@ static = true
 find-package = "LitoFixture"
 path = "cmake-package"
 integration = "build-tree"
+add-subdirectory = false
 adapter = "fixture-adapter.cmake"
 )toml"_str,
         },
@@ -235,6 +236,7 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(cmake.targets.len(), usize(1));
     EXPECT_EQ(cmake.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
     EXPECT_EQ(cmake.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_FALSE(cmake.add_subdirectory);
     ASSERT_TRUE(cmake.adapter.is_some());
     EXPECT_EQ(cmake.adapter->as_path().to_str().unwrap(), "fixture-adapter.cmake"_str);
     ASSERT_TRUE(cmake.declaration_root.is_some());
@@ -247,6 +249,7 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
     const auto& resolved = prepared_sources->dependencies[usize {}].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
+    EXPECT_FALSE(resolved.add_subdirectory);
     EXPECT_EQ(resolved.source.as_Directory().root.as_path(),
               directory.join(PathBuf::from("cmake-package"_str).as_path()).as_path());
     ASSERT_TRUE(resolved.adapter.is_some());

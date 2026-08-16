@@ -135,6 +135,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
                 .package          = declaration.package.clone(),
                 .source           = rstd::move(source),
                 .integration      = declaration.integration,
+                .add_subdirectory = declaration.add_subdirectory,
                 .adapter          = rstd::move(adapter),
                 .adapter_identity = rstd::move(adapter_identity),
                 .config_directory = rstd::move(config_directory),
@@ -272,7 +273,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         source = ResolvedCMakeDependencySource::Directory(
             requirement.source.as_Directory().root.clone(),
             requirement.source.as_Directory().identity.clone(),
-            true,
+            requirement.add_subdirectory,
             requirement.source.as_Directory().cacheable);
     } else if (requirement.source.is_Archive()) {
         source =
@@ -325,6 +326,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         .package          = requirement.package.clone(),
         .source           = rstd::move(source),
         .integration      = requirement.integration,
+        .add_subdirectory = requirement.add_subdirectory,
         .adapter          = rstd::move(adapter),
         .adapter_identity = requirement.adapter_identity.clone(),
         .config_directory = rstd::move(config_directory),

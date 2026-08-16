@@ -147,7 +147,10 @@ target_include_directories(lito_build_tree PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/in
         { "include/lito_build_tree.hpp"_str, "#pragma once\nint lito_build_tree_fixture();\n"_str },
         { "src/fixture.cpp"_str,
           "#include <lito_build_tree.hpp>\nint lito_build_tree_fixture() { return 42; }\n"_str },
-        { "adapter.cmake"_str, R"(if(NOT TARGET LitoBuildTree::fixture)
+        { "adapter.cmake"_str, R"(if(NOT TARGET lito_build_tree)
+  add_subdirectory("${fixture_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/fixture-source")
+endif()
+if(NOT TARGET LitoBuildTree::fixture)
   add_library(LitoBuildTree::fixture ALIAS lito_build_tree)
 endif()
 set(LitoBuildTree_VERSION "4.5.6")

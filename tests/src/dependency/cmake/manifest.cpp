@@ -110,6 +110,7 @@ archive = "cmake_build_tree"
 find-package = "LitoBuildTree"
 path = "project"
 integration = "build-tree"
+add-subdirectory = false
 adapter = "adapter.cmake"
 targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
 )"_str },
@@ -124,6 +125,7 @@ targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& declared = loaded->cmake_external_dependencies[usize {}];
     EXPECT_EQ(declared.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_FALSE(declared.add_subdirectory);
     ASSERT_TRUE(declared.source.is_Path());
     ASSERT_TRUE(declared.adapter.is_some());
     EXPECT_EQ(declared.adapter->as_path().to_str().unwrap(), "adapter.cmake"_str);
@@ -136,6 +138,7 @@ targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
     const auto& resolved = external->dependencies[usize {}].requirement;
     EXPECT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_FALSE(resolved.add_subdirectory);
     ASSERT_TRUE(resolved.adapter.is_some());
     EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
 }
@@ -194,6 +197,26 @@ TEST_F(CMakeManifest, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
 find-package = "Fixture"
 path = "package"
 adapter = "adapter.cmake"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "add-subdirectory-install"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+path = "package"
+add-subdirectory = false
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "add-subdirectory-type"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+path = "package"
+integration = "build-tree"
+add-subdirectory = "false"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
+)"_str },
+        { "add-subdirectory-without-adapter"_str, R"([external-dependencies.cmake.fixture]
+find-package = "Fixture"
+path = "package"
+integration = "build-tree"
+add-subdirectory = false
 targets = [{ name = "Fixture::fixture", visibility = "private" }]
 )"_str },
         { "archive-missing-sha"_str, R"([external-dependencies.cmake.fixture]

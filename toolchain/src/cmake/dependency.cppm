@@ -23,6 +23,7 @@ struct ResolvedCMakeDependencyRequirement {
     String                        package;
     ResolvedCMakeDependencySource source;
     CMakeIntegration              integration { CMakeIntegration::Install };
+    bool                          add_subdirectory { true };
     Option<PathBuf>               adapter;
     String                        adapter_identity;
     Option<PathBuf>               config_directory;
