@@ -41,6 +41,37 @@ auto contains_unit(const Vec<UnitId>& values, UnitId value) -> bool {
     return false;
 }
 
+auto directly_visible(const PackagePlan& package, TargetId importer, TargetId provider) -> bool {
+    if (importer == provider) return true;
+    for (const auto& dependency : package.package->targets[importer].dependencies) {
+        if (dependency.visibility != DependencyVisibility::LinkOnly &&
+            dependency.target == package.package->targets[provider].id) {
+            return true;
+        }
+    }
+    return false;
+}
+
+auto target_index(const PackagePlan& package, const PackageTargetId& identity) -> Option<TargetId> {
+    for (auto target = TargetId {}; target < package.package->targets.len(); ++target) {
+        if (package.package->targets[target].id == identity) return Some(target);
+    }
+    return None();
+}
+
+auto publicly_reexported(const PackagePlan&      package,
+                         const Vec<Vec<UnitId>>& public_target_units,
+                         TargetId                importer,
+                         UnitId                  provider) -> bool {
+    for (const auto& dependency : package.package->targets[importer].dependencies) {
+        if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
+        auto dependency_target = target_index(package, dependency.target);
+        if (dependency_target.is_none()) continue;
+        if (contains_unit(public_target_units[*dependency_target], provider)) return true;
+    }
+    return false;
+}
+
 auto visit(UnitId                   unit,
            const Vec<PreparedUnit>& units,
            const Vec<Vec<UnitId>>&  direct_inputs,
@@ -72,6 +103,7 @@ struct ModulePlan {
     Vec<UnitId>      compile_order;
     Vec<Vec<UnitId>> direct_inputs;
     Vec<Vec<UnitId>> resolved_inputs;
+    Vec<Vec<UnitId>> public_inputs;
 };
 
 auto resolve_modules(const PackagePlan&       package,
@@ -80,6 +112,10 @@ auto resolve_modules(const PackagePlan&       package,
                      const BmiFormatIdentity& format) -> ModuleResult<ModulePlan> {
     if (units.len() != scans.len()) {
         return graph_failure<ModulePlan>("module graph received mismatched units and scans"_str);
+    }
+    if (package.public_targets.len() != package.package->targets.len() ||
+        package.visible_targets.len() != package.package->targets.len()) {
+        return graph_failure<ModulePlan>("module graph received an invalid package plan"_str);
     }
 
     auto providers = ProviderMap::make();
@@ -149,8 +185,12 @@ auto resolve_modules(const PackagePlan&       package,
         }
     }
 
-    auto direct_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
-    for (auto unit = UnitId {}; unit < units.len(); ++unit) direct_inputs.emplace_back();
+    auto direct_inputs   = Vec<Vec<UnitId>>::with_capacity(units.len());
+    auto exported_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
+    for (auto unit = UnitId {}; unit < units.len(); ++unit) {
+        direct_inputs.emplace_back();
+        exported_inputs.emplace_back();
+    }
     for (const auto& scan : scans) {
         auto names = StringSet::make();
         for (const auto& required : scan.required_modules) {
@@ -192,6 +232,9 @@ auto resolve_modules(const PackagePlan&       package,
             if (names.contains_key(required.logical_name.as_str())) continue;
             names.insert(required.logical_name.clone(), empty {});
             direct_inputs[scan.unit].emplace_back(provider_unit);
+            if (scan.provided.is_some() && scan.provided->is_interface && required.exported) {
+                exported_inputs[scan.unit].emplace_back(provider_unit);
+            }
         }
     }
 
@@ -218,10 +261,84 @@ auto resolve_modules(const PackagePlan&       package,
         }
     }
 
+    auto public_inputs = Vec<Vec<UnitId>>::with_capacity(units.len());
+    for (auto unit = UnitId {}; unit < units.len(); ++unit) public_inputs.emplace_back();
+    for (auto unit : compile_order) {
+        for (auto input : exported_inputs[unit]) {
+            for (auto transitive : public_inputs[input]) {
+                if (! contains_unit(public_inputs[unit], transitive)) {
+                    public_inputs[unit].emplace_back(transitive);
+                }
+            }
+            if (! contains_unit(public_inputs[unit], input)) {
+                public_inputs[unit].emplace_back(input);
+            }
+        }
+    }
+
+    auto public_target_units = Vec<Vec<UnitId>>::with_capacity(package.package->targets.len());
+    for (auto target = TargetId {}; target < package.package->targets.len(); ++target) {
+        public_target_units.emplace_back();
+    }
+    for (const auto& scan : scans) {
+        if (scan.provided.is_none() || ! scan.provided->is_interface ||
+            scan.provided->logical_name.as_str().contains(":"_str)) {
+            continue;
+        }
+        auto target = units[scan.unit].unit.target;
+        if (! contains_unit(public_target_units[target], scan.unit)) {
+            public_target_units[target].emplace_back(scan.unit);
+        }
+        for (auto exported : public_inputs[scan.unit]) {
+            if (! contains_unit(public_target_units[target], exported)) {
+                public_target_units[target].emplace_back(exported);
+            }
+        }
+    }
+
+    for (const auto& scan : scans) {
+        const auto importer_target = units[scan.unit].unit.target;
+        for (const auto& required : scan.required_modules) {
+            auto provider        = providers.get(required.logical_name.as_str());
+            auto provider_unit   = **provider;
+            auto provider_target = units[provider_unit].unit.target;
+            if (required.exported &&
+                contains_unit(public_target_units[importer_target], scan.unit) &&
+                importer_target != provider_target &&
+                ! contains_target(package.public_targets[importer_target], provider_target)) {
+                return graph_failure<ModulePlan>(rstd::format(
+                    "module '{}' export-imports module '{}' from target '{}', but that target is "
+                    "not a public dependency",
+                    scan.provided->logical_name.as_str(),
+                    required.logical_name.as_str(),
+                    package.package->targets[provider_target].id.name.as_str()));
+            }
+            if (directly_visible(package, importer_target, provider_target) ||
+                publicly_reexported(package,
+                                    public_target_units,
+                                    importer_target,
+                                    provider_unit)) {
+                continue;
+            }
+            if (package.package->targets[importer_target].test_attachment.is_some() &&
+                importer_target < package.visible_targets.len() &&
+                contains_target(package.visible_targets[importer_target], provider_target)) {
+                continue;
+            }
+            return graph_failure<ModulePlan>(rstd::format(
+                "module '{}' from target '{}' is not directly visible or re-exported to target "
+                "'{}'",
+                required.logical_name.as_str(),
+                package.package->targets[provider_target].id.name.as_str(),
+                package.package->targets[importer_target].id.name.as_str()));
+        }
+    }
+
     return Ok(ModulePlan {
         .compile_order   = rstd::move(compile_order),
         .direct_inputs   = rstd::move(direct_inputs),
         .resolved_inputs = rstd::move(resolved_inputs),
+        .public_inputs   = rstd::move(public_inputs),
     });
 }
 

@@ -430,7 +430,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
     auto target_order = rstd::move(selection.target_order);
 
     auto public_usage    = Vec<Option<PublicUsage>>::with_capacity(package.targets.len());
-    auto public_visible  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
+    auto public_targets  = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto contexts        = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto link_inputs     = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
@@ -438,7 +438,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
     auto linker_options  = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
-        public_visible.emplace_back();
+        public_targets.emplace_back();
         contexts.emplace_back();
         visible_targets.emplace_back();
         link_inputs.emplace_back();
@@ -472,10 +472,10 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
             append_unique(usage.definitions, nested_usage.definitions);
             append_unique(usage.arguments, nested_usage.arguments);
             append_unique(usage.external_identities, nested_usage.external_identities);
-            append_unique(exported_targets, public_visible[dependency_id]);
+            append_unique(exported_targets, public_targets[dependency_id]);
         }
         public_usage[target]   = Some(rstd::move(usage));
-        public_visible[target] = rstd::move(exported_targets);
+        public_targets[target] = rstd::move(exported_targets);
     }
 
     for (auto target : target_order) {
@@ -522,7 +522,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         for (const auto& dependency : spec.dependencies) {
             if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
             auto dependency_id = *target_index(package, dependency.target);
-            append_unique(visible, public_visible[dependency_id]);
+            append_unique(visible, public_targets[dependency_id]);
             if (dependency.visibility == DependencyVisibility::Public) continue;
             const auto& usage = *public_usage[dependency_id];
             append_unique(private_layer.include_directories, usage.include_directories);
@@ -628,6 +628,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         .target_identities = rstd::move(target_identities),
         .target_order      = rstd::move(target_order),
         .contexts          = rstd::move(contexts),
+        .public_targets    = rstd::move(public_targets),
         .visible_targets   = rstd::move(visible_targets),
         .link_inputs       = rstd::move(link_inputs),
         .link_requirements = rstd::move(link_requirements),
@@ -662,6 +663,7 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
         .profile         = rstd::addressof(package.profiles[discovery.profile]),
         .target_order    = rstd::move(discovery.target_order),
         .contexts        = rstd::move(discovery.contexts),
+        .public_targets  = rstd::move(discovery.public_targets),
         .visible_targets = rstd::move(discovery.visible_targets),
         .link_inputs     = rstd::move(discovery.link_inputs),
         .link_requirements = rstd::move(discovery.link_requirements),

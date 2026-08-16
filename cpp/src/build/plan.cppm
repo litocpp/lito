@@ -25,6 +25,7 @@ struct SourceDiscoveryPlan {
     Vec<PackageTargetId>       target_identities;
     Vec<TargetId>              target_order;
     Vec<CompileContext>        contexts;
+    Vec<Vec<TargetId>>         public_targets;
     Vec<Vec<TargetId>>         visible_targets;
     Vec<Vec<PlannedLinkInput>> link_inputs;
     Vec<CppLinkRequirements>   link_requirements;
@@ -42,6 +43,7 @@ struct PackagePlan {
     const ProfileSpec*         profile {};
     Vec<TargetId>              target_order;
     Vec<CompileContext>        contexts;
+    Vec<Vec<TargetId>>         public_targets;
     Vec<Vec<TargetId>>         visible_targets;
     Vec<Vec<PlannedLinkInput>> link_inputs;
     Vec<CppLinkRequirements>   link_requirements;
