@@ -249,15 +249,18 @@ auto discovery_compile_context(const cpp::PackageMetadata&     package,
     return Ok(Some(rstd::move(context).unwrap()));
 }
 
-auto import_owner(const cpp::PackageMetadata&     package,
-                  const cpp::SourceDiscoveryPlan& plan,
-                  cpp::TargetId                   importer,
-                  ref<str>                        logical_name,
-                  FrontendAnalysisService& analysis_service) -> BuildResult<Option<ImportOwner>> {
+auto convention_import_owner(const cpp::PackageMetadata&     package,
+                             const cpp::SourceDiscoveryPlan& plan,
+                             cpp::TargetId                   importer,
+                             ref<str>                        logical_name,
+                             FrontendAnalysisService& analysis_service)
+    -> BuildResult<Option<ImportOwner>> {
     auto candidates       = Vec<ImportOwnerCandidate>::make();
     auto highest_priority = usize {};
     for (auto visible : plan.visible_targets[importer]) {
-        auto exists = cpp::module_source_exists(package.targets[visible], logical_name);
+        const auto& target = package.targets[visible];
+        if (target.source.discovery == SourceDiscoveryMode::Explicit) continue;
+        auto exists = cpp::module_source_exists(target, logical_name);
         if (exists.is_err()) {
             return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(
                 rstd::format("cannot inspect owner of module '{}': {}",
@@ -698,20 +701,16 @@ auto discover_sources(const cpp::PackageMetadata&     package,
 
             if (candidate.expand_imports) {
                 for (const auto& imported : frontend_result.imports) {
-                    auto owner = import_owner(package,
-                                              plan,
-                                              candidate.target,
-                                              imported.logical_name.as_str(),
-                                              analysis_service);
+                    auto owner = convention_import_owner(package,
+                                                         plan,
+                                                         candidate.target,
+                                                         imported.logical_name.as_str(),
+                                                         analysis_service);
                     if (owner.is_err()) {
                         return Err(rstd::move(owner).unwrap_err());
                     }
                     if (owner->is_none()) continue;
                     auto resolved_owner = rstd::move(owner).unwrap().unwrap();
-                    if (package.targets[resolved_owner.target].source.discovery ==
-                        SourceDiscoveryMode::Explicit) {
-                        continue;
-                    }
                     auto enqueued = enqueue_candidate(resolved_owner.target,
                                                       rstd::move(resolved_owner.source),
                                                       true,

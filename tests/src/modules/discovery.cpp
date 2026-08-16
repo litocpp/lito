@@ -34,3 +34,13 @@ TEST(ModuleDiscovery, DiscoveryAndModuleConventionsBuildExpectedCases) {
     }
     EXPECT_TRUE(clear_output(output.as_path()));
 }
+
+TEST(ModuleDiscovery, ConventionLookupSkipsExplicitSourceTargets) {
+    auto output = output_root("module-discovery-explicit-visible"_str);
+    ASSERT_TRUE(clear_output(output.as_path()));
+    auto directory = fixture_path("modules/discovery/explicit-visible/app"_str);
+    auto built = lito::build(
+        build_request(directory.as_path(), output.as_path(), Vec<String>::make()));
+    ASSERT_TRUE(built.is_ok());
+    EXPECT_TRUE(clear_output(output.as_path()));
+}

@@ -1,0 +1,9 @@
+[package]
+name = "fixture-explicit-no-src"
+version = "0.1.0"
+
+[lib]
+name = "fixture-explicit-no-src"
+module = "fixture.source"
+archive = "fixture_explicit_no_src"
+sources = ["lib.cppm"]
