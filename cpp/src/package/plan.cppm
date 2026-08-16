@@ -82,6 +82,34 @@ auto append_unique(CppArgumentLayer& output, const CppArgumentLayer& input) -> v
     }
 }
 
+auto append_unique(CppLinkRequirements& output, const CppLinkRequirements& input) -> void {
+    if (input.posix_threads) {
+        output.posix_threads = true;
+        append_unique(output.thread_sources, input.thread_sources);
+    }
+    for (const auto& requirement : input.system_libraries) {
+        auto present = false;
+        for (const auto& existing : output.system_libraries) {
+            if (existing.name == requirement.name.as_str()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) output.system_libraries.push(requirement.clone());
+    }
+}
+
+auto append_unique(CppLinkRequirements& output, const ResolvedExternalDependency& input) -> void {
+    append_unique(output, input.link_requirements);
+    for (const auto& target : input.targets) {
+        for (const auto& occurrence : target.compile_arguments.occurrences) {
+            if (! occurrence.argument.is_Threading()) continue;
+            output.posix_threads = true;
+            append_unique(output.thread_sources, occurrence.source.as_str());
+        }
+    }
+}
+
 auto append_unique(Vec<TargetId>& output, TargetId value) -> bool {
     for (auto existing : output) {
         if (existing == value) return false;
@@ -153,7 +181,7 @@ auto visit_target(const PackageMetadata& package,
 }
 
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-compile-context-v3\n"_str);
+    auto result = String::make("lito-compile-context-v4\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
@@ -168,7 +196,7 @@ auto context_id(const CompileContext& context) -> String {
 }
 
 auto scan_context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-scan-context-v1\n"_str);
+    auto result = String::make("lito-scan-context-v2\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
@@ -406,6 +434,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
     auto contexts        = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto link_inputs     = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
+    auto link_requirements = Vec<CppLinkRequirements>::with_capacity(package.targets.len());
     auto linker_options  = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());
@@ -413,6 +442,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         contexts.emplace_back();
         visible_targets.emplace_back();
         link_inputs.emplace_back();
+        link_requirements.emplace_back();
         linker_options.emplace_back();
     }
 
@@ -422,7 +452,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         if (spec.id.kind == PackageTargetKind::Library) {
             append_unique(usage.include_directories, spec.usage.public_include_directories);
             append_unique(usage.definitions, spec.usage.public_definitions);
-            append_unique(usage.arguments, spec.usage.public_arguments);
+            append_unique(usage.arguments, spec.usage.interface_arguments);
             for (const auto& dependency : spec.external_dependencies) {
                 for (const auto& target : dependency.targets) {
                     if (target.visibility != DependencyVisibility::Public) continue;
@@ -472,7 +502,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto private_layer = CppOptionLayer {};
         append_unique(private_layer.include_directories, spec.usage.private_include_directories);
         append_unique(private_layer.definitions, spec.usage.private_definitions);
-        append_unique(private_layer.arguments, spec.usage.private_arguments);
+        append_unique(private_layer.arguments, spec.usage.arguments);
         for (const auto& dependency : spec.external_dependencies) {
             for (const auto& external_target : dependency.targets) {
                 const auto consumed_publicly =
@@ -510,7 +540,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);
-        append_unique(linker_options[target], spec.usage.private_linker_options);
+        append_unique(linker_options[target], spec.usage.linker_options);
     }
 
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
@@ -555,17 +585,34 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto ordered          = visit_target(package, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs = link_inputs[target];
+        auto& requirements = link_requirements[target];
+        append_unique(requirements, package.profiles[profile].link_requirements);
+        append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {
             const auto candidate = dependency_order[index - usize(1)];
             if (candidate == target) continue;
+            auto abi_difference =
+                check_cpp_abi_compatibility(contexts[candidate].cpp, contexts[target].cpp);
+            if (abi_difference.is_some()) {
+                return plan_failure<SourceDiscoveryPlan>(rstd::format(
+                    "artifact ABI conflict in {}: target '{}' has '{}', dependency '{}' has '{}'",
+                    cpp_abi_compatibility_field_name(abi_difference->field),
+                    target_text(package.targets[target].id).as_str(),
+                    abi_difference->consumer.as_str(),
+                    target_text(package.targets[candidate].id).as_str(),
+                    abi_difference->provider.as_str()));
+            }
+            append_unique(requirements, package.targets[candidate].usage.link_requirements);
             inputs.push(PlannedLinkInput::Target(candidate));
             for (const auto& external : package.targets[candidate].external_dependencies) {
+                append_unique(requirements, external);
                 if (! external.link_arguments.tokens.is_empty()) {
                     inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
                 }
             }
         }
         for (const auto& external : package.targets[target].external_dependencies) {
+            append_unique(requirements, external);
             if (! external.link_arguments.tokens.is_empty()) {
                 inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
             }
@@ -583,6 +630,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         .contexts          = rstd::move(contexts),
         .visible_targets   = rstd::move(visible_targets),
         .link_inputs       = rstd::move(link_inputs),
+        .link_requirements = rstd::move(link_requirements),
         .linker_options    = rstd::move(linker_options),
     });
 }
@@ -616,6 +664,7 @@ auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan disco
         .contexts        = rstd::move(discovery.contexts),
         .visible_targets = rstd::move(discovery.visible_targets),
         .link_inputs     = rstd::move(discovery.link_inputs),
+        .link_requirements = rstd::move(discovery.link_requirements),
         .linker_options  = rstd::move(discovery.linker_options),
     });
 }

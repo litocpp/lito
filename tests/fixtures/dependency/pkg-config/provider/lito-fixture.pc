@@ -7,4 +7,4 @@ Description: Controlled Lito pkg-config fixture
 Version: 2.3.4
 Requires.private: lito-private
 Cflags: -I${includedir}/regular -isystem "${includedir}/system dir" -DLITO_PKG_CONFIG_FIXTURE=1
-Libs: -L${libdir} -llito_fixture -Wl,--start-group -lrepeat -lrepeat -Wl,--end-group
+Libs: -L${libdir} -llito_fixture -Wl,--start-group -lrepeat -lrepeat -Wl,--end-group -pthread -ldl

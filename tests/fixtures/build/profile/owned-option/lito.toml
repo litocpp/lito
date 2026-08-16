@@ -8,4 +8,4 @@ name = "profile-owned-option"
 sources = ["main.cpp"]
 
 [usage]
-private-options = ["-O2"]
+options = ["-O2"]

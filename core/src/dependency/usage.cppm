@@ -28,9 +28,10 @@ struct DeclaredUsageRequirements {
     Vec<PathBuf>                     private_include_directories;
     Vec<String>                      public_definitions;
     Vec<String>                      private_definitions;
-    Vec<String>                      public_options;
-    Vec<String>                      private_options;
-    Vec<String>                      private_linker_options;
+    Vec<String>                      options;
+    Vec<String>                      linker_options;
+    bool                             threads { false };
+    Vec<String>                      system_libraries;
     Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
 };
 

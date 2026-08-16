@@ -28,6 +28,56 @@ auto macro_states(const Vec<CppMacroDirective>& values) -> IdentityMap<String, S
     return result;
 }
 
+auto push_identity(String& output, ref<str> key, ref<str> value) -> void;
+
+auto standard_library_mode_macro(ref<str> name) -> bool {
+    return name == "_GLIBCXX_USE_CXX11_ABI"_str || name == "_GLIBCXX_DEBUG"_str ||
+           name == "_GLIBCXX_ASSERTIONS"_str || name == "_GLIBCXX_PARALLEL"_str ||
+           name == "_LIBCPP_HARDENING_MODE"_str ||
+           name == "_LIBCPP_ASSERTION_SEMANTIC"_str;
+}
+
+auto standard_library_abi_macro(ref<str> name) -> bool {
+    return name == "_GLIBCXX_USE_CXX11_ABI"_str || name == "_GLIBCXX_DEBUG"_str ||
+           name == "_GLIBCXX_PARALLEL"_str;
+}
+
+auto standard_library_macro_identity(const CppCompileOptions& options, bool abi_only) -> String {
+    auto states = macro_states(options.preprocessor.macros);
+    auto result = String::make();
+    auto values = states.into_iter();
+    while (auto value = values.next()) {
+        auto entry = rstd::move(value).unwrap();
+        auto name  = entry.template get<0>().as_str();
+        if ((abi_only && ! standard_library_abi_macro(name)) ||
+            (! abi_only && ! standard_library_mode_macro(name))) {
+            continue;
+        }
+        push_identity(result, name, entry.template get<1>().as_str());
+    }
+    return result;
+}
+
+auto family_options_identity(ref<str> prefix, const Vec<CppFamilyOption>& values) -> String {
+    auto result = String::make();
+    for (const auto& value : values) {
+        push_identity(result,
+                      rstd::format("{}:{}", prefix, value.family.as_str()).as_str(),
+                      value.value.as_str());
+    }
+    return result;
+}
+
+auto string_options_identity(ref<str> key, const Vec<String>& values) -> String {
+    auto result = String::make();
+    for (const auto& value : values) push_identity(result, key, value.as_str());
+    return result;
+}
+
+auto standard_library_name(StandardLibrary value) -> ref<str> {
+    return value == StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
+}
+
 auto push_identity(String& output, ref<str> key, ref<str> value) -> void {
     output.push_str(key);
     output.push_ascii('=');
@@ -61,6 +111,12 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
                   "stdlib"_str,
                   options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
                                                                              : "libc++"_str);
+    if (options.abi.resolved_standard_library.is_some()) {
+        push_identity(output,
+                      "resolved-stdlib"_str,
+                      options.abi.resolved_standard_library->headers_identity.as_str());
+    }
+    push_identity(output, "posix-threads"_str, options.threading.posix);
     for (const auto& value : options.language.modes) {
         push_identity(output,
                       rstd::format("language:{}", value.family.as_str()).as_str(),
@@ -88,8 +144,137 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
 export namespace lito::cpp
 {
 
+enum class CppAbiCompatibilityField
+{
+    StandardLibrary,
+    StandardLibraryHeaders,
+    StandardLibraryModes,
+    AbiModes,
+    Target,
+    TargetFeatures,
+    Instrumentation,
+};
+
+struct CppAbiCompatibilityDifference {
+    CppAbiCompatibilityField field { CppAbiCompatibilityField::StandardLibrary };
+    String                   provider;
+    String                   consumer;
+};
+
+constexpr auto cpp_abi_compatibility_field_name(CppAbiCompatibilityField field) -> ref<str> {
+    switch (field) {
+    case CppAbiCompatibilityField::StandardLibrary: return "standard library"_str;
+    case CppAbiCompatibilityField::StandardLibraryHeaders:
+        return "resolved standard library headers"_str;
+    case CppAbiCompatibilityField::StandardLibraryModes:
+        return "standard library ABI modes"_str;
+    case CppAbiCompatibilityField::AbiModes: return "C++ ABI modes"_str;
+    case CppAbiCompatibilityField::Target: return "target"_str;
+    case CppAbiCompatibilityField::TargetFeatures: return "target ABI features"_str;
+    case CppAbiCompatibilityField::Instrumentation: return "instrumentation runtime"_str;
+    }
+    return "C++ ABI"_str;
+}
+
+auto is_cpp_standard_library_mode_macro(ref<str> definition) -> bool {
+    return standard_library_mode_macro(macro_name(definition));
+}
+
+auto cpp_standard_library_modes_identity(const CppCompileOptions& options) -> String {
+    auto result = String::make("lito-cpp-stdlib-modes-v1\n"_str);
+    result.push_str(standard_library_macro_identity(options, false).as_str());
+    return result;
+}
+
+auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String {
+    auto result = String::make("lito-cpp-abi-compatibility-v1\n"_str);
+    push_identity(result,
+                  "stdlib"_str,
+                  options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
+                                                                               : "libc++"_str);
+    if (options.abi.resolved_standard_library.is_some()) {
+        push_identity(result,
+                      "resolved-stdlib"_str,
+                      options.abi.resolved_standard_library->headers_identity.as_str());
+    }
+    for (const auto& value : options.abi.modes) {
+        push_identity(
+            result, rstd::format("abi:{}", value.family.as_str()).as_str(), value.value.as_str());
+    }
+    if (options.target.target.is_some()) {
+        push_identity(result, "target"_str, options.target.target->as_str());
+    }
+    result.push_str(family_options_identity("target"_str, options.target.features).as_str());
+    result.push_str(string_options_identity("instrumentation"_str,
+                                            options.codegen.instrumentation)
+                        .as_str());
+    result.push_str(standard_library_macro_identity(options, true).as_str());
+    return result;
+}
+
+auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
+                                 const CppCompileOptions& consumer)
+    -> Option<CppAbiCompatibilityDifference> {
+    const auto difference = [](CppAbiCompatibilityField field,
+                               ref<str>                  provider_value,
+                               ref<str>                  consumer_value)
+        -> Option<CppAbiCompatibilityDifference> {
+        if (provider_value == consumer_value) return None();
+        return Some(CppAbiCompatibilityDifference {
+            .field    = field,
+            .provider = String::make(provider_value),
+            .consumer = String::make(consumer_value),
+        });
+    };
+
+    auto found = difference(CppAbiCompatibilityField::StandardLibrary,
+                            standard_library_name(provider.abi.standard_library),
+                            standard_library_name(consumer.abi.standard_library));
+    if (found.is_some()) return found;
+    auto provider_headers = provider.abi.resolved_standard_library.is_some()
+                                ? provider.abi.resolved_standard_library->headers_identity.as_str()
+                                : "<unresolved>"_str;
+    auto consumer_headers = consumer.abi.resolved_standard_library.is_some()
+                                ? consumer.abi.resolved_standard_library->headers_identity.as_str()
+                                : "<unresolved>"_str;
+    found = difference(CppAbiCompatibilityField::StandardLibraryHeaders,
+                       provider_headers,
+                       consumer_headers);
+    if (found.is_some()) return found;
+    auto provider_stdlib_modes = standard_library_macro_identity(provider, true);
+    auto consumer_stdlib_modes = standard_library_macro_identity(consumer, true);
+    found = difference(CppAbiCompatibilityField::StandardLibraryModes,
+                       provider_stdlib_modes.as_str(),
+                       consumer_stdlib_modes.as_str());
+    if (found.is_some()) return found;
+    auto provider_abi = family_options_identity("abi"_str, provider.abi.modes);
+    auto consumer_abi = family_options_identity("abi"_str, consumer.abi.modes);
+    found = difference(
+        CppAbiCompatibilityField::AbiModes, provider_abi.as_str(), consumer_abi.as_str());
+    if (found.is_some()) return found;
+    auto provider_target = provider.target.target.is_some() ? provider.target.target->as_str()
+                                                            : "<compiler-default>"_str;
+    auto consumer_target = consumer.target.target.is_some() ? consumer.target.target->as_str()
+                                                            : "<compiler-default>"_str;
+    found = difference(CppAbiCompatibilityField::Target, provider_target, consumer_target);
+    if (found.is_some()) return found;
+    auto provider_features = family_options_identity("target"_str, provider.target.features);
+    auto consumer_features = family_options_identity("target"_str, consumer.target.features);
+    found = difference(CppAbiCompatibilityField::TargetFeatures,
+                       provider_features.as_str(),
+                       consumer_features.as_str());
+    if (found.is_some()) return found;
+    auto provider_instrumentation =
+        string_options_identity("instrumentation"_str, provider.codegen.instrumentation);
+    auto consumer_instrumentation =
+        string_options_identity("instrumentation"_str, consumer.codegen.instrumentation);
+    return difference(CppAbiCompatibilityField::Instrumentation,
+                      provider_instrumentation.as_str(),
+                      consumer_instrumentation.as_str());
+}
+
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-compile-context-v1\n"_str);
+    auto result = String::make("lito-cpp-compile-context-v2\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
@@ -132,7 +317,7 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_scan_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-scan-context-v1\n"_str);
+    auto result = String::make("lito-cpp-scan-context-v2\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
@@ -169,7 +354,7 @@ auto cpp_scan_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-bmi-compatibility-v1\n"_str);
+    auto result = String::make("lito-cpp-bmi-compatibility-v2\n"_str);
     append_semantic_identity(result, options);
     for (const auto& value : options.vendor) {
         if (value.effect == CppVendorOptionEffect::Language ||
@@ -183,7 +368,7 @@ auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String 
 }
 
 auto cpp_public_requirements_identity(const CppPublicRequirements& requirements) -> String {
-    auto result = String::make("lito-cpp-public-requirements-v1\n"_str);
+    auto result = String::make("lito-cpp-public-requirements-v2\n"_str);
     for (const auto& include : requirements.include_directories) {
         auto text = include.path.as_path().to_str();
         push_identity(result,
@@ -218,6 +403,7 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
     auto values          = required_macros.into_iter();
     while (auto value = values.next()) {
         auto entry    = rstd::move(value).unwrap();
+        if (standard_library_mode_macro(entry.template get<0>().as_str())) continue;
         auto consumer = consumer_macros.get(entry.template get<0>().as_str());
         if (consumer.is_none() || (**consumer).as_str() != entry.template get<1>().as_str()) {
             return false;

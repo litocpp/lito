@@ -8,6 +8,7 @@ import lito.core;
 import :build.configuration;
 import lito.system;
 import :compiler.option;
+import :compiler.identity;
 import :package.metadata;
 import :package.spec;
 import :package.target;
@@ -38,30 +39,55 @@ auto parse_options(const CppArgumentParser& parser, const Vec<String>& options, 
     return Ok(rstd::move(parsed).unwrap());
 }
 
-auto validate_usage(const DeclaredUsageRequirements& usage, ref<str> package)
+auto usage_source(const PackageManifest& package, ref<str> field) -> String {
+    return rstd::format("package '{}' manifest '{}' {}",
+                        package.name.as_str(),
+                        package.manifest_path.as_path(),
+                        field);
+}
+
+auto valid_system_library_name(ref<str> name) -> bool {
+    return ! name.is_empty() && ! name.starts_with("-"_str) && ! name.starts_with("/"_str) &&
+           ! name.contains("/"_str) && ! name.contains("\\"_str) && ! name.contains(":"_str) &&
+           ! name.contains(" "_str) && ! name.contains("\t"_str) && ! name.contains("\n"_str) &&
+           ! name.contains("\r"_str);
+}
+
+auto validate_usage(const PackageManifest& package, bool has_link_action)
     -> PackageResult<empty> {
+    const auto& usage = package.usage;
     auto validate_definitions = [&](const Vec<String>& definitions,
                                     ref<str>           field) -> PackageResult<empty> {
         for (const auto& definition : definitions) {
             if (! is_profile_owned_definition(definition.as_str())) continue;
             return adapter_failure<empty>(
-                rstd::format("package '{}' {} definition '{}' overrides a Lito-owned setting",
-                             package,
-                             field,
+                rstd::format("{} definition '{}' overrides a Lito-owned setting",
+                             usage_source(package, field).as_str(),
                              definition.as_str()));
         }
         return Ok(empty {});
     };
     rstd_try(validate_definitions(usage.public_definitions, "public-definitions"_str));
     rstd_try(validate_definitions(usage.private_definitions, "private-definitions"_str));
-    for (const auto& option : usage.private_linker_options) {
+    if (! has_link_action && ! usage.linker_options.is_empty()) {
+        return adapter_failure<empty>(rstd::format(
+            "{} requires a binary, test, or benchmark target",
+            usage_source(package, "usage.linker-options"_str).as_str()));
+    }
+    for (auto index = usize {}; index < usage.linker_options.len(); ++index) {
+        const auto& option = usage.linker_options[index];
+        if (option.as_str() == "-pthread"_str) {
+            return adapter_failure<empty>(rstd::format(
+                "{} option '-pthread' must be declared as usage.threads",
+                usage_source(package, "usage.linker-options"_str).as_str()));
+        }
         if (! option.as_str().starts_with("-stdlib="_str) && option.as_str() != "-nostdlib++"_str &&
             ! is_profile_owned_linker_option(option.as_str())) {
             continue;
         }
         return adapter_failure<empty>(rstd::format(
-            "package '{}' private-linker-options option '{}' overrides a Lito-owned setting",
-            package,
+            "{} option '{}' overrides a Lito-owned setting",
+            usage_source(package, "usage.linker-options"_str).as_str(),
             option.as_str()));
     }
     return Ok(empty {});
@@ -84,22 +110,72 @@ auto contains_source(const Vec<PathBuf>& sources, ref<rstd::path::Path> candidat
     return false;
 }
 
+auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
+    auto result = CppArgumentLayer {};
+    for (const auto& occurrence : arguments.occurrences) {
+        auto promoted = occurrence.argument.is_Threading();
+        if (occurrence.argument.is_Macro()) {
+            promoted = is_cpp_standard_library_mode_macro(
+                occurrence.argument.as_Macro().directive.value.as_str());
+        }
+        if (promoted) result.occurrences.push(as<Clone>(occurrence).clone());
+    }
+    return result;
+}
+
+auto usage_link_requirements(const PackageManifest&  package,
+                             const CppArgumentLayer& arguments)
+    -> PackageResult<CppLinkRequirements> {
+    const auto& usage = package.usage;
+    auto result = CppLinkRequirements {};
+    if (usage.threads) {
+        result.posix_threads = true;
+        result.thread_sources.push(usage_source(package, "usage.threads"_str));
+    }
+    for (const auto& occurrence : arguments.occurrences) {
+        if (! occurrence.argument.is_Threading()) continue;
+        result.posix_threads = true;
+        result.thread_sources.push(occurrence.source.clone());
+    }
+    for (const auto& library : usage.system_libraries) {
+        if (! valid_system_library_name(library.as_str())) {
+            return adapter_failure<CppLinkRequirements>(rstd::format(
+                "{} contains invalid logical library name '{}'",
+                usage_source(package, "usage.system-libraries"_str).as_str(),
+                library.as_str()));
+        }
+        result.system_libraries.push(CppSystemLibraryRequirement {
+            .name   = library.clone(),
+            .source = usage_source(package, "usage.system-libraries"_str),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto clone_usage(const DeclaredUsageRequirements& usage,
-                 const CppArgumentLayer&          public_arguments,
-                 const CppArgumentLayer&          private_arguments) -> UsageRequirements {
+                 const CppArgumentLayer&          arguments,
+                 const CppArgumentLayer&          interface_arguments,
+                 const CppLinkRequirements&       link_requirements) -> UsageRequirements {
     auto include_requirements = Vec<IncludeDirectoryRequirement>::with_capacity(
         usage.private_include_directory_requirements.len());
     for (const auto& requirement : usage.private_include_directory_requirements) {
         include_requirements.push(requirement.clone());
     }
+    auto public_definitions = as<Clone>(usage.public_definitions).clone();
+    for (const auto& definition : usage.private_definitions) {
+        if (is_cpp_standard_library_mode_macro(definition.as_str())) {
+            public_definitions.push(definition.clone());
+        }
+    }
     return UsageRequirements {
         .public_include_directories  = as<Clone>(usage.public_include_directories).clone(),
         .private_include_directories = as<Clone>(usage.private_include_directories).clone(),
-        .public_definitions          = as<Clone>(usage.public_definitions).clone(),
+        .public_definitions          = rstd::move(public_definitions),
         .private_definitions         = as<Clone>(usage.private_definitions).clone(),
-        .public_arguments            = as<Clone>(public_arguments).clone(),
-        .private_arguments           = as<Clone>(private_arguments).clone(),
-        .private_linker_options      = as<Clone>(usage.private_linker_options).clone(),
+        .arguments                   = as<Clone>(arguments).clone(),
+        .interface_arguments         = as<Clone>(interface_arguments).clone(),
+        .link_requirements           = link_requirements.clone(),
+        .linker_options              = as<Clone>(usage.linker_options).clone(),
         .private_include_directory_requirements = rstd::move(include_requirements),
     };
 }
@@ -259,7 +335,16 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
-        rstd_try(validate_usage(package.manifest.usage, package.manifest.name.as_str()));
+        auto has_link_action = false;
+        for (const auto& target : package.manifest.targets) {
+            auto kind = package_target_kind(target);
+            if (kind == PackageTargetKind::Binary || kind == PackageTargetKind::Test ||
+                kind == PackageTargetKind::Benchmark) {
+                has_link_action = true;
+                break;
+            }
+        }
+        rstd_try(validate_usage(package.manifest, has_link_action));
         for (auto& requirement : package.manifest.build_tools) {
             build_tools.push(PackageBuildToolRequirement {
                 .package     = package.manifest.name.clone(),
@@ -267,14 +352,19 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                 .requirement = rstd::move(requirement),
             });
         }
-        auto public_arguments  = rstd_try(parse_options(
+        auto arguments = rstd_try(parse_options(
             argument_parser,
-            package.manifest.usage.public_options,
-            rstd::format("package '{}'.public-options", package.manifest.name.as_str())));
-        auto private_arguments = rstd_try(parse_options(
-            argument_parser,
-            package.manifest.usage.private_options,
-            rstd::format("package '{}'.private-options", package.manifest.name.as_str())));
+            package.manifest.usage.options,
+            usage_source(package.manifest, "usage.options"_str)));
+        if (package.manifest.usage.threads) {
+            arguments.occurrences.push(CppCompilerArgumentOccurrence {
+                .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
+                .source = usage_source(package.manifest, "usage.threads"_str),
+            });
+        }
+        auto interface_arguments = promoted_arguments(arguments);
+        auto link_requirements =
+            rstd_try(usage_link_requirements(package.manifest, arguments));
         auto compile_tests =
             Vec<ResolvedCompileTestCase>::with_capacity(package.manifest.compile_tests.len());
         for (const auto& test : package.manifest.compile_tests) {
@@ -389,7 +479,10 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                 .source        = rstd::move(source),
                 .root          = package.manifest.root.clone(),
                 .source_root   = package.manifest.source_root.clone(),
-                .usage = clone_usage(package.manifest.usage, public_arguments, private_arguments),
+                .usage = clone_usage(package.manifest.usage,
+                                     arguments,
+                                     interface_arguments,
+                                     link_requirements),
                 .attachments       = rstd::move(attachments),
                 .runtime_resources = rstd::move(runtime_resources),
                 .dependencies      = rstd::move(target_dependencies),
@@ -430,7 +523,10 @@ auto adapt_package_graph_metadata(ResolvedPackageGraph        graph,
                     },
                 .root        = package.manifest.root.clone(),
                 .source_root = package.manifest.source_root.clone(),
-                .usage = clone_usage(package.manifest.usage, public_arguments, private_arguments),
+                .usage = clone_usage(package.manifest.usage,
+                                     arguments,
+                                     interface_arguments,
+                                     link_requirements),
                 .compile_tests = rstd::move(compile_tests),
                 .dependencies  = rstd::move(compile_dependencies),
                 .external_dependencies =

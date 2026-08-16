@@ -175,6 +175,8 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
         return CppCompilerArgument::Family(
             family_domain(kind), rstd::move(family), canonical_argument(matched));
     }
+    case CppCompilerArgumentKind::Threading:
+        return CppCompilerArgument::Threading(CppThreadingModel::Posix);
     case CppCompilerArgumentKind::Instrumentation:
         return CppCompilerArgument::Instrumentation(canonical_argument(matched));
     case CppCompilerArgumentKind::Diagnostic:

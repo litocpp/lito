@@ -8,4 +8,4 @@ name = "profile-linker-owned"
 sources = ["main.cpp"]
 
 [usage]
-private-linker-options = ["-Wl,--strip-all"]
+linker-options = ["-Wl,--strip-all"]

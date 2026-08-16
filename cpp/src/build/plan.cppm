@@ -27,6 +27,7 @@ struct SourceDiscoveryPlan {
     Vec<CompileContext>        contexts;
     Vec<Vec<TargetId>>         visible_targets;
     Vec<Vec<PlannedLinkInput>> link_inputs;
+    Vec<CppLinkRequirements>   link_requirements;
     Vec<Vec<String>>           linker_options;
 };
 
@@ -43,6 +44,7 @@ struct PackagePlan {
     Vec<CompileContext>        contexts;
     Vec<Vec<TargetId>>         visible_targets;
     Vec<Vec<PlannedLinkInput>> link_inputs;
+    Vec<CppLinkRequirements>   link_requirements;
     Vec<Vec<String>>           linker_options;
 };
 

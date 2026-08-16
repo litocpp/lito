@@ -199,6 +199,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
                 }
                 modes->insert(rstd::move(family), rstd::move(value));
             }
+            RSTD_CASE(Threading, model) {
+                if (model == CppThreadingModel::Posix) input.threading.posix = true;
+            }
             RSTD_CASE(Instrumentation, value) {
                 instrumentation.insert(rstd::move(value), empty {});
             }
@@ -269,6 +272,11 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
             .argument = CppCompilerArgument::Family(
                 CppOptionFamilyDomain::Abi, value.family.clone(), value.value.clone()),
+        });
+    }
+    if (extra.threading.posix) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
         });
     }
     for (const auto& value : extra.target.features) {

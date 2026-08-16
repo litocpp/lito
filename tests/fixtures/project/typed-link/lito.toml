@@ -1,0 +1,12 @@
+[package]
+name = "fixture-typed-link"
+version = { workspace = true }
+
+[[bin]]
+name = "typed-link"
+link-stdlib = false
+sources = ["main.cpp"]
+
+[usage]
+threads = true
+system-libraries = ["dl", "m"]

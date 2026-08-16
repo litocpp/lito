@@ -1,0 +1,15 @@
+[package]
+name = "fixture-typed-usage"
+version = "0.1.0"
+
+[lib]
+name = "fixture-typed-usage"
+archive = "fixture.typed_usage"
+module = "fixture.typed_usage"
+sources = ["lib.cppm"]
+
+[usage]
+options = ["-Wall"]
+linker-options = ["-Wl,--as-needed"]
+threads = true
+system-libraries = ["dl", "user32"]

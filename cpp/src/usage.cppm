@@ -24,6 +24,63 @@ struct LinkArgumentSequence {
     }
 };
 
+constexpr auto cpp_thread_requirement_semantics() -> CppRequirementSemantics {
+    return CppRequirementSemantics {
+        .applications = CppRequirementApplications {
+            .preprocess = true,
+            .scan       = true,
+            .bmi        = true,
+            .compile    = true,
+            .link       = true,
+        },
+        .domain = CppCompatibilityDomain::ImportClosure,
+        .merge  = CppRequirementMergePolicy::Enable,
+    };
+}
+
+constexpr auto cpp_system_library_requirement_semantics() -> CppRequirementSemantics {
+    return CppRequirementSemantics {
+        .applications = CppRequirementApplications { .link = true },
+        .domain       = CppCompatibilityDomain::LinkClosure,
+        .merge        = CppRequirementMergePolicy::SetUnion,
+    };
+}
+
+struct CppSystemLibraryRequirement : DefaultInClass<CppSystemLibraryRequirement, Clone> {
+    String name;
+    String source;
+
+    auto clone() const -> CppSystemLibraryRequirement {
+        return CppSystemLibraryRequirement { .name = name.clone(), .source = source.clone() };
+    }
+};
+
+struct CppLinkRequirements {
+    bool                               posix_threads { false };
+    Vec<String>                        thread_sources;
+    Vec<CppSystemLibraryRequirement>   system_libraries;
+
+    auto clone() const -> CppLinkRequirements {
+        return CppLinkRequirements {
+            .posix_threads   = posix_threads,
+            .thread_sources  = as<Clone>(thread_sources).clone(),
+            .system_libraries = as<Clone>(system_libraries).clone(),
+        };
+    }
+};
+
+auto cpp_link_requirements_identity(const CppLinkRequirements& requirements) -> String {
+    auto result = String::make("lito-cpp-link-requirements-v1\n"_str);
+    result.push_str(requirements.posix_threads ? "posix-threads=true\n"_str
+                                              : "posix-threads=false\n"_str);
+    for (const auto& requirement : requirements.system_libraries) {
+        result.push_str("system-library="_str);
+        result.push_str(requirement.name.as_str());
+        result.push_ascii('\n');
+    }
+    return result;
+}
+
 struct ResolvedExternalTargetUsage {
     String               name;
     DependencyVisibility visibility { DependencyVisibility::Private };
@@ -46,6 +103,7 @@ struct ResolvedExternalDependency {
     String                           version;
     Vec<ResolvedExternalTargetUsage> targets;
     LinkArgumentSequence             link_arguments;
+    CppLinkRequirements              link_requirements;
     String                           identity;
 
     auto clone() const -> ResolvedExternalDependency {
@@ -57,6 +115,7 @@ struct ResolvedExternalDependency {
             .version        = version.clone(),
             .targets        = rstd::move(copied_targets),
             .link_arguments = link_arguments.clone(),
+            .link_requirements = link_requirements.clone(),
             .identity       = identity.clone(),
         };
     }
@@ -67,9 +126,10 @@ struct UsageRequirements {
     Vec<PathBuf>                     private_include_directories;
     Vec<String>                      public_definitions;
     Vec<String>                      private_definitions;
-    CppArgumentLayer                 public_arguments;
-    CppArgumentLayer                 private_arguments;
-    Vec<String>                      private_linker_options;
+    CppArgumentLayer                 arguments;
+    CppArgumentLayer                 interface_arguments;
+    CppLinkRequirements              link_requirements;
+    Vec<String>                      linker_options;
     Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
 };
 

@@ -9,4 +9,4 @@ archive = "fixture.scan.definitions"
 
 [usage]
 private-definitions = ["LITO_SCAN_DEFINITION=7"]
-private-options = ["-DLITO_SCAN_REMOVED=1", "-ULITO_SCAN_REMOVED", "-U__clang__"]
+options = ["-DLITO_SCAN_REMOVED=1", "-ULITO_SCAN_REMOVED", "-U__clang__"]

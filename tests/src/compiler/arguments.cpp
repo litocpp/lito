@@ -98,7 +98,7 @@ TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
     EXPECT_EQ(options->vendor[usize {}].raw_tokens.len(), usize(2));
 }
 
-TEST(CompilerArguments, ClassifiesPthreadAsLanguageMode) {
+TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
     auto parser = make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto arguments =
@@ -114,7 +114,17 @@ TEST(CompilerArguments, ClassifiesPthreadAsLanguageMode) {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });
     ASSERT_TRUE(options.is_ok());
-    ASSERT_EQ(options->language.modes.len(), usize(1));
-    EXPECT_EQ(options->language.modes[usize {}].family.as_str(), "posix-threads"_str);
-    EXPECT_EQ(options->language.modes[usize {}].value.as_str(), "-pthread"_str);
+    EXPECT_TRUE(options->threading.posix);
+    EXPECT_TRUE(options->language.modes.is_empty());
+
+    auto normalized = normalize_clang_link_arguments(cpp::LinkArgumentSequence {
+        .tokens   = strings("-pthread"_str, "-ldl"_str, "-lm"_str),
+        .source   = String::make("compiler arguments test"_str),
+        .identity = String::make("link-v1"_str),
+    });
+    EXPECT_TRUE(normalized.requirements.posix_threads);
+    ASSERT_EQ(normalized.requirements.system_libraries.len(), usize(1));
+    EXPECT_EQ(normalized.requirements.system_libraries[usize {}].name.as_str(), "dl"_str);
+    ASSERT_EQ(normalized.arguments.tokens.len(), usize(1));
+    EXPECT_EQ(normalized.arguments.tokens[usize {}].as_str(), "-lm"_str);
 }

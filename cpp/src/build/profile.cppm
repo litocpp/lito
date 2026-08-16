@@ -10,6 +10,7 @@ import :bmi.artifact;
 import :compiler.option;
 import :compiler.parser;
 import :compiler.policy;
+import :usage;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -22,6 +23,7 @@ struct ProfileSpec {
     BuildProfileFamily family { BuildProfileFamily::Debug };
     BmiRequest         bmi;
     CppCompileOptions  cpp;
+    CppLinkRequirements link_requirements;
     StripMode          strip { StripMode::None };
     Vec<String>        linker_options;
 };
@@ -73,6 +75,7 @@ auto make_profile_spec(const BuildConfiguration& configuration,
                        const BuildProfileName&   selected_profile,
                        CppArgumentLayer          arguments) -> BuildProfileResult<ProfileSpec> {
     auto selected = rstd_try(resolve_build_profile(project_profile, selected_profile));
+    auto link_requirements = CppLinkRequirements {};
     for (const auto& occurrence : arguments.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
         RSTD_MATCH(occurrence.argument) {
@@ -101,6 +104,11 @@ auto make_profile_spec(const BuildConfiguration& configuration,
                 static_cast<void>(family);
                 static_cast<void>(value);
             }
+            RSTD_CASE(Threading, value) {
+                static_cast<void>(value);
+                link_requirements.posix_threads = true;
+                link_requirements.thread_sources.push(occurrence.source.clone());
+            }
             RSTD_CASE(Instrumentation, value) {
                 static_cast<void>(value);
             }
@@ -122,6 +130,14 @@ auto make_profile_spec(const BuildConfiguration& configuration,
         }
     }
     for (const auto& option : configuration.linker_options) {
+        if (option.as_str() == "-pthread"_str) {
+            return profile_failure(String::make(
+                "build linker option '-pthread' must be declared in build.options"_str));
+        }
+        if (option.as_str() == "-ldl"_str) {
+            return profile_failure(String::make(
+                "build linker option '-ldl' must be declared as usage.system-libraries"_str));
+        }
         if (option.as_str() == "-nostdlib++"_str || option.as_str().starts_with("-stdlib="_str))
             return profile_failure(rstd::format(
                 "build linker option '{}' overrides a Lito-owned setting", option.as_str()));
@@ -150,6 +166,7 @@ auto make_profile_spec(const BuildConfiguration& configuration,
         .bmi            = BmiRequest { .representation   = configuration.bmi_mode,
                                        .source_embedding = configuration.bmi_source_embedding },
         .cpp            = rstd::move(cpp),
+        .link_requirements = rstd::move(link_requirements),
         .strip          = selected.strip,
         .linker_options = configuration.linker_options.clone(),
     });

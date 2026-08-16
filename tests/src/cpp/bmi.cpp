@@ -124,6 +124,26 @@ TEST(Bmi, ReportsConservativeSemanticDifferencesByField) {
                  cpp::BmiCompatibilityField::VendorSemantics);
 }
 
+TEST(Bmi, TreatsStandardLibraryModesAsAnExplicitConsistencyDomain) {
+    auto provider = cpp_options("c++20"_str,
+                                lito::CppOptimization::None,
+                                lito::CppDebugInfo::None,
+                                strings("-D_GLIBCXX_USE_CXX11_ABI=0"_str));
+    auto consumer = cpp_options("c++20"_str,
+                                lito::CppOptimization::None,
+                                lito::CppDebugInfo::None,
+                                strings("-D_GLIBCXX_USE_CXX11_ABI=1"_str));
+    auto identity     = format();
+    auto requirements = cpp::cpp_public_requirements(provider);
+    auto result =
+        cpp::check_bmi_compatibility(identity, provider, requirements, identity, consumer);
+    ASSERT_FALSE(result.compatible());
+    EXPECT_EQ(result.differences[usize {}].field,
+              cpp::BmiCompatibilityField::StandardLibraryModes);
+    EXPECT_NE(cpp::cpp_abi_compatibility_identity(provider).as_str(),
+              cpp::cpp_abi_compatibility_identity(consumer).as_str());
+}
+
 TEST(Bmi, ArtifactIdentityIncludesRepresentationEmbeddingAndDependencies) {
     auto reduced            = artifact_key(cpp::BmiRepresentation::Reduced,
                                            cpp::BmiSourceEmbeddingPolicy::ExternalSources,

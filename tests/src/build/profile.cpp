@@ -59,6 +59,22 @@ TEST(BuildProfile, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossBui
     EXPECT_FALSE(release->cpp.language.rtti);
 }
 
+TEST(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.options.push(String::make("-pthread"_str));
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    EXPECT_TRUE(profile->cpp.threading.posix);
+    EXPECT_TRUE(profile->link_requirements.posix_threads);
+    ASSERT_EQ(profile->link_requirements.thread_sources.len(), usize(1));
+    EXPECT_EQ(profile->link_requirements.thread_sources[usize {}].as_str(), "build.options"_str);
+}
+
 TEST(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     auto graph = lito::resolve_package_graph(fixture_path("build/profile"_str).as_path());
     ASSERT_TRUE(graph.is_ok());
@@ -175,6 +191,13 @@ TEST(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto stdlib_error = rstd::move(stdlib).unwrap_err();
     ASSERT_TRUE(stdlib_error.is_Message());
     EXPECT_TRUE(stdlib_error.as_Message().message.as_str().contains("Lito-owned setting"_str));
+
+    auto pthread_configuration = configuration();
+    pthread_configuration.linker_options.push(String::make("-pthread"_str));
+    auto pthread = lito::cpp::make_profile_spec(
+        pthread_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(pthread.is_err());
+    EXPECT_TRUE(rstd::format("{}", pthread.unwrap_err()).as_str().contains("build.options"_str));
 }
 
 TEST(BuildProfile, CompilerOptionsAreValidatedAfterToolchainParsing) {

@@ -699,36 +699,44 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
         string_array(member(**value, "public-definitions"_str), "usage.public-definitions"_str);
     auto private_definitions =
         string_array(member(**value, "private-definitions"_str), "usage.private-definitions"_str);
-    auto public_options =
-        string_array(member(**value, "public-options"_str), "usage.public-options"_str);
-    auto private_options =
-        string_array(member(**value, "private-options"_str), "usage.private-options"_str);
-    auto private_linker_options = string_array(member(**value, "private-linker-options"_str),
-                                               "usage.private-linker-options"_str);
+    auto options = string_array(member(**value, "options"_str), "usage.options"_str);
+    auto linker_options =
+        string_array(member(**value, "linker-options"_str), "usage.linker-options"_str);
+    auto system_libraries = string_array(member(**value, "system-libraries"_str),
+                                         "usage.system-libraries"_str);
+    auto threads = false;
+    auto declared_threads = member(**value, "threads"_str);
+    if (declared_threads.is_some()) {
+        auto parsed = (**declared_threads).as_bool();
+        if (parsed.is_none()) {
+            return manifest_schema_failure<DeclaredUsageRequirements>(
+                "usage.threads must be a boolean"_str);
+        }
+        threads = *parsed;
+    }
     if (public_includes.is_err()) return Err(rstd::move(public_includes).unwrap_err());
     if (private_includes.is_err()) return Err(rstd::move(private_includes).unwrap_err());
     if (public_definitions.is_err()) return Err(rstd::move(public_definitions).unwrap_err());
     if (private_definitions.is_err()) return Err(rstd::move(private_definitions).unwrap_err());
-    if (public_options.is_err()) return Err(rstd::move(public_options).unwrap_err());
-    if (private_options.is_err()) return Err(rstd::move(private_options).unwrap_err());
-    if (private_linker_options.is_err()) {
-        return Err(rstd::move(private_linker_options).unwrap_err());
-    }
+    if (options.is_err()) return Err(rstd::move(options).unwrap_err());
+    if (linker_options.is_err()) return Err(rstd::move(linker_options).unwrap_err());
+    if (system_libraries.is_err()) return Err(rstd::move(system_libraries).unwrap_err());
     auto public_include_values        = rstd::move(public_includes).unwrap();
     auto private_include_values       = rstd::move(private_includes).unwrap();
     auto public_definition_values     = rstd::move(public_definitions).unwrap();
     auto private_definition_values    = rstd::move(private_definitions).unwrap();
-    auto public_option_values         = rstd::move(public_options).unwrap();
-    auto private_option_values        = rstd::move(private_options).unwrap();
-    auto private_linker_option_values = rstd::move(private_linker_options).unwrap();
+    auto option_values         = rstd::move(options).unwrap();
+    auto linker_option_values  = rstd::move(linker_options).unwrap();
+    auto system_library_values = rstd::move(system_libraries).unwrap();
     return Ok(DeclaredUsageRequirements {
         .public_include_directories             = rstd::move(public_include_values.physical),
         .private_include_directories            = rstd::move(private_include_values.physical),
         .public_definitions                     = rstd::move(public_definition_values),
         .private_definitions                    = rstd::move(private_definition_values),
-        .public_options                         = rstd::move(public_option_values),
-        .private_options                        = rstd::move(private_option_values),
-        .private_linker_options                 = rstd::move(private_linker_option_values),
+        .options                                = rstd::move(option_values),
+        .linker_options                         = rstd::move(linker_option_values),
+        .threads                                = threads,
+        .system_libraries                       = rstd::move(system_library_values),
         .private_include_directory_requirements = rstd::move(private_include_values.deferred),
     });
 }

@@ -20,8 +20,8 @@ namespace lito
 {
 
 inline constexpr auto CACHE_VERSION  = u64(3);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v3"_str;
-inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v3"_str;
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v4"_str;
+inline constexpr auto COMPILE_RECIPE = "clang-cxx-compile-v4"_str;
 
 template<typename T>
 auto cache_failure(String message) -> CacheResult<T> {

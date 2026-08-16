@@ -174,6 +174,7 @@ auto append_typed_options(Vec<String>&                  command,
     }
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
+    if (options.threading.posix) command.push(String::make("-pthread"_str));
     for (const auto& option : options.target.features) command.push(option.value.clone());
     for (const auto& option : options.codegen.modes) command.push(option.value.clone());
     for (const auto& option : options.codegen.instrumentation) command.push(option.clone());

@@ -95,6 +95,19 @@ TEST(Manifest, PackageManifestOwnsTypedTargetCollection) {
               lito::SourceDiscoveryMode::Explicit);
 }
 
+TEST(Manifest, UsageSeparatesLocalOptionsFromTypedLinkRequirements) {
+    auto loaded =
+        lito::load_package_manifest(fixture_path("manifest/usage/typed"_str).as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->usage.options.len(), usize(1));
+    EXPECT_EQ(loaded->usage.options[usize {}].as_str(), "-Wall"_str);
+    ASSERT_EQ(loaded->usage.linker_options.len(), usize(1));
+    EXPECT_TRUE(loaded->usage.threads);
+    ASSERT_EQ(loaded->usage.system_libraries.len(), usize(2));
+    EXPECT_EQ(loaded->usage.system_libraries[usize {}].as_str(), "dl"_str);
+    EXPECT_EQ(loaded->usage.system_libraries[usize(1)].as_str(), "user32"_str);
+}
+
 TEST(Manifest, PackageManifestOwnsHostBuildToolsAndRuntimeResources) {
     auto loaded =
         lito::load_package_manifest(fixture_path("manifest/build-tools/valid"_str).as_path());

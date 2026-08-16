@@ -108,6 +108,12 @@ TEST(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements)
     }
     EXPECT_EQ(repeat_count, usize(2));
     EXPECT_TRUE(has_private);
+    EXPECT_TRUE((*resolved)[usize {}].link_requirements.posix_threads);
+    ASSERT_EQ((*resolved)[usize {}].link_requirements.system_libraries.len(), usize(1));
+    for (const auto& token : (*resolved)[usize {}].link_arguments.tokens) {
+        EXPECT_NE(token.as_str(), "-pthread"_str);
+        EXPECT_NE(token.as_str(), "-ldl"_str);
+    }
 
     declarations[usize {}].requirement.mode = lito::PkgConfigQueryMode::Shared;
     auto shared = lito::resolve_external_dependencies(declarations,

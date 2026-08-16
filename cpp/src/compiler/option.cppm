@@ -24,6 +24,41 @@ enum class CppSizedDeallocation
     Disabled,
 };
 
+enum class CppThreadingModel
+{
+    Posix,
+};
+
+enum class CppCompatibilityDomain
+{
+    Target,
+    ImportClosure,
+    ArtifactClosure,
+    LinkClosure,
+};
+
+enum class CppRequirementMergePolicy
+{
+    Exact,
+    Enable,
+    SetUnion,
+    Ordered,
+};
+
+struct CppRequirementApplications {
+    bool preprocess { false };
+    bool scan { false };
+    bool bmi { false };
+    bool compile { false };
+    bool link { false };
+};
+
+struct CppRequirementSemantics {
+    CppRequirementApplications applications;
+    CppCompatibilityDomain      domain { CppCompatibilityDomain::Target };
+    CppRequirementMergePolicy  merge { CppRequirementMergePolicy::Exact };
+};
+
 enum class CppMacroAction
 {
     Define,
@@ -86,6 +121,7 @@ enum class CppCompilerArgumentKind
     AbiMode,
     TargetMode,
     CodegenMode,
+    Threading,
     Instrumentation,
     Diagnostic,
     VendorLanguage,
@@ -146,9 +182,32 @@ struct CppLanguageOptions {
     Vec<CppFamilyOption> modes;
 };
 
+struct CppThreadingOptions {
+    bool posix { false };
+};
+
+struct ResolvedStandardLibrary : DefaultInClass<ResolvedStandardLibrary, Clone> {
+    StandardLibrary family { StandardLibrary::Libstdcxx };
+    String          headers_identity;
+    String          binary_identity;
+    String          thread_backend;
+    String          identity;
+
+    auto clone() const -> ResolvedStandardLibrary {
+        return ResolvedStandardLibrary {
+            .family           = family,
+            .headers_identity = headers_identity.clone(),
+            .binary_identity  = binary_identity.clone(),
+            .thread_backend   = thread_backend.clone(),
+            .identity         = identity.clone(),
+        };
+    }
+};
+
 struct CppAbiOptions {
-    StandardLibrary      standard_library { StandardLibrary::Libstdcxx };
-    Vec<CppFamilyOption> modes;
+    StandardLibrary                 standard_library { StandardLibrary::Libstdcxx };
+    Option<ResolvedStandardLibrary> resolved_standard_library;
+    Vec<CppFamilyOption>            modes;
 };
 
 struct CppTargetOptions {
@@ -178,6 +237,7 @@ struct CppDiagnosticOptions {
 
 struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
     CppLanguageOptions     language;
+    CppThreadingOptions    threading;
     CppAbiOptions          abi;
     CppTargetOptions       target;
     CppPreprocessorOptions preprocessor;
@@ -208,6 +268,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (Sysroot, (String value;)),
               (OwnedSetting, (CppOwnedSetting setting;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
+              (Threading, (CppThreadingModel model;)),
               (Instrumentation, (String value;)),
               (PositionIndependentCode, (bool enabled;)),
               (SizedDeallocation, (CppSizedDeallocation value;)),
@@ -301,6 +362,9 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(Family, domain, family, value) {
             return CppCompilerArgument::Family(domain, family.clone(), value.clone());
         }
+        RSTD_CASE(Threading, model) {
+            return CppCompilerArgument::Threading(model);
+        }
         RSTD_CASE(Instrumentation, value) {
             return CppCompilerArgument::Instrumentation(value.clone());
         }
@@ -349,6 +413,7 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
                 .sized_deallocation = input.language.sized_deallocation,
                 .modes              = as<Clone>(input.language.modes).clone(),
             },
+        .threading = input.threading,
         .abi =
             CppAbiOptions {
                 .standard_library = input.abi.standard_library,
@@ -378,6 +443,10 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
     if (input.target.target.is_some()) result.target.target = Some(input.target.target->clone());
     if (input.target.sysroot.is_some()) {
         result.target.sysroot = Some(input.target.sysroot->clone());
+    }
+    if (input.abi.resolved_standard_library.is_some()) {
+        result.abi.resolved_standard_library =
+            Some(input.abi.resolved_standard_library->clone());
     }
     result.target.features = as<Clone>(input.target.features).clone();
     return result;

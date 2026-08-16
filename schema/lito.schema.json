@@ -551,14 +551,22 @@
         "private-definitions": {
           "$ref": "#/definitions/stringArray"
         },
-        "public-options": {
+        "options": {
           "$ref": "#/definitions/stringArray"
         },
-        "private-options": {
+        "linker-options": {
           "$ref": "#/definitions/stringArray"
         },
-        "private-linker-options": {
-          "$ref": "#/definitions/stringArray"
+        "threads": {
+          "type": "boolean"
+        },
+        "system-libraries": {
+          "description": "Logical operating-system or SDK library names without linker options or paths.",
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "additionalProperties": false
@@ -1790,8 +1798,7 @@
                 "usage": {
                   "properties": {
                     "public-include-directories": { "maxItems": 0 },
-                    "public-definitions": { "maxItems": 0 },
-                    "public-options": { "maxItems": 0 }
+                    "public-definitions": { "maxItems": 0 }
                   }
                 }
               }

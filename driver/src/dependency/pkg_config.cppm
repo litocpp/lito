@@ -7,6 +7,7 @@ import rstd;
 import lito.core;
 import lito.cpp;
 import lito.system;
+import lito.toolchain.clang;
 import lito.toolchain.cmake;
 import lito.toolchain.pkg_config;
 import :dependency.external_source;
@@ -144,12 +145,14 @@ auto resolve_pkg_config_dependencies(
             .compile_arguments = as<Clone>(snapshot.compile_arguments).clone(),
             .identity          = snapshot.identity.clone(),
         });
+        auto normalized = normalize_clang_link_arguments(snapshot.link_arguments.clone());
         result.push(cpp::ResolvedExternalDependency {
             .alias          = declaration.alias.clone(),
             .provider       = String::make("pkg-config"_str),
             .version        = snapshot.version.clone(),
             .targets        = rstd::move(targets),
-            .link_arguments = snapshot.link_arguments.clone(),
+            .link_arguments = rstd::move(normalized.arguments),
+            .link_requirements = rstd::move(normalized.requirements),
             .identity       = snapshot.identity.clone(),
         });
     }

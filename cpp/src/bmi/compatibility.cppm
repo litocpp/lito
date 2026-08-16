@@ -90,9 +90,12 @@ enum class BmiCompatibilityField
     Format,
     LanguageStandard,
     StandardLibrary,
+    StandardLibraryIdentity,
+    StandardLibraryModes,
     Exceptions,
     Rtti,
     SizedDeallocation,
+    Threading,
     LanguageModes,
     AbiModes,
     Target,
@@ -144,6 +147,22 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     add_difference(BmiCompatibilityField::StandardLibrary,
                    standard_library_text(provider.abi.standard_library),
                    standard_library_text(consumer.abi.standard_library));
+    auto provider_stdlib_identity = provider.abi.resolved_standard_library.is_some()
+                                        ? provider.abi.resolved_standard_library->headers_identity
+                                              .as_str()
+                                        : "<unresolved>"_str;
+    auto consumer_stdlib_identity = consumer.abi.resolved_standard_library.is_some()
+                                        ? consumer.abi.resolved_standard_library->headers_identity
+                                              .as_str()
+                                        : "<unresolved>"_str;
+    add_difference(BmiCompatibilityField::StandardLibraryIdentity,
+                   provider_stdlib_identity,
+                   consumer_stdlib_identity);
+    auto provider_stdlib_modes = cpp_standard_library_modes_identity(provider);
+    auto consumer_stdlib_modes = cpp_standard_library_modes_identity(consumer);
+    add_difference(BmiCompatibilityField::StandardLibraryModes,
+                   provider_stdlib_modes.as_str(),
+                   consumer_stdlib_modes.as_str());
     add_difference(BmiCompatibilityField::Exceptions,
                    bool_text(provider.language.exceptions),
                    bool_text(consumer.language.exceptions));
@@ -153,6 +172,9 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     add_difference(BmiCompatibilityField::SizedDeallocation,
                    cpp_sized_deallocation_name(provider.language.sized_deallocation),
                    cpp_sized_deallocation_name(consumer.language.sized_deallocation));
+    add_difference(BmiCompatibilityField::Threading,
+                   bool_text(provider.threading.posix),
+                   bool_text(consumer.threading.posix));
     auto provider_language = family_identity("language"_str, provider.language.modes);
     auto consumer_language = family_identity("language"_str, consumer.language.modes);
     add_difference(BmiCompatibilityField::LanguageModes,
@@ -209,11 +231,18 @@ struct Impl<fmt::Display, lito::cpp::BmiCompatibilityField>
         case lito::cpp::BmiCompatibilityField::StandardLibrary:
             name = "standard library"_str;
             break;
+        case lito::cpp::BmiCompatibilityField::StandardLibraryIdentity:
+            name = "resolved standard library headers"_str;
+            break;
+        case lito::cpp::BmiCompatibilityField::StandardLibraryModes:
+            name = "standard library consistency modes"_str;
+            break;
         case lito::cpp::BmiCompatibilityField::Exceptions: name = "exceptions"_str; break;
         case lito::cpp::BmiCompatibilityField::Rtti: name = "RTTI"_str; break;
         case lito::cpp::BmiCompatibilityField::SizedDeallocation:
             name = "sized deallocation"_str;
             break;
+        case lito::cpp::BmiCompatibilityField::Threading: name = "threading model"_str; break;
         case lito::cpp::BmiCompatibilityField::LanguageModes:
             name = "C++ language modes"_str;
             break;

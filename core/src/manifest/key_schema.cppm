@@ -77,8 +77,8 @@ auto compile_test_case_key(ref<str> key) -> bool {
 auto usage_key(ref<str> key) -> bool {
     return key == "public-include-directories"_str || key == "private-include-directories"_str ||
            key == "public-definitions"_str || key == "private-definitions"_str ||
-           key == "public-options"_str || key == "private-options"_str ||
-           key == "private-linker-options"_str;
+           key == "options"_str || key == "linker-options"_str || key == "threads"_str ||
+           key == "system-libraries"_str;
 }
 
 auto include_directory_key(ref<str> key) -> bool {

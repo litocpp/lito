@@ -202,8 +202,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_usage = rstd::move(usage).unwrap();
     if (! has_library && (! parsed_usage.public_include_directories.is_empty() ||
-                          ! parsed_usage.public_definitions.is_empty() ||
-                          ! parsed_usage.public_options.is_empty())) {
+                          ! parsed_usage.public_definitions.is_empty())) {
         return manifest_schema_failure<ManifestDocument>(
             "usage.public-* requires a library target"_str);
     }

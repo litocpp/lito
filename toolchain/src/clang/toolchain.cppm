@@ -218,6 +218,121 @@ public:
         return argument_parser_;
     }
 
+    auto resolve_standard_library(const cpp::CppCompileOptions& options,
+                                  const TargetInfo&             target) const
+        -> ToolchainResult<cpp::ResolvedStandardLibrary> {
+        auto command = Vec<String>::make();
+        auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
+        pushed = toolchain::command::push_path(command, resource_dir_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        command.push(rstd::format(
+            "{}{}", toolchain::clang_options::STANDARD, options.language.standard.as_str()));
+        toolchain::command::push_option(
+            command, toolchain::clang_options::standard_library(options.abi.standard_library));
+        if (options.target.target.is_some()) {
+            command.push(rstd::format("--target={}", options.target.target->as_str()));
+        }
+        if (options.target.sysroot.is_some()) {
+            command.push(rstd::format("--sysroot={}", options.target.sysroot->as_str()));
+        }
+        toolchain::command::push_option(command, "-dM"_str);
+        toolchain::command::push_option(command, "-E"_str);
+        toolchain::command::push_option(command, "-x"_str);
+        toolchain::command::push_option(command, "c++"_str);
+        toolchain::command::push_option(command, "-"_str);
+        auto queried = run_command_with_input(
+            command, "#include <version>\n"_str, environment_);
+        if (queried.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(queried).unwrap_err()));
+        }
+        if (queried->exit_code != i32 {}) {
+            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+                "cannot resolve selected C++ standard library headers\n{}\n{}",
+                command_text(command).as_str(),
+                queried->standard_error.as_str()));
+        }
+
+        auto library_name = options.abi.standard_library == StandardLibrary::Libcxx
+                                ? "libc++.so"_str
+                                : "libstdc++.so"_str;
+        if (target.family == TargetFamily::Windows) {
+            library_name = options.abi.standard_library == StandardLibrary::Libcxx
+                               ? "libc++.a"_str
+                               : "libstdc++.a"_str;
+        } else if (target.os.as_str() == "macos"_str) {
+            library_name = options.abi.standard_library == StandardLibrary::Libcxx
+                               ? "libc++.dylib"_str
+                               : "libstdc++.dylib"_str;
+        }
+        auto library_command = Vec<String>::make();
+        pushed = toolchain::command::push_path(library_command, compiler_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(
+            library_command,
+            toolchain::clang_options::standard_library(options.abi.standard_library));
+        if (options.target.target.is_some()) {
+            library_command.push(rstd::format("--target={}", options.target.target->as_str()));
+        }
+        if (options.target.sysroot.is_some()) {
+            library_command.push(rstd::format("--sysroot={}", options.target.sysroot->as_str()));
+        }
+        library_command.push(rstd::format("-print-file-name={}", library_name));
+        auto library = run_command(library_command, environment_);
+        if (library.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(library).unwrap_err()));
+        }
+        if (library->exit_code != i32 {}) {
+            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+                "cannot resolve selected C++ standard library artifact\n{}\n{}",
+                command_text(library_command).as_str(),
+                library->standard_error.as_str()));
+        }
+        auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
+        auto binary_identity  = rstd::format("unresolved:{}", binary_path_text.as_str());
+        auto binary_path      = PathBuf::from(binary_path_text.as_str());
+        auto binary_metadata  = rstd::fs::metadata(binary_path.as_path());
+        if (binary_metadata.is_ok() && binary_metadata->is_file()) {
+            auto modified = binary_metadata->modified();
+            auto timestamp = modified.is_ok() ? modified->as_unix_time()
+                                              : rstd::time::UnixTime {};
+            auto canonical = rstd::fs::canonicalize(binary_path.as_path());
+            auto identity_path = canonical.is_ok() ? canonical->as_path() : binary_path.as_path();
+            binary_identity = rstd::format("path={}\nsize={}\nmodified={}:{}",
+                                           identity_path,
+                                           binary_metadata->size(),
+                                           timestamp.seconds,
+                                           timestamp.nanoseconds);
+        }
+        auto thread_backend  = String::make("unknown"_str);
+        if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_PTHREAD"_str) ||
+            queried->standard_output.as_str().contains("_GLIBCXX_HAS_GTHREADS"_str)) {
+            thread_backend = String::make("pthread"_str);
+        } else if (queried->standard_output.as_str().contains(
+                       "_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
+            thread_backend = String::make("win32"_str);
+        }
+        auto family = options.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
+                                                                               : "libstdc++"_str;
+        auto headers_identity = rstd::format(
+            "clang-stdlib-headers-v2\nfamily={}\ntarget={}\nmacros-sha256={}",
+            family,
+            target.triple.as_str(),
+            rstd::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
+        auto identity = rstd::format("clang-stdlib-v1\n{}\nbinary={}\nthread-backend={}",
+                                     headers_identity.as_str(),
+                                     binary_identity.as_str(),
+                                     thread_backend.as_str());
+        return Ok(cpp::ResolvedStandardLibrary {
+            .family           = options.abi.standard_library,
+            .headers_identity = rstd::move(headers_identity),
+            .binary_identity  = rstd::move(binary_identity),
+            .thread_backend   = rstd::move(thread_backend),
+            .identity         = rstd::move(identity),
+        });
+    }
+
     auto validate(const cpp::CppCompileOptions& cpp, const cpp::BmiRequest& bmi) const
         -> ToolchainResult<empty> {
         if (! cpp::is_supported_cpp_standard(cpp.language.standard.as_str())) {
@@ -484,8 +599,10 @@ public:
                          const Vec<PathBuf>&           objects,
                          const Vec<ResolvedLinkInput>& inputs,
                          StandardLibrary               standard_library,
+                         const TargetInfo&             target,
                          bool                          link_stdlib,
                          lito::CppLto                  lto,
+                         const cpp::CppLinkRequirements& link_requirements,
                          const Vec<String>&            linker_options,
                          ref<rstd::path::Path>         working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
@@ -518,7 +635,7 @@ public:
                 if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
                 continue;
             }
-            if (target_info_.os.as_str() == "macos"_str) {
+            if (target.os.as_str() == "macos"_str) {
                 toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
                 toolchain::command::push_option(command, toolchain::clang_options::FORCE_LOAD);
                 toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
@@ -526,7 +643,7 @@ public:
                 if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
                 continue;
             }
-            if (target_info_.family == TargetFamily::Windows) {
+            if (target.family == TargetFamily::Windows) {
                 auto text = archive.path.as_path().to_str();
                 if (text.is_none()) {
                     return failure<rstd::time::Duration>(rstd::format(
@@ -538,15 +655,32 @@ public:
                 command.push(rstd::move(option));
                 continue;
             }
-            if (target_info_.family != TargetFamily::Unix) {
+            if (target.family != TargetFamily::Unix) {
                 return failure<rstd::time::Duration>(
                     rstd::format("whole-archive linking is unsupported for target '{}'",
-                                 target_info_.triple.as_str()));
+                                 target.triple.as_str()));
             }
             toolchain::command::push_option(command, toolchain::clang_options::WHOLE_ARCHIVE);
             pushed = toolchain::command::push_path(command, archive.path.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             toolchain::command::push_option(command, toolchain::clang_options::NO_WHOLE_ARCHIVE);
+        }
+        if (link_requirements.posix_threads) {
+            toolchain::command::push_option(command, "-pthread"_str);
+        }
+        for (const auto& requirement : link_requirements.system_libraries) {
+            if (requirement.name.as_str() == "dl"_str && target.family == TargetFamily::Windows) {
+                return failure<rstd::time::Duration>(rstd::format(
+                    "system library 'dl' required by {} is unsupported for target '{}'",
+                    requirement.source.as_str(),
+                    target.triple.as_str()));
+            }
+            if (requirement.name.as_str() == "dl"_str && target.os.as_str() == "macos"_str) continue;
+            auto option = target.family == TargetFamily::Windows ? requirement.name.clone()
+                                                                  : String::make("-l"_str);
+            option.push_str(target.family == TargetFamily::Windows ? ".lib"_str
+                                                                    : requirement.name.as_str());
+            command.push(rstd::move(option));
         }
         toolchain::command::push_option(command, toolchain::clang_options::OUTPUT);
         pushed = toolchain::command::push_path(command, output_path);

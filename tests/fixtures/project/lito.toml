@@ -9,6 +9,7 @@ members = [
   "test-attach-lib",
   "test-attach",
   "compile-lib",
+  "typed-link",
   "compile-pass",
   "compile-mismatch",
   "windows-only",
