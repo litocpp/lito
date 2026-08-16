@@ -19,7 +19,8 @@ export namespace lito
 enum class ConfigLoadMode
 {
     Enabled,
-    Disabled,
+    LocalDisabled,
+    Disabled = LocalDisabled,
 };
 
 struct InstallConfig {

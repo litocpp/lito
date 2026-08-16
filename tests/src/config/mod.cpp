@@ -40,6 +40,45 @@ TEST(Config, ToolchainConfigurationUsesCommandLineNames) {
     EXPECT_EQ(defaults->standard_library, lito::StandardLibrary::Libcxx);
 }
 
+TEST(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
+    auto directory = output_root("config-shared-layer"_str);
+    ASSERT_TRUE(clear_output(directory.as_path()));
+    auto local_directory = directory.join(PathBuf::from(".lito"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(local_directory.as_path()).is_ok());
+    auto shared = directory.join(PathBuf::from("lito-config.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(shared.as_path(),
+                                "[toolchain]\n"
+                                "cxx = \"project-cxx\"\n"
+                                "stdlib = \"libstdc++\"\n"
+                                "[cmake]\n"
+                                "generator = \"Ninja\"\n"_str.as_bytes())
+                    .is_ok());
+    auto local = local_directory.join(PathBuf::from("config.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(local.as_path(),
+                                "[toolchain]\n"
+                                "cxx = \"local-cxx\"\n"
+                                "[cmake]\n"
+                                "search-path = [\".\"]\n"_str.as_bytes())
+                    .is_ok());
+
+    auto loaded = lito::load_project_config(directory.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("local-cxx"_str).as_path());
+    EXPECT_EQ(loaded->standard_library, lito::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->cmake.generator.as_str(), "Ninja"_str);
+    ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
+    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), directory.as_path());
+
+    auto shared_only =
+        lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::LocalDisabled);
+    ASSERT_TRUE(shared_only.is_ok());
+    EXPECT_EQ(shared_only->toolchain.cxx.as_path(), PathBuf::from("project-cxx"_str).as_path());
+    EXPECT_EQ(shared_only->standard_library, lito::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(shared_only->cmake.generator.as_str(), "Ninja"_str);
+    EXPECT_TRUE(shared_only->cmake.search_paths.is_empty());
+    EXPECT_TRUE(clear_output(directory.as_path()));
+}
+
 TEST(Config, EnvironmentAppendPathBelongsToProjectConfig) {
     auto loaded = lito::load_project_config(fixture_path("config/environment-valid"_str).as_path());
     ASSERT_TRUE(loaded.is_ok());
@@ -65,14 +104,15 @@ TEST(Config, LockPathBelongsToProjectConfig) {
     EXPECT_EQ(loaded->lock.path.as_path(),
               root_path.join(rstd::path::PathBuf::from(".lito/lito.lock"_str).as_path()).as_path());
 
-    auto disabled = lito::load_project_config(root_path.as_path(), lito::ConfigLoadMode::Disabled);
+    auto disabled =
+        lito::load_project_config(root_path.as_path(), lito::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_EQ(disabled->lock.path.as_path(),
               root_path.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
 
     auto invalid_root = fixture_path("config/lock-missing-path"_str);
     auto ignored =
-        lito::load_project_config(invalid_root.as_path(), lito::ConfigLoadMode::Disabled);
+        lito::load_project_config(invalid_root.as_path(), lito::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(ignored.is_ok());
     EXPECT_EQ(ignored->lock.path.as_path(),
               invalid_root.join(rstd::path::PathBuf::from("lito.lock"_str).as_path()).as_path());
@@ -188,7 +228,7 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     disabled_overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
     auto disabled = lito::load_project_config(directory.as_path(),
                                               lito::ProjectConfigRequest {
-                                                  .mode      = lito::ConfigLoadMode::Disabled,
+                                                  .mode      = lito::ConfigLoadMode::LocalDisabled,
                                                   .overrides = rstd::move(disabled_overrides),
                                               });
     ASSERT_TRUE(disabled.is_ok());
@@ -199,7 +239,7 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
     invalid_standard_library.push(String::make("toolchain.stdlib=unknown"_str));
     auto invalid = lito::load_project_config(directory.as_path(),
                                              lito::ProjectConfigRequest {
-                                                 .mode      = lito::ConfigLoadMode::Disabled,
+                                                 .mode      = lito::ConfigLoadMode::LocalDisabled,
                                                  .overrides = rstd::move(invalid_standard_library),
                                              });
     EXPECT_TRUE(invalid.is_err());
@@ -211,7 +251,7 @@ TEST(Config, RuntimeOverridesShareOneSchemaDecode) {
                                       patch_directory.as_path()));
     auto patched = lito::load_project_config(directory.as_path(),
                                              lito::ProjectConfigRequest {
-                                                 .mode      = lito::ConfigLoadMode::Disabled,
+                                                 .mode      = lito::ConfigLoadMode::LocalDisabled,
                                                  .overrides = rstd::move(patch_overrides),
                                              });
     ASSERT_TRUE(patched.is_ok());

@@ -21,6 +21,7 @@ namespace lito
 struct ConfigLocation {
     PathBuf root;
     PathBuf directory;
+    PathBuf shared_path;
     PathBuf path;
     PathBuf lock;
 };
@@ -73,11 +74,13 @@ auto resolve_config_location(ref<rstd::path::Path> requested_root) -> ConfigResu
             rstd::format("project root '{}' is not a directory", root.as_path()));
     }
     auto directory = root.join(PathBuf::from(".lito"_str).as_path());
+    auto shared_path = root.join(PathBuf::from("lito-config.toml"_str).as_path());
     return Ok(ConfigLocation {
-        .root      = rstd::move(root),
-        .directory = directory.clone(),
-        .path      = directory.join(PathBuf::from("config.toml"_str).as_path()),
-        .lock      = directory.join(PathBuf::from("config.toml.lock"_str).as_path()),
+        .root        = rstd::move(root),
+        .directory   = directory.clone(),
+        .shared_path = rstd::move(shared_path),
+        .path        = directory.join(PathBuf::from("config.toml"_str).as_path()),
+        .lock        = directory.join(PathBuf::from("config.toml.lock"_str).as_path()),
     });
 }
 
@@ -103,45 +106,81 @@ auto inspect_ordinary_file(ref<rstd::path::Path> path, ref<str> description) -> 
     return Ok(true);
 }
 
-auto read_config_document(ConfigLocation location, bool require_ordinary_file)
-    -> ConfigResult<ConfigDocument> {
+auto read_config_value(ref<rstd::path::Path> path,
+                       ref<str>              description,
+                       bool                  require_ordinary_file) -> ConfigResult<Option<Toml>> {
     bool exists {};
     if (require_ordinary_file) {
-        exists = rstd_try(inspect_ordinary_file(location.path.as_path(), "configuration"_str));
+        exists = rstd_try(inspect_ordinary_file(path, description));
     } else {
-        auto result = rstd::fs::exists(location.path.as_path());
+        auto result = rstd::fs::exists(path);
         if (result.is_err()) {
-            return document_io_failure<ConfigDocument>("inspect configuration"_str,
-                                                       location.path.as_path(),
-                                                       rstd::move(result).unwrap_err());
+            return document_io_failure<Option<Toml>>(rstd::format("inspect {}", description).as_str(),
+                                                      path,
+                                                      rstd::move(result).unwrap_err());
         }
         exists = *result;
     }
-    if (! exists) return Ok(empty_document(rstd::move(location)));
+    if (! exists) return Ok(Option<Toml> {});
 
-    auto contents = rstd::fs::read_to_string(location.path.as_path());
+    auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
-        return document_io_failure<ConfigDocument>(
-            "read configuration"_str, location.path.as_path(), rstd::move(contents).unwrap_err());
+        return document_io_failure<Option<Toml>>(rstd::format("read {}", description).as_str(),
+                                                  path,
+                                                  rstd::move(contents).unwrap_err());
     }
     auto parsed = rstd::toml::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return Err(ConfigError::Parse(location.path.clone(), rstd::move(parsed).unwrap_err()));
+        return Err(ConfigError::Parse(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     if (! parsed->is_table()) {
-        return document_failure<ConfigDocument>("configuration root must be a table"_str);
+        return document_failure<Option<Toml>>(
+            rstd::format("{} root must be a table", description));
     }
-    return Ok(ConfigDocument {
-        .location = rstd::move(location),
-        .value    = rstd::move(parsed).unwrap(),
-    });
+    return Ok(Some(rstd::move(parsed).unwrap()));
+}
+
+auto read_config_document(ConfigLocation location, bool require_ordinary_file)
+    -> ConfigResult<ConfigDocument> {
+    auto value = rstd_try(read_config_value(
+        location.path.as_path(), "configuration"_str, require_ordinary_file));
+    auto document = empty_document(rstd::move(location));
+    if (value.is_some()) document.value = rstd::move(value).unwrap();
+    return Ok(rstd::move(document));
+}
+
+auto merge_config_value(Toml& destination, const Toml& source) -> void {
+    if (! destination.is_table() || ! source.is_table()) {
+        destination = source.clone();
+        return;
+    }
+    auto source_table = source.as_table().unwrap();
+    auto keys         = source_table->keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        auto source_value      = source_table->get((**key).as_str()).unwrap();
+        auto destination_value = destination.get_mut((**key).as_str());
+        if (destination_value.is_some() && (**destination_value).is_table() &&
+            source_value->is_table()) {
+            merge_config_value(**destination_value, *source_value);
+            continue;
+        }
+        auto destination_table = destination.as_table_mut().unwrap();
+        destination_table->insert((**key).clone(), source_value->clone());
+    }
 }
 
 auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     -> ConfigResult<ConfigDocument> {
     auto location = rstd_try(resolve_config_location(root));
-    if (mode == ConfigLoadMode::Disabled) return Ok(empty_document(rstd::move(location)));
-    return read_config_document(rstd::move(location), false);
+    auto shared   = rstd_try(
+        read_config_value(location.shared_path.as_path(), "project configuration"_str, false));
+    auto document = empty_document(rstd::move(location));
+    if (shared.is_some()) document.value = rstd::move(shared).unwrap();
+    if (mode == ConfigLoadMode::LocalDisabled) return Ok(rstd::move(document));
+    auto local = rstd_try(
+        read_config_value(document.location.path.as_path(), "configuration"_str, false));
+    if (local.is_some()) merge_config_value(document.value, *local);
+    return Ok(rstd::move(document));
 }
 
 auto get_config_value(const Toml& document, const rstd::toml::KeyPath& key) -> Option<ref<Toml>> {

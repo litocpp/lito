@@ -46,7 +46,8 @@ TEST(Update, DependencyUpdateWritesConfiguredLocalLock) {
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_FALSE(*root_exists);
 
-    auto defaults = lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::Disabled);
+    auto defaults =
+        lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(defaults.is_ok());
     auto repository_updated = lito::update_dependencies(lito::UpdateRequest {
         .root = defaults->root.clone(),

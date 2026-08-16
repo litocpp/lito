@@ -274,7 +274,7 @@ extern "C++" int main() {
     auto loaded_config = lito::load_project_config(
         config_root,
         lito::ProjectConfigRequest {
-            .mode                       = invocation.no_config ? lito::ConfigLoadMode::Disabled
+            .mode                       = invocation.no_config ? lito::ConfigLoadMode::LocalDisabled
                                                                : lito::ConfigLoadMode::Enabled,
             .overrides                  = rstd::move(invocation.config_overrides),
             .toolchain                  = rstd::move(invocation.toolchain),
