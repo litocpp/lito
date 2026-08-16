@@ -46,6 +46,18 @@ constexpr auto cpp_system_library_requirement_semantics() -> CppRequirementSeman
     };
 }
 
+auto merge_cpp_import_requirements(CppCompileOptions& left, CppCompileOptions& right) -> bool {
+    constexpr auto semantics = cpp_thread_requirement_semantics();
+    static_assert(semantics.domain == CppCompatibilityDomain::ImportClosure);
+    static_assert(semantics.merge == CppRequirementMergePolicy::Enable);
+
+    auto enabled = left.threading.posix || right.threading.posix;
+    auto changed = left.threading.posix != enabled || right.threading.posix != enabled;
+    left.threading.posix  = enabled;
+    right.threading.posix = enabled;
+    return changed;
+}
+
 struct CppSystemLibraryRequirement : DefaultInClass<CppSystemLibraryRequirement, Clone> {
     String name;
     String source;

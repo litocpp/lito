@@ -204,6 +204,13 @@ private:
             candidate[declaration + usize(1)].text.as_str() == ";"_str) {
             return Ok(empty {});
         }
+        if (keyword == "import"_str && exported &&
+            (provided_.is_none() || ! provided_->is_interface)) {
+            return Err(lexical::Error::at(
+                String::make(
+                    "export import declaration can only be used within a module interface unit"_str),
+                candidate[usize {}].expansion));
+        }
         auto parsed = parse_name(candidate,
                                  declaration + usize(1),
                                  keyword == "module"_str ? "module declaration"_str

@@ -180,6 +180,41 @@ auto visit_target(const PackageMetadata& package,
     return Ok(empty {});
 }
 
+auto resolve_import_requirements(const PackageMetadata& package,
+                                 const Vec<TargetId>&    target_order,
+                                 Vec<CompileContext>&    contexts) -> PackageResult<empty> {
+    if (contexts.len() != package.targets.len()) {
+        return plan_failure<empty>("import requirement contexts do not match package targets"_str);
+    }
+    auto selected = Vec<bool>::with_capacity(package.targets.len());
+    for (auto target = TargetId {}; target < package.targets.len(); ++target) {
+        selected.emplace_back(false);
+    }
+    for (auto target : target_order) selected[target] = true;
+
+    auto changed = true;
+    while (changed) {
+        changed = false;
+        for (auto importer : target_order) {
+            for (const auto& dependency : package.targets[importer].dependencies) {
+                if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
+                auto provider = target_index(package, dependency.target);
+                if (provider.is_none() || ! selected[*provider]) {
+                    return plan_failure<empty>(rstd::format(
+                        "import requirement dependency '{}' of target '{}' is not selected",
+                        target_text(dependency.target).as_str(),
+                        target_text(package.targets[importer].id).as_str()));
+                }
+                if (merge_cpp_import_requirements(contexts[importer].cpp,
+                                                  contexts[*provider].cpp)) {
+                    changed = true;
+                }
+            }
+        }
+    }
+    return Ok(empty {});
+}
+
 auto context_id(const CompileContext& context) -> String {
     auto result = String::make("lito-compile-context-v4\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
@@ -535,12 +570,19 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
             return Err(PackageError::Configuration(erase_error(rstd::move(applied).unwrap_err())));
         }
         context.cpp             = rstd::move(applied).unwrap();
-        context.id              = context_id(context);
-        context.scan_id         = scan_context_id(context);
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);
         append_unique(linker_options[target], spec.usage.linker_options);
+    }
+
+    auto import_requirements = resolve_import_requirements(package, target_order, contexts);
+    if (import_requirements.is_err()) {
+        return Err(rstd::move(import_requirements).unwrap_err());
+    }
+    for (auto target : target_order) {
+        contexts[target].id      = context_id(contexts[target]);
+        contexts[target].scan_id = scan_context_id(contexts[target]);
     }
 
     for (auto target = TargetId {}; target < package.targets.len(); ++target) {
@@ -586,6 +628,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs = link_inputs[target];
         auto& requirements = link_requirements[target];
+        requirements.posix_threads = contexts[target].cpp.threading.posix;
         append_unique(requirements, package.profiles[profile].link_requirements);
         append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {
