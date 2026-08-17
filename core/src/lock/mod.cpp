@@ -1,14 +1,11 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.core:lock.implementation;
+module lito.core;
 
 import rstd;
 import rstd.json;
-import :lock.error;
-import :lock.config;
-import :lock.document;
-import :lock.session;
+import :lock;
 import :package.graph;
 import :dependency.source;
 import :manifest;

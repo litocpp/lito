@@ -1,18 +1,13 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.core:manifest.assembly;
+module lito.core;
 
 import rstd;
 import rstd.toml;
-import :manifest.document;
-import :manifest.package;
-import :manifest.workspace;
-import :manifest.target;
-import :manifest.error;
+import :manifest;
 import :package.identity;
 import lito.system;
-import :manifest.locator;
 import :manifest.primitives;
 import :manifest.profile_schema;
 import :manifest.key_schema;

@@ -1,68 +1,34 @@
-module;
-#include <rstd/enum.hpp>
-
-export module lito.core:configure_template;
+module lito.core;
 
 import rstd;
+import :template_;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+using namespace lito;
 
-export namespace lito
-{
+auto lito::ConfigureValue::from_string(String value) -> ConfigureValue {
+    auto result    = ConfigureValue {};
+    result.kind_   = ConfigureValueKind::String;
+    result.string_ = rstd::move(value);
+    return result;
+}
 
-enum class ConfigureValueKind
-{
-    String,
-    Integer,
-    Boolean,
-};
+auto lito::ConfigureValue::from_integer(i64 value) -> ConfigureValue {
+    auto result     = ConfigureValue {};
+    result.kind_    = ConfigureValueKind::Integer;
+    result.integer_ = value;
+    return result;
+}
 
-class ConfigureValue {
-public:
-    static auto from_string(String value) -> ConfigureValue {
-        auto result    = ConfigureValue {};
-        result.kind_   = ConfigureValueKind::String;
-        result.string_ = rstd::move(value);
-        return result;
-    }
+auto lito::ConfigureValue::from_boolean(bool value) -> ConfigureValue {
+    auto result     = ConfigureValue {};
+    result.kind_    = ConfigureValueKind::Boolean;
+    result.boolean_ = value;
+    return result;
+}
 
-    static auto from_integer(i64 value) -> ConfigureValue {
-        auto result     = ConfigureValue {};
-        result.kind_    = ConfigureValueKind::Integer;
-        result.integer_ = value;
-        return result;
-    }
-
-    static auto from_boolean(bool value) -> ConfigureValue {
-        auto result     = ConfigureValue {};
-        result.kind_    = ConfigureValueKind::Boolean;
-        result.boolean_ = value;
-        return result;
-    }
-
-    auto kind() const noexcept -> ConfigureValueKind { return kind_; }
-    auto string() const noexcept -> ref<str> { return string_.as_str(); }
-    auto integer() const noexcept -> i64 { return integer_; }
-    auto boolean() const noexcept -> bool { return boolean_; }
-
-private:
-    ConfigureValueKind kind_ { ConfigureValueKind::String };
-    String             string_;
-    i64                integer_ {};
-    bool               boolean_ { false };
-};
-
-using ConfigureValues = rstd::collections::BTreeMap<String, ConfigureValue>;
-
-class TemplateError {
-    RSTD_ENUM(TemplateError, (Message, (String message;)))
-};
-
-template<typename T>
-using TemplateResult = Result<T, TemplateError>;
-
-auto configure_placeholder_name_is_valid(ref<str> name) noexcept -> bool {
+auto lito::configure_placeholder_name_is_valid(ref<str> name) noexcept -> bool {
     if (name.is_empty()) return false;
     auto first = name[usize()].to_primitive();
     auto alpha = (first >= 'a' && first <= 'z') || (first >= 'A' && first <= 'Z');
@@ -76,9 +42,9 @@ auto configure_placeholder_name_is_valid(ref<str> name) noexcept -> bool {
     return true;
 }
 
-auto render_configure_template(ref<str>               input,
-                               const ConfigureValues& values,
-                               ref<rstd::path::Path>  source) -> TemplateResult<String> {
+auto lito::render_configure_template(ref<str>               input,
+                                     const ConfigureValues& values,
+                                     ref<rstd::path::Path>  source) -> TemplateResult<String> {
     auto output        = String::make();
     auto used          = rstd::collections::BTreeMap<String, empty>::make();
     auto literal_begin = usize();
@@ -140,27 +106,15 @@ auto render_configure_template(ref<str>               input,
     return Ok(rstd::move(output));
 }
 
-} // namespace lito
-
-export namespace rstd
+namespace rstd
 {
 
-template<>
-struct Impl<fmt::Display, lito::TemplateError> : ImplBase<lito::TemplateError> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        return formatter.write_str(this->self().as_Message().message.as_str());
-    }
-};
+auto Impl<fmt::Display, lito::TemplateError>::fmt(fmt::Formatter& formatter) const -> bool {
+    return formatter.write_str(this->self().as_Message().message.as_str());
+}
 
-template<>
-struct Impl<fmt::Debug, lito::TemplateError> : ImplBase<lito::TemplateError> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        return as<fmt::Display>(this->self()).fmt(formatter);
-    }
-};
-
-template<>
-struct Impl<error::Error, lito::TemplateError> : DefaultInImpl<error::Error, lito::TemplateError> {
-};
+auto Impl<fmt::Debug, lito::TemplateError>::fmt(fmt::Formatter& formatter) const -> bool {
+    return as<fmt::Display>(this->self()).fmt(formatter);
+}
 
 } // namespace rstd

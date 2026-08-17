@@ -1,12 +1,11 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.core:config.implementation;
+module lito.core;
 
 import rstd;
 import rstd.toml;
-import :config.project;
-import :config.document;
+import :config;
 import :config.schema;
 
 using namespace rstd::prelude;

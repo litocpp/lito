@@ -184,7 +184,27 @@ auto namespace_relative_path(ref<str> root_module, ref<str> logical_name) -> Mod
     return relative_module_path(logical_name, namespace_size + usize(1));
 }
 
-auto relative_source_exists(ref<rstd::path::Path> source_root, ref<str> relative)
+auto source_relative_alias(ref<str> relative) -> Option<String> {
+    auto alias   = String::make();
+    auto changed = false;
+    for (auto index = usize {}; index < relative.len(); ++index) {
+        auto value = relative[index];
+        if (value == u8('/') && ! alias.is_empty() &&
+            alias.as_str()[alias.len() - usize(1)] == u8('_')) {
+            alias.truncate(alias.len() - usize(1));
+            changed = true;
+        }
+        alias.push_ascii(value);
+    }
+    if (! alias.is_empty() && alias.as_str()[alias.len() - usize(1)] == u8('_')) {
+        alias.truncate(alias.len() - usize(1));
+        changed = true;
+    }
+    if (! changed) return None();
+    return Some(rstd::move(alias));
+}
+
+auto exact_relative_source_exists(ref<rstd::path::Path> source_root, ref<str> relative)
     -> ModuleResult<bool> {
     auto direct_relative = String::make(relative);
     direct_relative.push_str(".cppm"_str);
@@ -198,10 +218,19 @@ auto relative_source_exists(ref<rstd::path::Path> source_root, ref<str> relative
         PathBuf::from(source_root).join(PathBuf::from(module_relative).as_path()).as_path());
 }
 
-auto relative_module_source(const ResolvedTarget& target,
-                            ref<rstd::path::Path> source_root,
-                            ref<str>              logical_name,
-                            ref<str> relative) -> ModuleResult<Option<ResolvedSource>> {
+auto relative_source_exists(ref<rstd::path::Path> source_root, ref<str> relative)
+    -> ModuleResult<bool> {
+    auto direct = exact_relative_source_exists(source_root, relative);
+    if (direct.is_err() || *direct) return direct;
+    auto alias = source_relative_alias(relative);
+    if (alias.is_none()) return direct;
+    return exact_relative_source_exists(source_root, alias->as_str());
+}
+
+auto exact_relative_module_source(const ResolvedTarget& target,
+                                  ref<rstd::path::Path> source_root,
+                                  ref<str>              logical_name,
+                                  ref<str> relative) -> ModuleResult<Option<ResolvedSource>> {
     auto direct_relative = String::make(relative);
     direct_relative.push_str(".cppm"_str);
     auto direct     = PathBuf::from(source_root).join(PathBuf::from(direct_relative).as_path());
@@ -228,6 +257,17 @@ auto relative_module_source(const ResolvedTarget& target,
                                         Some(String::make(logical_name)));
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
     return Ok(Some(rstd::move(resolved).unwrap()));
+}
+
+auto relative_module_source(const ResolvedTarget& target,
+                            ref<rstd::path::Path> source_root,
+                            ref<str>              logical_name,
+                            ref<str> relative) -> ModuleResult<Option<ResolvedSource>> {
+    auto direct = exact_relative_module_source(target, source_root, logical_name, relative);
+    if (direct.is_err() || direct->is_some()) return direct;
+    auto alias = source_relative_alias(relative);
+    if (alias.is_none()) return direct;
+    return exact_relative_module_source(target, source_root, logical_name, alias->as_str());
 }
 
 } // namespace lito::cpp

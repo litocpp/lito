@@ -1,6 +1,12 @@
 add_library(lito.core STATIC)
 target_compile_features(lito.core PUBLIC cxx_std_20)
-target_sources(lito.core PRIVATE src/lib.cpp)
+target_sources(
+  lito.core
+  PRIVATE src/config/mod.cpp
+          src/lib.cpp
+          src/lock/mod.cpp
+          src/manifest/mod.cpp
+          src/template/mod.cpp)
 target_sources(
   lito.core
   PUBLIC FILE_SET
@@ -10,12 +16,10 @@ target_sources(
          FILES
          src/config/document.cppm
          src/config/error.cppm
-         src/config/implementation.cppm
          src/config/mod.cppm
          src/config/project.cppm
          src/config/schema.cppm
          src/config/toolchain.cppm
-         src/configure_template/mod.cppm
          src/lib.cppm
          src/dependency/cmake.cppm
          src/dependency/error.cppm
@@ -28,10 +32,8 @@ target_sources(
          src/lock/flatpak.cppm
          src/lock/config.cppm
          src/lock/document.cppm
-         src/lock/implementation.cppm
          src/lock/mod.cppm
          src/lock/session.cppm
-         src/manifest/assembly.cppm
          src/manifest/build_tool.cppm
          src/manifest/build_tool_schema.cppm
          src/manifest/convention.cppm
@@ -76,6 +78,8 @@ target_sources(
          src/system/platform.cppm
          src/system/process.cppm
          src/system/storage.cppm
+         src/template/configure.cppm
+         src/template/mod.cppm
          src/workspace/catalog.cppm
          src/workspace/error.cppm
          src/workspace/member.cppm

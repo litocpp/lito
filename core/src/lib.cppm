@@ -4,7 +4,7 @@ import rstd;
 
 export import lito.system;
 export import :config;
-export import :configure_template;
+export import :template_;
 export import :dependency;
 export import :lock;
 export import :lock.flatpak;

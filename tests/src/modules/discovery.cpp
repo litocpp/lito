@@ -285,6 +285,49 @@ auto second_value() -> int {
     return source_tree(files);
 }
 
+auto manifest_toml_module_escaped_directory_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"module([package]
+name = "fixture-convention-escaped-directory"
+version = "0.1.0"
+
+[lib]
+name = "fixture-convention-escaped-directory"
+module = "fixture.convention.escaped_directory"
+archive = "fixture.convention.escaped_directory"
+)module"_str },
+        { "src/lib.cppm"_str, R"module(export module fixture.convention.escaped_directory;
+
+export import :template_;
+)module"_str },
+        { "src/template/configure.cppm"_str,
+          R"module(export module fixture.convention.escaped_directory:template_.configure;
+
+export auto configured_value() -> int {
+    return 41;
+}
+)module"_str },
+        { "src/template/mod.cpp"_str,
+          R"module(module fixture.convention.escaped_directory;
+
+import :template_;
+
+auto template_value() -> int {
+    return configured_value() + 1;
+}
+)module"_str },
+        { "src/template/mod.cppm"_str,
+          R"module(export module fixture.convention.escaped_directory:template_;
+
+export import :template_.configure;
+
+export auto template_value() -> int;
+)module"_str },
+    };
+    return source_tree(files);
+}
+
 auto modules_scanner_module_kinds_tree()
     -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
@@ -585,6 +628,10 @@ constexpr ModuleBuildCase module_build_cases[] = {
       ""_str,
       true,
       &manifest_toml_module_multiple_implementations_tree },
+    { "manifest_toml_module_escaped_directory"_str,
+      ""_str,
+      true,
+      &manifest_toml_module_escaped_directory_tree },
     { "modules_scanner_module_kinds"_str, ""_str, true, &modules_scanner_module_kinds_tree },
     { "modules_scanner_stdlib_header"_str, ""_str, true, &modules_scanner_stdlib_header_tree },
     { "workspace_shared_source_root"_str, ""_str, true, &workspace_shared_source_root_tree },
