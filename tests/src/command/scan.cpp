@@ -35,6 +35,9 @@ version = "0.1.0"
 name = "fixture-preprocessor-native"
 module = "fixture.preprocessor.native"
 archive = "fixture.preprocessor.native"
+
+[features.docs]
+default = false
 )scan"_str },
         { "preprocessor-native/src/config.hpp"_str, R"scan(#pragma once
 
@@ -59,6 +62,10 @@ export auto native_preprocessor_dependency() -> int {
 #define LITO_PRAGMA(value) _Pragma(#value)
 
 export module fixture.preprocessor.native;
+
+#if defined(LITO_FEAT_DOCS)
+import :docs;
+#endif
 
 #if defined(LITO_ENABLED) && LITO_JOIN(LITO_, ENABLED) && ((2 + 3 * 4) == 14) && \
     __has_include("config.hpp")
@@ -117,6 +124,8 @@ constexpr auto ignored_import = R"tag(import fixture.preprocessor.missing;)tag";
 export auto native_preprocessor_value() -> int {
     return native_preprocessor_dependency();
 }
+
+export inline constexpr auto package_version = LITO_PKG_VERSION;
 )scan"_str },
         { "scan-definitions/lito.toml"_str, R"scan([package]
 name = "fixture-scan-definitions"
@@ -173,8 +182,14 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
     auto native_json = lito::scan_report_json(*native);
     ASSERT_TRUE(native_json.is_ok());
     EXPECT_TRUE(native_json->as_str().contains("\"format\": \"lito-scan\""_str));
-    EXPECT_TRUE(native_json->as_str().contains("\"version\": 2"_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"version\": 3"_str));
     EXPECT_TRUE(native_json->as_str().contains("\"exported\": true"_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"external-macros\":"_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"name\": \"LITO_PKG_VERSION\""_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"state\": \"defined\""_str));
+    EXPECT_TRUE(native_json->as_str().contains("LITO_PKG_VERSION=\\\"0.1.0\\\""_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"name\": \"LITO_FEAT_DOCS\""_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"state\": \"undefined\""_str));
 
     auto p1689_json = lito::scan_report_json(*native, lito::ScanOutputFormat::P1689);
     ASSERT_TRUE(p1689_json.is_ok());

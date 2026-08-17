@@ -11,6 +11,34 @@ using namespace rstd::prelude;
 export namespace lito::cpp
 {
 
+struct PackageFeatureState {
+    String name;
+    String macro_name;
+    bool   enabled { false };
+
+    auto clone() const -> PackageFeatureState {
+        return PackageFeatureState {
+            .name       = name.clone(),
+            .macro_name = macro_name.clone(),
+            .enabled    = enabled,
+        };
+    }
+};
+
+struct PackageCompileMetadata {
+    Option<String>          version;
+    Vec<PackageFeatureState> features;
+
+    auto clone() const -> PackageCompileMetadata {
+        auto copied_features = Vec<PackageFeatureState>::with_capacity(features.len());
+        for (const auto& feature : features) copied_features.push(feature.clone());
+        return PackageCompileMetadata {
+            .version  = as<Clone>(version).clone(),
+            .features = rstd::move(copied_features),
+        };
+    }
+};
+
 struct ResolvedTarget {
     lito::package::PackageTargetId               id;
     ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
@@ -26,6 +54,7 @@ struct ResolvedTarget {
     Vec<DependencySpec>                          dependencies;
     Vec<ResolvedExternalDependency>              external_dependencies;
     Option<TestAttachmentTarget>                 test_attachment;
+    PackageCompileMetadata                       compile_metadata;
 };
 
 struct PackageBuildToolRequirement {

@@ -52,12 +52,29 @@ struct IncludeLookupDependency {
     Option<ResolvedIncludeCandidate> resolved;
 };
 
+enum class ExternalMacroState
+{
+    Defined,
+    Undefined,
+};
+
+struct ExternalMacroMaterialization : DefaultInClass<ExternalMacroMaterialization, Clone> {
+    String                 name;
+    String                 dependency_key;
+    String                 value_identity;
+    ExternalMacroState     state { ExternalMacroState::Undefined };
+    Option<String>         compiler_definition;
+
+    auto clone() const -> ExternalMacroMaterialization;
+};
+
 struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     rstd::path::PathBuf      source;
     Option<ProvidedModule>   provided;
     Option<String>           implementation_module;
     Vec<ModuleImport>        imports;
     Vec<rstd::path::PathBuf> header_inputs;
+    Vec<ExternalMacroMaterialization> external_macros;
     String                   preprocessor_environment;
     usize                    input_bytes {};
 
@@ -70,6 +87,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     Option<String>           implementation_module;
     Vec<ModuleImport>        imports;
     Vec<rstd::path::PathBuf> header_inputs;
+    Vec<ExternalMacroMaterialization> external_macros;
     String                   preprocessor_environment;
     usize                    input_bytes {};
 
@@ -119,6 +137,16 @@ auto ModuleImport::clone() const -> ModuleImport {
     };
 }
 
+auto ExternalMacroMaterialization::clone() const -> ExternalMacroMaterialization {
+    return ExternalMacroMaterialization {
+        .name                = name.clone(),
+        .dependency_key      = dependency_key.clone(),
+        .value_identity      = value_identity.clone(),
+        .state               = state,
+        .compiler_definition = as<Clone>(compiler_definition).clone(),
+    };
+}
+
 auto FrontendResult::clone() const -> FrontendResult {
     return FrontendResult {
         .source                   = source.clone(),
@@ -126,6 +154,7 @@ auto FrontendResult::clone() const -> FrontendResult {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
+        .external_macros          = as<Clone>(external_macros).clone(),
         .preprocessor_environment = preprocessor_environment.clone(),
         .input_bytes              = input_bytes,
     };
@@ -138,6 +167,7 @@ auto FrontendSnapshot::clone() const -> FrontendSnapshot {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
+        .external_macros          = as<Clone>(external_macros).clone(),
         .preprocessor_environment = preprocessor_environment.clone(),
         .input_bytes              = input_bytes,
     };
@@ -150,6 +180,7 @@ auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
         .implementation_module    = as<Clone>(result.implementation_module).clone(),
         .imports                  = as<Clone>(result.imports).clone(),
         .header_inputs            = as<Clone>(result.header_inputs).clone(),
+        .external_macros          = as<Clone>(result.external_macros).clone(),
         .preprocessor_environment = result.preprocessor_environment.clone(),
         .input_bytes              = result.input_bytes,
     };
@@ -163,12 +194,23 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
     for (const auto& imported : value.imports) {
         if (imported.logical_name.is_empty() || imported.location.path.is_empty()) return None();
     }
+    for (const auto& macro : value.external_macros) {
+        if (macro.name.is_empty() || macro.dependency_key.is_empty() ||
+            macro.value_identity.is_empty()) {
+            return None();
+        }
+        if ((macro.state == ExternalMacroState::Defined) !=
+            macro.compiler_definition.is_some()) {
+            return None();
+        }
+    }
     return Some(FrontendResult {
         .source                   = rstd::move(value.source),
         .provided                 = rstd::move(value.provided),
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(value.imports),
         .header_inputs            = rstd::move(value.header_inputs),
+        .external_macros          = rstd::move(value.external_macros),
         .preprocessor_environment = rstd::move(value.preprocessor_environment),
         .input_bytes              = value.input_bytes,
     });

@@ -113,6 +113,25 @@ export auto scan_cache_date() -> const char* {
     return source_tree(files);
 }
 
+auto package_metadata_manifest(ref<str> version) -> String {
+    return rstd::format(R"cache([package]
+name = "fixture-package-metadata-cache"
+version = "{}"
+
+[[bin]]
+name = "fixture-package-metadata-cache"
+link-stdlib = false
+sources = ["src/main.cpp", "src/version.cpp", "src/feature.cpp", "src/unused.cpp"]
+
+[features.optional]
+default = false
+
+[features.unused]
+default = false
+)cache",
+                        version);
+}
+
 TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     auto tree = scan_cache_tree();
     ASSERT_TRUE(tree.is_ok());
@@ -190,4 +209,81 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(dynamic_warm->frontend.persistent_scan_hits, usize {});
     EXPECT_EQ(dynamic_warm->frontend.persistent_scan_uncacheable, usize(1));
     EXPECT_EQ(dynamic_warm->frontend.analyze_builds, usize(1));
+}
+
+TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
+    auto manifest = package_metadata_manifest("0.1.0"_str);
+    const ProjectFile files[] = {
+        { "lito.toml"_str, manifest.as_str() },
+        { "src/main.cpp"_str,
+          "auto package_version() -> const char*;\n"
+          "auto package_feature() -> int;\n"
+          "auto unrelated_value() -> int;\n"
+          "auto main() -> int {\n"
+          "    (void)package_version();\n"
+          "    (void)unrelated_value();\n"
+          "    return package_feature();\n"
+          "}\n"_str },
+        { "src/version.cpp"_str,
+          "auto package_version() -> const char* { return LITO_PKG_VERSION; }\n"_str },
+        { "src/feature.cpp"_str,
+          "auto package_feature() -> int {\n"
+          "#ifdef LITO_FEAT_OPTIONAL\n"
+          "    return LITO_FEAT_OPTIONAL;\n"
+          "#else\n"
+          "    return 0;\n"
+          "#endif\n"
+          "}\n"_str },
+        { "src/unused.cpp"_str, "auto unrelated_value() -> int { return 7; }\n"_str },
+    };
+    auto project = materialize("package-metadata-cache"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("package-metadata-cache"_str);
+    auto request = build_request(project->root.as_path(),
+                                 output.as_path(),
+                                 strings("fixture-package-metadata-cache"_str));
+
+    auto cold = lito::build(request);
+    ASSERT_TRUE(cold.is_ok());
+    EXPECT_EQ(cold->compiled, usize(4));
+    auto cold_executable = executable(*cold);
+    ASSERT_TRUE(cold_executable.is_some());
+    auto cold_status = rstd::process::Command::make((*cold_executable).as_os_str()).status();
+    ASSERT_TRUE(cold_status.is_ok());
+    EXPECT_TRUE(cold_status->success());
+
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(4));
+
+    auto changed_manifest = package_metadata_manifest("0.2.0"_str);
+    auto manifest_path = project->root.join(PathBuf::from("lito.toml"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(manifest_path.as_path(), changed_manifest.as_str().as_bytes()).is_ok());
+    auto changed_version = lito::build(request);
+    ASSERT_TRUE(changed_version.is_ok());
+    EXPECT_EQ(changed_version->compiled, usize(1));
+    EXPECT_EQ(changed_version->frontend.persistent_scan_external_macro, usize(1));
+    EXPECT_EQ(changed_version->frontend.persistent_scan_hits, usize(3));
+
+    request.selection.features.enabled.push(String::make("optional"_str));
+    auto changed_feature = lito::build(request);
+    ASSERT_TRUE(changed_feature.is_ok());
+    EXPECT_EQ(changed_feature->compiled, usize(1));
+    EXPECT_EQ(changed_feature->frontend.persistent_scan_external_macro, usize(1));
+    EXPECT_EQ(changed_feature->frontend.persistent_scan_hits, usize(3));
+    auto enabled_executable = executable(*changed_feature);
+    ASSERT_TRUE(enabled_executable.is_some());
+    auto enabled_status =
+        rstd::process::Command::make((*enabled_executable).as_os_str()).status();
+    ASSERT_TRUE(enabled_status.is_ok());
+    ASSERT_TRUE(enabled_status->code().is_some());
+    EXPECT_EQ(*enabled_status->code(), i32(1));
+
+    request.selection.features.enabled.push(String::make("unused"_str));
+    auto changed_unused = lito::build(request);
+    ASSERT_TRUE(changed_unused.is_ok());
+    EXPECT_EQ(changed_unused->compiled, usize {});
+    EXPECT_EQ(changed_unused->frontend.persistent_scan_hits, usize(4));
 }

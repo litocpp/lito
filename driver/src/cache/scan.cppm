@@ -5,6 +5,7 @@ import rstd.json;
 import lito.core;
 import lito.cpp;
 import lito.frontend;
+import lito.toolchain;
 import :build.layout;
 import :cache.hash;
 import :cache.common;
@@ -31,6 +32,7 @@ enum class ScanCacheMissReason
     Source,
     FileDependency,
     IncludeLookup,
+    ExternalMacro,
     Receipt,
 };
 
@@ -48,6 +50,7 @@ struct ScanCacheStatistics {
     usize                source {};
     usize                file_dependency {};
     usize                include_lookup {};
+    usize                external_macro {};
     usize                receipt {};
     usize                fingerprint_requests {};
     usize                fingerprint_hits {};
@@ -64,6 +67,8 @@ struct ScanCacheInput {
     String  context_identity;
     PathBuf working_directory;
     String  preprocessor_environment;
+    String  external_macro_schema;
+    toolchain::SharedPackageMacroCatalog external_macros;
 };
 
 struct ScanCacheLookup {
@@ -87,6 +92,64 @@ auto parse_include_kind(ref<str> value) -> Option<frontend::IncludeLookupKind> {
     if (value == "next-quoted"_str) return Some(frontend::IncludeLookupKind::NextQuoted);
     if (value == "next-angled"_str) return Some(frontend::IncludeLookupKind::NextAngled);
     return None();
+}
+
+auto external_macro_state_name(frontend::ExternalMacroState state) -> ref<str> {
+    return state == frontend::ExternalMacroState::Defined ? "defined"_str : "undefined"_str;
+}
+
+auto parse_external_macro_state(ref<str> value) -> Option<frontend::ExternalMacroState> {
+    if (value == "defined"_str) return Some(frontend::ExternalMacroState::Defined);
+    if (value == "undefined"_str) return Some(frontend::ExternalMacroState::Undefined);
+    return None();
+}
+
+auto external_macro_json(const frontend::ExternalMacroMaterialization& macro) -> Json {
+    auto definition = Json::Null();
+    if (macro.compiler_definition.is_some()) {
+        definition = cache_string(macro.compiler_definition->as_str());
+    }
+    auto value = JsonMap::make();
+    value.insert(String::make("compiler-definition"_str), rstd::move(definition));
+    value.insert(String::make("dependency-key"_str),
+                 cache_string(macro.dependency_key.as_str()));
+    value.insert(String::make("name"_str), cache_string(macro.name.as_str()));
+    value.insert(String::make("state"_str), cache_string(external_macro_state_name(macro.state)));
+    value.insert(String::make("value-identity"_str),
+                 cache_string(macro.value_identity.as_str()));
+    return Json::Object(rstd::move(value));
+}
+
+auto parse_external_macro(ref<Json> value) -> Option<frontend::ExternalMacroMaterialization> {
+    if (! value->is_object()) return None();
+    auto name       = json_text(value, "name"_str);
+    auto dependency = json_text(value, "dependency-key"_str);
+    auto identity   = json_text(value, "value-identity"_str);
+    auto state_text = json_text(value, "state"_str);
+    auto definition = json_member(value, "compiler-definition"_str);
+    if (name.is_none() || name->is_empty() || dependency.is_none() || dependency->is_empty() ||
+        identity.is_none() || identity->is_empty() || state_text.is_none() ||
+        definition.is_none()) {
+        return None();
+    }
+    auto state = parse_external_macro_state(*state_text);
+    if (state.is_none()) return None();
+    auto compiler_definition = Option<String> {};
+    if (! (**definition).is_null()) {
+        auto text = (**definition).as_str();
+        if (text.is_none()) return None();
+        compiler_definition = Some(String::make(*text));
+    }
+    if ((*state == frontend::ExternalMacroState::Defined) != compiler_definition.is_some()) {
+        return None();
+    }
+    return Some(frontend::ExternalMacroMaterialization {
+        .name                = String::make(*name),
+        .dependency_key      = String::make(*dependency),
+        .value_identity      = String::make(*identity),
+        .state               = *state,
+        .compiler_definition = rstd::move(compiler_definition),
+    });
 }
 
 auto path_json(ref<rstd::path::Path> path) -> CacheResult<Json> {
@@ -214,7 +277,13 @@ auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Js
         if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
         headers.push(rstd::move(encoded).unwrap());
     }
+    auto external_macros = JsonArray::with_capacity(snapshot.external_macros.len());
+    for (const auto& macro : snapshot.external_macros) {
+        external_macros.push(external_macro_json(macro));
+    }
     auto value = JsonMap::make();
+    value.insert(String::make("external-macros"_str),
+                 Json::Array(rstd::move(external_macros)));
     value.insert(String::make("header-inputs"_str), Json::Array(rstd::move(headers)));
     value.insert(String::make("implementation-module"_str), rstd::move(implementation));
     value.insert(String::make("imports"_str), Json::Array(rstd::move(imports)));
@@ -235,9 +304,10 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
     auto implementation_value = json_member(value, "implementation-module"_str);
     auto import_values        = json_array(value, "imports"_str);
     auto header_values        = json_array(value, "header-inputs"_str);
+    auto external_macro_values = json_array(value, "external-macros"_str);
     if (source.is_none() || environment.is_none() || input_bytes.is_none() ||
         provided_value.is_none() || implementation_value.is_none() || import_values.is_none() ||
-        header_values.is_none()) {
+        header_values.is_none() || external_macro_values.is_none()) {
         return None();
     }
     auto provided = Option<frontend::ProvidedModule> {};
@@ -286,12 +356,20 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
         if (path.is_none()) return None();
         headers.push(rstd::move(path).unwrap());
     }
+    auto external_macros = Vec<frontend::ExternalMacroMaterialization>::with_capacity(
+        (**external_macro_values).len());
+    for (const auto& item : **external_macro_values) {
+        auto macro = parse_external_macro(ref<Json>::from_raw_parts(rstd::addressof(item)));
+        if (macro.is_none()) return None();
+        external_macros.push(rstd::move(macro).unwrap());
+    }
     return Some(frontend::FrontendSnapshot {
         .source                   = PathBuf::from(*source),
         .provided                 = rstd::move(provided),
         .implementation_module    = rstd::move(implementation),
         .imports                  = rstd::move(imports),
         .header_inputs            = rstd::move(headers),
+        .external_macros          = rstd::move(external_macros),
         .preprocessor_environment = String::make(*environment),
         .input_bytes              = usize(static_cast<size_t>(input_bytes->to_primitive())),
     });
@@ -357,6 +435,7 @@ class ScanCacheSession {
         case ScanCacheMissReason::Source: ++statistics->source; break;
         case ScanCacheMissReason::FileDependency: ++statistics->file_dependency; break;
         case ScanCacheMissReason::IncludeLookup: ++statistics->include_lookup; break;
+        case ScanCacheMissReason::ExternalMacro: ++statistics->external_macro; break;
         case ScanCacheMissReason::Receipt: ++statistics->receipt; break;
         case ScanCacheMissReason::None: __builtin_unreachable();
         }
@@ -454,6 +533,7 @@ class ScanCacheSession {
         cache::add_text(hash, state_->environment.as_str());
         cache::add_text(hash, input.target.as_str());
         cache::add_text(hash, input.context_identity.as_str());
+        cache::add_text(hash, input.external_macro_schema.as_str());
         cache::add_text(hash, working->as_str());
         cache::add_text(hash, source_path->as_str());
         cache::add_text(hash, relative->as_str());
@@ -552,10 +632,12 @@ private:
         auto lookups_value  = json_array(document, "include-lookups"_str);
         auto result_value   = json_member(document, "result"_str);
         auto stored_receipt = json_text(document, "receipt"_str);
+        auto stored_external_macro_schema = json_text(document, "external-macro-schema"_str);
         if (version.is_none() || state.is_none() || *state != "complete"_str || recipe.is_none() ||
             environment.is_none() || target.is_none() || context.is_none() ||
             stored_working.is_none() || stored_source.is_none() || files_value.is_none() ||
-            lookups_value.is_none() || result_value.is_none() || stored_receipt.is_none()) {
+            lookups_value.is_none() || result_value.is_none() || stored_receipt.is_none() ||
+            stored_external_macro_schema.is_none()) {
             return miss(ScanCacheMissReason::Corrupt);
         }
         if (*version != CACHE_VERSION) return miss(ScanCacheMissReason::Version);
@@ -566,6 +648,9 @@ private:
         if (*target != input.target.as_str() || *context != input.context_identity.as_str() ||
             *stored_working != working->as_str()) {
             return miss(ScanCacheMissReason::Context);
+        }
+        if (*stored_external_macro_schema != input.external_macro_schema.as_str()) {
+            return miss(ScanCacheMissReason::ExternalMacro);
         }
         auto stored_source_path        = json_text(*stored_source, "path"_str);
         auto stored_relative           = json_text(*stored_source, "relative"_str);
@@ -639,6 +724,11 @@ private:
             restored->preprocessor_environment.as_str() !=
                 input.preprocessor_environment.as_str()) {
             return miss(ScanCacheMissReason::Environment);
+        }
+        for (const auto& macro : restored->external_macros) {
+            if (! input.external_macros->validates(macro)) {
+                return miss(ScanCacheMissReason::ExternalMacro);
+            }
         }
         auto header_paths = rstd::collections::BTreeMap<String, empty>::make();
         for (const auto& header : restored->header_inputs) {
@@ -722,6 +812,8 @@ private:
             root.insert(String::make("context"_str), cache_string(input.context_identity.as_str()));
             root.insert(String::make("environment"_str),
                         cache_string(state_->environment.as_str()));
+            root.insert(String::make("external-macro-schema"_str),
+                        cache_string(input.external_macro_schema.as_str()));
             root.insert(String::make("files"_str), Json::Array(rstd::move(files_json)));
             root.insert(String::make("include-lookups"_str), Json::Array(rstd::move(lookups_json)));
             root.insert(String::make("receipt"_str), cache_string(scan_receipt->as_str()));

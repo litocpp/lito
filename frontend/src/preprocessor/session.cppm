@@ -27,6 +27,7 @@ struct PreprocessedTranslationUnit {
     Vec<Token>               tokens;
     Vec<CommentTrivia>       active_comments;
     Vec<rstd::path::PathBuf> header_inputs;
+    Vec<frontend::ExternalMacroMaterialization> external_macros;
     String                   environment_identity;
     usize                    input_bytes {};
     PreprocessorStatistics   statistics;
@@ -35,6 +36,7 @@ struct PreprocessedTranslationUnit {
 template<typename Sources,
          typename Includes,
          typename Builtins,
+         typename Externals,
          typename Identifiers,
          typename Pragmas,
          typename Events,
@@ -133,6 +135,7 @@ public:
                         Sources&          sources,
                         Includes&         includes,
                         Builtins&         builtins,
+                        Externals&        externals,
                         Identifiers&      identifiers,
                         Pragmas&          pragmas,
                         Events&           events,
@@ -142,6 +145,7 @@ public:
           source_provider_(sources),
           include_resolver_(includes),
           builtin_provider_(builtins),
+          external_macro_provider_(externals),
           identifier_matcher_(identifiers),
           pragma_handler_(pragmas),
           event_sink_(events),
@@ -187,6 +191,7 @@ public:
             .tokens               = Vec<Token>::make(),
             .active_comments      = rstd::move(active_comments_),
             .header_inputs        = Vec<rstd::path::PathBuf>::make(),
+            .external_macros      = rstd::move(external_macros_),
             .environment_identity = environment_identity(),
             .input_bytes          = input_bytes_,
             .statistics           = statistics,
@@ -318,6 +323,53 @@ private:
             "{}:{}", request_.environment_identity.as_str(), builtin_identity_.as_str());
     }
 
+    auto prepare_external_macro(ref<str> name, SourceLocation location) -> Result<empty> {
+        if (resolved_external_macros_.contains_key(name)) return Ok(empty {});
+        auto resolved = as<ExternalMacroProvider>(external_macro_provider_).resolve(name, location);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        if (resolved->is_none()) return Ok(empty {});
+        auto value = rstd::move(resolved).unwrap().unwrap();
+        if (value.dependency_key.is_empty() || value.value_identity.is_empty()) {
+            return Err(failure("external macro resolution has an empty identity"_str, location));
+        }
+        if (value.state == frontend::ExternalMacroState::Defined) {
+            if (value.definition.is_none() || value.compiler_definition.is_none() ||
+                (**value.definition).name.as_str() != name) {
+                return Err(failure("defined external macro has an invalid definition"_str,
+                                   location));
+            }
+            (void)macros_.define_shared(value.definition->clone());
+        } else if (value.definition.is_some() || value.compiler_definition.is_some()) {
+            return Err(failure("undefined external macro carries a definition"_str, location));
+        }
+        resolved_external_macros_.insert(String::make(name), empty {});
+        external_macros_.push(frontend::ExternalMacroMaterialization {
+            .name                = String::make(name),
+            .dependency_key      = rstd::move(value.dependency_key),
+            .value_identity      = rstd::move(value.value_identity),
+            .state               = value.state,
+            .compiler_definition = rstd::move(value.compiler_definition),
+        });
+        return Ok(empty {});
+    }
+
+    auto lookup_macro(ref<str> name, SourceLocation location)
+        -> Result<Option<SharedMacroDefinition>> {
+        auto found = macros_.get(name);
+        if (found.is_some() || resolved_external_macros_.contains_key(name)) {
+            return Ok(rstd::move(found));
+        }
+        auto prepared = prepare_external_macro(name, location);
+        if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+        return Ok(macros_.get(name));
+    }
+
+    auto contains_macro(ref<str> name, SourceLocation location) -> Result<bool> {
+        auto found = lookup_macro(name, location);
+        if (found.is_err()) return Err(rstd::move(found).unwrap_err());
+        return Ok(found->is_some());
+    }
+
     auto clone_range(const Vec<Token>& input, usize begin, usize end) -> Vec<Token> {
         auto result = Vec<Token>::with_capacity(end - begin);
         for (auto index = begin; index < end; ++index) result.push(clone_token(input[index]));
@@ -412,14 +464,15 @@ private:
             auto name = pragma_macro_name(tokens, location);
             if (name.is_err()) return Err(rstd::move(name).unwrap_err());
             if (push) {
-                auto stored = macros_.get(name->as_str());
+                auto stored = lookup_macro(name->as_str(), location);
+                if (stored.is_err()) return Err(rstd::move(stored).unwrap_err());
                 auto stack  = macro_stacks_.get_mut(name->as_str());
                 if (stack.is_none()) {
                     auto values = Vec<Option<SharedMacroDefinition>>::make();
-                    values.push(rstd::move(stored));
+                    values.push(rstd::move(stored).unwrap());
                     macro_stacks_.insert(rstd::move(name).unwrap(), rstd::move(values));
                 } else {
-                    (**stack).push(rstd::move(stored));
+                    (**stack).push(rstd::move(stored).unwrap());
                 }
                 return Ok(empty {});
             }
@@ -943,7 +996,9 @@ private:
             }
 
             ++raw_statistics_.macro_lookups;
-            auto found = macros_.get(name);
+            auto resolved = lookup_macro(name, token.expansion);
+            if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+            auto found = rstd::move(resolved).unwrap();
             if (found.is_none()) {
                 token.mark_unavailable_macro(revision);
                 output.push(rstd::move(token));
@@ -1001,6 +1056,9 @@ private:
     auto define_macro(const Vec<Token>& line, bool send_event) -> Result<empty> {
         auto parsed = parse_macro_definition(line);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
+        auto external = prepare_external_macro(
+            line[usize {}].text.as_str(), line[usize {}].expansion);
+        if (external.is_err()) return Err(rstd::move(external).unwrap_err());
         auto macro    = rstd::move(parsed).unwrap();
         auto previous = macros_.define(rstd::move(macro));
         (void)previous;
@@ -1028,9 +1086,10 @@ private:
                 return Err(failure("defined requires an identifier"_str, token.expansion));
             }
             const auto& identifier = line[cursor].text;
-            auto        value =
-                macros_.contains(identifier.as_str()) ||
-                DynamicBuiltinSet::contains(identifier.comparable_hash(), identifier.as_str());
+            auto contains = contains_macro(identifier.as_str(), line[cursor].expansion);
+            if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
+            auto value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
+                                                                  identifier.as_str());
             ++cursor;
             if (parenthesized) {
                 if (cursor >= line.len() || line[cursor].text.as_str() != ")"_str) {
@@ -1184,9 +1243,10 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     const auto& identifier = rest[usize {}].text;
-                    value = macros_.contains(identifier.as_str()) ||
-                            DynamicBuiltinSet::contains(identifier.comparable_hash(),
-                                                        identifier.as_str());
+                    auto contains = contains_macro(identifier.as_str(), rest[usize {}].expansion);
+                    if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
+                    value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
+                                                                     identifier.as_str());
                     if (directive == "ifndef"_str) value = ! value;
                 }
             }
@@ -1217,9 +1277,10 @@ private:
                             failure("conditional directive requires one identifier"_str, location));
                     }
                     const auto& identifier = rest[usize {}].text;
-                    value = macros_.contains(identifier.as_str()) ||
-                            DynamicBuiltinSet::contains(identifier.comparable_hash(),
-                                                        identifier.as_str());
+                    auto contains = contains_macro(identifier.as_str(), rest[usize {}].expansion);
+                    if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
+                    value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
+                                                                     identifier.as_str());
                     if (directive == "elifndef"_str) value = ! value;
                 }
             }
@@ -1246,6 +1307,8 @@ private:
 
     auto flush_normal(Vec<Token>& normal) -> Result<empty> {
         if (normal.is_empty()) return Ok(empty {});
+        auto module_names = validate_module_name_macros(normal);
+        if (module_names.is_err()) return Err(rstd::move(module_names).unwrap_err());
         auto disabled = DisabledMacros {};
         auto expanded = expand(rstd::move(normal), disabled);
         normal        = Vec<Token>::make();
@@ -1253,6 +1316,54 @@ private:
         ++raw_statistics_.consumer_batches;
         raw_statistics_.consumer_tokens += expanded->len().to_primitive();
         return as<PreprocessedTokenConsumer>(consumer_).consume(rstd::move(expanded).unwrap());
+    }
+
+    auto validate_module_name_macros(const Vec<Token>& tokens) -> Result<empty> {
+        for (auto index = usize {}; index < tokens.len(); ++index) {
+            if (! tokens[index].start_of_line || tokens[index].kind != TokenKind::Identifier) {
+                continue;
+            }
+            auto cursor = index;
+            if (tokens[cursor].text.as_str() == "export"_str) {
+                ++cursor;
+                while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
+            }
+            if (cursor >= tokens.len() ||
+                (tokens[cursor].text.as_str() != "module"_str &&
+                 tokens[cursor].text.as_str() != "import"_str)) {
+                continue;
+            }
+            ++cursor;
+            while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
+            if (cursor >= tokens.len() || tokens[cursor].text.as_str() == ";"_str ||
+                tokens[cursor].text.as_str() == "<"_str ||
+                tokens[cursor].kind == TokenKind::StringLiteral ||
+                tokens[cursor].kind == TokenKind::HeaderName) {
+                continue;
+            }
+            if (tokens[cursor].text.as_str() == ":"_str) ++cursor;
+            while (cursor < tokens.len()) {
+                while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
+                if (cursor >= tokens.len() || tokens[cursor].kind != TokenKind::Identifier) break;
+                auto macro = lookup_macro(tokens[cursor].text.as_str(), tokens[cursor].expansion);
+                if (macro.is_err()) return Err(rstd::move(macro).unwrap_err());
+                if (macro->is_some() && (***macro).parameters.is_none()) {
+                    return Err(failure(
+                        rstd::format("module name identifier '{}' is defined as an object-like macro",
+                                     tokens[cursor].text.as_str()),
+                        tokens[cursor].expansion));
+                }
+                ++cursor;
+                while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
+                if (cursor >= tokens.len() ||
+                    (tokens[cursor].text.as_str() != "."_str &&
+                     tokens[cursor].text.as_str() != ":"_str)) {
+                    break;
+                }
+                ++cursor;
+            }
+        }
+        return Ok(empty {});
     }
 
     auto collect_comments_through(const Vec<CommentTrivia>& comments,
@@ -1282,8 +1393,10 @@ private:
         }
         if (path_value.is_some()) {
             auto guard = include_guards_.get(*path_value);
-            if (guard.is_some() && macros_.contains((**guard).as_str())) {
-                return Ok(empty {});
+            if (guard.is_some()) {
+                auto defined = contains_macro((**guard).as_str(), SourceLocation {});
+                if (defined.is_err()) return Err(rstd::move(defined).unwrap_err());
+                if (*defined) return Ok(empty {});
             }
         }
         auto loaded = as<SourceProvider>(source_provider_).load(path);
@@ -1377,6 +1490,9 @@ private:
                 if (rest.len() != usize(1) || rest[usize {}].kind != TokenKind::Identifier) {
                     return Err(failure("#undef requires one identifier"_str, location));
                 }
+                auto external = prepare_external_macro(
+                    rest[usize {}].text.as_str(), rest[usize {}].expansion);
+                if (external.is_err()) return Err(rstd::move(external).unwrap_err());
                 auto removed = macros_.undefine(rest[usize {}].text.as_str());
                 (void)removed;
                 auto event =
@@ -1472,6 +1588,7 @@ private:
     Sources&                                                                source_provider_;
     Includes&                                                               include_resolver_;
     Builtins&                                                               builtin_provider_;
+    Externals&                                                              external_macro_provider_;
     Identifiers&                                                            identifier_matcher_;
     Pragmas&                                                                pragma_handler_;
     Events&                                                                 event_sink_;
@@ -1479,6 +1596,8 @@ private:
     Observer&                                                               observer_;
     SourceManager                                                           sources_;
     MacroTable                                                              macros_;
+    rstd::collections::BTreeMap<String, empty>                              resolved_external_macros_;
+    Vec<frontend::ExternalMacroMaterialization>                             external_macros_;
     Vec<IncludeFrame>                                                       include_stack_;
     Vec<CommentTrivia>                                                      active_comments_;
     rstd::collections::BTreeMap<String, empty>                              once_files_;
@@ -1507,6 +1626,78 @@ private:
 template<typename Sources,
          typename Includes,
          typename Builtins,
+         typename Externals,
+         typename Identifiers,
+         typename Pragmas,
+         typename Events,
+         typename Consumer,
+         typename Observer>
+    requires Impled<Identifiers, TokenMatcher>
+auto preprocess_to(PreprocessRequest request,
+                   Sources&          sources,
+                   Includes&         includes,
+                   Builtins&         builtins,
+                   Externals&        externals,
+                   Identifiers&      identifiers,
+                   Pragmas&          pragmas,
+                   Events&           events,
+                   Consumer&         consumer,
+                   Observer&         observer) -> Result<PreprocessedTranslationUnit> {
+    return PreprocessorSession<Sources,
+                               Includes,
+                               Builtins,
+                               Externals,
+                               Identifiers,
+                               Pragmas,
+                               Events,
+                               Consumer,
+                               Observer>(rstd::move(request),
+                                         sources,
+                                         includes,
+                                         builtins,
+                                         externals,
+                                         identifiers,
+                                         pragmas,
+                                         events,
+                                         consumer,
+                                         observer)
+        .run();
+}
+
+template<typename Sources,
+         typename Includes,
+         typename Builtins,
+         typename Externals,
+         typename Identifiers,
+         typename Pragmas,
+         typename Events,
+         typename Consumer>
+    requires Impled<Identifiers, TokenMatcher>
+auto preprocess_to(PreprocessRequest request,
+                   Sources&          sources,
+                   Includes&         includes,
+                   Builtins&         builtins,
+                   Externals&        externals,
+                   Identifiers&      identifiers,
+                   Pragmas&          pragmas,
+                   Events&           events,
+                   Consumer&         consumer) -> Result<PreprocessedTranslationUnit> {
+    auto observer = IgnorePreprocessorObserver {};
+    return preprocess_to(rstd::move(request),
+                         sources,
+                         includes,
+                         builtins,
+                         externals,
+                         identifiers,
+                         pragmas,
+                         events,
+                         consumer,
+                         observer);
+}
+
+template<typename Sources,
+         typename Includes,
+         typename Builtins,
          typename Identifiers,
          typename Pragmas,
          typename Events,
@@ -1522,23 +1713,17 @@ auto preprocess_to(PreprocessRequest request,
                    Events&           events,
                    Consumer&         consumer,
                    Observer&         observer) -> Result<PreprocessedTranslationUnit> {
-    return PreprocessorSession<Sources,
-                               Includes,
-                               Builtins,
-                               Identifiers,
-                               Pragmas,
-                               Events,
-                               Consumer,
-                               Observer>(rstd::move(request),
-                                         sources,
-                                         includes,
-                                         builtins,
-                                         identifiers,
-                                         pragmas,
-                                         events,
-                                         consumer,
-                                         observer)
-        .run();
+    auto externals = EmptyExternalMacroProvider {};
+    return preprocess_to(rstd::move(request),
+                         sources,
+                         includes,
+                         builtins,
+                         externals,
+                         identifiers,
+                         pragmas,
+                         events,
+                         consumer,
+                         observer);
 }
 
 template<typename Sources,
@@ -1557,16 +1742,49 @@ auto preprocess_to(PreprocessRequest request,
                    Pragmas&          pragmas,
                    Events&           events,
                    Consumer&         consumer) -> Result<PreprocessedTranslationUnit> {
-    auto observer = IgnorePreprocessorObserver {};
+    auto externals = EmptyExternalMacroProvider {};
+    auto observer  = IgnorePreprocessorObserver {};
     return preprocess_to(rstd::move(request),
                          sources,
                          includes,
                          builtins,
+                         externals,
                          identifiers,
                          pragmas,
                          events,
                          consumer,
                          observer);
+}
+
+template<typename Sources,
+         typename Includes,
+         typename Builtins,
+         typename Externals,
+         typename Identifiers,
+         typename Pragmas,
+         typename Events>
+    requires Impled<Identifiers, TokenMatcher>
+auto preprocess(PreprocessRequest request,
+                Sources&          sources,
+                Includes&         includes,
+                Builtins&         builtins,
+                Externals&        externals,
+                Identifiers&      identifiers,
+                Pragmas&          pragmas,
+                Events&           events) -> Result<PreprocessedTranslationUnit> {
+    auto consumer = CollectPreprocessedTokens {};
+    auto result = preprocess_to(rstd::move(request),
+                                sources,
+                                includes,
+                                builtins,
+                                externals,
+                                identifiers,
+                                pragmas,
+                                events,
+                                consumer);
+    if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+    result->tokens = consumer.take();
+    return result;
 }
 
 template<typename Sources,
@@ -1583,12 +1801,15 @@ auto preprocess(PreprocessRequest request,
                 Identifiers&      identifiers,
                 Pragmas&          pragmas,
                 Events&           events) -> Result<PreprocessedTranslationUnit> {
-    auto consumer = CollectPreprocessedTokens {};
-    auto result   = preprocess_to(
-        rstd::move(request), sources, includes, builtins, identifiers, pragmas, events, consumer);
-    if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-    result->tokens = consumer.take();
-    return result;
+    auto externals = EmptyExternalMacroProvider {};
+    return preprocess(rstd::move(request),
+                      sources,
+                      includes,
+                      builtins,
+                      externals,
+                      identifiers,
+                      pragmas,
+                      events);
 }
 
 } // namespace lito::frontend::preprocessor

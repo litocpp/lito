@@ -410,11 +410,43 @@ private-definitions = ["NDEBUG"]
             "fixture-profile-owned_definition"_str,
             "profile-owned-definition"_str,
         },
+        {
+            R"toml([package]
+name = "fixture-package-version-definition"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "package-version-definition"
+sources = ["main.cpp"]
+
+[usage]
+private-definitions = ["LITO_PKG_VERSION=\"override\""]
+)toml"_str,
+            "fixture-package-version-definition"_str,
+            "package-version-definition"_str,
+        },
+        {
+            R"toml([package]
+name = "fixture-package-feature-option"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "package-feature-option"
+sources = ["main.cpp"]
+
+[usage]
+options = ["-ULITO_FEAT_API"]
+)toml"_str,
+            "fixture-package-feature-option"_str,
+            "package-feature-option"_str,
+        },
     };
 
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    for (auto index = usize {}; index < usize(2); ++index) {
+    for (auto index = usize {}; index < usize(4); ++index) {
         const auto& item = cases[index.to_primitive()];
         auto project = manifest_project(rstd::format("usage-{}", index).as_str(), item.manifest);
         ASSERT_TRUE(project.is_ok());
@@ -450,6 +482,6 @@ private-definitions = ["NDEBUG"]
         ASSERT_TRUE(metadata.is_err());
         auto error = rstd::move(metadata).unwrap_err();
         ASSERT_TRUE(error.is_Message());
-        EXPECT_TRUE(error.as_Message().message.as_str().contains("Lito-owned setting"_str));
+        EXPECT_TRUE(error.as_Message().message.as_str().contains("Lito-owned"_str));
     }
 }

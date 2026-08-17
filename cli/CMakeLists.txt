@@ -10,5 +10,6 @@ target_sources(
           src/cli.cppm
           src/main.cppm)
 target_link_libraries(lito PRIVATE lito.driver rstd.argparse rstd::nostd)
+target_compile_definitions(lito PRIVATE "LITO_PKG_VERSION=\"${PROJECT_VERSION}\"")
 
 install(TARGETS lito RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})

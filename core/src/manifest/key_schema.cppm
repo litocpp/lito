@@ -80,7 +80,7 @@ auto when_key(ref<str> key) -> bool {
 }
 
 auto feature_key(ref<str> key) -> bool {
-    return key == "default"_str || key == "macro"_str;
+    return key == "default"_str;
 }
 
 auto include_directory_key(ref<str> key) -> bool {

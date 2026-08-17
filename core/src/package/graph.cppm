@@ -37,7 +37,7 @@ struct ResolvedRuntimeDependency {
 
 struct ResolvedFeature {
     String      name;
-    String      macro;
+    String      macro_name;
     bool        enabled { false };
     Vec<String> activation_sources;
 };

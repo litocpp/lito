@@ -228,11 +228,19 @@ default = false
 name = "fixture-feature-macro-collision"
 version = "0.1.0"
 
-[features.first]
-macro = "FIXTURE_FEATURE"
+[features.foo-bar]
+default = false
 
-[features.second]
-macro = "FIXTURE_FEATURE"
+[features.foo_bar]
+default = false
+)lito"_str },
+    { "manifest-feature-custom-macro"_str, R"lito([package]
+name = "fixture-feature-custom-macro"
+version = "0.1.0"
+
+[features.ffi]
+default = false
+macro = "FIXTURE_FEATURE_FFI"
 )lito"_str },
     { "manifest-when-invalid-expression"_str, R"lito([package]
 name = "fixture-when-invalid-expression"
@@ -594,7 +602,6 @@ sources = ["src/lib.cppm"]
 
 [features.ffi]
 default = true
-macro = "FIXTURE_FEATURE_FFI"
 
 [[when]]
 condition = 'target.os == "linux" && feature.ffi'
@@ -614,8 +621,7 @@ default-features = false
     ASSERT_EQ(loaded->conditions.len(), usize(1));
     ASSERT_EQ(loaded->features.len(), usize(1));
     EXPECT_TRUE(loaded->features[usize {}].default_enabled);
-    ASSERT_TRUE(loaded->features[usize {}].macro.is_some());
-    EXPECT_EQ(*loaded->features[usize {}].macro, "FIXTURE_FEATURE_FFI"_str);
+    EXPECT_EQ(loaded->features[usize {}].macro_name, "LITO_FEAT_FFI"_str);
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     EXPECT_FALSE(loaded->dependencies[usize {}].default_features);
     ASSERT_EQ(loaded->dependencies[usize {}].features.len(), usize(1));

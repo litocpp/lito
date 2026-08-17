@@ -11,6 +11,7 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace rstd::argparse;
 using rstd::ffi::OsStr;
+using rstd::ffi::OsString;
 
 export namespace lito::cli
 {
@@ -184,6 +185,14 @@ class CliOutcome {
 
 namespace lito::cli
 {
+
+inline constexpr auto LITO_VERSION_TEXT = LITO_PKG_VERSION;
+inline constexpr auto LITO_VERSION_SIZE = sizeof(LITO_PKG_VERSION) - sizeof(char);
+
+auto lito_version() noexcept -> ref<str> {
+    return ref<str>::from_raw_parts_unchecked(
+        reinterpret_cast<const byte*>(LITO_VERSION_TEXT), usize(LITO_VERSION_SIZE));
+}
 
 class BuildProfileParser {
 public:
@@ -907,6 +916,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
+    root.version(lito_version());
     root.require_subcommand();
     auto root_args = RootArgs {
         .directory = root.add_arg(Arg<String>::value("directory"_str, string_parser())
@@ -1428,7 +1438,14 @@ auto parse() -> CliOutcome {
                                 i32(1));
     }
     auto schema = rstd::move(schema_result).unwrap();
-    auto parsed = schema.parser.parse_env();
+    auto argv   = Vec<OsString>::make();
+    argv.push(OsString::from("lito"_str));
+    auto arguments = rstd::env::args_os();
+    (void)arguments.next();
+    for (auto argument = arguments.next(); argument.is_some(); argument = arguments.next()) {
+        argv.push(rstd::move(argument).unwrap());
+    }
+    auto parsed = schema.parser.parse_from(rstd::move(argv));
     if (parsed.is_err()) {
         auto error  = rstd::move(parsed).unwrap_err();
         auto report = schema.parser.render_error(error);
@@ -1439,7 +1456,9 @@ auto parse() -> CliOutcome {
     auto outcome = rstd::move(parsed).unwrap();
     if (outcome.is_Display()) {
         auto request = rstd::move(outcome).as_Display().request;
-        return CliOutcome::Exit(String::make(request.text()),
+        auto output = String::make(request.text());
+        if (request.kind() == DisplayKind::Tag::Version) output.push_ascii(u8('\n'));
+        return CliOutcome::Exit(rstd::move(output),
                                 request.target() == OutputTarget::Tag::Stderr,
                                 request.exit_code());
     }

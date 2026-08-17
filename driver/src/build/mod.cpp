@@ -392,6 +392,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_scan_source          = scan_cache_statistics.source;
     frontend_statistics.persistent_scan_file_dependency = scan_cache_statistics.file_dependency;
     frontend_statistics.persistent_scan_include_lookup  = scan_cache_statistics.include_lookup;
+    frontend_statistics.persistent_scan_external_macro  = scan_cache_statistics.external_macro;
     frontend_statistics.persistent_scan_receipt         = scan_cache_statistics.receipt;
     frontend_statistics.persistent_fingerprint_requests =
         scan_cache_statistics.fingerprint_requests;

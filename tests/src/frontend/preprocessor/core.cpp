@@ -93,6 +93,64 @@ public:
     usize typed_queries {};
 };
 
+auto external_object_macro(ref<str> name, TokenKind kind, ref<str> replacement)
+    -> SharedMacroDefinition {
+    auto token = Token {};
+    token.kind = kind;
+    token.text = String::make(replacement);
+    auto tokens = Vec<Token>::make();
+    tokens.push(rstd::move(token));
+    auto macro = MacroDefinition {};
+    macro.set_name(String::make(name));
+    macro.set_replacement(rstd::move(tokens));
+    return share_macro_definition(rstd::move(macro));
+}
+
+class TestExternalMacros {
+public:
+    auto resolve(ref<str> name, SourceLocation location)
+        -> PpResult<Option<ExternalMacroResolution>> {
+        if (name == "LITO_PKG_VERSION"_str) {
+            ++version_queries;
+            return Ok(Some(ExternalMacroResolution {
+                .dependency_key = String::make("package.version"_str),
+                .value_identity = String::make("1.2.3"_str),
+                .state = lito::frontend::ExternalMacroState::Defined,
+                .compiler_definition = Some(String::make("LITO_PKG_VERSION=\"1.2.3\""_str)),
+                .definition = Some(external_object_macro(
+                    name, TokenKind::StringLiteral, "\"1.2.3\""_str)),
+            }));
+        }
+        if (name == "LITO_FEAT_ON"_str) {
+            ++enabled_queries;
+            return Ok(Some(ExternalMacroResolution {
+                .dependency_key = String::make("package.feature:on"_str),
+                .value_identity = String::make("on"_str),
+                .state = lito::frontend::ExternalMacroState::Defined,
+                .compiler_definition = Some(String::make("LITO_FEAT_ON=1"_str)),
+                .definition = Some(external_object_macro(name, TokenKind::PpNumber, "1"_str)),
+            }));
+        }
+        if (name == "LITO_FEAT_OFF"_str) {
+            ++disabled_queries;
+            return Ok(Some(ExternalMacroResolution {
+                .dependency_key = String::make("package.feature:off"_str),
+                .value_identity = String::make("off"_str),
+                .state = lito::frontend::ExternalMacroState::Undefined,
+            }));
+        }
+        if (name.starts_with("LITO_FEAT_"_str)) {
+            return Err(lito::frontend::lexical::Error::at(
+                rstd::format("unknown package feature macro '{}'", name), location));
+        }
+        return Ok(None());
+    }
+
+    usize version_queries {};
+    usize enabled_queries {};
+    usize disabled_queries {};
+};
+
 class TestEvents {
 public:
     auto wants(EventKind kind) const -> bool {
@@ -276,6 +334,137 @@ auto run_preprocessor_test() -> int {
 
 TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
+}
+
+TEST(Preprocessor, LazilyMaterializesExternalMacros) {
+    auto sources = MemorySources {};
+    sources.add("/metadata.hpp"_str,
+                "#if defined(LITO_PKG_VERSION)\n"
+                "LITO_PKG_VERSION\n"
+                "#endif\n"_str);
+    sources.add("/main.cpp"_str,
+                "#include \"metadata.hpp\"\n"
+                "#if defined LITO_FEAT_ON && !defined(LITO_FEAT_OFF)\n"
+                "LITO_PKG_VERSION\n"
+                "#else\n"
+                "#error external macro state mismatch\n"
+                "#endif\n"
+                "#if 0\n"
+                "LITO_FEAT_NEVER\n"
+                "#endif\n"
+                "#undef LITO_FEAT_ON\n"
+                "#ifdef LITO_FEAT_ON\n"
+                "#error external macro undef failed\n"
+                "#endif\n"
+                "#define LITO_FEAT_OFF 7\n"
+                "#if LITO_FEAT_OFF != 7\n"
+                "#error external macro redefine failed\n"
+                "#endif\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto externals   = TestExternalMacros {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto result      = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/main.cpp"_str),
+            .environment_identity = String::make("external-v1"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        externals,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(result.is_ok());
+    EXPECT_EQ(externals.version_queries, usize(1));
+    EXPECT_EQ(externals.enabled_queries, usize(1));
+    EXPECT_EQ(externals.disabled_queries, usize(1));
+    ASSERT_EQ(result->external_macros.len(), usize(3));
+    EXPECT_EQ(result->external_macros[usize {}].name, "LITO_PKG_VERSION"_str);
+    EXPECT_EQ(result->external_macros[usize(1)].name, "LITO_FEAT_ON"_str);
+    EXPECT_EQ(result->external_macros[usize(2)].name, "LITO_FEAT_OFF"_str);
+    EXPECT_EQ(result->external_macros[usize(2)].state,
+              lito::frontend::ExternalMacroState::Undefined);
+    EXPECT_TRUE(result->external_macros[usize(2)].compiler_definition.is_none());
+
+    auto invalid_sources = MemorySources {};
+    invalid_sources.add("/invalid.cpp"_str,
+                        "#ifdef LITO_FEAT_TYPO\n"
+                        "#endif\n"_str);
+    auto invalid_includes  = MemoryIncludes(invalid_sources);
+    auto invalid_builtins  = TestBuiltins {};
+    auto invalid_externals = TestExternalMacros {};
+    auto invalid_pragmas   = IgnorePragmas {};
+    auto invalid_events    = TestEvents {};
+    auto invalid = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/invalid.cpp"_str),
+            .environment_identity = String::make("external-v1"_str),
+        },
+        invalid_sources,
+        invalid_includes,
+        invalid_builtins,
+        invalid_externals,
+        identifiers,
+        invalid_pragmas,
+        invalid_events);
+    ASSERT_TRUE(invalid.is_err());
+    EXPECT_TRUE(invalid.unwrap_err().message.as_str().contains(
+        "unknown package feature macro 'LITO_FEAT_TYPO'"_str));
+}
+
+TEST(Preprocessor, ValidatesExternalMacrosInModuleNames) {
+    auto sources = MemorySources {};
+    sources.add("/defined.cppm"_str, "export module LITO_PKG_VERSION;\n"_str);
+    auto includes    = MemoryIncludes(sources);
+    auto builtins    = TestBuiltins {};
+    auto externals   = TestExternalMacros {};
+    auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
+    auto pragmas     = IgnorePragmas {};
+    auto events      = TestEvents {};
+    auto defined     = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/defined.cppm"_str),
+            .environment_identity = String::make("external-v1"_str),
+        },
+        sources,
+        includes,
+        builtins,
+        externals,
+        identifiers,
+        pragmas,
+        events);
+    ASSERT_TRUE(defined.is_err());
+    EXPECT_TRUE(defined.unwrap_err().message.as_str().contains(
+        "module name identifier 'LITO_PKG_VERSION' is defined as an object-like macro"_str));
+
+    auto disabled_sources = MemorySources {};
+    disabled_sources.add("/disabled.cppm"_str, "export module LITO_FEAT_OFF;\n"_str);
+    auto disabled_includes  = MemoryIncludes(disabled_sources);
+    auto disabled_builtins  = TestBuiltins {};
+    auto disabled_externals = TestExternalMacros {};
+    auto disabled_pragmas   = IgnorePragmas {};
+    auto disabled_events    = TestEvents {};
+    auto disabled = preprocess(
+        PreprocessRequest {
+            .source               = rstd::path::PathBuf::from("/disabled.cppm"_str),
+            .environment_identity = String::make("external-v1"_str),
+        },
+        disabled_sources,
+        disabled_includes,
+        disabled_builtins,
+        disabled_externals,
+        identifiers,
+        disabled_pragmas,
+        disabled_events);
+    ASSERT_TRUE(disabled.is_ok());
+    EXPECT_TRUE(contains_sequence(disabled->tokens, "module"_str, "LITO_FEAT_OFF"_str));
+    ASSERT_EQ(disabled->external_macros.len(), usize(1));
+    EXPECT_EQ(disabled->external_macros[usize {}].state,
+              lito::frontend::ExternalMacroState::Undefined);
 }
 
 TEST(BuiltinQuery, TypedDefinition) {

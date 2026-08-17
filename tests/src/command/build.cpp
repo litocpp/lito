@@ -132,13 +132,13 @@ private-definitions = ["FIXTURE_FEATURE_CONDITION=1"]
 )toml"_str },
         { "src/lib.cppm"_str, R"cpp(export module fixture.feature;
 
-#if FIXTURE_FEATURE_BUILD_FEATURE_OPTIONAL
+#if LITO_FEAT_OPTIONAL
 export import :optional;
 #endif
 )cpp"_str },
         { "src/optional.cppm"_str, R"cpp(module;
 
-#if FIXTURE_FEATURE_BUILD_FEATURE_OPTIONAL
+#if LITO_FEAT_OPTIONAL
 #ifndef FIXTURE_FEATURE_CONDITION
 #error feature condition did not contribute to the scan context
 #endif
@@ -252,7 +252,7 @@ threads = false
     EXPECT_TRUE(scalar_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
 }
 
-TEST_F(BuildCommand, DependencyFeaturesPropagatePublicMacros) {
+TEST_F(BuildCommand, PackageFeatureMacrosRemainOwnedByTheirPackage) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "fixture-dependency-features"
@@ -277,7 +277,11 @@ default = false
         { "provider/src/api.cppm"_str, R"cpp(export module fixture.feature.provider.api;
 
 export constexpr auto fixture_feature_value() -> int {
-    return FIXTURE_FEATURE_PROVIDER_FEATURE_API;
+#ifdef LITO_FEAT_API
+    return LITO_FEAT_API;
+#else
+    return 0;
+#endif
 }
 )cpp"_str },
         { "consumer/lito.toml"_str, R"toml([package]
@@ -289,6 +293,9 @@ name = "fixture-feature-consumer"
 link-stdlib = false
 sources = ["src/main.cpp"]
 
+[features.api]
+default = false
+
 [dependencies.fixture-feature-provider]
 path = "../provider"
 visibility = "private"
@@ -297,8 +304,8 @@ default-features = false
 )toml"_str },
         { "consumer/src/main.cpp"_str, R"cpp(import fixture.feature.provider.api;
 
-#if FIXTURE_FEATURE_PROVIDER_FEATURE_API != 1
-#error dependency feature macro did not propagate
+#ifdef LITO_FEAT_API
+#error dependency feature macro escaped its package
 #endif
 
 auto main() -> int {

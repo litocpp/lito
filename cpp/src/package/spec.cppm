@@ -6,6 +6,7 @@ import :bmi.artifact;
 import :build.profile;
 import :compiler.option;
 import :package.target;
+import :package.metadata;
 import :usage;
 
 using namespace rstd::prelude;
@@ -30,6 +31,7 @@ struct TargetSpec {
     UsageRequirements               usage;
     Vec<ResolvedCompileTestCase>    compile_tests;
     Option<TestAttachmentTarget>    test_attachment;
+    PackageCompileMetadata          compile_metadata;
 };
 
 struct PackageSpec {

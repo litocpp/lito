@@ -776,7 +776,7 @@ auto macro_name_is_valid(ref<str> value) -> bool {
     return true;
 }
 
-auto parse_features(Option<ref<Toml>> value, ref<str> package)
+auto parse_features(Option<ref<Toml>> value)
     -> ManifestSchemaResult<Vec<FeatureDeclaration>> {
     auto result = Vec<FeatureDeclaration>::make();
     if (value.is_none()) return Ok(rstd::move(result));
@@ -806,11 +806,7 @@ auto parse_features(Option<ref<Toml>> value, ref<str> package)
             }
             default_enabled = *parsed;
         }
-        auto declared_macro = optional_string(**specification, "macro"_str, context.as_str());
-        if (declared_macro.is_err()) return Err(rstd::move(declared_macro).unwrap_err());
-        auto macro = declared_macro->is_some()
-                         ? (**declared_macro).clone()
-                         : normalized_feature_macro(package, name.as_str());
+        auto macro = normalized_feature_macro(name.as_str());
         if (! macro_name_is_valid(macro.as_str())) {
             return manifest_schema_failure<Vec<FeatureDeclaration>>(
                 rstd::format("feature '{}' macro '{}' is not a C/C++ identifier",
@@ -825,8 +821,8 @@ auto parse_features(Option<ref<Toml>> value, ref<str> package)
         macros.insert(macro.clone(), name.clone());
         result.push(FeatureDeclaration {
             .name = name.clone(),
+            .macro_name = rstd::move(macro),
             .default_enabled = default_enabled,
-            .macro = rstd::move(declared_macro).unwrap(),
         });
     }
     return Ok(rstd::move(result));

@@ -389,43 +389,50 @@ public:
         return Ok((*environment)->identity.clone());
     }
 
-    auto prepare_scan_environment(const cpp::CompileContext& compile_context,
-                                  ref<rstd::path::Path>      working_directory) const
-        -> ToolchainResult<toolchain::SharedPreprocessorEnvironment> {
+    auto prepare_scan_input(const cpp::CompileContext&        compile_context,
+                            const cpp::PackageCompileMetadata& compile_metadata,
+                            ref<rstd::path::Path>              working_directory) const
+        -> ToolchainResult<toolchain::PreparedScanInput> {
         for (const auto& option : compile_context.cpp.vendor) {
             if (option.native_preprocessor_unsupported) {
-                return failure<toolchain::SharedPreprocessorEnvironment>(
+                return failure<toolchain::PreparedScanInput>(
                     rstd::format("compiler option '{}' is not supported by the native preprocessor",
                                  option.value.as_str()));
             }
         }
-        return environment_for(compile_context, working_directory);
+        auto environment = environment_for(compile_context, working_directory);
+        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        return Ok(toolchain::PreparedScanInput {
+            .environment = rstd::move(environment).unwrap(),
+            .external_macros = toolchain::SharedPackageMacroCatalog::make(
+                toolchain::PackageMacroCatalog::make(compile_metadata)),
+        });
     }
 
     auto preprocess(ref<rstd::path::Path>      source,
                     const cpp::CompileContext& compile_context,
+                    const cpp::PackageCompileMetadata& compile_metadata,
                     ref<rstd::path::Path>      working_directory,
                     frontend::FrontendService& frontend_service) const
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
-        auto selected_environment = prepare_scan_environment(compile_context, working_directory);
-        if (selected_environment.is_err()) {
-            return Err(rstd::move(selected_environment).unwrap_err());
+        auto input = prepare_scan_input(compile_context, compile_metadata, working_directory);
+        if (input.is_err()) {
+            return Err(rstd::move(input).unwrap_err());
         }
         auto observer = preprocessor::IgnorePreprocessorObserver {};
-        return preprocess_with_environment(
-            source, *selected_environment, frontend_service, observer);
+        return preprocess_with_environment(source, *input, frontend_service, observer);
     }
 
     template<typename Observer>
     auto preprocess_with_environment(ref<rstd::path::Path>                           source,
-                                     const toolchain::SharedPreprocessorEnvironment& environment,
+                                     const toolchain::PreparedScanInput&              input,
                                      frontend::FrontendService& frontend_service,
                                      Observer&                  observer) const
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         frontend_service.record_analysis_build();
-        auto includes = toolchain::ClangIncludeResolver(*environment);
+        auto includes = toolchain::ClangIncludeResolver(*input.environment);
         auto builtins = toolchain::ClangBuiltinProvider(
-            *environment, environment->key.working_directory.as_path());
+            *input.environment, input.environment->key.working_directory.as_path());
         auto identifiers = cpp::CppIdentifierTokenMatcher {};
         auto pragmas     = toolchain::ClangPragmaHandler {};
         auto events      = toolchain::DependencyEvents {};
@@ -433,11 +440,12 @@ public:
         auto translation = preprocessor::preprocess_to(
             preprocessor::PreprocessRequest {
                 .source               = PathBuf::from(source),
-                .environment_identity = environment->identity.clone(),
+                .environment_identity = input.environment->identity.clone(),
             },
             frontend_service,
             includes,
             builtins,
+            *input.external_macros,
             identifiers,
             pragmas,
             events,
@@ -469,6 +477,20 @@ public:
         auto command    = Vec<String>::make();
         auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        for (const auto& macro : scan_result.external_macros) {
+            if (macro.state == frontend::ExternalMacroState::Undefined) {
+                if (macro.compiler_definition.is_some()) {
+                    return failure<CompileInvocation>(
+                        "undefined external macro has a compiler definition"_str);
+                }
+                continue;
+            }
+            if (macro.compiler_definition.is_none()) {
+                return failure<CompileInvocation>(
+                    "defined external macro has no compiler definition"_str);
+            }
+            command.push(rstd::format("-D{}", macro.compiler_definition->as_str()));
+        }
         if (scan_result.provided.is_some()) {
             if (prepared.unit.bmi.is_none()) {
                 return failure<CompileInvocation>(rstd::format("module unit has no BMI output: {}",

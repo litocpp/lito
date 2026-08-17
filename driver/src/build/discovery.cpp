@@ -311,6 +311,7 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
                                      candidate.source.relative_path.as_path(),
                                      candidate.source.canonical_path.as_path(),
                                      compile_context,
+                                     package.targets[candidate.target].compile_metadata,
                                      package.targets[candidate.target].source_root.as_path());
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
         auto value = rstd::move(analysis).unwrap();
@@ -590,6 +591,7 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                                                  candidate.source.relative_path.as_path(),
                                                  candidate.source.canonical_path.as_path(),
                                                  context,
+                                                 target.compile_metadata,
                                                  target.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
             if (task.is_err()) {

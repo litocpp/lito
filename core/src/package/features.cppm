@@ -167,13 +167,9 @@ auto resolve_features(ResolvedPackageGraph& graph,
                     break;
                 }
             }
-            auto macro = declaration.macro.is_some()
-                             ? declaration.macro->clone()
-                             : lito::manifest::normalized_feature_macro(
-                                   package.manifest.name.as_str(), declaration.name.as_str());
             package.features.push(ResolvedFeature {
                 .name = declaration.name.clone(),
-                .macro = rstd::move(macro),
+                .macro_name = declaration.macro_name.clone(),
                 .enabled = enabled,
                 .activation_sources = rstd::move(activation_sources),
             });

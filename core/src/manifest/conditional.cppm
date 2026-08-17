@@ -22,25 +22,20 @@ struct ConditionalConfiguration {
 };
 
 struct FeatureDeclaration {
-    String         name;
-    bool           default_enabled { false };
-    Option<String> macro;
+    String name;
+    String macro_name;
+    bool   default_enabled { false };
 };
 
-auto normalized_feature_macro(ref<str> package, ref<str> feature) -> String {
-    auto result = String::make();
-    const auto append = [&](ref<str> value) -> void {
-        for (auto byte : value.as_bytes()) {
-            if (byte == u8('-')) byte = u8('_');
-            if (byte >= u8('a') && byte <= u8('z')) {
-                byte = u8(byte.to_primitive() - u8('a').to_primitive() + u8('A').to_primitive());
-            }
-            result.push_ascii(byte);
+auto normalized_feature_macro(ref<str> feature) -> String {
+    auto result = String::make("LITO_FEAT_"_str);
+    for (auto byte : feature.as_bytes()) {
+        if (byte == u8('-')) byte = u8('_');
+        if (byte >= u8('a') && byte <= u8('z')) {
+            byte = u8(byte.to_primitive() - u8('a').to_primitive() + u8('A').to_primitive());
         }
-    };
-    append(package);
-    result.push_str("_FEATURE_"_str);
-    append(feature);
+        result.push_ascii(byte);
+    }
     return result;
 }
 

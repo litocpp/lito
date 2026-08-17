@@ -28,20 +28,20 @@ class FrontendAnalysisTask {
     frontend::FrontendSourceStore            source_store_;
     ScanCacheTransaction                     cache_;
     PathBuf                                  source_;
-    toolchain::SharedPreprocessorEnvironment environment_;
+    toolchain::PreparedScanInput              input_;
     ScanTaskProfileContext                   profile_;
 
     FrontendAnalysisTask(const ClangToolchain&                    toolchain,
                          frontend::FrontendSourceStore            source_store,
                          ScanCacheTransaction                     cache,
                          PathBuf                                  source,
-                         toolchain::SharedPreprocessorEnvironment environment,
+                         toolchain::PreparedScanInput              input,
                          ScanTaskProfileContext                   profile)
         : toolchain_(rstd::addressof(toolchain)),
           source_store_(rstd::move(source_store)),
           cache_(rstd::move(cache)),
           source_(rstd::move(source)),
-          environment_(rstd::move(environment)),
+          input_(rstd::move(input)),
           profile_(rstd::move(profile)) {}
 
     friend class FrontendAnalysisService;
@@ -69,7 +69,7 @@ public:
             auto preprocessor_span     = profiler.span(ScanProbe::Preprocessor);
             auto preprocessor_observer = PreprocessorTaskProfileObserver(profiler);
             auto analyzed              = toolchain_->preprocess_with_environment(
-                source_.as_path(), environment_, frontend_service, preprocessor_observer);
+                source_.as_path(), input_, frontend_service, preprocessor_observer);
             auto observer_finished     = preprocessor_observer.finish();
             auto preprocessor_finished = profiler.complete(preprocessor_span);
             auto frontend_finished     = profiler.complete(frontend_span);
@@ -123,6 +123,7 @@ public:
                  ref<rstd::path::Path>                 relative_source,
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
+                 const cpp::PackageCompileMetadata&    compile_metadata,
                  ref<rstd::path::Path>                 working_directory,
                  ScanSourceOrigin origin) -> BuildResult<FrontendAnalysisTask> {
         auto record = layout_.cache_scan(target, relative_source);
@@ -130,34 +131,39 @@ public:
             return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
         }
         auto environment_span     = profiler_.span(ScanProbe::Environment);
-        auto environment          = toolchain_.prepare_scan_environment(context, working_directory);
+        auto prepared = toolchain_.prepare_scan_input(
+            context, compile_metadata, working_directory);
         auto environment_finished = profiler_.complete(environment_span);
         if (environment_finished.is_err()) {
             return Err(
                 BuildError::Message(rstd::move(environment_finished).unwrap_err_unchecked()));
         }
-        if (environment.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
+        if (prepared.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
         }
+        auto scan_input      = rstd::move(prepared).unwrap();
         auto target_identity = lito::package::package_target_id_text(target);
         auto profile         = profiler_.task(target_identity.as_str(), source, origin);
         if (profile.is_err()) {
             return Err(BuildError::Message(rstd::move(profile).unwrap_err_unchecked()));
         }
-        auto input = ScanCacheInput {
+        auto cache_input = ScanCacheInput {
             .record                   = rstd::move(record).unwrap(),
             .target                   = target_identity.clone(),
             .relative_source          = PathBuf::from(relative_source),
             .source                   = PathBuf::from(source),
             .context_identity         = context.scan_id.clone(),
             .working_directory        = PathBuf::from(working_directory),
-            .preprocessor_environment = (*environment)->identity.clone(),
+            .preprocessor_environment = scan_input.environment->identity.clone(),
+            .external_macro_schema    = String::make(
+                scan_input.external_macros->schema_identity()),
+            .external_macros          = scan_input.external_macros.clone(),
         };
         return Ok(FrontendAnalysisTask(toolchain_,
                                        source_store_.clone(),
-                                       cache_.begin(rstd::move(input)),
+                                       cache_.begin(rstd::move(cache_input)),
                                        PathBuf::from(source),
-                                       rstd::move(environment).unwrap(),
+                                       rstd::move(scan_input),
                                        rstd::move(profile).unwrap_unchecked()));
     }
 
@@ -174,12 +180,14 @@ public:
                  ref<rstd::path::Path>                 relative_source,
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
+                 const cpp::PackageCompileMetadata&    compile_metadata,
                  ref<rstd::path::Path>                 working_directory)
         -> BuildResult<frontend::FrontendAnalysis> {
         auto task = prepare(target,
                             relative_source,
                             source,
                             context,
+                            compile_metadata,
                             working_directory,
                             ScanSourceOrigin::Discovery);
         if (task.is_err()) return Err(rstd::move(task).unwrap_err());

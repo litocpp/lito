@@ -10,6 +10,7 @@ auto feature(ref<str> name, bool default_enabled = false)
     -> lito::manifest::FeatureDeclaration {
     return {
         .name = String::make(name),
+        .macro_name = lito::manifest::normalized_feature_macro(name),
         .default_enabled = default_enabled,
     };
 }

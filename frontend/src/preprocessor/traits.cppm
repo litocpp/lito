@@ -165,6 +165,36 @@ struct BuiltinProvider {
     using Funcs = TraitFuncs<&T::predefined_macros, &T::evaluate, &T::text>;
 };
 
+struct ExternalMacroResolution {
+    String                        dependency_key;
+    String                        value_identity;
+    frontend::ExternalMacroState  state { frontend::ExternalMacroState::Undefined };
+    Option<String>                compiler_definition;
+    Option<SharedMacroDefinition> definition;
+};
+
+struct ExternalMacroProvider {
+    template<typename Self, typename = void>
+    struct Api {
+        using Trait = ExternalMacroProvider;
+
+        auto resolve(ref<str> name, SourceLocation location)
+            -> Result<Option<ExternalMacroResolution>> {
+            return rstd::trait_call<0>(this, name, location);
+        }
+    };
+
+    template<typename T>
+    using Funcs = TraitFuncs<&T::resolve>;
+};
+
+class EmptyExternalMacroProvider {
+public:
+    auto resolve(ref<str>, SourceLocation) -> Result<Option<ExternalMacroResolution>> {
+        return Ok(None());
+    }
+};
+
 struct PragmaHandler {
     template<typename Self, typename = void>
     struct Api {

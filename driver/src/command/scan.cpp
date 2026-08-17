@@ -155,6 +155,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     auto frontend_service = frontend::FrontendService::make();
     auto facts = toolchain.preprocess(source.as_path(),
                                       discovery.contexts[source_target],
+                                      target.compile_metadata,
                                       metadata.targets[source_target].source_root.as_path(),
                                       frontend_service);
     if (facts.is_err()) {
@@ -209,10 +210,30 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         implementation = scan_json_string(report.result.implementation_module->as_str());
     }
 
+    auto external_macros = JsonArray::with_capacity(report.result.external_macros.len());
+    for (const auto& macro : report.result.external_macros) {
+        auto value = JsonMap::make();
+        auto definition = Json::Null();
+        if (macro.compiler_definition.is_some()) {
+            definition = scan_json_string(macro.compiler_definition->as_str());
+        }
+        value.insert(String::make("compiler-definition"_str), rstd::move(definition));
+        value.insert(String::make("dependency-key"_str),
+                     scan_json_string(macro.dependency_key.as_str()));
+        value.insert(String::make("name"_str), scan_json_string(macro.name.as_str()));
+        value.insert(String::make("state"_str),
+                     scan_json_string(macro.state == frontend::ExternalMacroState::Defined
+                                          ? "defined"_str
+                                          : "undefined"_str));
+        value.insert(String::make("value-identity"_str),
+                     scan_json_string(macro.value_identity.as_str()));
+        external_macros.push(Json::Object(rstd::move(value)));
+    }
+
     auto document = JsonMap::make();
     document.insert(String::make("format"_str), scan_json_string("lito-scan"_str));
     document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(2))));
+                    Json::Number(rstd::json::Number::from_u64(u64(3))));
     document.insert(String::make("target"_str), scan_json_string(report.target.as_str()));
     document.insert(String::make("profile"_str), scan_json_string(report.profile.as_str()));
     document.insert(String::make("source"_str), Json::String(rstd::move(source).unwrap()));
@@ -220,6 +241,8 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     document.insert(String::make("implementation-module"_str), rstd::move(implementation));
     document.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
     document.insert(String::make("headers"_str), Json::Array(rstd::move(headers)));
+    document.insert(String::make("external-macros"_str),
+                    Json::Array(rstd::move(external_macros)));
     document.insert(String::make("preprocessor-environment"_str),
                     scan_json_string(report.result.preprocessor_environment.as_str()));
     document.insert(String::make("input-bytes"_str), json_usize(report.result.input_bytes));

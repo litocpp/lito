@@ -47,6 +47,15 @@ auto usage_source(const lito::manifest::PackageManifest& package, ref<str> field
                         field);
 }
 
+auto definition_name(ref<str> value) -> ref<str> {
+    auto separator = value.find("="_str);
+    return separator.is_some() ? value.split_at(*separator).template get<0>() : value;
+}
+
+auto package_metadata_macro(ref<str> name) -> bool {
+    return name == "LITO_PKG_VERSION"_str || name.starts_with("LITO_FEAT_"_str);
+}
+
 auto valid_system_library_name(ref<str> name) -> bool {
     return ! name.is_empty() && ! name.starts_with("-"_str) && ! name.starts_with("/"_str) &&
            ! name.contains("/"_str) && ! name.contains("\\"_str) && ! name.contains(":"_str) &&
@@ -60,7 +69,11 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
     auto        validate_definitions = [&](const Vec<String>& definitions,
                                            ref<str> field) -> lito::package::PackageResult<empty> {
         for (const auto& definition : definitions) {
-            if (! is_profile_owned_definition(definition.as_str())) continue;
+            auto name = definition_name(definition.as_str());
+            if (! is_profile_owned_definition(definition.as_str()) &&
+                ! package_metadata_macro(name)) {
+                continue;
+            }
             return adapter_failure<empty>(
                 rstd::format("{} definition '{}' overrides a Lito-owned setting",
                              usage_source(package, field).as_str(),
@@ -150,11 +163,6 @@ auto append_conditional_unique(
         }
         if (! present) output.push(value.clone());
     }
-}
-
-auto definition_name(ref<str> value) -> ref<str> {
-    auto separator = value.find("="_str);
-    return separator.is_some() ? value.split_at(*separator).template get<0>() : value;
 }
 
 struct DefinitionRecord {
@@ -277,32 +285,6 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
         }
     }
 
-    for (const auto& feature : package.features) {
-        const auto reject_override = [&](const Vec<String>& definitions)
-            -> lito::package::PackageResult<empty> {
-            for (const auto& definition : definitions) {
-                if (definition_name(definition.as_str()) != feature.macro.as_str()) continue;
-                return adapter_failure<empty>(rstd::format(
-                    "package '{}' usage cannot define feature macro '{}'",
-                    package.manifest.name.as_str(),
-                    feature.macro.as_str()));
-            }
-            return Ok(empty {});
-        };
-        rstd_try(reject_override(package.manifest.usage.public_definitions));
-        rstd_try(reject_override(package.manifest.usage.private_definitions));
-        auto definition = feature.macro.clone();
-        definition.push_str(feature.enabled ? "=1"_str : "=0"_str);
-        if (has_library) {
-            auto values = Vec<String>::make();
-            values.push(rstd::move(definition));
-            append_conditional_unique(package.manifest.usage.public_definitions, values);
-        } else {
-            auto values = Vec<String>::make();
-            values.push(rstd::move(definition));
-            append_conditional_unique(package.manifest.usage.private_definitions, values);
-        }
-    }
     if (! has_library && (! package.manifest.usage.public_include_directories.is_empty() ||
                           ! package.manifest.usage.public_definitions.is_empty())) {
         return adapter_failure<empty>(rstd::format(
@@ -310,6 +292,40 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
             package.manifest.name.as_str()));
     }
     return Ok(empty {});
+}
+
+auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& package,
+                                         const CppArgumentLayer&                arguments)
+    -> lito::package::PackageResult<empty> {
+    for (const auto& occurrence : arguments.occurrences) {
+        if (! occurrence.argument.is_Macro()) continue;
+        const auto& value = occurrence.argument.as_Macro().directive.value;
+        auto        name  = definition_name(value.as_str());
+        if (! package_metadata_macro(name)) continue;
+        return adapter_failure<empty>(rstd::format(
+            "package '{}' option from {} overrides Lito-owned macro '{}'",
+            package.name.as_str(),
+            occurrence.source.as_str(),
+            name));
+    }
+    return Ok(empty {});
+}
+
+auto package_compile_metadata(const lito::package::ResolvedPackage& package)
+    -> PackageCompileMetadata {
+    auto result = PackageCompileMetadata {};
+    if (package.manifest.version.value.is_some()) {
+        result.version = Some(package.manifest.version.value->clone());
+    }
+    result.features = Vec<PackageFeatureState>::with_capacity(package.features.len());
+    for (const auto& feature : package.features) {
+        result.features.push(PackageFeatureState {
+            .name       = feature.name.clone(),
+            .macro_name = feature.macro_name.clone(),
+            .enabled    = feature.enabled,
+        });
+    }
+    return result;
 }
 
 auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
@@ -567,6 +583,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             rstd_try(parse_options(argument_parser,
                                    package.manifest.usage.options,
                                    usage_source(package.manifest, "usage.options"_str)));
+        rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
         if (package.manifest.usage.threads) {
             arguments.occurrences.push(CppCompilerArgumentOccurrence {
                 .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
@@ -575,6 +592,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         auto interface_arguments = promoted_arguments(arguments);
         auto link_requirements   = rstd_try(usage_link_requirements(package.manifest, arguments));
+        auto compile_metadata    = package_compile_metadata(package);
         auto compile_tests =
             Vec<ResolvedCompileTestCase>::with_capacity(package.manifest.compile_tests.len());
         for (const auto& test : package.manifest.compile_tests) {
@@ -583,6 +601,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                                     rstd::format("package '{}'.compile-test '{}'",
                                                                  package.manifest.name.as_str(),
                                                                  test.name.as_str())));
+            rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
             compile_tests.push(ResolvedCompileTestCase {
                 .name                    = test.name.clone(),
                 .source                  = test.source.clone(),
@@ -683,6 +702,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .dependencies      = rstd::move(target_dependencies),
                 .external_dependencies =
                     clone_external_dependencies(external_by_package[package_index]),
+                .compile_metadata = compile_metadata.clone(),
             });
         }
         if (! package.manifest.compile_tests.is_empty()) {
@@ -724,6 +744,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .dependencies  = rstd::move(compile_dependencies),
                 .external_dependencies =
                     clone_external_dependencies(external_by_package[package_index]),
+                .compile_metadata = compile_metadata.clone(),
             });
         }
     }
@@ -812,6 +833,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                     .test_target    = test.id.clone(),
                     .library_target = library->id.clone(),
                 }),
+                .compile_metadata = library->compile_metadata.clone(),
             });
         }
     }
@@ -932,6 +954,7 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
             .usage                 = rstd::move(target.usage),
             .compile_tests         = rstd::move(target.compile_tests),
             .test_attachment       = rstd::move(target.test_attachment),
+            .compile_metadata      = rstd::move(target.compile_metadata),
         });
     }
 

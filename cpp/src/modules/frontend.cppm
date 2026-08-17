@@ -30,6 +30,7 @@ export namespace lito::cpp
 auto scan_from_frontend(const frontend::FrontendResult& facts, UnitId unit) -> ScanResult {
     auto result = ScanResult {
         .unit                     = unit,
+        .external_macros          = as<Clone>(facts.external_macros).clone(),
         .preprocessor_environment = facts.preprocessor_environment.clone(),
     };
     if (facts.provided.is_some()) {

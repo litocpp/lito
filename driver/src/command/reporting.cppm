@@ -167,6 +167,8 @@ auto detailed_report(const BuildSummary& summary) -> String {
         output, "scan miss file dependency"_str, summary.frontend.persistent_scan_file_dependency);
     append_metric(
         output, "scan miss include lookup"_str, summary.frontend.persistent_scan_include_lookup);
+    append_metric(
+        output, "scan miss external macro"_str, summary.frontend.persistent_scan_external_macro);
     append_metric(output, "scan miss receipt"_str, summary.frontend.persistent_scan_receipt);
     append_metric(
         output, "fingerprint requests"_str, summary.frontend.persistent_fingerprint_requests);
