@@ -635,25 +635,22 @@ auto parse_usage(Option<ref<Toml>>     value,
                                     root,
                                     rstd::format("{}.public-include-directories", context).as_str(),
                                     false);
-    auto private_includes =
-        resolve_include_directories(member(**value, "private-include-directories"_str),
-                                    root,
-                                    rstd::format("{}.private-include-directories", context).as_str(),
-                                    true);
-    auto public_definitions =
-        string_array(member(**value, "public-definitions"_str),
-                     rstd::format("{}.public-definitions", context).as_str());
+    auto private_includes = resolve_include_directories(
+        member(**value, "private-include-directories"_str),
+        root,
+        rstd::format("{}.private-include-directories", context).as_str(),
+        true);
+    auto public_definitions = string_array(member(**value, "public-definitions"_str),
+                                           rstd::format("{}.public-definitions", context).as_str());
     auto private_definitions =
         string_array(member(**value, "private-definitions"_str),
                      rstd::format("{}.private-definitions", context).as_str());
     auto options =
         string_array(member(**value, "options"_str), rstd::format("{}.options", context).as_str());
-    auto linker_options =
-        string_array(member(**value, "linker-options"_str),
-                     rstd::format("{}.linker-options", context).as_str());
-    auto system_libraries =
-        string_array(member(**value, "system-libraries"_str),
-                     rstd::format("{}.system-libraries", context).as_str());
+    auto linker_options   = string_array(member(**value, "linker-options"_str),
+                                         rstd::format("{}.linker-options", context).as_str());
+    auto system_libraries = string_array(member(**value, "system-libraries"_str),
+                                         rstd::format("{}.system-libraries", context).as_str());
     auto threads          = false;
     auto declared_threads = member(**value, "threads"_str);
     if (declared_threads.is_some()) {
@@ -691,19 +688,19 @@ auto parse_usage(Option<ref<Toml>>     value,
     });
 }
 
-auto parse_conditional_configurations(Option<ref<Toml>>     value,
-                                      ref<rstd::path::Path> root)
+auto parse_conditional_configurations(Option<ref<Toml>> value, ref<rstd::path::Path> root)
     -> ManifestSchemaResult<Vec<ConditionalConfiguration>> {
     auto result = Vec<ConditionalConfiguration>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
     if (entries.is_none()) {
-        return manifest_schema_failure<Vec<ConditionalConfiguration>>("manifest.when must be an array"_str);
+        return manifest_schema_failure<Vec<ConditionalConfiguration>>(
+            "manifest.when must be an array"_str);
     }
     for (usize index {}; index < (**entries).len(); ++index) {
-        const auto context = rstd::format("manifest.when[{}]", index);
-        const auto& entry = (**entries)[index];
-        auto table = table_value(entry, context.as_str());
+        const auto  context = rstd::format("manifest.when[{}]", index);
+        const auto& entry   = (**entries)[index];
+        auto        table   = table_value(entry, context.as_str());
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, context.as_str(), when_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
@@ -719,18 +716,19 @@ auto parse_conditional_configurations(Option<ref<Toml>>     value,
             return manifest_schema_failure<Vec<ConditionalConfiguration>>(
                 rstd::format("{} is missing 'usage'", context.as_str()));
         }
-        auto usage = parse_usage(
-            usage_value, root, rstd::format("{}.usage", context.as_str()).as_str());
+        auto usage =
+            parse_usage(usage_value, root, rstd::format("{}.usage", context.as_str()).as_str());
         if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
         auto usage_table = table_value(**usage_value, rstd::format("{}.usage", context).as_str());
         if (usage_table.is_err()) return Err(rstd::move(usage_table).unwrap_err());
         result.push(ConditionalConfiguration {
-            .source = rstd::move(source).unwrap(),
+            .source    = rstd::move(source).unwrap(),
             .condition = rstd::move(condition).unwrap(),
-            .usage = ConditionalUsage {
-                .values = rstd::move(usage).unwrap(),
-                .declares_threads = member(**usage_value, "threads"_str).is_some(),
-            },
+            .usage =
+                ConditionalUsage {
+                    .values           = rstd::move(usage).unwrap(),
+                    .declares_threads = member(**usage_value, "threads"_str).is_some(),
+                },
         });
     }
     return Ok(rstd::move(result));
@@ -740,14 +738,13 @@ auto feature_name_is_valid(ref<str> value) -> bool {
     if (value.is_empty()) return false;
     const auto bytes = value.as_bytes();
     const auto first = bytes[usize {}];
-    if (! ((first >= u8('a') && first <= u8('z')) ||
-           (first >= u8('A') && first <= u8('Z')) || first == u8('_'))) {
+    if (! ((first >= u8('a') && first <= u8('z')) || (first >= u8('A') && first <= u8('Z')) ||
+           first == u8('_'))) {
         return false;
     }
     for (usize index { 1 }; index < bytes.len(); ++index) {
         const auto byte = bytes[index];
-        if ((byte >= u8('a') && byte <= u8('z')) ||
-            (byte >= u8('A') && byte <= u8('Z')) ||
+        if ((byte >= u8('a') && byte <= u8('z')) || (byte >= u8('A') && byte <= u8('Z')) ||
             (byte >= u8('0') && byte <= u8('9')) || byte == u8('-') || byte == u8('_')) {
             continue;
         }
@@ -760,14 +757,13 @@ auto macro_name_is_valid(ref<str> value) -> bool {
     if (value.is_empty()) return false;
     const auto bytes = value.as_bytes();
     const auto first = bytes[usize {}];
-    if (! ((first >= u8('a') && first <= u8('z')) ||
-           (first >= u8('A') && first <= u8('Z')) || first == u8('_'))) {
+    if (! ((first >= u8('a') && first <= u8('z')) || (first >= u8('A') && first <= u8('Z')) ||
+           first == u8('_'))) {
         return false;
     }
     for (usize index { 1 }; index < bytes.len(); ++index) {
         const auto byte = bytes[index];
-        if ((byte >= u8('a') && byte <= u8('z')) ||
-            (byte >= u8('A') && byte <= u8('Z')) ||
+        if ((byte >= u8('a') && byte <= u8('z')) || (byte >= u8('A') && byte <= u8('Z')) ||
             (byte >= u8('0') && byte <= u8('9')) || byte == u8('_')) {
             continue;
         }
@@ -776,28 +772,27 @@ auto macro_name_is_valid(ref<str> value) -> bool {
     return true;
 }
 
-auto parse_features(Option<ref<Toml>> value)
-    -> ManifestSchemaResult<Vec<FeatureDeclaration>> {
+auto parse_features(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<FeatureDeclaration>> {
     auto result = Vec<FeatureDeclaration>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto features = table_value(**value, "manifest.features"_str);
     if (features.is_err()) return Err(rstd::move(features).unwrap_err());
     auto macros = rstd::collections::BTreeMap<String, String>::make();
-    auto keys = (**features).keys();
+    auto keys   = (**features).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name = **key;
-        const auto context = rstd::format("manifest.features.{}", name.as_str());
+        const auto& name    = **key;
+        const auto  context = rstd::format("manifest.features.{}", name.as_str());
         if (! feature_name_is_valid(name.as_str())) {
             return manifest_schema_failure<Vec<FeatureDeclaration>>(
                 rstd::format("feature name '{}' is invalid", name.as_str()));
         }
         auto specification = (**features).get(name.as_str());
-        auto table = table_value(**specification, context.as_str());
+        auto table         = table_value(**specification, context.as_str());
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, context.as_str(), feature_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         auto default_enabled = false;
-        auto default_value = member(**specification, "default"_str);
+        auto default_value   = member(**specification, "default"_str);
         if (default_value.is_some()) {
             auto parsed = (**default_value).as_bool();
             if (parsed.is_none()) {
@@ -810,18 +805,21 @@ auto parse_features(Option<ref<Toml>> value)
         if (! macro_name_is_valid(macro.as_str())) {
             return manifest_schema_failure<Vec<FeatureDeclaration>>(
                 rstd::format("feature '{}' macro '{}' is not a C/C++ identifier",
-                             name.as_str(), macro.as_str()));
+                             name.as_str(),
+                             macro.as_str()));
         }
         auto existing = macros.get(macro.as_str());
         if (existing.is_some()) {
             return manifest_schema_failure<Vec<FeatureDeclaration>>(
                 rstd::format("features '{}' and '{}' use the same macro '{}'",
-                             (**existing).as_str(), name.as_str(), macro.as_str()));
+                             (**existing).as_str(),
+                             name.as_str(),
+                             macro.as_str()));
         }
         macros.insert(macro.clone(), name.clone());
         result.push(FeatureDeclaration {
-            .name = name.clone(),
-            .macro_name = rstd::move(macro),
+            .name            = name.clone(),
+            .macro_name      = rstd::move(macro),
             .default_enabled = default_enabled,
         });
     }

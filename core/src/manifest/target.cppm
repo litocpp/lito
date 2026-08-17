@@ -27,9 +27,9 @@ struct TestAttachmentManifest {
 };
 
 struct TargetSourceManifest {
-    Option<String>              module;
-    SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>                declared_sources;
+    Option<String>      module;
+    SourceDiscoveryMode discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>        declared_sources;
 };
 
 enum class RuntimeResourceRoot

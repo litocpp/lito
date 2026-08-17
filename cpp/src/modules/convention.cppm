@@ -384,7 +384,7 @@ auto module_companion_source(const ResolvedTarget& target, const ResolvedSource&
     auto resolved    = canonical_candidate(
         target.source_root.as_path(), source_root.as_path(), requested.as_path(), None());
     if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-    auto companion_source = rstd::move(resolved).unwrap();
+    auto companion_source             = rstd::move(resolved).unwrap();
     companion_source.module_companion = true;
     return Ok(Some(rstd::move(companion_source)));
 }

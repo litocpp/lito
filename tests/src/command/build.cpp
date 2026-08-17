@@ -150,7 +150,7 @@ export module fixture.feature:optional;
     };
     auto project = materialize("feature-build"_str, files);
     ASSERT_TRUE(project.is_ok());
-    auto output = build_root("feature-build"_str);
+    auto output  = build_root("feature-build"_str);
     auto request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-feature-build"_str));
 
@@ -205,16 +205,15 @@ private-definitions = ["FIXTURE_CONFLICT=2"]
     };
     auto definition_project = materialize("condition-definition-conflict"_str, definition_files);
     ASSERT_TRUE(definition_project.is_ok());
-    auto definition_request = project_build_request(
-        "condition-definition-conflict"_str,
-        definition_project->root.as_path(),
-        strings("fixture-condition-definition-conflict"_str));
+    auto definition_request =
+        project_build_request("condition-definition-conflict"_str,
+                              definition_project->root.as_path(),
+                              strings("fixture-condition-definition-conflict"_str));
     auto definition_result = lito::build(definition_request);
     ASSERT_TRUE(definition_result.is_err());
     auto definition_error = error_chain_text(definition_result.unwrap_err());
     EXPECT_TRUE(definition_error.as_str().contains("condition 'true'"_str));
-    EXPECT_TRUE(
-        definition_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
+    EXPECT_TRUE(definition_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
 
     const ProjectFile scalar_files[] = {
         { "lito.toml"_str, R"toml([package]
@@ -242,11 +241,10 @@ threads = false
     };
     auto scalar_project = materialize("condition-scalar-conflict"_str, scalar_files);
     ASSERT_TRUE(scalar_project.is_ok());
-    auto scalar_request =
-        project_build_request("condition-scalar-conflict"_str,
-                              scalar_project->root.as_path(),
-                              strings("fixture-condition-scalar-conflict"_str));
-    auto scalar_result = lito::build(scalar_request);
+    auto scalar_request = project_build_request("condition-scalar-conflict"_str,
+                                                scalar_project->root.as_path(),
+                                                strings("fixture-condition-scalar-conflict"_str));
+    auto scalar_result  = lito::build(scalar_request);
     ASSERT_TRUE(scalar_result.is_err());
     auto scalar_error = error_chain_text(scalar_result.unwrap_err());
     EXPECT_TRUE(scalar_error.as_str().contains("condition 'true'"_str));
@@ -320,7 +318,7 @@ auto main() -> int {
     auto request = project_build_request("dependency-features"_str,
                                          project->root.as_path(),
                                          strings("fixture-feature-consumer"_str));
-    auto result = lito::build(request);
+    auto result  = lito::build(request);
     if (result.is_err()) {
         auto message = error_chain_text(result.unwrap_err());
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
@@ -428,10 +426,10 @@ auto main() -> int {
     };
     auto project = materialize("visibility"_str, files);
     ASSERT_TRUE(project.is_ok());
-    auto request = project_build_request("visibility"_str,
-                                         project->root.as_path(),
-                                         strings("fixture-default-app"_str,
-                                                 "fixture-hidden-app"_str));
+    auto request =
+        project_build_request("visibility"_str,
+                              project->root.as_path(),
+                              strings("fixture-default-app"_str, "fixture-hidden-app"_str));
     auto result = lito::build(request);
     if (result.is_err()) {
         auto message = error_chain_text(result.unwrap_err());
@@ -464,8 +462,8 @@ auto main() -> int {
 #endif
 
     auto hidden_manifest = project->root.join(PathBuf::from("hidden-lib/lito.toml"_str).as_path());
-    auto changed = rstd::fs::write(hidden_manifest.as_path(),
-                                   R"toml([package]
+    auto changed         = rstd::fs::write(hidden_manifest.as_path(),
+                                           R"toml([package]
 name = "fixture-hidden-lib"
 version.workspace = true
 
@@ -485,11 +483,11 @@ options = ["-fvisibility=default"]
     EXPECT_EQ(rebuilt->frontend.analyze_builds, usize {});
     EXPECT_TRUE(rebuilt->compiled > usize {});
 
-    auto lto_request = project_build_request("visibility-lto"_str,
-                                             project->root.as_path(),
-                                             strings("fixture-default-app"_str,
-                                                     "fixture-hidden-app"_str),
-                                             build_profile("visibility-lto"_str));
+    auto lto_request =
+        project_build_request("visibility-lto"_str,
+                              project->root.as_path(),
+                              strings("fixture-default-app"_str, "fixture-hidden-app"_str),
+                              build_profile("visibility-lto"_str));
     auto lto = lito::build(lto_request);
     ASSERT_TRUE(lto.is_ok());
     EXPECT_EQ(artifact_count(*lto, lito::cpp::ArtifactKind::StaticLibrary), usize(2));

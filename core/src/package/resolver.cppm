@@ -476,9 +476,9 @@ public:
                     return Err(rstd::move(dependency_name).unwrap_err());
                 }
                 dependencies.push(ResolvedDependency {
-                    .name       = rstd::move(dependency_name).unwrap(),
-                    .visibility = dependency.visibility,
-                    .features = dependency.features.clone(),
+                    .name             = rstd::move(dependency_name).unwrap(),
+                    .visibility       = dependency.visibility,
+                    .features         = dependency.features.clone(),
                     .default_features = dependency.default_features,
                 });
             }

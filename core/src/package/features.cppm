@@ -29,17 +29,17 @@ struct FeatureSelection {
     bool        default_features { true };
 };
 
-auto resolve_features(ResolvedPackageGraph& graph,
-                      const Vec<String>& selected_roots,
-                      const Vec<String>& selected_packages,
+auto resolve_features(ResolvedPackageGraph&       graph,
+                      const Vec<String>&          selected_roots,
+                      const Vec<String>&          selected_packages,
                       const Vec<PackageTargetId>& selected_targets,
-                      const FeatureSelection& selection) -> PackageResult<empty> {
+                      const FeatureSelection&     selection) -> PackageResult<empty> {
     auto indices = rstd::collections::BTreeMap<String, usize>::make();
     for (usize index {}; index < graph.packages.len(); ++index) {
         indices.insert(graph.packages[index].manifest.name.clone(), index);
     }
-    auto defaults = Vec<bool>::with_capacity(graph.packages.len());
-    auto requests = Vec<Vec<FeatureRequest>>::with_capacity(graph.packages.len());
+    auto defaults        = Vec<bool>::with_capacity(graph.packages.len());
+    auto requests        = Vec<Vec<FeatureRequest>>::with_capacity(graph.packages.len());
     auto default_sources = Vec<Vec<String>>::with_capacity(graph.packages.len());
     for (usize index {}; index < graph.packages.len(); ++index) {
         defaults.push(false);
@@ -52,9 +52,8 @@ auto resolve_features(ResolvedPackageGraph& graph,
         }
         values.push(String::make(value));
     };
-    const auto append_request = [&](Vec<FeatureRequest>& values,
-                                    ref<str>             name,
-                                    String               source) -> void {
+    const auto append_request =
+        [&](Vec<FeatureRequest>& values, ref<str> name, String source) -> void {
         for (auto& existing : values) {
             if (existing.name.as_str() != name) continue;
             append_unique(existing.sources, source.as_str());
@@ -89,8 +88,9 @@ auto resolve_features(ResolvedPackageGraph& graph,
         }
         if (selection.default_features) {
             defaults[**index] = true;
-            append_unique(default_sources[**index],
-                          rstd::format("root package '{}' default features", root.as_str()).as_str());
+            append_unique(
+                default_sources[**index],
+                rstd::format("root package '{}' default features", root.as_str()).as_str());
         }
         for (const auto& feature : selection.enabled) {
             append_request(requests[**index],
@@ -100,8 +100,8 @@ auto resolve_features(ResolvedPackageGraph& graph,
     }
     for (const auto& package : graph.packages) {
         if (! selected(package.manifest.name.as_str())) continue;
-        const auto collect = [&](const Vec<ResolvedDependency>& dependencies)
-            -> PackageResult<empty> {
+        const auto collect =
+            [&](const Vec<ResolvedDependency>& dependencies) -> PackageResult<empty> {
             for (const auto& dependency : dependencies) {
                 if (! selected(dependency.name.as_str())) continue;
                 auto index = indices.get(dependency.name.as_str());
@@ -112,10 +112,10 @@ auto resolve_features(ResolvedPackageGraph& graph,
                 if (dependency.default_features) {
                     defaults[**index] = true;
                     append_unique(default_sources[**index],
-                                  rstd::format(
-                                      "dependency '{}' from package '{}' default features",
-                                      dependency.name.as_str(),
-                                      package.manifest.name.as_str()).as_str());
+                                  rstd::format("dependency '{}' from package '{}' default features",
+                                               dependency.name.as_str(),
+                                               package.manifest.name.as_str())
+                                      .as_str());
                 }
                 for (const auto& feature : dependency.features) {
                     append_request(requests[**index],
@@ -143,15 +143,14 @@ auto resolve_features(ResolvedPackageGraph& graph,
                 }
             }
             if (! found) {
-                return Err(PackageError::Message(rstd::format(
-                    "package '{}' has no feature '{}'",
-                    package.manifest.name.as_str(),
-                    request.name.as_str())));
+                return Err(PackageError::Message(rstd::format("package '{}' has no feature '{}'",
+                                                              package.manifest.name.as_str(),
+                                                              request.name.as_str())));
             }
         }
         package.features.clear();
         for (const auto& declaration : package.manifest.features) {
-            auto enabled = defaults[index] && declaration.default_enabled;
+            auto enabled            = defaults[index] && declaration.default_enabled;
             auto activation_sources = Vec<String>::make();
             if (enabled) {
                 for (const auto& source : default_sources[index]) {
@@ -168,9 +167,9 @@ auto resolve_features(ResolvedPackageGraph& graph,
                 }
             }
             package.features.push(ResolvedFeature {
-                .name = declaration.name.clone(),
-                .macro_name = declaration.macro_name.clone(),
-                .enabled = enabled,
+                .name               = declaration.name.clone(),
+                .macro_name         = declaration.macro_name.clone(),
+                .enabled            = enabled,
                 .activation_sources = rstd::move(activation_sources),
             });
         }

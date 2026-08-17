@@ -92,9 +92,9 @@ TEST(Cpp, AppliesTargetLocalVisibilityWithLastValueWins) {
               cpp::cpp_bmi_compatibility_identity(configured).as_str());
     EXPECT_EQ(cpp::cpp_abi_compatibility_identity(defaults).as_str(),
               cpp::cpp_abi_compatibility_identity(configured).as_str());
-    EXPECT_EQ(cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(defaults)).as_str(),
-              cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(configured))
-                  .as_str());
+    EXPECT_EQ(
+        cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(defaults)).as_str(),
+        cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(configured)).as_str());
 }
 
 TEST(Cpp, MaterializesTypedSizedDeallocationPolicy) {

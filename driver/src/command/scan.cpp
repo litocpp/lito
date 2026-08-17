@@ -212,7 +212,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
 
     auto external_macros = JsonArray::with_capacity(report.result.external_macros.len());
     for (const auto& macro : report.result.external_macros) {
-        auto value = JsonMap::make();
+        auto value      = JsonMap::make();
         auto definition = Json::Null();
         if (macro.compiler_definition.is_some()) {
             definition = scan_json_string(macro.compiler_definition->as_str());
@@ -241,8 +241,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     document.insert(String::make("implementation-module"_str), rstd::move(implementation));
     document.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
     document.insert(String::make("headers"_str), Json::Array(rstd::move(headers)));
-    document.insert(String::make("external-macros"_str),
-                    Json::Array(rstd::move(external_macros)));
+    document.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     document.insert(String::make("preprocessor-environment"_str),
                     scan_json_string(report.result.preprocessor_environment.as_str()));
     document.insert(String::make("input-bytes"_str), json_usize(report.result.input_bytes));

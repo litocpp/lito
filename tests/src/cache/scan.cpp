@@ -212,8 +212,8 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
 }
 
 TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
-    auto manifest = package_metadata_manifest("0.1.0"_str);
-    const ProjectFile files[] = {
+    auto              manifest = package_metadata_manifest("0.1.0"_str);
+    const ProjectFile files[]  = {
         { "lito.toml"_str, manifest.as_str() },
         { "src/main.cpp"_str,
           "auto package_version() -> const char*;\n"
@@ -238,10 +238,9 @@ TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     };
     auto project = materialize("package-metadata-cache"_str, files);
     ASSERT_TRUE(project.is_ok());
-    auto output = build_root("package-metadata-cache"_str);
-    auto request = build_request(project->root.as_path(),
-                                 output.as_path(),
-                                 strings("fixture-package-metadata-cache"_str));
+    auto output  = build_root("package-metadata-cache"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-package-metadata-cache"_str));
 
     auto cold = lito::build(request);
     ASSERT_TRUE(cold.is_ok());
@@ -258,7 +257,7 @@ TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(4));
 
     auto changed_manifest = package_metadata_manifest("0.2.0"_str);
-    auto manifest_path = project->root.join(PathBuf::from("lito.toml"_str).as_path());
+    auto manifest_path    = project->root.join(PathBuf::from("lito.toml"_str).as_path());
     ASSERT_TRUE(
         rstd::fs::write(manifest_path.as_path(), changed_manifest.as_str().as_bytes()).is_ok());
     auto changed_version = lito::build(request);
@@ -275,8 +274,7 @@ TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     EXPECT_EQ(changed_feature->frontend.persistent_scan_hits, usize(3));
     auto enabled_executable = executable(*changed_feature);
     ASSERT_TRUE(enabled_executable.is_some());
-    auto enabled_status =
-        rstd::process::Command::make((*enabled_executable).as_os_str()).status();
+    auto enabled_status = rstd::process::Command::make((*enabled_executable).as_os_str()).status();
     ASSERT_TRUE(enabled_status.is_ok());
     ASSERT_TRUE(enabled_status->code().is_some());
     EXPECT_EQ(*enabled_status->code(), i32(1));

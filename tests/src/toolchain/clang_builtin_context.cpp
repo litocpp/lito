@@ -118,10 +118,10 @@ auto run_clang_builtin_context_test() -> int {
         return 11;
     }
 
-    auto visibility = toolchain.builtin_context(context_with(options(
-        "-fvisibility=default"_str,
-        "-ftype-visibility=protected"_str,
-        "-fvisibility-inlines-hidden"_str)));
+    auto visibility =
+        toolchain.builtin_context(context_with(options("-fvisibility=default"_str,
+                                                       "-ftype-visibility=protected"_str,
+                                                       "-fvisibility-inlines-hidden"_str)));
     if (visibility.is_err()) return 12;
     if (visibility->key.as_str() != llvm_debug_direct->key.as_str() ||
         ! same_command(visibility->query_command, llvm_debug_direct->query_command)) {

@@ -26,7 +26,7 @@ struct PackageFeatureState {
 };
 
 struct PackageCompileMetadata {
-    Option<String>          version;
+    Option<String>           version;
     Vec<PackageFeatureState> features;
 
     auto clone() const -> PackageCompileMetadata {

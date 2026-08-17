@@ -81,15 +81,15 @@ auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) con
     -> CppOptionResult<CppArgumentLayer> {
     auto parsed_result = parser_.parse(arguments);
     if (parsed_result.is_err()) {
-        return Err(CppOptionError::Argument(rstd::move(parsed_result).unwrap_err(),
-                                            String::make(source)));
+        return Err(
+            CppOptionError::Argument(rstd::move(parsed_result).unwrap_err(), String::make(source)));
     }
     auto parsed = rstd::move(parsed_result).unwrap();
     auto result = CppArgumentLayer {};
     for (auto& matched : parsed) {
-        auto binding = matched.definition.is_some()
-                           ? rstd::addressof(bindings_[*matched.definition])
-                           : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        auto binding  = matched.definition.is_some()
+                            ? rstd::addressof(bindings_[*matched.definition])
+                            : static_cast<const CppCompilerArgumentBinding*>(nullptr);
         auto argument = rstd_try(make_cpp_compiler_argument(matched, binding, source));
         result.occurrences.push(CppCompilerArgumentOccurrence {
             .argument   = rstd::move(argument),

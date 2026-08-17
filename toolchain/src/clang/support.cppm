@@ -167,13 +167,13 @@ auto append_typed_options(Vec<String>&                  command,
             command, options.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     }
     if (! semantic_only) {
-        command.push(rstd::format("-fvisibility={}",
-                                  cpp::cpp_symbol_visibility_name(
-                                      options.codegen.visibility.symbols)));
+        command.push(
+            rstd::format("-fvisibility={}",
+                         cpp::cpp_symbol_visibility_name(options.codegen.visibility.symbols)));
         if (options.codegen.visibility.types.is_some()) {
-            command.push(rstd::format("-ftype-visibility={}",
-                                      cpp::cpp_symbol_visibility_name(
-                                          *options.codegen.visibility.types)));
+            command.push(
+                rstd::format("-ftype-visibility={}",
+                             cpp::cpp_symbol_visibility_name(*options.codegen.visibility.types)));
         }
         if (options.codegen.visibility.inlines_hidden) {
             toolchain::command::push_option(command, "-fvisibility-inlines-hidden"_str);

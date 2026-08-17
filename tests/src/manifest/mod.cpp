@@ -586,7 +586,6 @@ archive = "fixture.convention.markers"
     ASSERT_EQ(module->targets.len(), usize(1));
     EXPECT_EQ(lito::manifest::package_target_source(module->targets[usize {}]).discovery,
               lito::manifest::SourceDiscoveryMode::Module);
-
 }
 
 TEST_F(Manifest, ParsesConditionalUsageFeaturesAndDependencyRequests) {

@@ -183,9 +183,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto license = parse_package_license(package_value);
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
 
-    auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
-    auto conditions       = parse_conditional_configurations(member(document, "when"_str),
-                                                             source_root->as_path());
+    auto usage = parse_usage(member(document, "usage"_str), source_root->as_path());
+    auto conditions =
+        parse_conditional_configurations(member(document, "when"_str), source_root->as_path());
     auto features         = parse_features(member(document, "features"_str));
     auto dependencies     = parse_dependencies(member(document, "dependencies"_str));
     auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);

@@ -21,8 +21,7 @@ auto manifest_package_key(ref<str> key) -> bool {
 }
 
 auto library_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "archive"_str || key == "module"_str ||
-           key == "sources"_str;
+    return key == "name"_str || key == "archive"_str || key == "module"_str || key == "sources"_str;
 }
 
 auto runnable_key(ref<str> key) -> bool {
@@ -90,8 +89,7 @@ auto include_directory_key(ref<str> key) -> bool {
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
-           key == "workspace"_str || key == "features"_str ||
-           key == "default-features"_str;
+           key == "workspace"_str || key == "features"_str || key == "default-features"_str;
 }
 
 auto dev_dependency_key(ref<str> key) -> bool {

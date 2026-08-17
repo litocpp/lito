@@ -389,7 +389,7 @@ public:
         return Ok((*environment)->identity.clone());
     }
 
-    auto prepare_scan_input(const cpp::CompileContext&        compile_context,
+    auto prepare_scan_input(const cpp::CompileContext&         compile_context,
                             const cpp::PackageCompileMetadata& compile_metadata,
                             ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
@@ -403,17 +403,17 @@ public:
         auto environment = environment_for(compile_context, working_directory);
         if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
         return Ok(toolchain::PreparedScanInput {
-            .environment = rstd::move(environment).unwrap(),
+            .environment     = rstd::move(environment).unwrap(),
             .external_macros = toolchain::SharedPackageMacroCatalog::make(
                 toolchain::PackageMacroCatalog::make(compile_metadata)),
         });
     }
 
-    auto preprocess(ref<rstd::path::Path>      source,
-                    const cpp::CompileContext& compile_context,
+    auto preprocess(ref<rstd::path::Path>              source,
+                    const cpp::CompileContext&         compile_context,
                     const cpp::PackageCompileMetadata& compile_metadata,
-                    ref<rstd::path::Path>      working_directory,
-                    frontend::FrontendService& frontend_service) const
+                    ref<rstd::path::Path>              working_directory,
+                    frontend::FrontendService&         frontend_service) const
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         auto input = prepare_scan_input(compile_context, compile_metadata, working_directory);
         if (input.is_err()) {
@@ -424,10 +424,10 @@ public:
     }
 
     template<typename Observer>
-    auto preprocess_with_environment(ref<rstd::path::Path>                           source,
-                                     const toolchain::PreparedScanInput&              input,
-                                     frontend::FrontendService& frontend_service,
-                                     Observer&                  observer) const
+    auto preprocess_with_environment(ref<rstd::path::Path>               source,
+                                     const toolchain::PreparedScanInput& input,
+                                     frontend::FrontendService&          frontend_service,
+                                     Observer&                           observer) const
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         frontend_service.record_analysis_build();
         auto includes = toolchain::ClangIncludeResolver(*input.environment);

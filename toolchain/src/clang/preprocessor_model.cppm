@@ -87,20 +87,20 @@ struct PreprocessorEnvironment {
 using SharedPreprocessorEnvironment = rstd::sync::Arc<PreprocessorEnvironment>;
 
 struct PackageMacroEntry {
-    String                                          name;
-    String                                          dependency_key;
-    String                                          value_identity;
-    frontend::ExternalMacroState                    state { frontend::ExternalMacroState::Undefined };
-    Option<String>                                  compiler_definition;
-    Option<preprocessor::SharedMacroDefinition>     definition;
+    String                                      name;
+    String                                      dependency_key;
+    String                                      value_identity;
+    frontend::ExternalMacroState                state { frontend::ExternalMacroState::Undefined };
+    Option<String>                              compiler_definition;
+    Option<preprocessor::SharedMacroDefinition> definition;
 };
 
 class PackageMacroCatalog {
 public:
     static auto make(const cpp::PackageCompileMetadata& metadata) -> PackageMacroCatalog {
         auto entries = Vec<PackageMacroEntry>::with_capacity(metadata.features.len() + usize(1));
-        auto raw_version = metadata.version.is_some() ? metadata.version->as_str() : ""_str;
-        auto literal     = string_literal(raw_version);
+        auto raw_version        = metadata.version.is_some() ? metadata.version->as_str() : ""_str;
+        auto literal            = string_literal(raw_version);
         auto version_definition = String::make("LITO_PKG_VERSION="_str);
         version_definition.push_str(literal.as_str());
         entries.push(PackageMacroEntry {
@@ -109,9 +109,9 @@ public:
             .value_identity      = value_identity("lito-package-version-v1"_str, raw_version),
             .state               = frontend::ExternalMacroState::Defined,
             .compiler_definition = Some(rstd::move(version_definition)),
-            .definition = Some(object_macro("LITO_PKG_VERSION"_str,
-                                            frontend::lexical::TokenKind::StringLiteral,
-                                            literal.as_str())),
+            .definition          = Some(object_macro("LITO_PKG_VERSION"_str,
+                                                     frontend::lexical::TokenKind::StringLiteral,
+                                                     literal.as_str())),
         });
         for (const auto& feature : metadata.features) {
             auto dependency_key = String::make("lito.package.feature:"_str);
@@ -120,20 +120,19 @@ public:
             identity_value.push_ascii('=');
             identity_value.push_str(feature.enabled ? "1"_str : "0"_str);
             auto compiler_definition = Option<String> {};
-            auto definition = Option<preprocessor::SharedMacroDefinition> {};
+            auto definition          = Option<preprocessor::SharedMacroDefinition> {};
             if (feature.enabled) {
                 auto argument = feature.macro_name.clone();
                 argument.push_str("=1"_str);
                 compiler_definition = Some(rstd::move(argument));
-                definition = Some(object_macro(feature.macro_name.as_str(),
-                                               frontend::lexical::TokenKind::PpNumber,
-                                               "1"_str));
+                definition          = Some(object_macro(
+                    feature.macro_name.as_str(), frontend::lexical::TokenKind::PpNumber, "1"_str));
             }
             entries.push(PackageMacroEntry {
-                .name                = feature.macro_name.clone(),
-                .dependency_key      = rstd::move(dependency_key),
-                .value_identity      = value_identity("lito-package-feature-v1"_str,
-                                                      identity_value.as_str()),
+                .name           = feature.macro_name.clone(),
+                .dependency_key = rstd::move(dependency_key),
+                .value_identity =
+                    value_identity("lito-package-feature-v1"_str, identity_value.as_str()),
                 .state               = feature.enabled ? frontend::ExternalMacroState::Defined
                                                        : frontend::ExternalMacroState::Undefined,
                 .compiler_definition = rstd::move(compiler_definition),
@@ -147,7 +146,8 @@ public:
             });
         auto schema = String::make("lito-package-macro-catalog-v1\n"_str);
         for (const auto& entry : entries) {
-            schema.push_str(rstd::format("{}:{}\n", entry.name.len(), entry.name.as_str()).as_str());
+            schema.push_str(
+                rstd::format("{}:{}\n", entry.name.len(), entry.name.as_str()).as_str());
         }
         return PackageMacroCatalog(rstd::move(entries), rstd::move(schema));
     }
@@ -213,12 +213,11 @@ private:
         return rstd::format("{}\n{}:{}", recipe, value.len(), value);
     }
 
-    static auto object_macro(ref<str> name,
-                             frontend::lexical::TokenKind kind,
-                             ref<str> replacement) -> preprocessor::SharedMacroDefinition {
-        auto token = frontend::lexical::Token {};
-        token.kind = kind;
-        token.text = String::make(replacement);
+    static auto object_macro(ref<str> name, frontend::lexical::TokenKind kind, ref<str> replacement)
+        -> preprocessor::SharedMacroDefinition {
+        auto token  = frontend::lexical::Token {};
+        token.kind  = kind;
+        token.text  = String::make(replacement);
         auto tokens = Vec<frontend::lexical::Token>::make();
         tokens.push(rstd::move(token));
         auto macro = preprocessor::MacroDefinition {};

@@ -6,37 +6,35 @@ import lito.core;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-auto feature(ref<str> name, bool default_enabled = false)
-    -> lito::manifest::FeatureDeclaration {
+auto feature(ref<str> name, bool default_enabled = false) -> lito::manifest::FeatureDeclaration {
     return {
-        .name = String::make(name),
-        .macro_name = lito::manifest::normalized_feature_macro(name),
+        .name            = String::make(name),
+        .macro_name      = lito::manifest::normalized_feature_macro(name),
         .default_enabled = default_enabled,
     };
 }
 
-auto dependency(ref<str> name,
-                Vec<String> features = {},
-                bool default_features = true) -> lito::package::ResolvedDependency {
+auto dependency(ref<str> name, Vec<String> features = {}, bool default_features = true)
+    -> lito::package::ResolvedDependency {
     return {
-        .name = String::make(name),
-        .features = rstd::move(features),
+        .name             = String::make(name),
+        .features         = rstd::move(features),
         .default_features = default_features,
     };
 }
 
-auto package(ref<str> name,
-             Vec<lito::manifest::FeatureDeclaration> features = {},
-             Vec<lito::package::ResolvedDependency> dependencies = {},
-             Vec<lito::package::ResolvedDependency> dev_dependencies = {})
+auto package(ref<str>                                name,
+             Vec<lito::manifest::FeatureDeclaration> features         = {},
+             Vec<lito::package::ResolvedDependency>  dependencies     = {},
+             Vec<lito::package::ResolvedDependency>  dev_dependencies = {})
     -> lito::package::ResolvedPackage {
     return {
         .manifest =
             lito::manifest::PackageManifest {
-                .name = String::make(name),
+                .name     = String::make(name),
                 .features = rstd::move(features),
             },
-        .dependencies = rstd::move(dependencies),
+        .dependencies     = rstd::move(dependencies),
         .dev_dependencies = rstd::move(dev_dependencies),
     };
 }
@@ -50,12 +48,12 @@ auto names(Values... values) -> Vec<String> {
 
 template<typename... Packages>
 auto library_targets(Packages... packages) -> Vec<lito::package::PackageTargetId> {
-    auto result = Vec<lito::package::PackageTargetId>::make();
+    auto       result = Vec<lito::package::PackageTargetId>::make();
     const auto append = [&](ref<str> package) {
         result.push({
             .package = String::make(package),
-            .kind = lito::package::PackageTargetKind::Library,
-            .name = String::make(package),
+            .kind    = lito::package::PackageTargetKind::Library,
+            .name    = String::make(package),
         });
     };
     (append(packages), ...);
@@ -75,11 +73,11 @@ TEST(PackageFeatures, ResolvesRootDefaultsAndCommandLineRequests) {
     declarations.push(feature("explicit"_str));
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(package("provider"_str, rstd::move(declarations)));
-    auto graph = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
-    auto roots = names("provider"_str);
-    auto targets = library_targets("provider"_str);
+    auto graph     = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
+    auto roots     = names("provider"_str);
+    auto targets   = library_targets("provider"_str);
     auto selection = lito::package::FeatureSelection {
-        .enabled = names("explicit"_str),
+        .enabled          = names("explicit"_str),
         .default_features = true,
     };
 
@@ -116,10 +114,10 @@ TEST(PackageFeatures, UnifiesDependencyRequestsAndIgnoresInactiveDevEdges) {
                           rstd::move(first_dev_dependencies)));
     packages.push(package("provider"_str, rstd::move(declarations)));
     packages.push(package("second-consumer"_str, {}, rstd::move(second_dependencies)));
-    auto graph = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
-    auto roots = names("first-consumer"_str);
+    auto graph    = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
+    auto roots    = names("first-consumer"_str);
     auto selected = names("first-consumer"_str, "provider"_str);
-    auto targets = library_targets("first-consumer"_str);
+    auto targets  = library_targets("first-consumer"_str);
 
     auto resolved = lito::package::resolve_features(
         graph, roots, selected, targets, lito::package::FeatureSelection {});
@@ -127,9 +125,9 @@ TEST(PackageFeatures, UnifiesDependencyRequestsAndIgnoresInactiveDevEdges) {
     EXPECT_TRUE(feature_enabled(graph.packages[usize(1)], "first"_str));
     EXPECT_FALSE(feature_enabled(graph.packages[usize(1)], "second"_str));
 
-    roots = names("first-consumer"_str, "second-consumer"_str);
+    roots    = names("first-consumer"_str, "second-consumer"_str);
     selected = names("first-consumer"_str, "provider"_str, "second-consumer"_str);
-    targets = library_targets("first-consumer"_str, "second-consumer"_str);
+    targets  = library_targets("first-consumer"_str, "second-consumer"_str);
     resolved = lito::package::resolve_features(
         graph, roots, selected, targets, lito::package::FeatureSelection {});
     ASSERT_TRUE(resolved.is_ok());
@@ -141,13 +139,12 @@ TEST(PackageFeatures, UnifiesDependencyRequestsAndIgnoresInactiveDevEdges) {
 TEST(PackageFeatures, RejectsUnknownFeatureRequests) {
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(package("provider"_str));
-    auto graph = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
-    auto roots = names("provider"_str);
-    auto targets = library_targets("provider"_str);
+    auto graph     = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
+    auto roots     = names("provider"_str);
+    auto targets   = library_targets("provider"_str);
     auto selection = lito::package::FeatureSelection {
         .enabled = names("missing"_str),
     };
 
-    EXPECT_TRUE(
-        lito::package::resolve_features(graph, roots, roots, targets, selection).is_err());
+    EXPECT_TRUE(lito::package::resolve_features(graph, roots, roots, targets, selection).is_err());
 }

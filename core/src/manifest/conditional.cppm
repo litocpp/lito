@@ -16,9 +16,9 @@ struct ConditionalUsage {
 };
 
 struct ConditionalConfiguration {
-    String                     source;
+    String                      source;
     lito::condition::Expression condition;
-    ConditionalUsage           usage;
+    ConditionalUsage            usage;
 };
 
 struct FeatureDeclaration {

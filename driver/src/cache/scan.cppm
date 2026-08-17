@@ -60,14 +60,14 @@ struct ScanCacheStatistics {
 };
 
 struct ScanCacheInput {
-    PathBuf record;
-    String  target;
-    PathBuf relative_source;
-    PathBuf source;
-    String  context_identity;
-    PathBuf working_directory;
-    String  preprocessor_environment;
-    String  external_macro_schema;
+    PathBuf                              record;
+    String                               target;
+    PathBuf                              relative_source;
+    PathBuf                              source;
+    String                               context_identity;
+    PathBuf                              working_directory;
+    String                               preprocessor_environment;
+    String                               external_macro_schema;
     toolchain::SharedPackageMacroCatalog external_macros;
 };
 
@@ -111,12 +111,10 @@ auto external_macro_json(const frontend::ExternalMacroMaterialization& macro) ->
     }
     auto value = JsonMap::make();
     value.insert(String::make("compiler-definition"_str), rstd::move(definition));
-    value.insert(String::make("dependency-key"_str),
-                 cache_string(macro.dependency_key.as_str()));
+    value.insert(String::make("dependency-key"_str), cache_string(macro.dependency_key.as_str()));
     value.insert(String::make("name"_str), cache_string(macro.name.as_str()));
     value.insert(String::make("state"_str), cache_string(external_macro_state_name(macro.state)));
-    value.insert(String::make("value-identity"_str),
-                 cache_string(macro.value_identity.as_str()));
+    value.insert(String::make("value-identity"_str), cache_string(macro.value_identity.as_str()));
     return Json::Object(rstd::move(value));
 }
 
@@ -282,8 +280,7 @@ auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Js
         external_macros.push(external_macro_json(macro));
     }
     auto value = JsonMap::make();
-    value.insert(String::make("external-macros"_str),
-                 Json::Array(rstd::move(external_macros)));
+    value.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     value.insert(String::make("header-inputs"_str), Json::Array(rstd::move(headers)));
     value.insert(String::make("implementation-module"_str), rstd::move(implementation));
     value.insert(String::make("imports"_str), Json::Array(rstd::move(imports)));
@@ -297,13 +294,13 @@ auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Js
 
 auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
     if (! value->is_object()) return None();
-    auto source               = json_text(value, "source"_str);
-    auto environment          = json_text(value, "preprocessor-environment"_str);
-    auto input_bytes          = json_number(value, "input-bytes"_str);
-    auto provided_value       = json_member(value, "provided-module"_str);
-    auto implementation_value = json_member(value, "implementation-module"_str);
-    auto import_values        = json_array(value, "imports"_str);
-    auto header_values        = json_array(value, "header-inputs"_str);
+    auto source                = json_text(value, "source"_str);
+    auto environment           = json_text(value, "preprocessor-environment"_str);
+    auto input_bytes           = json_number(value, "input-bytes"_str);
+    auto provided_value        = json_member(value, "provided-module"_str);
+    auto implementation_value  = json_member(value, "implementation-module"_str);
+    auto import_values         = json_array(value, "imports"_str);
+    auto header_values         = json_array(value, "header-inputs"_str);
     auto external_macro_values = json_array(value, "external-macros"_str);
     if (source.is_none() || environment.is_none() || input_bytes.is_none() ||
         provided_value.is_none() || implementation_value.is_none() || import_values.is_none() ||
@@ -356,8 +353,8 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
         if (path.is_none()) return None();
         headers.push(rstd::move(path).unwrap());
     }
-    auto external_macros = Vec<frontend::ExternalMacroMaterialization>::with_capacity(
-        (**external_macro_values).len());
+    auto external_macros =
+        Vec<frontend::ExternalMacroMaterialization>::with_capacity((**external_macro_values).len());
     for (const auto& item : **external_macro_values) {
         auto macro = parse_external_macro(ref<Json>::from_raw_parts(rstd::addressof(item)));
         if (macro.is_none()) return None();
@@ -620,18 +617,18 @@ private:
         if (source_path.is_err()) return Err(rstd::move(source_path).unwrap_err());
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
         if (working.is_err()) return Err(rstd::move(working).unwrap_err());
-        auto version        = json_number(document, "version"_str);
-        auto state          = json_text(document, "state"_str);
-        auto recipe         = json_text(document, "recipe"_str);
-        auto environment    = json_text(document, "environment"_str);
-        auto target         = json_text(document, "target"_str);
-        auto context        = json_text(document, "context"_str);
-        auto stored_working = json_text(document, "working-directory"_str);
-        auto stored_source  = json_member(document, "source"_str);
-        auto files_value    = json_array(document, "files"_str);
-        auto lookups_value  = json_array(document, "include-lookups"_str);
-        auto result_value   = json_member(document, "result"_str);
-        auto stored_receipt = json_text(document, "receipt"_str);
+        auto version                      = json_number(document, "version"_str);
+        auto state                        = json_text(document, "state"_str);
+        auto recipe                       = json_text(document, "recipe"_str);
+        auto environment                  = json_text(document, "environment"_str);
+        auto target                       = json_text(document, "target"_str);
+        auto context                      = json_text(document, "context"_str);
+        auto stored_working               = json_text(document, "working-directory"_str);
+        auto stored_source                = json_member(document, "source"_str);
+        auto files_value                  = json_array(document, "files"_str);
+        auto lookups_value                = json_array(document, "include-lookups"_str);
+        auto result_value                 = json_member(document, "result"_str);
+        auto stored_receipt               = json_text(document, "receipt"_str);
         auto stored_external_macro_schema = json_text(document, "external-macro-schema"_str);
         if (version.is_none() || state.is_none() || *state != "complete"_str || recipe.is_none() ||
             environment.is_none() || target.is_none() || context.is_none() ||

@@ -15,13 +15,13 @@ struct RequiredModule {
 };
 
 struct ScanResult {
-    UnitId                           unit {};
-    Option<frontend::ProvidedModule> provided;
-    Option<String>                   implementation_module;
-    Vec<RequiredModule>              required_modules;
-    Vec<PathBuf>                     header_inputs;
+    UnitId                                      unit {};
+    Option<frontend::ProvidedModule>            provided;
+    Option<String>                              implementation_module;
+    Vec<RequiredModule>                         required_modules;
+    Vec<PathBuf>                                header_inputs;
     Vec<frontend::ExternalMacroMaterialization> external_macros;
-    String                           preprocessor_environment;
+    String                                      preprocessor_environment;
 };
 
 } // namespace lito::cpp

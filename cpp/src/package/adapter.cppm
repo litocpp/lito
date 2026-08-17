@@ -150,9 +150,9 @@ auto append_conditional_unique(Vec<PathBuf>& output, const Vec<PathBuf>& input) 
     }
 }
 
-auto append_conditional_unique(
-    Vec<lito::dependency::IncludeDirectoryRequirement>& output,
-    const Vec<lito::dependency::IncludeDirectoryRequirement>& input) -> void {
+auto append_conditional_unique(Vec<lito::dependency::IncludeDirectoryRequirement>&       output,
+                               const Vec<lito::dependency::IncludeDirectoryRequirement>& input)
+    -> void {
     for (const auto& value : input) {
         auto present = false;
         for (const auto& existing : output) {
@@ -175,16 +175,14 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                                    const BuildConfiguration&       configuration,
                                    const ProfileSpec&              profile,
                                    const BuildPlatform&            platform,
-                                   bool                            has_library)
-    -> lito::package::PackageResult<empty> {
+                                   bool has_library) -> lito::package::PackageResult<empty> {
     auto context = lito::condition::Context {};
     context.set_string(String::make("target.os"_str), platform.effective_target.os.clone());
     context.set_string(String::make("target.family"_str),
                        String::make(platform.effective_target.family_name()));
     context.set_string(String::make("target.arch"_str),
                        platform.effective_target.architecture.name.clone());
-    context.set_string(String::make("target.triple"_str),
-                       platform.effective_target.triple.clone());
+    context.set_string(String::make("target.triple"_str), platform.effective_target.triple.clone());
     context.set_string(String::make("host.os"_str), platform.host.os.clone());
     context.set_string(String::make("host.arch"_str), platform.host.architecture.name.clone());
     context.set_bool(String::make("build.cross"_str), platform.cross);
@@ -201,13 +199,13 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
         context.set_bool(rstd::move(key), feature.enabled);
     }
 
-    auto matched_threads = Option<bool> {};
-    auto matched_threads_source = Option<String> {};
-    auto definitions = Vec<DefinitionRecord>::make();
-    const auto record_definitions =
-        [&](const Vec<String>& values, ref<str> source) -> lito::package::PackageResult<empty> {
+    auto       matched_threads        = Option<bool> {};
+    auto       matched_threads_source = Option<String> {};
+    auto       definitions            = Vec<DefinitionRecord>::make();
+    const auto record_definitions = [&](const Vec<String>& values,
+                                        ref<str> source) -> lito::package::PackageResult<empty> {
         for (const auto& value : values) {
-            const auto name = definition_name(value.as_str());
+            const auto name      = definition_name(value.as_str());
             auto       duplicate = false;
             for (const auto& existing : definitions) {
                 if (existing.name.as_str() != name) continue;
@@ -215,51 +213,50 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                     duplicate = true;
                     break;
                 }
-                return adapter_failure<empty>(rstd::format(
-                    "package '{}' defines macro '{}' as '{}' from {} and '{}' from {}",
-                    package.manifest.name.as_str(),
-                    name,
-                    existing.value.as_str(),
-                    existing.source.as_str(),
-                    value.as_str(),
-                    source));
+                return adapter_failure<empty>(
+                    rstd::format("package '{}' defines macro '{}' as '{}' from {} and '{}' from {}",
+                                 package.manifest.name.as_str(),
+                                 name,
+                                 existing.value.as_str(),
+                                 existing.source.as_str(),
+                                 value.as_str(),
+                                 source));
             }
             if (duplicate) continue;
             definitions.push(DefinitionRecord {
-                .name = String::make(name),
-                .value = value.clone(),
+                .name   = String::make(name),
+                .value  = value.clone(),
                 .source = String::make(source),
             });
         }
         return Ok(empty {});
     };
-    rstd_try(record_definitions(package.manifest.usage.public_definitions,
-                                usage_source(package.manifest,
-                                             "usage.public-definitions"_str).as_str()));
-    rstd_try(record_definitions(package.manifest.usage.private_definitions,
-                                usage_source(package.manifest,
-                                             "usage.private-definitions"_str).as_str()));
+    rstd_try(record_definitions(
+        package.manifest.usage.public_definitions,
+        usage_source(package.manifest, "usage.public-definitions"_str).as_str()));
+    rstd_try(record_definitions(
+        package.manifest.usage.private_definitions,
+        usage_source(package.manifest, "usage.private-definitions"_str).as_str()));
     for (const auto& conditional : package.manifest.conditions) {
         auto matched = lito::condition::evaluate(conditional.condition, context);
         if (matched.is_err()) {
-            return adapter_failure<empty>(rstd::format(
-                "package '{}' manifest '{}' condition '{}' is invalid: {}",
-                package.manifest.name.as_str(),
-                package.manifest.manifest_path.as_path(),
-                conditional.source.as_str(),
-                rstd::move(matched).unwrap_err()));
+            return adapter_failure<empty>(
+                rstd::format("package '{}' manifest '{}' condition '{}' is invalid: {}",
+                             package.manifest.name.as_str(),
+                             package.manifest.manifest_path.as_path(),
+                             conditional.source.as_str(),
+                             rstd::move(matched).unwrap_err()));
         }
         if (! *matched) continue;
-        const auto& overlay = conditional.usage;
-        auto& usage = package.manifest.usage;
-        const auto conditional_source =
-            rstd::format("manifest '{}' condition '{}'",
-                         package.manifest.manifest_path.as_path(),
-                         conditional.source.as_str());
-        rstd_try(record_definitions(overlay.values.public_definitions,
-                                    conditional_source.as_str()));
-        rstd_try(record_definitions(overlay.values.private_definitions,
-                                    conditional_source.as_str()));
+        const auto& overlay            = conditional.usage;
+        auto&       usage              = package.manifest.usage;
+        const auto  conditional_source = rstd::format("manifest '{}' condition '{}'",
+                                                      package.manifest.manifest_path.as_path(),
+                                                      conditional.source.as_str());
+        rstd_try(
+            record_definitions(overlay.values.public_definitions, conditional_source.as_str()));
+        rstd_try(
+            record_definitions(overlay.values.private_definitions, conditional_source.as_str()));
         append_conditional_unique(usage.public_include_directories,
                                   overlay.values.public_include_directories);
         append_conditional_unique(usage.private_include_directories,
@@ -273,23 +270,23 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                                   overlay.values.private_include_directory_requirements);
         if (overlay.declares_threads) {
             if (matched_threads.is_some() && *matched_threads != overlay.values.threads) {
-                return adapter_failure<empty>(rstd::format(
-                    "package '{}' has conflicting usage.threads values from {} and {}",
-                    package.manifest.name.as_str(),
-                    matched_threads_source->as_str(),
-                    conditional_source.as_str()));
+                return adapter_failure<empty>(
+                    rstd::format("package '{}' has conflicting usage.threads values from {} and {}",
+                                 package.manifest.name.as_str(),
+                                 matched_threads_source->as_str(),
+                                 conditional_source.as_str()));
             }
-            matched_threads = Some<bool>(overlay.values.threads);
+            matched_threads        = Some<bool>(overlay.values.threads);
             matched_threads_source = Some(conditional_source.clone());
-            usage.threads = overlay.values.threads;
+            usage.threads          = overlay.values.threads;
         }
     }
 
     if (! has_library && (! package.manifest.usage.public_include_directories.is_empty() ||
                           ! package.manifest.usage.public_definitions.is_empty())) {
-        return adapter_failure<empty>(rstd::format(
-            "package '{}' conditional public usage requires a library target",
-            package.manifest.name.as_str()));
+        return adapter_failure<empty>(
+            rstd::format("package '{}' conditional public usage requires a library target",
+                         package.manifest.name.as_str()));
     }
     return Ok(empty {});
 }
@@ -302,11 +299,11 @@ auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& 
         const auto& value = occurrence.argument.as_Macro().directive.value;
         auto        name  = definition_name(value.as_str());
         if (! package_metadata_macro(name)) continue;
-        return adapter_failure<empty>(rstd::format(
-            "package '{}' option from {} overrides Lito-owned macro '{}'",
-            package.name.as_str(),
-            occurrence.source.as_str(),
-            name));
+        return adapter_failure<empty>(
+            rstd::format("package '{}' option from {} overrides Lito-owned macro '{}'",
+                         package.name.as_str(),
+                         occurrence.source.as_str(),
+                         name));
     }
     return Ok(empty {});
 }
@@ -559,7 +556,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
         auto has_link_action = false;
-        auto has_library = false;
+        auto has_library     = false;
         for (const auto& target : package.manifest.targets) {
             auto kind = lito::manifest::package_target_kind(target);
             if (kind == lito::package::PackageTargetKind::Library) has_library = true;
@@ -569,8 +566,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 has_link_action = true;
             }
         }
-        rstd_try(resolve_package_configuration(
-            package, configuration, profile, platform, has_library));
+        rstd_try(
+            resolve_package_configuration(package, configuration, profile, platform, has_library));
         rstd_try(validate_usage(package.manifest, has_link_action));
         for (auto& requirement : package.manifest.build_tools) {
             build_tools.push(PackageBuildToolRequirement {
@@ -663,8 +660,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .kind    = kind,
                 .name    = String::make(lito::manifest::package_target_name(manifest_target)),
             };
-            auto& source = lito::manifest::package_target_source(manifest_target);
-            auto attachments = Vec<lito::manifest::TestAttachmentManifest>::make();
+            auto& source      = lito::manifest::package_target_source(manifest_target);
+            auto  attachments = Vec<lito::manifest::TestAttachmentManifest>::make();
             if (manifest_target.is_Test()) {
                 attachments = rstd::move(manifest_target.as_Test().attachments);
             }
@@ -827,9 +824,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                         .discovery        = lito::manifest::SourceDiscoveryMode::Explicit,
                         .declared_sources = rstd::move(sources),
                     },
-                .root            = test.root.clone(),
-                .source_root     = test.source_root.clone(),
-                .test_attachment = Some(TestAttachmentTarget {
+                .root             = test.root.clone(),
+                .source_root      = test.source_root.clone(),
+                .test_attachment  = Some(TestAttachmentTarget {
                     .test_target    = test.id.clone(),
                     .library_target = library->id.clone(),
                 }),

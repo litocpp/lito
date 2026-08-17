@@ -50,7 +50,7 @@ struct ResolvedPackage {
     Vec<ResolvedDependency>             dependencies;
     Vec<ResolvedDependency>             dev_dependencies;
     Vec<ResolvedRuntimeDependency>      runtime_dependencies;
-    Vec<ResolvedFeature>               features;
+    Vec<ResolvedFeature>                features;
 };
 
 struct ResolvedProjectRoot {

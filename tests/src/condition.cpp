@@ -7,8 +7,8 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 
 TEST(Condition, ParsesAndEvaluatesTypedExpressions) {
-    auto expression = lito::condition::parse(
-        R"(target.os == "linux" && (!build.cross || feature.ffi))"_str);
+    auto expression =
+        lito::condition::parse(R"(target.os == "linux" && (!build.cross || feature.ffi))"_str);
     ASSERT_TRUE(expression.is_ok());
 
     auto context = lito::condition::Context {};

@@ -459,13 +459,13 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
                 .debug_info                = input.codegen.debug_info,
                 .lto                       = input.codegen.lto,
                 .position_independent_code = input.codegen.position_independent_code,
-                .visibility                =
+                .visibility =
                     CppVisibilityOptions {
                         .symbols        = input.codegen.visibility.symbols,
                         .inlines_hidden = input.codegen.visibility.inlines_hidden,
                     },
-                .modes                     = as<Clone>(input.codegen.modes).clone(),
-                .instrumentation           = as<Clone>(input.codegen.instrumentation).clone(),
+                .modes           = as<Clone>(input.codegen.modes).clone(),
+                .instrumentation = as<Clone>(input.codegen.instrumentation).clone(),
             },
         .diagnostics =
             CppDiagnosticOptions {

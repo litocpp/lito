@@ -273,18 +273,14 @@ auto CompilerArgumentParser::parse(const Vec<String>& arguments) const
         raw.push(arguments[index].clone());
         if (selected.attached.is_some()) {
             if (selected.attached->is_empty()) {
-                return Err(
-                    CompilerArgumentError::EmptyValue(index,
-                                                      selected.spelling->value.clone(),
-                                                      allowed_values_text(definition)));
+                return Err(CompilerArgumentError::EmptyValue(
+                    index, selected.spelling->value.clone(), allowed_values_text(definition)));
             }
             value = Some(String::make(*selected.attached));
         } else if (requires_value(selected.spelling->form)) {
             if (! accepts_separate(selected.spelling->form)) {
-                return Err(
-                    CompilerArgumentError::EmptyValue(index,
-                                                      selected.spelling->value.clone(),
-                                                      allowed_values_text(definition)));
+                return Err(CompilerArgumentError::EmptyValue(
+                    index, selected.spelling->value.clone(), allowed_values_text(definition)));
             }
             if (index + usize(1) >= arguments.len()) {
                 return Err(

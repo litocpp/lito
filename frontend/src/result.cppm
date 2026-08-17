@@ -59,37 +59,37 @@ enum class ExternalMacroState
 };
 
 struct ExternalMacroMaterialization : DefaultInClass<ExternalMacroMaterialization, Clone> {
-    String                 name;
-    String                 dependency_key;
-    String                 value_identity;
-    ExternalMacroState     state { ExternalMacroState::Undefined };
-    Option<String>         compiler_definition;
+    String             name;
+    String             dependency_key;
+    String             value_identity;
+    ExternalMacroState state { ExternalMacroState::Undefined };
+    Option<String>     compiler_definition;
 
     auto clone() const -> ExternalMacroMaterialization;
 };
 
 struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
-    rstd::path::PathBuf      source;
-    Option<ProvidedModule>   provided;
-    Option<String>           implementation_module;
-    Vec<ModuleImport>        imports;
-    Vec<rstd::path::PathBuf> header_inputs;
+    rstd::path::PathBuf               source;
+    Option<ProvidedModule>            provided;
+    Option<String>                    implementation_module;
+    Vec<ModuleImport>                 imports;
+    Vec<rstd::path::PathBuf>          header_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
-    String                   preprocessor_environment;
-    usize                    input_bytes {};
+    String                            preprocessor_environment;
+    usize                             input_bytes {};
 
     auto clone() const -> FrontendResult;
 };
 
 struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
-    rstd::path::PathBuf      source;
-    Option<ProvidedModule>   provided;
-    Option<String>           implementation_module;
-    Vec<ModuleImport>        imports;
-    Vec<rstd::path::PathBuf> header_inputs;
+    rstd::path::PathBuf               source;
+    Option<ProvidedModule>            provided;
+    Option<String>                    implementation_module;
+    Vec<ModuleImport>                 imports;
+    Vec<rstd::path::PathBuf>          header_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
-    String                   preprocessor_environment;
-    usize                    input_bytes {};
+    String                            preprocessor_environment;
+    usize                             input_bytes {};
 
     auto clone() const -> FrontendSnapshot;
 };
@@ -199,8 +199,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
             macro.value_identity.is_empty()) {
             return None();
         }
-        if ((macro.state == ExternalMacroState::Defined) !=
-            macro.compiler_definition.is_some()) {
+        if ((macro.state == ExternalMacroState::Defined) != macro.compiler_definition.is_some()) {
             return None();
         }
     }

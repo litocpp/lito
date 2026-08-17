@@ -127,9 +127,8 @@ TEST(CompilerArguments, DecodesFiniteVisibilityValuesAtTheBindingBoundary) {
     ASSERT_TRUE(empty_error.is_Argument());
     EXPECT_TRUE(empty_error.as_Argument().source.is_EmptyValue());
     EXPECT_TRUE(rstd::format("{}", empty_error).as_str().contains("compiler.visibility"_str));
-    EXPECT_TRUE(rstd::format("{}", empty_error.as_Argument().source)
-                    .as_str()
-                    .contains("protected"_str));
+    EXPECT_TRUE(
+        rstd::format("{}", empty_error.as_Argument().source).as_str().contains("protected"_str));
 }
 
 TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {

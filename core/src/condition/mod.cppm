@@ -44,10 +44,10 @@ enum class ExpressionKind
 };
 
 struct Expression {
-    ExpressionKind kind { ExpressionKind::Boolean };
-    usize          position {};
-    bool           boolean {};
-    String         text;
+    ExpressionKind          kind { ExpressionKind::Boolean };
+    usize                   position {};
+    bool                    boolean {};
+    String                  text;
     Option<Box<Expression>> left;
     Option<Box<Expression>> right;
 
@@ -106,14 +106,13 @@ export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::condition::ParseError>
-    : ImplBase<lito::condition::ParseError> {
+struct Impl<fmt::Display, lito::condition::ParseError> : ImplBase<lito::condition::ParseError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        const auto& error = this->self();
-        auto message = rstd::format("{} at byte {} in condition '{}'",
-                                    error.message.as_str(),
-                                    error.position,
-                                    error.expression.as_str());
+        const auto& error   = this->self();
+        auto        message = rstd::format("{} at byte {} in condition '{}'",
+                                           error.message.as_str(),
+                                           error.position,
+                                           error.expression.as_str());
         return formatter.write_str(message.as_str());
     }
 };
@@ -122,8 +121,8 @@ template<>
 struct Impl<fmt::Display, lito::condition::EvaluationError>
     : ImplBase<lito::condition::EvaluationError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
-        const auto& error = this->self();
-        auto message = rstd::format("{} at byte {}", error.message.as_str(), error.position);
+        const auto& error   = this->self();
+        auto        message = rstd::format("{} at byte {}", error.message.as_str(), error.position);
         return formatter.write_str(message.as_str());
     }
 };
@@ -177,8 +176,8 @@ class Parser {
     }
 
     static auto identifier_start(u8 value) -> bool {
-        return (value >= u8('a') && value <= u8('z')) ||
-               (value >= u8('A') && value <= u8('Z')) || value == u8('_');
+        return (value >= u8('a') && value <= u8('z')) || (value >= u8('A') && value <= u8('Z')) ||
+               value == u8('_');
     }
 
     static auto identifier_continue(u8 value) -> bool {
@@ -224,11 +223,11 @@ class Parser {
             while (cursor_ < bytes.len() && bytes[cursor_] != u8('"')) {
                 auto byte = bytes[cursor_++];
                 if (byte == u8('\\')) {
-                    if (cursor_ >= bytes.len()) return Err(failure("unterminated escape"_str, position));
+                    if (cursor_ >= bytes.len())
+                        return Err(failure("unterminated escape"_str, position));
                     const auto escaped = bytes[cursor_++];
                     if (escaped != u8('\\') && escaped != u8('"')) {
-                        return Err(failure("unsupported string escape"_str,
-                                           cursor_ - usize(2)));
+                        return Err(failure("unsupported string escape"_str, cursor_ - usize(2)));
                     }
                     byte = escaped;
                 }
@@ -305,22 +304,19 @@ class Parser {
             const auto value = current_.boolean;
             rstd_try(advance());
             return Ok(Expression {
-                .kind = ExpressionKind::Boolean, .position = position, .boolean = value
-            });
+                .kind = ExpressionKind::Boolean, .position = position, .boolean = value });
         }
         if (current_.kind == TokenKind::String) {
             auto value = rstd::move(current_.text);
             rstd_try(advance());
             return Ok(Expression {
-                .kind = ExpressionKind::String, .position = position, .text = rstd::move(value)
-            });
+                .kind = ExpressionKind::String, .position = position, .text = rstd::move(value) });
         }
         if (current_.kind == TokenKind::Identifier) {
             auto value = rstd::move(current_.text);
             rstd_try(advance());
             return Ok(Expression {
-                .kind = ExpressionKind::Key, .position = position, .text = rstd::move(value)
-            });
+                .kind = ExpressionKind::Key, .position = position, .text = rstd::move(value) });
         }
         if (current_.kind == TokenKind::LeftParen) {
             rstd_try(advance());
@@ -344,8 +340,8 @@ class Parser {
     auto equality_expression() -> ParseResult<Expression> {
         auto left = rstd_try(unary_expression());
         while (current_.kind == TokenKind::Equal || current_.kind == TokenKind::NotEqual) {
-            const auto kind = current_.kind == TokenKind::Equal ? ExpressionKind::Equal
-                                                                : ExpressionKind::NotEqual;
+            const auto kind     = current_.kind == TokenKind::Equal ? ExpressionKind::Equal
+                                                                    : ExpressionKind::NotEqual;
             const auto position = current_.position;
             rstd_try(advance());
             left = binary(kind, position, rstd::move(left), rstd_try(unary_expression()));
@@ -358,10 +354,8 @@ class Parser {
         while (current_.kind == TokenKind::And) {
             const auto position = current_.position;
             rstd_try(advance());
-            left = binary(ExpressionKind::And,
-                          position,
-                          rstd::move(left),
-                          rstd_try(equality_expression()));
+            left = binary(
+                ExpressionKind::And, position, rstd::move(left), rstd_try(equality_expression()));
         }
         return Ok(rstd::move(left));
     }
@@ -371,16 +365,14 @@ class Parser {
         while (current_.kind == TokenKind::Or) {
             const auto position = current_.position;
             rstd_try(advance());
-            left = binary(ExpressionKind::Or,
-                          position,
-                          rstd::move(left),
-                          rstd_try(and_expression()));
+            left =
+                binary(ExpressionKind::Or, position, rstd::move(left), rstd_try(and_expression()));
         }
         return Ok(rstd::move(left));
     }
 
 public:
-    explicit Parser(ref<str> input) : input_(input) {}
+    explicit Parser(ref<str> input): input_(input) {}
 
     auto run() -> ParseResult<Expression> {
         rstd_try(advance());
@@ -417,18 +409,14 @@ auto resolve_value(const Expression& expression, const Context& context)
     if (expression.kind == ExpressionKind::Key) {
         auto value = context.get(expression.text.as_str());
         if (value.is_none()) {
-            return Err(evaluation_failure(rstd::format("unknown condition key '{}'",
-                                                       expression.text.as_str()),
-                                          expression.position));
+            return Err(evaluation_failure(
+                rstd::format("unknown condition key '{}'", expression.text.as_str()),
+                expression.position));
         }
         if ((**value).kind == ValueKind::Boolean) {
-            return Ok(ResolvedValue {
-                .kind = ValueKind::Boolean, .boolean = (**value).boolean
-            });
+            return Ok(ResolvedValue { .kind = ValueKind::Boolean, .boolean = (**value).boolean });
         }
-        return Ok(ResolvedValue {
-            .kind = ValueKind::String, .string = (**value).string.as_str()
-        });
+        return Ok(ResolvedValue { .kind = ValueKind::String, .string = (**value).string.as_str() });
     }
     auto result = evaluate(expression, context);
     if (result.is_err()) return Err(rstd::move(result).unwrap_err());
@@ -440,13 +428,15 @@ auto require_boolean(const Expression& expression, const Context& context)
     auto value = resolve_value(expression, context);
     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
     if (value->kind != ValueKind::Boolean) {
-        return Err(evaluation_failure("condition operand must be boolean"_str,
-                                      expression.position));
+        return Err(
+            evaluation_failure("condition operand must be boolean"_str, expression.position));
     }
     return Ok(value->boolean);
 }
 
-auto parse(ref<str> expression) -> ParseResult<Expression> { return Parser(expression).run(); }
+auto parse(ref<str> expression) -> ParseResult<Expression> {
+    return Parser(expression).run();
+}
 
 auto evaluate(const Expression& expression, const Context& context) -> EvaluationResult {
     if (expression.kind == ExpressionKind::Boolean || expression.kind == ExpressionKind::Key ||

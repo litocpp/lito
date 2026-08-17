@@ -207,9 +207,9 @@ auto enqueue_candidate(cpp::TargetId            target,
     if (queued.contains_key(work_key.as_str())) return Ok(empty {});
     queued.insert(rstd::move(work_key), empty {});
     queue.push(DiscoveryCandidate {
-        .target         = target,
-        .key            = rstd::move(path),
-        .source         = rstd::move(source),
+        .target             = target,
+        .key                = rstd::move(path),
+        .source             = rstd::move(source),
         .discover_companion = discover_companion,
     });
     return Ok(empty {});
@@ -693,8 +693,7 @@ auto discover_sources(const cpp::PackageMetadata&     package,
 
             if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Module &&
                 candidate.source.origin == cpp::SourceOrigin::Convention &&
-                candidate.source.expected_module.is_none() &&
-                ! candidate.source.module_companion &&
+                candidate.source.expected_module.is_none() && ! candidate.source.module_companion &&
                 frontend_result.provided.is_none() &&
                 frontend_result.implementation_module.is_none()) {
                 continue;

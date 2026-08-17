@@ -24,19 +24,19 @@ struct FrontendAnalysisTaskOutcome {
 };
 
 class FrontendAnalysisTask {
-    const ClangToolchain*                    toolchain_ {};
-    frontend::FrontendSourceStore            source_store_;
-    ScanCacheTransaction                     cache_;
-    PathBuf                                  source_;
-    toolchain::PreparedScanInput              input_;
-    ScanTaskProfileContext                   profile_;
+    const ClangToolchain*         toolchain_ {};
+    frontend::FrontendSourceStore source_store_;
+    ScanCacheTransaction          cache_;
+    PathBuf                       source_;
+    toolchain::PreparedScanInput  input_;
+    ScanTaskProfileContext        profile_;
 
-    FrontendAnalysisTask(const ClangToolchain&                    toolchain,
-                         frontend::FrontendSourceStore            source_store,
-                         ScanCacheTransaction                     cache,
-                         PathBuf                                  source,
-                         toolchain::PreparedScanInput              input,
-                         ScanTaskProfileContext                   profile)
+    FrontendAnalysisTask(const ClangToolchain&         toolchain,
+                         frontend::FrontendSourceStore source_store,
+                         ScanCacheTransaction          cache,
+                         PathBuf                       source,
+                         toolchain::PreparedScanInput  input,
+                         ScanTaskProfileContext        profile)
         : toolchain_(rstd::addressof(toolchain)),
           source_store_(rstd::move(source_store)),
           cache_(rstd::move(cache)),
@@ -130,9 +130,8 @@ public:
         if (record.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
         }
-        auto environment_span     = profiler_.span(ScanProbe::Environment);
-        auto prepared = toolchain_.prepare_scan_input(
-            context, compile_metadata, working_directory);
+        auto environment_span = profiler_.span(ScanProbe::Environment);
+        auto prepared = toolchain_.prepare_scan_input(context, compile_metadata, working_directory);
         auto environment_finished = profiler_.complete(environment_span);
         if (environment_finished.is_err()) {
             return Err(
@@ -155,8 +154,7 @@ public:
             .context_identity         = context.scan_id.clone(),
             .working_directory        = PathBuf::from(working_directory),
             .preprocessor_environment = scan_input.environment->identity.clone(),
-            .external_macro_schema    = String::make(
-                scan_input.external_macros->schema_identity()),
+            .external_macro_schema    = String::make(scan_input.external_macros->schema_identity()),
             .external_macros          = scan_input.external_macros.clone(),
         };
         return Ok(FrontendAnalysisTask(toolchain_,

@@ -190,8 +190,8 @@ inline constexpr auto LITO_VERSION_TEXT = LITO_PKG_VERSION;
 inline constexpr auto LITO_VERSION_SIZE = sizeof(LITO_PKG_VERSION) - sizeof(char);
 
 auto lito_version() noexcept -> ref<str> {
-    return ref<str>::from_raw_parts_unchecked(
-        reinterpret_cast<const byte*>(LITO_VERSION_TEXT), usize(LITO_VERSION_SIZE));
+    return ref<str>::from_raw_parts_unchecked(reinterpret_cast<const byte*>(LITO_VERSION_TEXT),
+                                              usize(LITO_VERSION_SIZE));
 }
 
 class BuildProfileParser {
@@ -231,9 +231,7 @@ public:
         return Ok(String::make(*text));
     }
 
-    auto possible_values() const -> Vec<String> {
-        return lito::config::standard_library_names();
-    }
+    auto possible_values() const -> Vec<String> { return lito::config::standard_library_names(); }
 };
 
 class LockExportFormatParser {
@@ -243,13 +241,10 @@ public:
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
         auto format = lito::lock::parse_lock_export_format(*text);
         if (format.is_some()) return Ok(*format);
-        return Err(ValueError::Message(rstd::format(
-            "unsupported lock export format '{}'", *text)));
+        return Err(ValueError::Message(rstd::format("unsupported lock export format '{}'", *text)));
     }
 
-    auto possible_values() const -> Vec<String> {
-        return lito::lock::lock_export_format_names();
-    }
+    auto possible_values() const -> Vec<String> { return lito::lock::lock_export_format_names(); }
 };
 
 class CliDecodeError {
@@ -568,13 +563,13 @@ auto add_toolchain_args(Command& command) -> ToolchainArgs {
             "toolchain-strip"_str, "toolchain.strip"_str, "Set the LLVM strip executable"_str)),
         .format = command.add_arg(toolchain_arg(
             "toolchain-format"_str, "toolchain.format"_str, "Set the ClangFormat executable"_str)),
-        .stdlib = command.add_arg(Arg<String>::value("toolchain-stdlib"_str,
-                                                    StandardLibraryParser {})
-                                      .long_name("toolchain.stdlib"_str)
-                                      .value_name("STDLIB"_str)
-                                      .help("Set the C++ standard library"_str)
-                                      .help_heading("Toolchain"_str)
-                                      .global()),
+        .stdlib =
+            command.add_arg(Arg<String>::value("toolchain-stdlib"_str, StandardLibraryParser {})
+                                .long_name("toolchain.stdlib"_str)
+                                .value_name("STDLIB"_str)
+                                .help("Set the C++ standard library"_str)
+                                .help_heading("Toolchain"_str)
+                                .global()),
     };
 }
 
@@ -601,9 +596,9 @@ auto jobs_arg() -> Arg<usize> {
 
 auto add_package_profile_args(Command& command) -> PackageProfileArgs {
     return PackageProfileArgs {
-        .package = command.add_arg(package_arg()),
-        .profile = command.add_arg(profile_arg()),
-        .features = command.add_arg(features_arg()),
+        .package             = command.add_arg(package_arg()),
+        .profile             = command.add_arg(profile_arg()),
+        .features            = command.add_arg(features_arg()),
         .no_default_features = command.add_arg(no_default_features_arg()),
     };
 }
@@ -847,17 +842,17 @@ auto make_lock_definition() -> CommandDefinition<LockSchema> {
     auto export_command = Command::make("export"_str);
     export_command.about("Export locked source inputs"_str);
     auto export_key = export_command.key();
-    auto format = export_command.add_arg(
+    auto format     = export_command.add_arg(
         Arg<lito::lock::LockExportFormat>::value("format"_str, LockExportFormatParser {})
             .long_name("format"_str)
             .value_name("FORMAT"_str)
             .help("Select the exported source format"_str)
             .required());
-    auto output     = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
-                                                 .long_name("output"_str)
-                                                 .value_name("FILE"_str)
-                                                 .help("Write exported sources to a file"_str)
-                                                 .required());
+    auto output = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
+                                             .long_name("output"_str)
+                                             .value_name("FILE"_str)
+                                             .help("Write exported sources to a file"_str)
+                                             .required());
 
     auto command = Command::make("lock"_str);
     command.about("Inspect and export the lock file"_str);
@@ -1071,7 +1066,7 @@ struct PackageProfileValues {
 auto decode_features(const Matches& matches, const PackageProfileArgs& args)
     -> Result<lito::package::FeatureSelection, CliDecodeError> {
     auto declared = rstd_try(string_values(matches, args.features));
-    auto enabled = Vec<String>::make();
+    auto enabled  = Vec<String>::make();
     for (const auto& value : declared) {
         auto begin = usize {};
         for (usize cursor {}; cursor <= value.len(); ++cursor) {
@@ -1093,7 +1088,7 @@ auto decode_features(const Matches& matches, const PackageProfileArgs& args)
         }
     }
     return Ok(lito::package::FeatureSelection {
-        .enabled = rstd::move(enabled),
+        .enabled          = rstd::move(enabled),
         .default_features = ! rstd_try(flag_value(matches, args.no_default_features)),
     });
 }
@@ -1490,11 +1485,10 @@ auto parse() -> CliOutcome {
     auto outcome = rstd::move(parsed).unwrap();
     if (outcome.is_Display()) {
         auto request = rstd::move(outcome).as_Display().request;
-        auto output = String::make(request.text());
+        auto output  = String::make(request.text());
         if (request.kind() == DisplayKind::Tag::Version) output.push_ascii(u8('\n'));
-        return CliOutcome::Exit(rstd::move(output),
-                                request.target() == OutputTarget::Tag::Stderr,
-                                request.exit_code());
+        return CliOutcome::Exit(
+            rstd::move(output), request.target() == OutputTarget::Tag::Stderr, request.exit_code());
     }
 
     auto matches    = rstd::move(outcome).as_Parsed().value;

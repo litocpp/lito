@@ -95,9 +95,9 @@ public:
 
 auto external_object_macro(ref<str> name, TokenKind kind, ref<str> replacement)
     -> SharedMacroDefinition {
-    auto token = Token {};
-    token.kind = kind;
-    token.text = String::make(replacement);
+    auto token  = Token {};
+    token.kind  = kind;
+    token.text  = String::make(replacement);
     auto tokens = Vec<Token>::make();
     tokens.push(rstd::move(token));
     auto macro = MacroDefinition {};
@@ -113,20 +113,20 @@ public:
         if (name == "LITO_PKG_VERSION"_str) {
             ++version_queries;
             return Ok(Some(ExternalMacroResolution {
-                .dependency_key = String::make("package.version"_str),
-                .value_identity = String::make("1.2.3"_str),
-                .state = lito::frontend::ExternalMacroState::Defined,
+                .dependency_key      = String::make("package.version"_str),
+                .value_identity      = String::make("1.2.3"_str),
+                .state               = lito::frontend::ExternalMacroState::Defined,
                 .compiler_definition = Some(String::make("LITO_PKG_VERSION=\"1.2.3\""_str)),
-                .definition = Some(external_object_macro(
-                    name, TokenKind::StringLiteral, "\"1.2.3\""_str)),
+                .definition =
+                    Some(external_object_macro(name, TokenKind::StringLiteral, "\"1.2.3\""_str)),
             }));
         }
         if (name == "LITO_FEAT_ON"_str) {
             ++enabled_queries;
             return Ok(Some(ExternalMacroResolution {
-                .dependency_key = String::make("package.feature:on"_str),
-                .value_identity = String::make("on"_str),
-                .state = lito::frontend::ExternalMacroState::Defined,
+                .dependency_key      = String::make("package.feature:on"_str),
+                .value_identity      = String::make("on"_str),
+                .state               = lito::frontend::ExternalMacroState::Defined,
                 .compiler_definition = Some(String::make("LITO_FEAT_ON=1"_str)),
                 .definition = Some(external_object_macro(name, TokenKind::PpNumber, "1"_str)),
             }));
@@ -136,7 +136,7 @@ public:
             return Ok(Some(ExternalMacroResolution {
                 .dependency_key = String::make("package.feature:off"_str),
                 .value_identity = String::make("off"_str),
-                .state = lito::frontend::ExternalMacroState::Undefined,
+                .state          = lito::frontend::ExternalMacroState::Undefined,
             }));
         }
         if (name.starts_with("LITO_FEAT_"_str)) {
@@ -399,7 +399,7 @@ TEST(Preprocessor, LazilyMaterializesExternalMacros) {
     auto invalid_externals = TestExternalMacros {};
     auto invalid_pragmas   = IgnorePragmas {};
     auto invalid_events    = TestEvents {};
-    auto invalid = preprocess(
+    auto invalid           = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/invalid.cpp"_str),
             .environment_identity = String::make("external-v1"_str),
@@ -448,7 +448,7 @@ TEST(Preprocessor, ValidatesExternalMacrosInModuleNames) {
     auto disabled_externals = TestExternalMacros {};
     auto disabled_pragmas   = IgnorePragmas {};
     auto disabled_events    = TestEvents {};
-    auto disabled = preprocess(
+    auto disabled           = preprocess(
         PreprocessRequest {
             .source               = rstd::path::PathBuf::from("/disabled.cppm"_str),
             .environment_identity = String::make("external-v1"_str),

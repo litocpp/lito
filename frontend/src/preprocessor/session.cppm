@@ -22,15 +22,15 @@ struct PreprocessRequest {
 };
 
 struct PreprocessedTranslationUnit {
-    SourceManager            sources;
-    SourceId                 main_source {};
-    Vec<Token>               tokens;
-    Vec<CommentTrivia>       active_comments;
-    Vec<rstd::path::PathBuf> header_inputs;
+    SourceManager                               sources;
+    SourceId                                    main_source {};
+    Vec<Token>                                  tokens;
+    Vec<CommentTrivia>                          active_comments;
+    Vec<rstd::path::PathBuf>                    header_inputs;
     Vec<frontend::ExternalMacroMaterialization> external_macros;
-    String                   environment_identity;
-    usize                    input_bytes {};
-    PreprocessorStatistics   statistics;
+    String                                      environment_identity;
+    usize                                       input_bytes {};
+    PreprocessorStatistics                      statistics;
 };
 
 template<typename Sources,
@@ -335,8 +335,8 @@ private:
         if (value.state == frontend::ExternalMacroState::Defined) {
             if (value.definition.is_none() || value.compiler_definition.is_none() ||
                 (**value.definition).name.as_str() != name) {
-                return Err(failure("defined external macro has an invalid definition"_str,
-                                   location));
+                return Err(
+                    failure("defined external macro has an invalid definition"_str, location));
             }
             (void)macros_.define_shared(value.definition->clone());
         } else if (value.definition.is_some() || value.compiler_definition.is_some()) {
@@ -466,7 +466,7 @@ private:
             if (push) {
                 auto stored = lookup_macro(name->as_str(), location);
                 if (stored.is_err()) return Err(rstd::move(stored).unwrap_err());
-                auto stack  = macro_stacks_.get_mut(name->as_str());
+                auto stack = macro_stacks_.get_mut(name->as_str());
                 if (stack.is_none()) {
                     auto values = Vec<Option<SharedMacroDefinition>>::make();
                     values.push(rstd::move(stored).unwrap());
@@ -1056,8 +1056,8 @@ private:
     auto define_macro(const Vec<Token>& line, bool send_event) -> Result<empty> {
         auto parsed = parse_macro_definition(line);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-        auto external = prepare_external_macro(
-            line[usize {}].text.as_str(), line[usize {}].expansion);
+        auto external =
+            prepare_external_macro(line[usize {}].text.as_str(), line[usize {}].expansion);
         if (external.is_err()) return Err(rstd::move(external).unwrap_err());
         auto macro    = rstd::move(parsed).unwrap();
         auto previous = macros_.define(rstd::move(macro));
@@ -1086,7 +1086,7 @@ private:
                 return Err(failure("defined requires an identifier"_str, token.expansion));
             }
             const auto& identifier = line[cursor].text;
-            auto contains = contains_macro(identifier.as_str(), line[cursor].expansion);
+            auto        contains   = contains_macro(identifier.as_str(), line[cursor].expansion);
             if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
             auto value = *contains || DynamicBuiltinSet::contains(identifier.comparable_hash(),
                                                                   identifier.as_str());
@@ -1328,9 +1328,8 @@ private:
                 ++cursor;
                 while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
             }
-            if (cursor >= tokens.len() ||
-                (tokens[cursor].text.as_str() != "module"_str &&
-                 tokens[cursor].text.as_str() != "import"_str)) {
+            if (cursor >= tokens.len() || (tokens[cursor].text.as_str() != "module"_str &&
+                                           tokens[cursor].text.as_str() != "import"_str)) {
                 continue;
             }
             ++cursor;
@@ -1349,15 +1348,15 @@ private:
                 if (macro.is_err()) return Err(rstd::move(macro).unwrap_err());
                 if (macro->is_some() && (***macro).parameters.is_none()) {
                     return Err(failure(
-                        rstd::format("module name identifier '{}' is defined as an object-like macro",
-                                     tokens[cursor].text.as_str()),
+                        rstd::format(
+                            "module name identifier '{}' is defined as an object-like macro",
+                            tokens[cursor].text.as_str()),
                         tokens[cursor].expansion));
                 }
                 ++cursor;
                 while (cursor < tokens.len() && tokens[cursor].kind == TokenKind::Newline) ++cursor;
-                if (cursor >= tokens.len() ||
-                    (tokens[cursor].text.as_str() != "."_str &&
-                     tokens[cursor].text.as_str() != ":"_str)) {
+                if (cursor >= tokens.len() || (tokens[cursor].text.as_str() != "."_str &&
+                                               tokens[cursor].text.as_str() != ":"_str)) {
                     break;
                 }
                 ++cursor;
@@ -1490,8 +1489,8 @@ private:
                 if (rest.len() != usize(1) || rest[usize {}].kind != TokenKind::Identifier) {
                     return Err(failure("#undef requires one identifier"_str, location));
                 }
-                auto external = prepare_external_macro(
-                    rest[usize {}].text.as_str(), rest[usize {}].expansion);
+                auto external =
+                    prepare_external_macro(rest[usize {}].text.as_str(), rest[usize {}].expansion);
                 if (external.is_err()) return Err(rstd::move(external).unwrap_err());
                 auto removed = macros_.undefine(rest[usize {}].text.as_str());
                 (void)removed;
@@ -1584,24 +1583,24 @@ private:
         return Ok(empty {});
     }
 
-    PreprocessRequest                                                       request_;
-    Sources&                                                                source_provider_;
-    Includes&                                                               include_resolver_;
-    Builtins&                                                               builtin_provider_;
-    Externals&                                                              external_macro_provider_;
-    Identifiers&                                                            identifier_matcher_;
-    Pragmas&                                                                pragma_handler_;
-    Events&                                                                 event_sink_;
-    Consumer&                                                               consumer_;
-    Observer&                                                               observer_;
-    SourceManager                                                           sources_;
-    MacroTable                                                              macros_;
-    rstd::collections::BTreeMap<String, empty>                              resolved_external_macros_;
-    Vec<frontend::ExternalMacroMaterialization>                             external_macros_;
-    Vec<IncludeFrame>                                                       include_stack_;
-    Vec<CommentTrivia>                                                      active_comments_;
-    rstd::collections::BTreeMap<String, empty>                              once_files_;
-    rstd::collections::BTreeMap<String, String>                             include_guards_;
+    PreprocessRequest                           request_;
+    Sources&                                    source_provider_;
+    Includes&                                   include_resolver_;
+    Builtins&                                   builtin_provider_;
+    Externals&                                  external_macro_provider_;
+    Identifiers&                                identifier_matcher_;
+    Pragmas&                                    pragma_handler_;
+    Events&                                     event_sink_;
+    Consumer&                                   consumer_;
+    Observer&                                   observer_;
+    SourceManager                               sources_;
+    MacroTable                                  macros_;
+    rstd::collections::BTreeMap<String, empty>  resolved_external_macros_;
+    Vec<frontend::ExternalMacroMaterialization> external_macros_;
+    Vec<IncludeFrame>                           include_stack_;
+    Vec<CommentTrivia>                          active_comments_;
+    rstd::collections::BTreeMap<String, empty>  once_files_;
+    rstd::collections::BTreeMap<String, String> include_guards_;
     rstd::collections::BTreeMap<String, Vec<Option<SharedMacroDefinition>>> macro_stacks_;
     usize                                                                   counter_ {};
     usize                                                                   input_bytes_ {};
@@ -1773,15 +1772,15 @@ auto preprocess(PreprocessRequest request,
                 Pragmas&          pragmas,
                 Events&           events) -> Result<PreprocessedTranslationUnit> {
     auto consumer = CollectPreprocessedTokens {};
-    auto result = preprocess_to(rstd::move(request),
-                                sources,
-                                includes,
-                                builtins,
-                                externals,
-                                identifiers,
-                                pragmas,
-                                events,
-                                consumer);
+    auto result   = preprocess_to(rstd::move(request),
+                                  sources,
+                                  includes,
+                                  builtins,
+                                  externals,
+                                  identifiers,
+                                  pragmas,
+                                  events,
+                                  consumer);
     if (result.is_err()) return Err(rstd::move(result).unwrap_err());
     result->tokens = consumer.take();
     return result;
@@ -1802,14 +1801,8 @@ auto preprocess(PreprocessRequest request,
                 Pragmas&          pragmas,
                 Events&           events) -> Result<PreprocessedTranslationUnit> {
     auto externals = EmptyExternalMacroProvider {};
-    return preprocess(rstd::move(request),
-                      sources,
-                      includes,
-                      builtins,
-                      externals,
-                      identifiers,
-                      pragmas,
-                      events);
+    return preprocess(
+        rstd::move(request), sources, includes, builtins, externals, identifiers, pragmas, events);
 }
 
 } // namespace lito::frontend::preprocessor

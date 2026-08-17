@@ -38,9 +38,9 @@ struct Impl<fmt::Display, lito::cpp::CppOptionError> : ImplBase<lito::cpp::CppOp
         const auto& error = this->self();
         if (error.is_Argument()) {
             if (! error.as_Argument().context.is_empty()) {
-                return formatter.write_fmt(fmt::Arguments::make(
-                    "C++ compiler arguments from '{}' are invalid",
-                    error.as_Argument().context.as_str()));
+                return formatter.write_fmt(
+                    fmt::Arguments::make("C++ compiler arguments from '{}' are invalid",
+                                         error.as_Argument().context.as_str()));
             }
             return formatter.write_raw("C++ compiler argument is invalid",
                                        sizeof("C++ compiler argument is invalid") - 1);

@@ -321,8 +321,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         input.codegen.visibility.types = None();
     }
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
-        .argument = CppCompilerArgument::InlineVisibilityHidden(
-            extra.codegen.visibility.inlines_hidden),
+        .argument =
+            CppCompilerArgument::InlineVisibilityHidden(extra.codegen.visibility.inlines_hidden),
     });
     for (const auto& value : extra.diagnostics.warnings) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {

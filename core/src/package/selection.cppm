@@ -35,8 +35,8 @@ enum class PackageSelectionPurpose
 };
 
 struct PackageSelection {
-    PathBuf     root;
-    Vec<String> packages;
+    PathBuf          root;
+    Vec<String>      packages;
     FeatureSelection features;
 };
 
@@ -360,8 +360,7 @@ auto resolve_package_selection_with_environment(
     auto resolved_features = resolve_features(
         graph, selected_roots, *selected_packages, selected_targets, selection.features);
     if (resolved_features.is_err()) {
-        return Err(rstd::into<PackageSelectionError>(
-            rstd::move(resolved_features).unwrap_err()));
+        return Err(rstd::into<PackageSelectionError>(rstd::move(resolved_features).unwrap_err()));
     }
     return Ok(ResolvedPackageSelection {
         .graph                  = rstd::move(graph),

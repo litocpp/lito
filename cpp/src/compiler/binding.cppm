@@ -182,16 +182,17 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
         return Ok(CppCompilerArgument::Instrumentation(canonical_argument(matched)));
     case CppCompilerArgumentKind::SymbolVisibility:
     case CppCompilerArgumentKind::TypeVisibility: {
-        const auto& value = compiler_argument_value(matched);
-        auto parsed = parse_cpp_symbol_visibility(value.as_str());
+        const auto& value  = compiler_argument_value(matched);
+        auto        parsed = parse_cpp_symbol_visibility(value.as_str());
         if (parsed.is_none()) {
-            return Err(CppOptionError::Message(rstd::format(
-                "{} arguments {}..{}: invalid visibility value '{}' in '{}'; expected default, hidden, internal, or protected",
-                source,
-                matched.range.begin,
-                matched.range.end,
-                value.as_str(),
-                matched.raw_tokens[usize {}].as_str())));
+            return Err(CppOptionError::Message(
+                rstd::format("{} arguments {}..{}: invalid visibility value '{}' in '{}'; expected "
+                             "default, hidden, internal, or protected",
+                             source,
+                             matched.range.begin,
+                             matched.range.end,
+                             value.as_str(),
+                             matched.raw_tokens[usize {}].as_str())));
         }
         return Ok(kind == CppCompilerArgumentKind::SymbolVisibility
                       ? CppCompilerArgument::SymbolVisibility(*parsed)
