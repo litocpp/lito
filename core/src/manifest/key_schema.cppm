@@ -17,7 +17,7 @@ using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
-           key == "target"_str;
+           key == "target"_str || key == "license"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
@@ -165,7 +165,11 @@ auto package_version_key(ref<str> key) -> bool {
 }
 
 auto workspace_package_key(ref<str> key) -> bool {
-    return key == "version"_str;
+    return key == "version"_str || key == "license"_str;
+}
+
+auto package_license_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
 }
 
 auto parse_package_version(const Toml& package, bool optional)
@@ -203,5 +207,39 @@ auto parse_package_version(const Toml& package, bool optional)
     }
     return Ok(PackageVersion {
         .source = PackageVersionSource::Workspace,
+    });
+}
+
+auto parse_package_license(const Toml& package) -> ManifestSchemaResult<PackageLicense> {
+    auto declared = member(package, "license"_str);
+    if (declared.is_none()) return Ok(PackageLicense {});
+
+    auto explicit_value = (**declared).as_str();
+    if (explicit_value.is_some()) {
+        if (explicit_value->is_empty()) {
+            return manifest_schema_failure<PackageLicense>("package.license must not be empty"_str);
+        }
+        return Ok(PackageLicense {
+            .source = PackageLicenseSource::Explicit,
+            .value  = Some(String::make(*explicit_value)),
+        });
+    }
+
+    auto inherited = table_value(**declared, "package.license"_str);
+    if (inherited.is_err()) return Err(rstd::move(inherited).unwrap_err());
+    auto known = reject_unknown(**inherited, "package.license"_str, package_license_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto workspace = member(**declared, "workspace"_str);
+    if (workspace.is_none()) {
+        return manifest_schema_failure<PackageLicense>(
+            "package.license is missing 'workspace'"_str);
+    }
+    auto enabled = (**workspace).as_bool();
+    if (enabled.is_none() || ! *enabled) {
+        return manifest_schema_failure<PackageLicense>(
+            "package.license.workspace must be true"_str);
+    }
+    return Ok(PackageLicense {
+        .source = PackageLicenseSource::Workspace,
     });
 }

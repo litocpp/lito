@@ -63,6 +63,22 @@ auto resolve_workspace_member_version(lito::manifest::PackageManifest&         m
     return Ok(empty {});
 }
 
+auto resolve_workspace_member_license(lito::manifest::PackageManifest&         manifest,
+                                      const lito::manifest::WorkspaceManifest& workspace)
+    -> WorkspaceResult<empty> {
+    if (manifest.license.source != lito::manifest::PackageLicenseSource::Workspace) {
+        return Ok(empty {});
+    }
+    if (workspace.package.license.is_none()) {
+        return workspace_failure<empty>(
+            rstd::format("workspace member '{}' inherits package.license but "
+                         "workspace.package.license is not set",
+                         manifest.name.as_str()));
+    }
+    manifest.license.value = Some(workspace.package.license->clone());
+    return Ok(empty {});
+}
+
 auto clone_package_source(const lito::source::PackageSourceRequirement& source)
     -> lito::source::PackageSourceRequirement {
     if (source.is_Path()) {
@@ -235,6 +251,7 @@ auto resolve_workspace_member(lito::manifest::PackageManifest&         manifest,
                               const lito::manifest::WorkspaceManifest& workspace)
     -> WorkspaceResult<empty> {
     rstd_try(resolve_workspace_member_version(manifest, workspace));
+    rstd_try(resolve_workspace_member_license(manifest, workspace));
     return resolve_workspace_member_dependencies(manifest, workspace);
 }
 

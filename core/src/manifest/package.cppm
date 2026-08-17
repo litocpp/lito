@@ -29,9 +29,22 @@ struct PackageVersion {
     Option<String>       value;
 };
 
+enum class PackageLicenseSource
+{
+    Unspecified,
+    Explicit,
+    Workspace,
+};
+
+struct PackageLicense {
+    PackageLicenseSource source { PackageLicenseSource::Unspecified };
+    Option<String>       value;
+};
+
 struct PackageManifest {
     String                                             name;
     PackageVersion                                     version;
+    PackageLicense                                     license;
     PathBuf                                            root;
     PathBuf                                            source_root;
     PathBuf                                            manifest_path;

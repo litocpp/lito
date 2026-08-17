@@ -66,4 +66,4 @@ add_subdirectory(driver)
 add_subdirectory(cli)
 
 install(FILES schema/lito.schema.json DESTINATION ${CMAKE_INSTALL_DATADIR}/lito)
-install(FILES LICENSE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/lito)
+install(FILES LICENSE-MIT LICENSE-APACHE DESTINATION ${CMAKE_INSTALL_DATADIR}/licenses/lito)

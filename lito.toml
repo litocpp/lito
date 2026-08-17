@@ -5,6 +5,7 @@ default-members = ["cli"]
 
 [workspace.package]
 version = "0.2.1"
+license = "MIT OR Apache-2.0"
 
 [workspace.dependencies.lito-frontend]
 path = "frontend"

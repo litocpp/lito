@@ -82,7 +82,17 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
                 return manifest_schema_failure<ManifestDocument>(
                     "workspace.package.version must not be empty"_str);
             }
+            auto workspace_license =
+                optional_string(**workspace_package_value, "license"_str, "workspace.package"_str);
+            if (workspace_license.is_err()) {
+                return Err(rstd::move(workspace_license).unwrap_err());
+            }
+            if (workspace_license->is_some() && (**workspace_license).is_empty()) {
+                return manifest_schema_failure<ManifestDocument>(
+                    "workspace.package.license must not be empty"_str);
+            }
             package_defaults.version = rstd::move(workspace_version).unwrap();
+            package_defaults.license = rstd::move(workspace_license).unwrap();
         }
         auto workspace_dependencies =
             rstd_try(parse_workspace_dependencies(member(**workspace_value, "dependencies"_str)));
@@ -170,6 +180,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         install_script->is_none() && ! has_library && ! has_bins && ! has_benches;
     auto version = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
+    auto license = parse_package_license(package_value);
+    if (license.is_err()) return Err(rstd::move(license).unwrap_err());
 
     auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
     auto dependencies     = parse_dependencies(member(document, "dependencies"_str));
@@ -219,6 +231,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         .package = Some(PackageManifest {
             .name                   = rstd::move(name).unwrap(),
             .version                = rstd::move(version).unwrap(),
+            .license                = rstd::move(license).unwrap(),
             .root                   = root.clone(),
             .source_root            = rstd::move(source_root).unwrap(),
             .manifest_path          = rstd::move(path),

@@ -85,6 +85,13 @@ public:
 
     static auto single(lito::manifest::PackageManifest manifest)
         -> WorkspaceResult<WorkspaceCatalog> {
+        if (manifest.license.source == lito::manifest::PackageLicenseSource::Workspace &&
+            manifest.license.value.is_none()) {
+            return catalog_failure<WorkspaceCatalog>(
+                rstd::format("package '{}' inherits package.license but is not a member of a "
+                             "containing workspace",
+                             manifest.name.as_str()));
+        }
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_runtime_dependencies.is_empty() ||

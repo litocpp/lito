@@ -47,4 +47,4 @@ See the [manifest schema](schema/lito.schema.json) for the complete configuratio
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE-MIT) OR [Apache-2.0](LICENSE-APACHE)

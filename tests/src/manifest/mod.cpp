@@ -26,6 +26,40 @@ protected:
     }
 };
 
+TEST_F(Manifest, PackageAndWorkspaceLicensesAreOwnedByManifest) {
+    auto package_project = manifest("package-license"_str, R"toml([package]
+name = "fixture-package-license"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "fixture-package-license"
+module = "fixture.package_license"
+archive = "fixture-package-license"
+)toml"_str);
+    ASSERT_TRUE(package_project.is_ok());
+    auto package = lito::manifest::load_package_manifest(package_project->root.as_path());
+    ASSERT_TRUE(package.is_ok());
+    EXPECT_EQ(package->license.source, lito::manifest::PackageLicenseSource::Explicit);
+    ASSERT_TRUE(package->license.value.is_some());
+    EXPECT_EQ(package->license.value->as_str(), "MIT OR Apache-2.0"_str);
+
+    auto workspace_project = manifest("workspace-license"_str, R"toml([workspace]
+name = "fixture-workspace-license"
+members = ["package"]
+
+[workspace.package]
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+)toml"_str);
+    ASSERT_TRUE(workspace_project.is_ok());
+    auto workspace = lito::manifest::load_manifest_document(workspace_project->root.as_path());
+    ASSERT_TRUE(workspace.is_ok());
+    ASSERT_TRUE(workspace->workspace.is_some());
+    ASSERT_TRUE(workspace->workspace->package.license.is_some());
+    EXPECT_EQ(workspace->workspace->package.license->as_str(), "MIT OR Apache-2.0"_str);
+}
+
 struct InvalidManifestCase {
     ref<str> name;
     ref<str> contents;
