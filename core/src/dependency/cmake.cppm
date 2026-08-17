@@ -15,6 +15,21 @@ using namespace lito::system;
 export namespace lito::dependency
 {
 
+auto cmake_package_name_is_valid(ref<str> value) noexcept -> bool {
+    if (value.is_empty() || value.starts_with("-"_str)) return false;
+    for (const auto byte : value) {
+        const auto character = byte.to_primitive();
+        const auto alpha =
+            (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
+        const auto digit = character >= '0' && character <= '9';
+        if (! (alpha || digit || character == '_' || character == '-' || character == '.' ||
+               character == '+')) {
+            return false;
+        }
+    }
+    return true;
+}
+
 struct CMakeCacheEntry {
     String name;
     String value;
@@ -117,6 +132,40 @@ struct CMakeDependencyRequirement {
         if (declaration_root.is_some()) result.declaration_root = Some(declaration_root->clone());
         if (adapter_root.is_some()) result.adapter_root = Some(adapter_root->clone());
         return result;
+    }
+};
+
+enum class CMakeBuildSourceOverride
+{
+    Installed,
+};
+
+struct CMakeBuildOverride {
+    String                   package;
+    CMakeBuildSourceOverride source { CMakeBuildSourceOverride::Installed };
+
+    auto clone() const -> CMakeBuildOverride {
+        return CMakeBuildOverride {
+            .package = package.clone(),
+            .source  = source,
+        };
+    }
+};
+
+struct CMakeBuildOverrideSet {
+    Vec<CMakeBuildOverride> entries;
+
+    auto clone() const -> CMakeBuildOverrideSet {
+        auto copied = Vec<CMakeBuildOverride>::with_capacity(entries.len());
+        for (const auto& entry : entries) copied.push(entry.clone());
+        return CMakeBuildOverrideSet { .entries = rstd::move(copied) };
+    }
+
+    auto contains(ref<str> package) const noexcept -> bool {
+        for (const auto& entry : entries) {
+            if (entry.package.as_str() == package) return true;
+        }
+        return false;
     }
 };
 

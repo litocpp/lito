@@ -116,17 +116,12 @@ auto resolve_package_owned_external(const lito::package::ResolvedPackage&       
     }));
 }
 
-struct CollectedExternalSources {
-    lito::source::SourceResolutionOptions                             options;
-    rstd::collections::BTreeMap<String, lito::source::AcquiredSource> package_owned;
-};
-
-auto collect_external_source_records(lito::package::ResolvedPackageGraph&  graph,
-                                     lito::source::SourceResolutionOptions options,
-                                     ToolResolver&                         resolver,
-                                     const ResolvedProcessEnvironment&     environment,
-                                     lito::source::SourceEventSink         observer)
-    -> lito::dependency::DependencyResult<CollectedExternalSources> {
+auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
+                                                  lito::source::SourceResolutionOptions options,
+                                                  ToolResolver&                         resolver,
+                                                  const ResolvedProcessEnvironment&     environment,
+                                                  lito::source::SourceEventSink         observer)
+    -> lito::dependency::DependencyResult<DeclaredExternalDependencySources> {
     graph.externals.clear();
     auto package_owned = rstd::collections::BTreeMap<String, lito::source::AcquiredSource>::make();
     for (const auto& package : graph.packages) {
@@ -218,7 +213,8 @@ auto collect_external_source_records(lito::package::ResolvedPackageGraph&  graph
                     auto key      = external_relation_key(package.manifest.name.as_str(),
                                                           declaration.alias.as_str());
                     if (package_owned.contains_key(key.as_str())) {
-                        return lito::dependency::dependency_failure<CollectedExternalSources>(
+                        return lito::dependency::dependency_failure<
+                            DeclaredExternalDependencySources>(
                             rstd::format("package '{}' repeats CMake external dependency '{}'",
                                          package.manifest.name.as_str(),
                                          declaration.alias.as_str()));
@@ -250,15 +246,32 @@ auto collect_external_source_records(lito::package::ResolvedPackageGraph&  graph
             if (existing.is_some()) {
                 resolved = clone_resolved_package_source(git_sources[**existing]);
             } else {
-                auto acquired = source_manager.resolve_external_source(
-                    lito::source::PackageSourceRequirement::Git(git.url.clone(),
-                                                                git.reference.clone()),
-                    declaring_root.as_path());
-                if (acquired.is_err()) {
+                auto selection =
+                    lito::source::select_git_source(options, git.url.as_str(), git.reference);
+                if (selection.is_err()) {
                     return Err(rstd::into<lito::dependency::DependencyError>(
-                        rstd::move(acquired).unwrap_err()));
+                        rstd::move(selection).unwrap_err()));
                 }
-                resolved = rstd::move(acquired).unwrap();
+                if (selection->exact_commit.is_some()) {
+                    resolved = lito::source::ResolvedPackageSource {
+                        .identity = lito::source::git_source_identity(
+                            git.url.as_str(), selection->exact_commit->as_str()),
+                        .kind      = lito::source::PackageSourceKind::Git,
+                        .git       = git.url.clone(),
+                        .reference = git.reference.clone(),
+                        .commit    = selection->exact_commit->clone(),
+                    };
+                } else {
+                    auto acquired = source_manager.resolve_external_source(
+                        lito::source::PackageSourceRequirement::Git(git.url.clone(),
+                                                                    git.reference.clone()),
+                        declaring_root.as_path());
+                    if (acquired.is_err()) {
+                        return Err(rstd::into<lito::dependency::DependencyError>(
+                            rstd::move(acquired).unwrap_err()));
+                    }
+                    resolved = rstd::move(acquired).unwrap();
+                }
                 git_indices.insert(rstd::move(key), git_sources.len());
                 git_sources.push(clone_resolved_package_source(resolved));
             }
@@ -270,7 +283,7 @@ auto collect_external_source_records(lito::package::ResolvedPackageGraph&  graph
         }
     }
     options.git = lito::source::GitResolutionMode::ReuseLocked;
-    return Ok(CollectedExternalSources {
+    return Ok(DeclaredExternalDependencySources {
         .options       = rstd::move(options),
         .package_owned = rstd::move(package_owned),
     });
@@ -279,6 +292,7 @@ auto collect_external_source_records(lito::package::ResolvedPackageGraph&  graph
 struct ExternalAcquisitionTask {
     usize                                package {};
     usize                                declaration {};
+    bool                                 installed_override { false };
     Option<usize>                        source_fetch;
     Option<lito::source::AcquiredSource> acquired;
 };
@@ -290,27 +304,48 @@ auto package_selected(const Vec<String>& selected, ref<str> package) -> bool {
     return false;
 }
 
+auto validate_cmake_build_overrides(const lito::package::ResolvedPackageGraph&     graph,
+                                    const lito::dependency::CMakeBuildOverrideSet& overrides)
+    -> lito::dependency::DependencyResult<empty> {
+    for (const auto& entry : overrides.entries) {
+        auto matched = false;
+        for (const auto& package : graph.packages) {
+            for (const auto& declaration : package.manifest.cmake_external_dependencies) {
+                if (declaration.package != entry.package) continue;
+                matched = true;
+            }
+        }
+        if (! matched) {
+            return lito::dependency::dependency_failure<empty>(rstd::format(
+                "cmake.overrides.{}.source = 'installed' does not match any find-package in the "
+                "active package graph",
+                entry.package.as_str()));
+        }
+    }
+    return Ok(empty {});
+}
+
 } // namespace lito
 
 namespace lito
 {
 
-auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
-                                         const Vec<String>&                    selected_packages,
-                                         lito::source::SourceResolutionOptions options,
-                                         ToolResolver&                         resolver,
-                                         const ResolvedProcessEnvironment&     environment,
-                                         usize                                 jobs     = usize(1),
-                                         lito::source::SourceEventSink         observer = {})
+auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& graph,
+                                         const Vec<String>&                   selected_packages,
+                                         DeclaredExternalDependencySources    declared,
+                                         const lito::dependency::CMakeBuildOverrideSet& overrides,
+                                         ToolResolver&                                  resolver,
+                                         const ResolvedProcessEnvironment&              environment,
+                                         usize                         jobs     = usize(1),
+                                         lito::source::SourceEventSink observer = {})
     -> lito::dependency::DependencyResult<AcquiredExternalDependencySources> {
     if (jobs == usize {}) {
         return lito::dependency::dependency_failure<AcquiredExternalDependencySources>(
             "source fetch jobs must be greater than zero"_str);
     }
-    auto collected      = rstd_try(collect_external_source_records(
-        graph, rstd::move(options), resolver, environment, observer));
-    options             = rstd::move(collected.options);
-    auto package_owned  = rstd::move(collected.package_owned);
+    rstd_try(validate_cmake_build_overrides(graph, overrides));
+    auto options        = rstd::move(declared.options);
+    auto package_owned  = rstd::move(declared.package_owned);
     auto tasks          = Vec<ExternalAcquisitionTask>::make();
     auto fetch_requests = Vec<lito::source::PackageSourceFetchRequest>::make();
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
@@ -321,9 +356,21 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
              ++declaration_index) {
             const auto& declaration =
                 package.manifest.cmake_external_dependencies[declaration_index];
+            const auto installed_override = overrides.contains(declaration.package.as_str());
+            if (installed_override &&
+                declaration.integration == lito::dependency::CMakeIntegration::BuildTree) {
+                return lito::dependency::dependency_failure<AcquiredExternalDependencySources>(
+                    rstd::format(
+                        "cmake.overrides.{}.source = 'installed' cannot replace build-tree "
+                        "dependency '{}:{}'",
+                        declaration.package.as_str(),
+                        package.manifest.name.as_str(),
+                        declaration.alias.as_str()));
+            }
             auto source_fetch = Option<usize> {};
             auto acquired     = Option<lito::source::AcquiredSource> {};
-            if (declaration.source.is_Git() || declaration.source.is_Path()) {
+            if (! installed_override &&
+                (declaration.source.is_Git() || declaration.source.is_Path())) {
                 if (declaration.source.is_Path()) {
                     auto key = external_relation_key(package.manifest.name.as_str(),
                                                      declaration.alias.as_str());
@@ -348,10 +395,11 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
                 }
             }
             tasks.push(ExternalAcquisitionTask {
-                .package      = package_index,
-                .declaration  = declaration_index,
-                .source_fetch = rstd::move(source_fetch),
-                .acquired     = rstd::move(acquired),
+                .package            = package_index,
+                .declaration        = declaration_index,
+                .installed_override = installed_override,
+                .source_fetch       = rstd::move(source_fetch),
+                .acquired           = rstd::move(acquired),
             });
         }
     }
@@ -391,9 +439,10 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
     result.dependencies.reserve(tasks.len());
     for (auto& task : tasks) {
         result.dependencies.push(AcquiredExternalDependencySource {
-            .package     = task.package,
-            .declaration = task.declaration,
-            .acquired    = rstd::move(task.acquired),
+            .package            = task.package,
+            .declaration        = task.declaration,
+            .installed_override = task.installed_override,
+            .acquired           = rstd::move(task.acquired),
         });
     }
     return Ok(rstd::move(result));

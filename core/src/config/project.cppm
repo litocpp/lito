@@ -41,6 +41,7 @@ struct ProjectConfig {
     lito::source::PackageSourceConfig         sources;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
+    lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
     InstallConfig                             install;
     DocConfig                                 doc;
 };

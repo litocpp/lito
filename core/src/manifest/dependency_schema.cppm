@@ -86,14 +86,6 @@ auto cmake_name_character_is_valid(u8 value) -> bool {
            character == '+';
 }
 
-auto cmake_name_is_valid(ref<str> value) -> bool {
-    if (value.is_empty() || value.starts_with("-"_str)) return false;
-    for (auto character : value) {
-        if (! cmake_name_character_is_valid(character)) return false;
-    }
-    return true;
-}
-
 auto cmake_target_is_valid(ref<str> value) -> bool {
     if (value.is_empty() || value.starts_with("-"_str)) return false;
     auto segment = usize {};
@@ -668,7 +660,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     if (integration.is_err()) return Err(rstd::move(integration).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
-    if (! cmake_name_is_valid(package->as_str())) {
+    if (! lito::dependency::cmake_package_name_is_valid(package->as_str())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.find-package is unsafe", context));
     }

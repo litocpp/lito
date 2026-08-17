@@ -24,6 +24,7 @@ struct PreparedCMakeDependencyRequirement {
     String                             alias;
     String                             package;
     PreparedCMakeDependencySource      source;
+    bool                               installed_override { false };
     lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
     bool                               add_subdirectory { true };
     Option<PathBuf>                    adapter;
@@ -40,6 +41,11 @@ struct PreparedExternalDependency {
 
 struct PreparedExternalDependencySources {
     Vec<PreparedExternalDependency> dependencies;
+};
+
+struct DeclaredExternalDependencySources {
+    lito::source::SourceResolutionOptions                             options;
+    rstd::collections::BTreeMap<String, lito::source::AcquiredSource> package_owned;
 };
 
 struct ExternalAssetCatalog {

@@ -1100,6 +1100,9 @@
         "rev": {
           "$ref": "#/definitions/gitSelector"
         },
+        "commit": {
+          "$ref": "#/definitions/gitCommit"
+        },
         "archive": {
           "$ref": "#/definitions/archiveUrl"
         },

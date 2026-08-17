@@ -84,6 +84,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 resolved_toolchain,
                                 resolver,
                                 *environment,
+                                request.build.cmake_build_overrides,
                                 request.build.locked,
                                 lito::package::PackageSelectionPurpose::Install,
                                 jobs,

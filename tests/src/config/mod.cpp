@@ -43,6 +43,9 @@ executable = "custom-cmake"
 generator = "Unix Makefiles"
 search-path = ["."]
 )toml"_str;
+constexpr auto cmake_override_config         = R"toml([cmake.overrides.Eigen3]
+source = "installed"
+)toml"_str;
 
 class Config : public ProjectFixture {
 protected:
@@ -271,6 +274,68 @@ TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), project->root.as_path());
+}
+
+TEST_F(Config, CMakeBuildOverridesBelongToLocalAndInvocationConfiguration) {
+    auto project = config("cmake-build-override"_str, cmake_override_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->cmake_build_overrides.entries.len(), usize(1));
+    EXPECT_EQ(loaded->cmake_build_overrides.entries[usize {}].package.as_str(), "Eigen3"_str);
+
+    auto invocation_project = empty_project("cmake-build-override-invocation"_str);
+    ASSERT_TRUE(invocation_project.is_ok());
+    auto overrides = Vec<String>::make();
+    overrides.push(String::make("cmake.overrides.LitoFixture.source=\"installed\""_str));
+    auto invocation =
+        lito::config::load_project_config(invocation_project->root.as_path(),
+                                          lito::config::ProjectConfigRequest {
+                                              .mode = lito::config::ConfigLoadMode::LocalDisabled,
+                                              .overrides = rstd::move(overrides),
+                                          });
+    ASSERT_TRUE(invocation.is_ok());
+    ASSERT_EQ(invocation->cmake_build_overrides.entries.len(), usize(1));
+    EXPECT_EQ(invocation->cmake_build_overrides.entries[usize {}].package.as_str(),
+              "LitoFixture"_str);
+}
+
+TEST_F(Config, SharedConfigurationCannotDeclareCMakeBuildOverrides) {
+    auto project = empty_project("cmake-build-override-shared"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto shared = project->root.join(PathBuf::from("lito-config.toml"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(shared.as_path(), cmake_override_config.as_bytes()).is_ok());
+
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_err());
+    auto error = rstd::move(loaded).unwrap_err();
+    EXPECT_TRUE(error_chain_text(error).as_str().contains("cannot contain cmake.overrides"_str));
+
+    auto disabled = lito::config::load_project_config(project->root.as_path(),
+                                                      lito::config::ConfigLoadMode::LocalDisabled);
+    EXPECT_TRUE(disabled.is_err());
+}
+
+TEST_F(Config, InvalidCMakeBuildOverridesAreRejectedByConfigOwner) {
+    struct ConfigCase {
+        ref<str> name;
+        ref<str> contents;
+    };
+    constexpr ConfigCase cases[] = {
+        { "cmake-override-missing-source"_str, "[cmake.overrides.Eigen3]\n"_str },
+        { "cmake-override-unknown-source"_str,
+          "[cmake.overrides.Eigen3]\nsource = \"managed\"\n"_str },
+        { "cmake-override-unknown-field"_str,
+          "[cmake.overrides.Eigen3]\nsource = \"installed\"\nfallback = true\n"_str },
+        { "cmake-override-unsafe-package"_str,
+          "[cmake.overrides.'-Eigen3']\nsource = \"installed\"\n"_str },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto project = config(item.name, item.contents);
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::config::load_project_config(project->root.as_path()).is_err());
+    }
 }
 
 TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {

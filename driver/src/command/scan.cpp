@@ -115,6 +115,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
                                           request.lock,
                                           request.pkg_config,
                                           request.cmake,
+                                          request.cmake_build_overrides,
                                           tool_resolver,
                                           *environment,
                                           request.locked,

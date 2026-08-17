@@ -168,6 +168,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                              request.lock,
                                              request.pkg_config,
                                              request.cmake,
+                                             request.cmake_build_overrides,
                                              tool_resolver,
                                              process_environment,
                                              request.locked,

@@ -124,10 +124,11 @@ auto external_dependencies_key(ref<str> key) -> bool {
 
 auto cmake_external_key(ref<str> key) -> bool {
     return key == "find-package"_str || key == "path"_str || key == "git"_str ||
-           key == "branch"_str || key == "tag"_str || key == "rev"_str || key == "archive"_str ||
-           key == "archives"_str || key == "sha256"_str || key == "integration"_str ||
-           key == "add-subdirectory"_str || key == "adapter"_str || key == "cache"_str ||
-           key == "config-directory"_str || key == "targets"_str || key == "workspace"_str;
+           key == "branch"_str || key == "tag"_str || key == "rev"_str || key == "commit"_str ||
+           key == "archive"_str || key == "archives"_str || key == "sha256"_str ||
+           key == "integration"_str || key == "add-subdirectory"_str || key == "adapter"_str ||
+           key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
+           key == "workspace"_str;
 }
 
 auto cmake_archive_variant_key(ref<str> key) -> bool {

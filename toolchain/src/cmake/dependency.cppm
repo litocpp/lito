@@ -22,6 +22,7 @@ struct ResolvedCMakeDependencyRequirement {
     String                             alias;
     String                             package;
     ResolvedCMakeDependencySource      source;
+    bool                               installed_override { false };
     lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
     bool                               add_subdirectory { true };
     Option<PathBuf>                    adapter;

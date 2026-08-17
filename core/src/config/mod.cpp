@@ -169,6 +169,18 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     auto location = rstd_try(resolve_config_location(root));
     auto shared   = rstd_try(
         read_config_value(location.shared_path.as_path(), "project configuration"_str, false));
+    if (shared.is_some()) {
+        auto cmake = shared->get("cmake"_str);
+        if (cmake.is_some()) {
+            auto table = (**cmake).as_table();
+            if (table.is_some() && (**table).contains_key("overrides"_str)) {
+                return document_failure<ConfigDocument>(
+                    rstd::format("project configuration '{}' cannot contain cmake.overrides; use "
+                                 ".lito/config.toml or --config",
+                                 location.shared_path.as_path()));
+            }
+        }
+    }
     auto document = empty_document(rstd::move(location));
     if (shared.is_some()) document.value = rstd::move(shared).unwrap();
     if (mode == ConfigLoadMode::LocalDisabled) return Ok(rstd::move(document));

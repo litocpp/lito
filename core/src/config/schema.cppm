@@ -91,7 +91,12 @@ auto pkg_config_key(ref<str> key) -> bool {
 }
 
 auto cmake_key(ref<str> key) -> bool {
-    return key == "executable"_str || key == "generator"_str || key == "search-path"_str;
+    return key == "executable"_str || key == "generator"_str || key == "search-path"_str ||
+           key == "overrides"_str;
+}
+
+auto cmake_override_key(ref<str> key) -> bool {
+    return key == "source"_str;
 }
 
 auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
@@ -295,6 +300,50 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
     }
     result.search_paths = rstd_try(
         configured_directories(**value, "search-path"_str, "config.cmake"_str, project_root));
+    return Ok(rstd::move(result));
+}
+
+auto configured_cmake_build_overrides(const Toml& document)
+    -> ConfigResult<lito::dependency::CMakeBuildOverrideSet> {
+    auto result = lito::dependency::CMakeBuildOverrideSet {};
+    auto cmake  = config_member(document, "cmake"_str);
+    if (cmake.is_none()) return Ok(rstd::move(result));
+    auto overrides = config_member(**cmake, "overrides"_str);
+    if (overrides.is_none()) return Ok(rstd::move(result));
+    auto table = config_table(**overrides, "config.cmake.overrides"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto keys = (**table).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& package = **key;
+        auto        context = rstd::format("config.cmake.overrides.'{}'", package.as_str());
+        if (! lito::dependency::cmake_package_name_is_valid(package.as_str())) {
+            return config_failure<lito::dependency::CMakeBuildOverrideSet>(
+                rstd::format("{} package name is unsafe", context.as_str()));
+        }
+        auto specification = (**table).get(package.as_str());
+        auto fields        = config_table(**specification, context.as_str());
+        if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
+        auto known = reject_config_unknown(**fields, context.as_str(), cmake_override_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto source = config_member(**specification, "source"_str);
+        if (source.is_none()) {
+            return config_failure<lito::dependency::CMakeBuildOverrideSet>(
+                rstd::format("{} is missing 'source'", context.as_str()));
+        }
+        auto value = (**source).as_str();
+        if (value.is_none() || *value != "installed"_str) {
+            return config_failure<lito::dependency::CMakeBuildOverrideSet>(
+                rstd::format("{}.source must be 'installed'", context.as_str()));
+        }
+        result.entries.push(lito::dependency::CMakeBuildOverride {
+            .package = package.clone(),
+        });
+    }
+    rstd::slice_::sort_unstable_by(result.entries.as_mut_slice().as_mut_ref(),
+                                   [](const lito::dependency::CMakeBuildOverride& left,
+                                      const lito::dependency::CMakeBuildOverride& right) {
+                                       return left.package < right.package;
+                                   });
     return Ok(rstd::move(result));
 }
 
@@ -543,26 +592,31 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
-    auto cmake         = configured_cmake(document, root.as_path());
-    auto install       = configured_install(document, root.as_path());
-    auto doc           = configured_doc(document, root.as_path());
-    auto build_options = configured_build_options(document);
+    auto cmake                 = configured_cmake(document, root.as_path());
+    auto cmake_build_overrides = configured_cmake_build_overrides(document);
+    auto install               = configured_install(document, root.as_path());
+    auto doc                   = configured_doc(document, root.as_path());
+    auto build_options         = configured_build_options(document);
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
+    if (cmake_build_overrides.is_err()) {
+        return Err(rstd::move(cmake_build_overrides).unwrap_err());
+    }
     if (install.is_err()) return Err(rstd::move(install).unwrap_err());
     if (doc.is_err()) return Err(rstd::move(doc).unwrap_err());
     if (build_options.is_err()) return Err(rstd::move(build_options).unwrap_err());
 
     return Ok(ProjectConfig {
-        .root             = rstd::move(root),
-        .lock             = rstd::move(lock).unwrap(),
-        .environment      = rstd::move(environment).unwrap(),
-        .toolchain        = rstd::move(toolchain),
-        .standard_library = standard_library,
-        .build_options    = rstd::move(build_options).unwrap(),
-        .sources          = rstd::move(sources).unwrap(),
-        .pkg_config       = rstd::move(pkg_config).unwrap(),
-        .cmake            = rstd::move(cmake).unwrap(),
-        .install          = rstd::move(install).unwrap(),
-        .doc              = rstd::move(doc).unwrap(),
+        .root                  = rstd::move(root),
+        .lock                  = rstd::move(lock).unwrap(),
+        .environment           = rstd::move(environment).unwrap(),
+        .toolchain             = rstd::move(toolchain),
+        .standard_library      = standard_library,
+        .build_options         = rstd::move(build_options).unwrap(),
+        .sources               = rstd::move(sources).unwrap(),
+        .pkg_config            = rstd::move(pkg_config).unwrap(),
+        .cmake                 = rstd::move(cmake).unwrap(),
+        .cmake_build_overrides = rstd::move(cmake_build_overrides).unwrap(),
+        .install               = rstd::move(install).unwrap(),
+        .doc                   = rstd::move(doc).unwrap(),
     });
 }

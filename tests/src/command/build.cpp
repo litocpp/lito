@@ -15,6 +15,27 @@ using namespace lito_test;
 
 class BuildCommand : public ProjectFixture {};
 
+struct CMakeOverrideEvents {
+    usize fetch {};
+    usize source_operations {};
+    usize query_operations {};
+};
+
+void capture_cmake_override_events(void* context, const lito::BuildEvent& event) noexcept {
+    auto& events = *static_cast<CMakeOverrideEvents*>(context);
+    if (event.kind == lito::BuildEventKind::Fetch) ++events.fetch;
+    if (event.kind == lito::BuildEventKind::CMakeConfigure ||
+        event.kind == lito::BuildEventKind::CMakeBuild ||
+        event.kind == lito::BuildEventKind::CMakeInstall) {
+        ++events.source_operations;
+    }
+    if (event.kind == lito::BuildEventKind::CMakeQuery ||
+        event.kind == lito::BuildEventKind::CMakeQueryBuild ||
+        event.kind == lito::BuildEventKind::CMakeSnapshot) {
+        ++events.query_operations;
+    }
+}
+
 auto build_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"build([workspace]
@@ -90,6 +111,97 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
         }
         EXPECT_TRUE(selected);
     }
+}
+
+TEST_F(BuildCommand, CMakeInstalledOverrideBuildsFromSearchPathAndPreservesLockSource) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-cmake-installed-override"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-cmake-installed-override"
+sources = ["main.cpp"]
+
+[external-dependencies.cmake.fixture]
+find-package = "LitoOverrideFixture"
+git = "https://example.invalid/lito-override-fixture.git"
+commit = "0123456789abcdef0123456789abcdef01234567"
+targets = [{ name = "LitoOverrideFixture::fixture", visibility = "private" }]
+)toml"_str },
+        { "main.cpp"_str, R"cpp(#ifndef LITO_SYSTEM_OVERRIDE_FIXTURE
+#error expected system CMake package usage
+#endif
+
+auto main() -> int {
+    return 0;
+}
+)cpp"_str },
+        { "system/lib/cmake/LitoOverrideFixture/LitoOverrideFixtureConfig.cmake"_str,
+          R"cmake(set(LitoOverrideFixture_VERSION "1.0.0")
+add_library(LitoOverrideFixture::fixture INTERFACE IMPORTED)
+set_property(TARGET LitoOverrideFixture::fixture PROPERTY
+  INTERFACE_COMPILE_DEFINITIONS LITO_SYSTEM_OVERRIDE_FIXTURE=1)
+)cmake"_str },
+    };
+    auto project = materialize("cmake-installed-override-build"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("cmake-installed-override-build"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-cmake-installed-override"_str));
+    request.cmake = fixture_cmake();
+    request.cmake.search_paths.push(project->root.join(PathBuf::from("system"_str).as_path()));
+    request.cmake_build_overrides.entries.push(lito::dependency::CMakeBuildOverride {
+        .package = String::make("LitoOverrideFixture"_str),
+    });
+    auto events      = CMakeOverrideEvents {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(events),
+        .notify  = capture_cmake_override_events,
+    });
+
+    auto summary = lito::build(request);
+    if (summary.is_err()) {
+        auto message = error_chain_text(summary.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(events.fetch, usize {});
+    EXPECT_EQ(events.source_operations, usize {});
+    EXPECT_TRUE(events.query_operations > usize {});
+    EXPECT_EQ(summary->compiled, usize(1));
+
+    auto lock = rstd::fs::read_to_string(
+        project->root.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(lock.is_ok());
+    EXPECT_TRUE(lock->as_str().contains("https://example.invalid/lito-override-fixture.git"_str));
+    EXPECT_TRUE(lock->as_str().contains("0123456789abcdef0123456789abcdef01234567"_str));
+    EXPECT_FALSE(lock->as_str().contains("\"kind\": \"installed\""_str));
+
+    auto locked_contents    = lock->clone();
+    request.locked          = true;
+    request.sources.network = lito::source::NetworkPolicy::Offline;
+    events                  = CMakeOverrideEvents {};
+    auto locked             = lito::build(request);
+    ASSERT_TRUE(locked.is_ok());
+    EXPECT_EQ(events.fetch, usize {});
+    EXPECT_EQ(events.source_operations, usize {});
+    auto unchanged = rstd::fs::read_to_string(
+        project->root.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(unchanged.is_ok());
+    EXPECT_EQ(unchanged->as_str(), locked_contents.as_str());
+
+    request.output = build_root("cmake-installed-override-missing"_str);
+    request.cmake.search_paths.clear();
+    events       = CMakeOverrideEvents {};
+    auto missing = lito::build(request);
+    ASSERT_TRUE(missing.is_err());
+    auto error = error_chain_text(missing.unwrap_err());
+    EXPECT_TRUE(
+        error.as_str().contains("cmake.overrides.LitoOverrideFixture.source = 'installed'"_str));
+    EXPECT_EQ(events.fetch, usize {});
+    EXPECT_EQ(events.source_operations, usize {});
 }
 
 TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {

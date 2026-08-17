@@ -21,6 +21,7 @@ namespace lito
 struct AcquiredExternalDependencySource {
     usize                                package {};
     usize                                declaration {};
+    bool                                 installed_override { false };
     Option<lito::source::AcquiredSource> acquired;
 };
 
@@ -28,13 +29,21 @@ struct AcquiredExternalDependencySources {
     Vec<AcquiredExternalDependencySource> dependencies;
 };
 
-auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
-                                         const Vec<String>&                    selected_packages,
-                                         lito::source::SourceResolutionOptions options,
-                                         ToolResolver&                         resolver,
-                                         const ResolvedProcessEnvironment&     environment,
-                                         usize                                 jobs,
-                                         lito::source::SourceEventSink         observer)
+auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
+                                                  lito::source::SourceResolutionOptions options,
+                                                  ToolResolver&                         resolver,
+                                                  const ResolvedProcessEnvironment&     environment,
+                                                  lito::source::SourceEventSink         observer)
+    -> lito::dependency::DependencyResult<DeclaredExternalDependencySources>;
+
+auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& graph,
+                                         const Vec<String>&                   selected_packages,
+                                         DeclaredExternalDependencySources    declared,
+                                         const lito::dependency::CMakeBuildOverrideSet& overrides,
+                                         ToolResolver&                                  resolver,
+                                         const ResolvedProcessEnvironment&              environment,
+                                         usize                                          jobs,
+                                         lito::source::SourceEventSink                  observer)
     -> lito::dependency::DependencyResult<AcquiredExternalDependencySources>;
 
 struct ExternalSourceTask {
@@ -42,6 +51,7 @@ struct ExternalSourceTask {
     usize                                        declaration {};
     lito::dependency::CMakeDependencyRequirement requirement;
     PathBuf                                      source_root;
+    bool                                         installed_override { false };
     Option<lito::source::AcquiredSource>         acquired;
 };
 
@@ -55,38 +65,43 @@ auto prepare_external_source_task(ExternalSourceTask task)
     -> lito::dependency::DependencyResult<PreparedExternalSourceTask> {
     auto        source      = PreparedCMakeDependencySource::Installed();
     const auto& declaration = task.requirement;
-    if (declaration.source.is_Archive()) {
-        source =
-            PreparedCMakeDependencySource::Archive(declaration.source.as_Archive().url.clone(),
-                                                   declaration.source.as_Archive().sha256.clone());
-    } else if (declaration.source.is_ArchitectureArchives()) {
-        auto variants = Vec<lito::dependency::CMakeArchiveVariant>::with_capacity(
-            declaration.source.as_ArchitectureArchives().variants.len());
-        for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
-            variants.push(lito::dependency::CMakeArchiveVariant {
-                .architecture = variant.architecture.clone(),
-                .url          = variant.url.clone(),
-                .sha256       = variant.sha256.clone(),
-            });
+    if (! task.installed_override) {
+        if (declaration.source.is_Archive()) {
+            source = PreparedCMakeDependencySource::Archive(
+                declaration.source.as_Archive().url.clone(),
+                declaration.source.as_Archive().sha256.clone());
+        } else if (declaration.source.is_ArchitectureArchives()) {
+            auto variants = Vec<lito::dependency::CMakeArchiveVariant>::with_capacity(
+                declaration.source.as_ArchitectureArchives().variants.len());
+            for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
+                variants.push(lito::dependency::CMakeArchiveVariant {
+                    .architecture = variant.architecture.clone(),
+                    .url          = variant.url.clone(),
+                    .sha256       = variant.sha256.clone(),
+                });
+            }
+            source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
+        } else if (! declaration.source.is_Installed()) {
+            if (task.acquired.is_none()) {
+                return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
+                    rstd::format("external source for CMake dependency '{}' was not fetched",
+                                 declaration.alias.as_str()));
+            }
+            auto value = rstd::move(task.acquired).unwrap();
+            source     = PreparedCMakeDependencySource::Directory(
+                rstd::move(value.root), rstd::move(value.identity), value.cacheable);
         }
-        source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
-    } else if (! declaration.source.is_Installed()) {
-        if (task.acquired.is_none()) {
-            return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
-                rstd::format("external source for CMake dependency '{}' was not fetched",
-                             declaration.alias.as_str()));
-        }
-        auto value = rstd::move(task.acquired).unwrap();
-        source     = PreparedCMakeDependencySource::Directory(
-            rstd::move(value.root), rstd::move(value.identity), value.cacheable);
     }
 
-    auto cache = Vec<lito::dependency::CMakeCacheEntry>::with_capacity(declaration.cache.len());
-    for (const auto& entry : declaration.cache) {
-        cache.push(lito::dependency::CMakeCacheEntry {
-            .name  = entry.name.clone(),
-            .value = entry.value.clone(),
-        });
+    auto cache = Vec<lito::dependency::CMakeCacheEntry>::make();
+    if (! task.installed_override) {
+        cache.reserve(declaration.cache.len());
+        for (const auto& entry : declaration.cache) {
+            cache.push(lito::dependency::CMakeCacheEntry {
+                .name  = entry.name.clone(),
+                .value = entry.value.clone(),
+            });
+        }
     }
     auto targets =
         Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(declaration.targets.len());
@@ -97,12 +112,12 @@ auto prepare_external_source_task(ExternalSourceTask task)
         });
     }
     auto config_directory = Option<PathBuf> {};
-    if (declaration.config_directory.is_some()) {
+    if (! task.installed_override && declaration.config_directory.is_some()) {
         config_directory = Some(declaration.config_directory->clone());
     }
     auto adapter          = Option<PathBuf> {};
     auto adapter_identity = String::make();
-    if (declaration.adapter.is_some()) {
+    if (! task.installed_override && declaration.adapter.is_some()) {
         auto adapter_root = task.source_root.as_path();
         if (declaration.adapter_root.is_some()) adapter_root = declaration.adapter_root->as_path();
         auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
@@ -133,16 +148,17 @@ auto prepare_external_source_task(ExternalSourceTask task)
         .declaration = task.declaration,
         .requirement =
             PreparedCMakeDependencyRequirement {
-                .alias            = declaration.alias.clone(),
-                .package          = declaration.package.clone(),
-                .source           = rstd::move(source),
-                .integration      = declaration.integration,
-                .add_subdirectory = declaration.add_subdirectory,
-                .adapter          = rstd::move(adapter),
-                .adapter_identity = rstd::move(adapter_identity),
-                .config_directory = rstd::move(config_directory),
-                .cache            = rstd::move(cache),
-                .targets          = rstd::move(targets),
+                .alias              = declaration.alias.clone(),
+                .package            = declaration.package.clone(),
+                .source             = rstd::move(source),
+                .installed_override = task.installed_override,
+                .integration        = declaration.integration,
+                .add_subdirectory   = task.installed_override ? true : declaration.add_subdirectory,
+                .adapter            = rstd::move(adapter),
+                .adapter_identity   = rstd::move(adapter_identity),
+                .config_directory   = rstd::move(config_directory),
+                .cache              = rstd::move(cache),
+                .targets            = rstd::move(targets),
             },
     });
 }
@@ -161,17 +177,29 @@ auto tokenize_pkg_config_fragments(ref<str> input)
     return Ok(rstd::move(tokens).unwrap());
 }
 
-auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
-                                         const Vec<String>&                    selected_packages,
+auto resolve_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                          lito::source::SourceResolutionOptions options,
                                          ToolResolver&                         resolver,
                                          const ResolvedProcessEnvironment&     environment,
-                                         usize                                 jobs     = usize(1),
                                          BuildEventSink                        observer = {})
+    -> lito::dependency::DependencyResult<DeclaredExternalDependencySources> {
+    return resolve_declared_external_dependency_sources(
+        graph, rstd::move(options), resolver, environment, source_observer(observer));
+}
+
+auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& graph,
+                                         const Vec<String>&                   selected_packages,
+                                         DeclaredExternalDependencySources    declared,
+                                         const lito::dependency::CMakeBuildOverrideSet& overrides,
+                                         ToolResolver&                                  resolver,
+                                         const ResolvedProcessEnvironment&              environment,
+                                         usize          jobs     = usize(1),
+                                         BuildEventSink observer = {})
     -> lito::dependency::DependencyResult<PreparedExternalDependencySources> {
     auto acquired = acquire_external_dependency_sources(graph,
                                                         selected_packages,
-                                                        rstd::move(options),
+                                                        rstd::move(declared),
+                                                        overrides,
                                                         resolver,
                                                         environment,
                                                         jobs,
@@ -183,11 +211,12 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
         auto& package     = graph.packages[source.package];
         auto& declaration = package.manifest.cmake_external_dependencies[source.declaration];
         tasks.push(ExternalSourceTask {
-            .package     = source.package,
-            .declaration = source.declaration,
-            .requirement = declaration.clone(),
-            .source_root = package.manifest.source_root.clone(),
-            .acquired    = rstd::move(source.acquired),
+            .package            = source.package,
+            .declaration        = source.declaration,
+            .requirement        = declaration.clone(),
+            .source_root        = package.manifest.source_root.clone(),
+            .installed_override = source.installed_override,
+            .acquired           = rstd::move(source.acquired),
         });
     }
     auto result = PreparedExternalDependencySources {};
@@ -239,6 +268,27 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
             return left.requirement.package < right.requirement.package;
         });
     return Ok(rstd::move(result));
+}
+
+auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
+                                         const Vec<String>&                    selected_packages,
+                                         lito::source::SourceResolutionOptions options,
+                                         ToolResolver&                         resolver,
+                                         const ResolvedProcessEnvironment&     environment,
+                                         usize                                 jobs     = usize(1),
+                                         BuildEventSink                        observer = {})
+    -> lito::dependency::DependencyResult<PreparedExternalDependencySources> {
+    auto declared = resolve_external_dependency_sources(
+        graph, rstd::move(options), resolver, environment, observer);
+    if (declared.is_err()) return Err(rstd::move(declared).unwrap_err());
+    return prepare_external_dependency_sources(graph,
+                                               selected_packages,
+                                               rstd::move(declared).unwrap(),
+                                               lito::dependency::CMakeBuildOverrideSet {},
+                                               resolver,
+                                               environment,
+                                               jobs,
+                                               observer);
 }
 
 auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
@@ -328,16 +378,17 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         });
     }
     return Ok(ResolvedCMakeDependencyRequirement {
-        .alias            = requirement.alias.clone(),
-        .package          = requirement.package.clone(),
-        .source           = rstd::move(source),
-        .integration      = requirement.integration,
-        .add_subdirectory = requirement.add_subdirectory,
-        .adapter          = rstd::move(adapter),
-        .adapter_identity = requirement.adapter_identity.clone(),
-        .config_directory = rstd::move(config_directory),
-        .cache            = rstd::move(cache),
-        .targets          = rstd::move(targets),
+        .alias              = requirement.alias.clone(),
+        .package            = requirement.package.clone(),
+        .source             = rstd::move(source),
+        .installed_override = requirement.installed_override,
+        .integration        = requirement.integration,
+        .add_subdirectory   = requirement.add_subdirectory,
+        .adapter            = rstd::move(adapter),
+        .adapter_identity   = requirement.adapter_identity.clone(),
+        .config_directory   = rstd::move(config_directory),
+        .cache              = rstd::move(cache),
+        .targets            = rstd::move(targets),
     });
 }
 

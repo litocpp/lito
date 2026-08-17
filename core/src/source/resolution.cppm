@@ -3,6 +3,7 @@ export module lito.core:source.resolution;
 import rstd;
 import :source.git;
 import :source.config;
+import :source.error;
 
 using namespace rstd::prelude;
 
@@ -36,5 +37,46 @@ struct SourceResolutionOptions {
         };
     }
 };
+
+struct GitSourceSelection {
+    Option<usize>  pin;
+    Option<String> exact_commit;
+};
+
+auto select_git_source(const SourceResolutionOptions& options,
+                       ref<str>                       url,
+                       const GitReference& reference) -> SourceResult<GitSourceSelection> {
+    auto matched = Option<usize> {};
+    for (usize index {}; index < options.git_sources.len(); ++index) {
+        const auto& source = options.git_sources[index];
+        if (source.git.as_str() != url || ! git_references_equal(source.reference, reference)) {
+            continue;
+        }
+        if (matched.is_some()) {
+            return source_failure<GitSourceSelection>(
+                rstd::format("lock contains more than one Git source for '{}'", url));
+        }
+        matched = Some(index);
+    }
+    if (options.git == GitResolutionMode::Refresh &&
+        options.sources.network == NetworkPolicy::Allow &&
+        reference.kind != GitReferenceKind::Commit) {
+        matched = None();
+    }
+    if (options.locked && matched.is_none()) {
+        return source_failure<GitSourceSelection>(
+            rstd::format("--locked has no source matching Git dependency '{}'", url));
+    }
+    auto exact_commit = Option<String> {};
+    if (matched.is_some()) {
+        exact_commit = Some(options.git_sources[*matched].commit.clone());
+    } else if (reference.kind == GitReferenceKind::Commit) {
+        exact_commit = Some(reference.value.clone());
+    }
+    return Ok(GitSourceSelection {
+        .pin          = rstd::move(matched),
+        .exact_commit = rstd::move(exact_commit),
+    });
+}
 
 } // namespace lito::source

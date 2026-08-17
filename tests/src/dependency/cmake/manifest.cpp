@@ -187,6 +187,107 @@ targets = [{ name = "FixtureShader::shader", visibility = "private" }]
     EXPECT_EQ(graph->sources.len(), source_count);
 }
 
+TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetching) {
+    auto reference = lito::source::GitReference {
+        .kind  = lito::source::GitReferenceKind::Branch,
+        .value = String::make("main"_str),
+    };
+    auto graph   = external_git_graph("https://example.invalid/fixture.git"_str,
+                                      source_root("cmake-override-git"_str).as_path(),
+                                      reference.clone());
+    auto options = lito::source::SourceResolutionOptions {
+        .locked = true,
+    };
+    options.git_sources.push(lito::source::GitSourcePin {
+        .git       = String::make("https://example.invalid/fixture.git"_str),
+        .reference = rstd::move(reference),
+        .commit    = String::make("0123456789abcdef0123456789abcdef01234567"_str),
+    });
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver = ToolResolver(*environment);
+    auto declared = lito::resolve_external_dependency_sources(
+        graph, rstd::move(options), resolver, *environment);
+    ASSERT_TRUE(declared.is_ok());
+    ASSERT_EQ(graph.externals.len(), usize(1));
+    ASSERT_TRUE(graph.externals[usize {}].source.is_Git());
+    EXPECT_EQ(graph.externals[usize {}].source.as_Git().commit.as_str(),
+              "0123456789abcdef0123456789abcdef01234567"_str);
+
+    auto selected  = strings("fixture-root"_str);
+    auto overrides = lito::dependency::CMakeBuildOverrideSet {};
+    overrides.entries.push(lito::dependency::CMakeBuildOverride {
+        .package = String::make("Fixture"_str),
+    });
+    auto prepared = lito::prepare_external_dependency_sources(
+        graph, selected, rstd::move(declared).unwrap(), overrides, resolver, *environment);
+    ASSERT_TRUE(prepared.is_ok());
+    ASSERT_EQ(prepared->dependencies.len(), usize(1));
+    EXPECT_TRUE(prepared->dependencies[usize {}].requirement.source.is_Installed());
+}
+
+TEST_F(CMakeManifest, InstalledOverrideRejectsMissesAndBuildTreeRequirements) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"([package]
+name = "cmake-override-build-tree"
+version = "0.1.0"
+[lib]
+name = "cmake-override-build-tree"
+module = "cmake.override_build_tree"
+archive = "cmake.override_build_tree"
+[external-dependencies.cmake.fixture]
+find-package = "LitoBuildTree"
+path = "project"
+integration = "build-tree"
+targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
+)"_str },
+        { "project/CMakeLists.txt"_str, "cmake_minimum_required(VERSION 3.28)\n"_str },
+    };
+    auto project = materialize("cmake-override-build-tree"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver   = ToolResolver(*environment);
+    auto build_tree = lito::dependency::CMakeBuildOverrideSet {};
+    build_tree.entries.push(lito::dependency::CMakeBuildOverride {
+        .package = String::make("LitoBuildTree"_str),
+    });
+    auto unselected_declared =
+        lito::resolve_external_dependency_sources(*graph, {}, resolver, *environment);
+    ASSERT_TRUE(unselected_declared.is_ok());
+    auto unselected = lito::prepare_external_dependency_sources(
+        *graph, {}, rstd::move(unselected_declared).unwrap(), build_tree, resolver, *environment);
+    ASSERT_TRUE(unselected.is_ok());
+    EXPECT_TRUE(unselected->dependencies.is_empty());
+
+    auto declared = lito::resolve_external_dependency_sources(*graph, {}, resolver, *environment);
+    ASSERT_TRUE(declared.is_ok());
+
+    auto selected = strings("cmake-override-build-tree"_str);
+    auto missing  = lito::dependency::CMakeBuildOverrideSet {};
+    missing.entries.push(lito::dependency::CMakeBuildOverride {
+        .package = String::make("Missing"_str),
+    });
+    auto missing_result = lito::prepare_external_dependency_sources(
+        *graph, selected, rstd::move(declared).unwrap(), missing, resolver, *environment);
+    ASSERT_TRUE(missing_result.is_err());
+    EXPECT_TRUE(error_chain_text(missing_result.unwrap_err())
+                    .as_str()
+                    .contains("does not match any find-package"_str));
+
+    auto declared_again =
+        lito::resolve_external_dependency_sources(*graph, {}, resolver, *environment);
+    ASSERT_TRUE(declared_again.is_ok());
+    auto build_tree_result = lito::prepare_external_dependency_sources(
+        *graph, selected, rstd::move(declared_again).unwrap(), build_tree, resolver, *environment);
+    ASSERT_TRUE(build_tree_result.is_err());
+    EXPECT_TRUE(error_chain_text(build_tree_result.unwrap_err())
+                    .as_str()
+                    .contains("cannot replace build-tree dependency"_str));
+}
+
 TEST_F(CMakeManifest, CMakeInvalidManifestDocumentsAreRejectedByManifestOwner) {
     struct InvalidManifest {
         ref<str> name;

@@ -99,10 +99,6 @@ auto git_status(Vec<String>                       arguments,
     return Ok(empty {});
 }
 
-auto same_reference(const GitReference& left, const GitReference& right) -> bool {
-    return git_references_equal(left, right);
-}
-
 struct ManagedSourceEntry {
     ResolvedPackageSource source;
 };
@@ -286,34 +282,8 @@ class SourceManager {
         return Ok(matched);
     }
 
-    auto locked_source(ref<str> url, const GitReference& reference)
-        -> SourceResult<Option<ref<GitSourcePin>>> {
-        auto matched = Option<ref<GitSourcePin>> {};
-        for (const auto& source : options_.git_sources) {
-            if (source.git.as_str() != url || ! same_reference(source.reference, reference)) {
-                continue;
-            }
-            if (matched.is_some()) {
-                return source_failure<Option<ref<GitSourcePin>>>(
-                    rstd::format("lock contains more than one Git source for '{}'", url));
-            }
-            matched = Some(ref<GitSourcePin>::from_raw_parts(rstd::addressof(source)));
-        }
-        return Ok(matched);
-    }
-
-    auto exact_git_commit(const GitReference& reference, Option<ref<GitSourcePin>> locked)
-        -> Option<ref<str>> {
-        if (locked.is_some()) return Some((*locked)->commit.as_str());
-        if (reference.kind == GitReferenceKind::Commit) return Some(reference.value.as_str());
-        return None();
-    }
-
-    auto prepared_exact_git_input(ref<str>                  url,
-                                  const GitReference&       reference,
-                                  Option<ref<GitSourcePin>> pin)
+    auto prepared_exact_git_input(ref<str> url, Option<ref<str>> commit)
         -> SourceResult<Option<ResolvedGitSeed>> {
-        auto commit = exact_git_commit(reference, pin);
         if (commit.is_none()) return Ok(None());
         auto patch = rstd_try(patched_path(url));
         if (patch.is_some()) {
@@ -333,19 +303,11 @@ class SourceManager {
     auto prepared_git_seed(const PackageSourceRequirement& requirement)
         -> SourceResult<Option<ResolvedGitSeed>> {
         if (! requirement.is_Git()) return Ok(None());
-        const auto& git    = requirement.as_Git();
-        auto        locked = rstd_try(locked_source(git.url.as_str(), git.reference));
-        auto        pin    = locked;
-        if (options_.git == GitResolutionMode::Refresh &&
-            options_.sources.network == NetworkPolicy::Allow &&
-            git.reference.kind != GitReferenceKind::Commit) {
-            pin = None();
-        }
-        if (options_.locked && pin.is_none()) {
-            return source_failure<Option<ResolvedGitSeed>>(rstd::format(
-                "--locked has no source matching Git dependency '{}'", git.url.as_str()));
-        }
-        return prepared_exact_git_input(git.url.as_str(), git.reference, pin);
+        const auto& git = requirement.as_Git();
+        auto selection  = rstd_try(select_git_source(options_, git.url.as_str(), git.reference));
+        auto commit     = selection.exact_commit.is_some() ? Some(selection.exact_commit->as_str())
+                                                           : Option<ref<str>> {};
+        return prepared_exact_git_input(git.url.as_str(), commit);
     }
 
     auto source_cache_session() -> SourceResult<SourceCacheSession> {
@@ -701,21 +663,16 @@ class SourceManager {
         auto request_key = git_requirement_identity(url, reference);
         auto requested   = source_requests_.get(request_key.as_str());
         if (requested.is_some()) return Ok(**requested);
-        auto locked = locked_source(url, reference);
-        if (locked.is_err()) return Err(rstd::move(locked).unwrap_err());
-        auto pin = rstd::move(locked).unwrap();
-        if (options_.git == GitResolutionMode::Refresh &&
-            options_.sources.network == NetworkPolicy::Allow &&
-            reference.kind != GitReferenceKind::Commit) {
-            pin = Option<ref<GitSourcePin>> {};
+        auto selection = rstd_try(select_git_source(options_, url, reference));
+        auto pin       = Option<ref<GitSourcePin>> {};
+        if (selection.pin.is_some()) {
+            pin = Some(ref<GitSourcePin>::from_raw_parts(
+                rstd::addressof(options_.git_sources[*selection.pin])));
         }
-        if (options_.locked && pin.is_none()) {
-            return source_failure<usize>(
-                rstd::format("--locked has no source matching Git dependency '{}'", url));
-        }
-
-        auto exact_commit = exact_git_commit(reference, pin);
-        auto input        = rstd_try(prepared_exact_git_input(url, reference, pin));
+        auto exact_commit = selection.exact_commit.is_some()
+                                ? Some(selection.exact_commit->as_str())
+                                : Option<ref<str>> {};
+        auto input        = rstd_try(prepared_exact_git_input(url, exact_commit));
         if (input.is_some()) {
             auto resolved   = rstd::move(input).unwrap();
             auto registered = rstd_try(register_git_source(
@@ -794,22 +751,18 @@ class SourceManager {
 
     auto resolve_git(ref<str> url, const GitReference& reference)
         -> SourceResult<ResolvedPackageSource> {
-        auto locked = rstd_try(locked_source(url, reference));
-        auto pin    = locked;
-        if (options_.git == GitResolutionMode::Refresh &&
-            options_.sources.network == NetworkPolicy::Allow &&
-            reference.kind != GitReferenceKind::Commit) {
-            pin = None();
+        auto selection = rstd_try(select_git_source(options_, url, reference));
+        auto pin       = Option<ref<GitSourcePin>> {};
+        if (selection.pin.is_some()) {
+            pin = Some(ref<GitSourcePin>::from_raw_parts(
+                rstd::addressof(options_.git_sources[*selection.pin])));
         }
-        if (options_.locked && pin.is_none()) {
-            return source_failure<ResolvedPackageSource>(
-                rstd::format("--locked has no source matching Git dependency '{}'", url));
-        }
-
         auto precise_commit = String::make();
-        auto exact_commit   = exact_git_commit(reference, pin);
+        auto exact_commit   = selection.exact_commit.is_some()
+                                  ? Some(selection.exact_commit->as_str())
+                                  : Option<ref<str>> {};
         if (exact_commit.is_some()) {
-            auto input = rstd_try(prepared_exact_git_input(url, reference, pin));
+            auto input = rstd_try(prepared_exact_git_input(url, exact_commit));
             if (input.is_some()) precise_commit = String::make(*exact_commit);
         }
         if (precise_commit.is_empty()) {

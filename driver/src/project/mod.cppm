@@ -78,18 +78,19 @@ auto start_project_resolution(const lito::package::PackageSelection&    selectio
     });
 }
 
-auto resolve_project(const lito::package::PackageSelection&    selection,
-                     lito::package::PackageSelectionPurpose    purpose,
-                     const lito::source::PackageSourceConfig&  sources,
-                     const lito::lock::LockConfig&             lock_config,
-                     bool                                      locked,
-                     lito::source::GitResolutionMode           git,
-                     const TargetInfo*                         target,
-                     ToolResolver&                             tool_resolver,
-                     const ResolvedProcessEnvironment&         environment,
-                     usize                                     jobs     = usize(1),
-                     BuildEventSink                            observer = {},
-                     Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+auto resolve_project(const lito::package::PackageSelection&         selection,
+                     lito::package::PackageSelectionPurpose         purpose,
+                     const lito::source::PackageSourceConfig&       sources,
+                     const lito::lock::LockConfig&                  lock_config,
+                     bool                                           locked,
+                     lito::source::GitResolutionMode                git,
+                     const TargetInfo*                              target,
+                     ToolResolver&                                  tool_resolver,
+                     const ResolvedProcessEnvironment&              environment,
+                     const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+                     usize                                          jobs     = usize(1),
+                     BuildEventSink                                 observer = {},
+                     Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
     -> ProjectResult<ProjectResolution> {
     auto started = rstd_try(start_project_resolution(selection,
                                                      purpose,
@@ -103,15 +104,22 @@ auto resolve_project(const lito::package::PackageSelection&    selection,
                                                      jobs,
                                                      observer,
                                                      rstd::move(catalog)));
+    auto declared_sources =
+        rstd_try(resolve_external_dependency_sources(started.selection.graph,
+                                                     rstd::move(started.external),
+                                                     tool_resolver,
+                                                     environment,
+                                                     observer));
+    auto lock = rstd_try(lito::lock::sync_lock(started.selection.graph, rstd::move(started.lock)));
     auto external_sources =
         rstd_try(prepare_external_dependency_sources(started.selection.graph,
                                                      started.selection.selected_package_names,
-                                                     rstd::move(started.external),
+                                                     rstd::move(declared_sources),
+                                                     cmake_build_overrides,
                                                      tool_resolver,
                                                      environment,
                                                      jobs,
                                                      observer));
-    auto lock = rstd_try(lito::lock::sync_lock(started.selection.graph, rstd::move(started.lock)));
     return Ok(ProjectResolution {
         .selection        = rstd::move(started.selection),
         .lock             = lock,
@@ -170,18 +178,19 @@ struct ResolvedProjectSession {
     BuildPlatform         platform;
 };
 
-auto resolve_project_session(const lito::package::PackageSelection&    selection,
-                             const cpp::BuildConfiguration&            configuration,
-                             const lito::source::PackageSourceConfig&  sources,
-                             const lito::lock::LockConfig&             lock,
-                             const ClangToolchain&                     toolchain,
-                             ToolResolver&                             tool_resolver,
-                             const ResolvedProcessEnvironment&         environment,
-                             bool                                      locked,
-                             lito::package::PackageSelectionPurpose    purpose,
-                             usize                                     jobs,
-                             const Option<BuildEventSink>&             observer = None(),
-                             Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+auto resolve_project_session(const lito::package::PackageSelection&         selection,
+                             const cpp::BuildConfiguration&                 configuration,
+                             const lito::source::PackageSourceConfig&       sources,
+                             const lito::lock::LockConfig&                  lock,
+                             const ClangToolchain&                          toolchain,
+                             ToolResolver&                                  tool_resolver,
+                             const ResolvedProcessEnvironment&              environment,
+                             const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+                             bool                                           locked,
+                             lito::package::PackageSelectionPurpose         purpose,
+                             usize                                          jobs,
+                             const Option<BuildEventSink>&                  observer = None(),
+                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
     -> ProjectResult<ResolvedProjectSession> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
@@ -197,6 +206,7 @@ auto resolve_project_session(const lito::package::PackageSelection&    selection
                                              rstd::addressof(platform.effective_target),
                                              tool_resolver,
                                              environment,
+                                             cmake_build_overrides,
                                              jobs,
                                              observer_value(observer),
                                              rstd::move(catalog)));
@@ -323,6 +333,7 @@ auto resolve_project_metadata(
     const lito::lock::LockConfig&                    lock,
     const lito::dependency::PkgConfigProviderConfig& pkg_config,
     const lito::dependency::CMakeProviderConfig&     cmake,
+    const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
     const ClangToolchain&                            toolchain,
     ToolResolver&                                    tool_resolver,
     const ResolvedProcessEnvironment&                environment,
@@ -339,6 +350,7 @@ auto resolve_project_metadata(
                                                     toolchain,
                                                     tool_resolver,
                                                     environment,
+                                                    cmake_build_overrides,
                                                     locked,
                                                     purpose,
                                                     jobs,
@@ -367,6 +379,7 @@ auto prepare_build_project(
     const lito::lock::LockConfig&                    lock,
     const lito::dependency::PkgConfigProviderConfig& pkg_config,
     const lito::dependency::CMakeProviderConfig&     cmake,
+    const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
     ToolResolver&                                    tool_resolver,
     const ResolvedProcessEnvironment&                environment,
     bool                                             locked,
@@ -389,6 +402,7 @@ auto prepare_build_project(
                                              lock,
                                              pkg_config,
                                              cmake,
+                                             cmake_build_overrides,
                                              toolchain,
                                              tool_resolver,
                                              environment,
@@ -434,6 +448,7 @@ auto update_project_dependencies(ref<rstd::path::Path>                    root,
                                              nullptr,
                                              tool_resolver,
                                              environment,
+                                             lito::dependency::CMakeBuildOverrideSet {},
                                              jobs,
                                              observer_value(observer)));
     return Ok(resolved.lock);

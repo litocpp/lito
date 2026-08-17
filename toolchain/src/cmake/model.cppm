@@ -209,14 +209,15 @@ auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requireme
         });
     }
     auto result = ResolvedCMakeDependencyRequirement {
-        .alias            = requirement.alias.clone(),
-        .package          = requirement.package.clone(),
-        .source           = clone_cmake_source(requirement.source),
-        .integration      = requirement.integration,
-        .add_subdirectory = requirement.add_subdirectory,
-        .adapter_identity = requirement.adapter_identity.clone(),
-        .cache            = rstd::move(cache),
-        .targets          = rstd::move(targets),
+        .alias              = requirement.alias.clone(),
+        .package            = requirement.package.clone(),
+        .source             = clone_cmake_source(requirement.source),
+        .installed_override = requirement.installed_override,
+        .integration        = requirement.integration,
+        .add_subdirectory   = requirement.add_subdirectory,
+        .adapter_identity   = requirement.adapter_identity.clone(),
+        .cache              = rstd::move(cache),
+        .targets            = rstd::move(targets),
     };
     if (requirement.adapter.is_some()) result.adapter = Some(requirement.adapter->clone());
     if (requirement.config_directory.is_some()) {

@@ -27,6 +27,7 @@ class DependencyError {
               (CMakeOperation,
                (String dependency; String operation; PathBuf work_area;
                 Box<DependencyError>                         source;)),
+              (CMakeOverride, (String package; Box<DependencyError> source;)),
               (Message, (String message;)))
 };
 
@@ -99,6 +100,12 @@ struct Impl<fmt::Display, lito::dependency::DependencyError>
                                      value.operation,
                                      value.work_area.as_path()));
         }
+        if (error.is_CMakeOverride()) {
+            return formatter.write_fmt(fmt::Arguments::make(
+                "CMake package '{}' selected by cmake.overrides.{}.source = 'installed' failed",
+                error.as_CMakeOverride().package,
+                error.as_CMakeOverride().package));
+        }
         return formatter.write_str(error.as_Message().message.as_str());
     }
 };
@@ -132,6 +139,9 @@ struct Impl<error::Error, lito::dependency::DependencyError>
         }
         if (error.is_CMakeOperation()) {
             return Some(dyn<error::Error>::from_ref(*error.as_CMakeOperation().source));
+        }
+        if (error.is_CMakeOverride()) {
+            return Some(dyn<error::Error>::from_ref(*error.as_CMakeOverride().source));
         }
         return None();
     }

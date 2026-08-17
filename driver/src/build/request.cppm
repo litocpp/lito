@@ -39,6 +39,7 @@ struct BuildRequest {
     lito::source::PackageSourceConfig         sources;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
+    lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
     lito::package::PackageSelectionPurpose    purpose {
         lito::package::PackageSelectionPurpose::Production
     };

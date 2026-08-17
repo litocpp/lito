@@ -167,6 +167,12 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     auto assets          = ExternalAssetCatalog {};
     auto cmake_work_root = layout.cmake_work_root();
     for (auto& binding : bindings) {
+        auto contextualize = [&](lito::dependency::DependencyError error) {
+            if (! binding.requirement.installed_override) return error;
+            return lito::dependency::DependencyError::CMakeOverride(
+                binding.requirement.package.clone(),
+                Box<lito::dependency::DependencyError>::make(rstd::move(error)));
+        };
         auto plan = plan_cmake_package(binding.requirement,
                                        resolved_cmake,
                                        configuration,
@@ -175,7 +181,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        platform.effective_target.triple.as_str(),
                                        cmake_work_root.as_path(),
                                        jobs);
-        if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
+        if (plan.is_err()) return Err(contextualize(rstd::move(plan).unwrap_err()));
         auto key_text = plan->area.query_root.as_path().to_str();
         if (key_text.is_none()) {
             return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
@@ -192,7 +198,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             snapshots.insert(String::make(*key_text), rstd::move(executed).unwrap());
             return materialized;
         }();
-        if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+        if (usage.is_err()) return Err(contextualize(rstd::move(usage).unwrap_err()));
         auto dependency = rstd::move(usage).unwrap();
         auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
         dependency.link_arguments    = rstd::move(normalized.arguments);

@@ -120,6 +120,34 @@
         },
         "search-path": {
           "$ref": "#/definitions/directoryArray"
+        },
+        "overrides": {
+          "$ref": "#/definitions/cmakeOverrides"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeOverrides": {
+      "description": "Invocation-local CMake package source materialization overrides. This field is not permitted in lito-config.toml.",
+      "type": "object",
+      "patternProperties": {
+        "^(?!-)[A-Za-z0-9_.+\\-]+$": {
+          "$ref": "#/definitions/cmakeOverride"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cmakeOverride": {
+      "type": "object",
+      "required": [
+        "source"
+      ],
+      "properties": {
+        "source": {
+          "type": "string",
+          "enum": [
+            "installed"
+          ]
         }
       },
       "additionalProperties": false
