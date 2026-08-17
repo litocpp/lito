@@ -47,6 +47,9 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
     EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-fvisibility=hidden"_str));
+    EXPECT_FALSE(has_prefix(invocation->arguments, "-ftype-visibility="_str));
+    EXPECT_FALSE(has_argument(invocation->arguments, "-fvisibility-inlines-hidden"_str));
     EXPECT_FALSE(has_argument(invocation->arguments, "-fsized-deallocation"_str));
     EXPECT_FALSE(has_argument(invocation->arguments, "-fno-sized-deallocation"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
@@ -63,6 +66,23 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
         toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(disabled_invocation.is_ok());
     EXPECT_TRUE(has_argument(disabled_invocation->arguments, "-fno-sized-deallocation"_str));
+
+    context.cpp.codegen.visibility.symbols = cpp::CppSymbolVisibility::Default;
+    context.cpp.codegen.visibility.types = Some(cpp::CppSymbolVisibility::Protected);
+    context.cpp.codegen.visibility.inlines_hidden = true;
+    auto visibility_invocation =
+        toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
+    ASSERT_TRUE(visibility_invocation.is_ok());
+    EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-fvisibility=default"_str));
+    EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-ftype-visibility=protected"_str));
+    EXPECT_TRUE(
+        has_argument(visibility_invocation->arguments, "-fvisibility-inlines-hidden"_str));
+
+    context.cpp.codegen.lto = lito::manifest::CppLto::Thin;
+    auto lto_invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
+    ASSERT_TRUE(lto_invocation.is_ok());
+    EXPECT_TRUE(has_argument(lto_invocation->arguments, "-flto=thin"_str));
+    EXPECT_TRUE(has_argument(lto_invocation->arguments, "-fvisibility=default"_str));
 }
 
 TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {

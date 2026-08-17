@@ -24,6 +24,14 @@ enum class CppSizedDeallocation
     Disabled,
 };
 
+enum class CppSymbolVisibility
+{
+    Default,
+    Hidden,
+    Internal,
+    Protected,
+};
+
 enum class CppThreadingModel
 {
     Posix,
@@ -123,6 +131,8 @@ enum class CppCompilerArgumentKind
     CodegenMode,
     Threading,
     Instrumentation,
+    SymbolVisibility,
+    TypeVisibility,
     Diagnostic,
     VendorLanguage,
     VendorCodegen,
@@ -221,11 +231,18 @@ struct CppPreprocessorOptions {
     Vec<CppMacroDirective>   macros;
 };
 
+struct CppVisibilityOptions {
+    CppSymbolVisibility         symbols { CppSymbolVisibility::Hidden };
+    Option<CppSymbolVisibility> types;
+    bool                        inlines_hidden { false };
+};
+
 struct CppCodegenOptions {
     lito::manifest::CppOptimization optimization { lito::manifest::CppOptimization::Default };
     lito::manifest::CppDebugInfo    debug_info { lito::manifest::CppDebugInfo::None };
     lito::manifest::CppLto          lto { lito::manifest::CppLto::Off };
     bool                            position_independent_code { true };
+    CppVisibilityOptions            visibility;
     Vec<CppFamilyOption>            modes;
     Vec<String>                     instrumentation;
 };
@@ -271,6 +288,9 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (Threading, (CppThreadingModel model;)),
               (Instrumentation, (String value;)),
               (PositionIndependentCode, (bool enabled;)),
+              (SymbolVisibility, (CppSymbolVisibility value;)),
+              (TypeVisibility, (CppSymbolVisibility value;)),
+              (InlineVisibilityHidden, (bool enabled;)),
               (SizedDeallocation, (CppSizedDeallocation value;)),
               (Warning, (CppWarningOption option;)),
               (Diagnostic, (String value;)),
@@ -371,6 +391,15 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(PositionIndependentCode, enabled) {
             return CppCompilerArgument::PositionIndependentCode(enabled);
         }
+        RSTD_CASE(SymbolVisibility, value) {
+            return CppCompilerArgument::SymbolVisibility(value);
+        }
+        RSTD_CASE(TypeVisibility, value) {
+            return CppCompilerArgument::TypeVisibility(value);
+        }
+        RSTD_CASE(InlineVisibilityHidden, enabled) {
+            return CppCompilerArgument::InlineVisibilityHidden(enabled);
+        }
         RSTD_CASE(SizedDeallocation, value) {
             return CppCompilerArgument::SizedDeallocation(value);
         }
@@ -430,6 +459,11 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
                 .debug_info                = input.codegen.debug_info,
                 .lto                       = input.codegen.lto,
                 .position_independent_code = input.codegen.position_independent_code,
+                .visibility                =
+                    CppVisibilityOptions {
+                        .symbols        = input.codegen.visibility.symbols,
+                        .inlines_hidden = input.codegen.visibility.inlines_hidden,
+                    },
                 .modes                     = as<Clone>(input.codegen.modes).clone(),
                 .instrumentation           = as<Clone>(input.codegen.instrumentation).clone(),
             },
@@ -446,6 +480,10 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
     }
     if (input.abi.resolved_standard_library.is_some()) {
         result.abi.resolved_standard_library = Some(input.abi.resolved_standard_library->clone());
+    }
+    if (input.codegen.visibility.types.is_some()) {
+        result.codegen.visibility.types =
+            Some(CppSymbolVisibility(*input.codegen.visibility.types));
     }
     result.target.features = as<Clone>(input.target.features).clone();
     return result;
@@ -505,6 +543,24 @@ auto cpp_sized_deallocation_name(CppSizedDeallocation value) noexcept -> ref<str
     case CppSizedDeallocation::Disabled: return "disabled"_str;
     }
     return "auto"_str;
+}
+
+auto cpp_symbol_visibility_name(CppSymbolVisibility value) noexcept -> ref<str> {
+    switch (value) {
+    case CppSymbolVisibility::Default: return "default"_str;
+    case CppSymbolVisibility::Hidden: return "hidden"_str;
+    case CppSymbolVisibility::Internal: return "internal"_str;
+    case CppSymbolVisibility::Protected: return "protected"_str;
+    }
+    return "hidden"_str;
+}
+
+auto parse_cpp_symbol_visibility(ref<str> value) noexcept -> Option<CppSymbolVisibility> {
+    if (value == "default"_str) return Some(CppSymbolVisibility::Default);
+    if (value == "hidden"_str) return Some(CppSymbolVisibility::Hidden);
+    if (value == "internal"_str) return Some(CppSymbolVisibility::Internal);
+    if (value == "protected"_str) return Some(CppSymbolVisibility::Protected);
+    return None();
 }
 
 auto cpp_warning_name(CppWarning value) noexcept -> ref<str> {

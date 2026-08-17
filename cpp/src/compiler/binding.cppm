@@ -124,37 +124,38 @@ auto compiler_argument_raw_tokens(const CompilerArgumentMatch& matched) -> Vec<S
 }
 
 auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
-                                const CppCompilerArgumentBinding* binding) -> CppCompilerArgument {
+                                const CppCompilerArgumentBinding* binding,
+                                ref<str> source) -> CppOptionResult<CppCompilerArgument> {
     if (binding == nullptr) {
-        return CppCompilerArgument::Vendor(CppVendorOption {
+        return Ok(CppCompilerArgument::Vendor(CppVendorOption {
             .value               = matched.raw_tokens[usize {}].clone(),
             .raw_tokens          = compiler_argument_raw_tokens(matched),
             .effect              = CppVendorOptionEffect::Unknown,
             .preserve_raw_tokens = true,
-        });
+        }));
     }
-    if (binding->typed.is_some()) return as<Clone>(*binding->typed).clone();
+    if (binding->typed.is_some()) return Ok(as<Clone>(*binding->typed).clone());
     auto kind = binding->kind;
     switch (kind) {
     case CppCompilerArgumentKind::MacroDefine:
     case CppCompilerArgumentKind::MacroUndefine:
-        return CppCompilerArgument::Macro(CppMacroDirective {
+        return Ok(CppCompilerArgument::Macro(CppMacroDirective {
             .action = kind == CppCompilerArgumentKind::MacroDefine ? CppMacroAction::Define
                                                                    : CppMacroAction::Undefine,
             .value  = compiler_argument_value(matched).clone(),
-        });
+        }));
     case CppCompilerArgumentKind::IncludeDirectory:
     case CppCompilerArgumentKind::SystemIncludeDirectory:
-        return CppCompilerArgument::IncludeDirectory(CppIncludeDirectory {
+        return Ok(CppCompilerArgument::IncludeDirectory(CppIncludeDirectory {
             .path = PathBuf::from(compiler_argument_value(matched).clone()),
             .kind = kind == CppCompilerArgumentKind::SystemIncludeDirectory
                         ? CppIncludeDirectoryKind::System
                         : CppIncludeDirectoryKind::User,
-        });
+        }));
     case CppCompilerArgumentKind::Target:
-        return CppCompilerArgument::Target(compiler_argument_value(matched).clone());
+        return Ok(CppCompilerArgument::Target(compiler_argument_value(matched).clone()));
     case CppCompilerArgumentKind::Sysroot:
-        return CppCompilerArgument::Sysroot(compiler_argument_value(matched).clone());
+        return Ok(CppCompilerArgument::Sysroot(compiler_argument_value(matched).clone()));
     case CppCompilerArgumentKind::OwnedLanguageStandard:
     case CppCompilerArgumentKind::OwnedStandardLibrary:
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
@@ -163,7 +164,7 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedOptimization:
     case CppCompilerArgumentKind::OwnedDebugInfo:
     case CppCompilerArgumentKind::OwnedLto:
-        return CppCompilerArgument::OwnedSetting(owned_setting(kind));
+        return Ok(CppCompilerArgument::OwnedSetting(owned_setting(kind)));
     case CppCompilerArgumentKind::LanguageMode:
     case CppCompilerArgumentKind::AbiMode:
     case CppCompilerArgumentKind::TargetMode:
@@ -172,41 +173,58 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
         if (family.is_empty()) {
             family = dynamic_target_family(compiler_argument_value(matched).as_str());
         }
-        return CppCompilerArgument::Family(
-            family_domain(kind), rstd::move(family), canonical_argument(matched));
+        return Ok(CppCompilerArgument::Family(
+            family_domain(kind), rstd::move(family), canonical_argument(matched)));
     }
     case CppCompilerArgumentKind::Threading:
-        return CppCompilerArgument::Threading(CppThreadingModel::Posix);
+        return Ok(CppCompilerArgument::Threading(CppThreadingModel::Posix));
     case CppCompilerArgumentKind::Instrumentation:
-        return CppCompilerArgument::Instrumentation(canonical_argument(matched));
+        return Ok(CppCompilerArgument::Instrumentation(canonical_argument(matched)));
+    case CppCompilerArgumentKind::SymbolVisibility:
+    case CppCompilerArgumentKind::TypeVisibility: {
+        const auto& value = compiler_argument_value(matched);
+        auto parsed = parse_cpp_symbol_visibility(value.as_str());
+        if (parsed.is_none()) {
+            return Err(CppOptionError::Message(rstd::format(
+                "{} arguments {}..{}: invalid visibility value '{}' in '{}'; expected default, hidden, internal, or protected",
+                source,
+                matched.range.begin,
+                matched.range.end,
+                value.as_str(),
+                matched.raw_tokens[usize {}].as_str())));
+        }
+        return Ok(kind == CppCompilerArgumentKind::SymbolVisibility
+                      ? CppCompilerArgument::SymbolVisibility(*parsed)
+                      : CppCompilerArgument::TypeVisibility(*parsed));
+    }
     case CppCompilerArgumentKind::Diagnostic:
-        return CppCompilerArgument::Diagnostic(canonical_argument(matched));
+        return Ok(CppCompilerArgument::Diagnostic(canonical_argument(matched)));
     case CppCompilerArgumentKind::VendorLanguage:
-        return CppCompilerArgument::Vendor(CppVendorOption {
+        return Ok(CppCompilerArgument::Vendor(CppVendorOption {
             .value      = canonical_argument(matched),
             .raw_tokens = compiler_argument_raw_tokens(matched),
             .effect     = CppVendorOptionEffect::Language,
-        });
+        }));
     case CppCompilerArgumentKind::VendorCodegen:
-        return CppCompilerArgument::Vendor(CppVendorOption {
+        return Ok(CppCompilerArgument::Vendor(CppVendorOption {
             .value      = canonical_argument(matched),
             .raw_tokens = compiler_argument_raw_tokens(matched),
             .effect     = CppVendorOptionEffect::Codegen,
-        });
+        }));
     case CppCompilerArgumentKind::VendorPreprocessorUnsupported:
-        return CppCompilerArgument::Vendor(CppVendorOption {
+        return Ok(CppCompilerArgument::Vendor(CppVendorOption {
             .value                           = canonical_argument(matched),
             .raw_tokens                      = compiler_argument_raw_tokens(matched),
             .effect                          = CppVendorOptionEffect::Preprocessor,
             .native_preprocessor_unsupported = true,
-        });
+        }));
     }
-    return CppCompilerArgument::Vendor(CppVendorOption {
+    return Ok(CppCompilerArgument::Vendor(CppVendorOption {
         .value               = matched.raw_tokens[usize {}].clone(),
         .raw_tokens          = compiler_argument_raw_tokens(matched),
         .effect              = CppVendorOptionEffect::Unknown,
         .preserve_raw_tokens = true,
-    });
+    }));
 }
 
 } // namespace lito::cpp

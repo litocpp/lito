@@ -76,6 +76,62 @@ TEST(CompilerArguments, ReportsMissingAndEmptyValuesAtTheParserBoundary) {
     EXPECT_TRUE(empty_error.as_Argument().source.is_EmptyValue());
 }
 
+TEST(CompilerArguments, DecodesFiniteVisibilityValuesAtTheBindingBoundary) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto parsed = parser->parse(strings("-fvisibility=default"_str,
+                                        "-fvisibility=hidden"_str,
+                                        "-fvisibility=internal"_str,
+                                        "-fvisibility=protected"_str,
+                                        "-ftype-visibility=default"_str,
+                                        "-ftype-visibility=hidden"_str,
+                                        "-ftype-visibility=internal"_str,
+                                        "-ftype-visibility=protected"_str,
+                                        "-fvisibility-inlines-hidden"_str,
+                                        "-fno-visibility-inlines-hidden"_str),
+                                "compiler.visibility"_str);
+    ASSERT_TRUE(parsed.is_ok());
+    ASSERT_EQ(parsed->occurrences.len(), usize(10));
+    EXPECT_EQ(parsed->occurrences[usize {}].argument.as_SymbolVisibility().value,
+              cpp::CppSymbolVisibility::Default);
+    EXPECT_EQ(parsed->occurrences[usize(1)].argument.as_SymbolVisibility().value,
+              cpp::CppSymbolVisibility::Hidden);
+    EXPECT_EQ(parsed->occurrences[usize(2)].argument.as_SymbolVisibility().value,
+              cpp::CppSymbolVisibility::Internal);
+    EXPECT_EQ(parsed->occurrences[usize(3)].argument.as_SymbolVisibility().value,
+              cpp::CppSymbolVisibility::Protected);
+    EXPECT_EQ(parsed->occurrences[usize(4)].argument.as_TypeVisibility().value,
+              cpp::CppSymbolVisibility::Default);
+    EXPECT_EQ(parsed->occurrences[usize(5)].argument.as_TypeVisibility().value,
+              cpp::CppSymbolVisibility::Hidden);
+    EXPECT_EQ(parsed->occurrences[usize(6)].argument.as_TypeVisibility().value,
+              cpp::CppSymbolVisibility::Internal);
+    EXPECT_EQ(parsed->occurrences[usize(7)].argument.as_TypeVisibility().value,
+              cpp::CppSymbolVisibility::Protected);
+    EXPECT_TRUE(parsed->occurrences[usize(8)].argument.as_InlineVisibilityHidden().enabled);
+    EXPECT_FALSE(parsed->occurrences[usize(9)].argument.as_InlineVisibilityHidden().enabled);
+
+    auto invalid = parser->parse(strings("-fvisibility=public"_str), "compiler.visibility"_str);
+    ASSERT_TRUE(invalid.is_err());
+    auto error = rstd::move(invalid).unwrap_err();
+    ASSERT_TRUE(error.is_Argument());
+    ASSERT_TRUE(error.as_Argument().source.is_InvalidValue());
+    EXPECT_TRUE(rstd::format("{}", error).as_str().contains("compiler.visibility"_str));
+    auto invalid_source = rstd::format("{}", error.as_Argument().source);
+    EXPECT_TRUE(invalid_source.as_str().contains("public"_str));
+    EXPECT_TRUE(invalid_source.as_str().contains("protected"_str));
+
+    auto empty = parser->parse(strings("-ftype-visibility="_str), "compiler.visibility"_str);
+    ASSERT_TRUE(empty.is_err());
+    auto empty_error = rstd::move(empty).unwrap_err();
+    ASSERT_TRUE(empty_error.is_Argument());
+    EXPECT_TRUE(empty_error.as_Argument().source.is_EmptyValue());
+    EXPECT_TRUE(rstd::format("{}", empty_error).as_str().contains("compiler.visibility"_str));
+    EXPECT_TRUE(rstd::format("{}", empty_error.as_Argument().source)
+                    .as_str()
+                    .contains("protected"_str));
+}
+
 TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
     auto parser = make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

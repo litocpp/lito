@@ -1,4 +1,5 @@
 #include <rstd/test/gtest.hpp>
+#include <rstd/macro.hpp>
 
 import rstd;
 import rstd.test;
@@ -260,6 +261,7 @@ members = ["provider", "consumer"]
 
 [workspace.package]
 version = "0.1.0"
+
 )toml"_str },
         { "provider/lito.toml"_str, R"toml([package]
 name = "fixture-feature-provider"
@@ -326,4 +328,170 @@ auto main() -> int {
     }
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(1));
+}
+
+TEST_F(BuildCommand, VisibilityRemainsTargetLocalAcrossModulesAndStaticLinks) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-visibility"
+members = ["hidden-lib", "default-app", "default-lib", "hidden-app"]
+
+[workspace.package]
+version = "0.1.0"
+
+[profile.visibility-lto]
+inherits = "release"
+lto = "thin"
+)toml"_str },
+        { "hidden-lib/lito.toml"_str, R"toml([package]
+name = "fixture-hidden-lib"
+version.workspace = true
+
+[lib]
+name = "fixture-hidden-lib"
+module = "fixture.visibility.hidden"
+archive = "fixture_hidden_lib"
+
+[usage]
+options = ["-fvisibility=hidden"]
+)toml"_str },
+        { "hidden-lib/src/lib.cppm"_str, R"cpp(export module fixture.visibility.hidden;
+
+export extern "C" auto fixture_hidden_symbol() -> int {
+    return 21;
+}
+
+export extern "C" __attribute__((visibility("default")))
+auto fixture_explicit_public_symbol() -> int {
+    return 21;
+}
+)cpp"_str },
+        { "default-app/lito.toml"_str, R"toml([package]
+name = "fixture-default-app"
+version.workspace = true
+
+[[bin]]
+name = "fixture-default-app"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[usage]
+options = ["-fvisibility=default"]
+
+[dependencies.fixture-hidden-lib]
+path = "../hidden-lib"
+visibility = "private"
+)toml"_str },
+        { "default-app/src/main.cpp"_str, R"cpp(import fixture.visibility.hidden;
+
+auto main() -> int {
+    return fixture_hidden_symbol() + fixture_explicit_public_symbol() == 42 ? 0 : 1;
+}
+)cpp"_str },
+        { "default-lib/lito.toml"_str, R"toml([package]
+name = "fixture-default-lib"
+version.workspace = true
+
+[lib]
+name = "fixture-default-lib"
+module = "fixture.visibility.public_"
+archive = "fixture_default_lib"
+
+[usage]
+options = ["-fvisibility=default"]
+)toml"_str },
+        { "default-lib/src/lib.cppm"_str, R"cpp(export module fixture.visibility.public_;
+
+export extern "C" auto fixture_default_symbol() -> int {
+    return 42;
+}
+)cpp"_str },
+        { "hidden-app/lito.toml"_str, R"toml([package]
+name = "fixture-hidden-app"
+version.workspace = true
+
+[[bin]]
+name = "fixture-hidden-app"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-default-lib]
+path = "../default-lib"
+visibility = "private"
+)toml"_str },
+        { "hidden-app/src/main.cpp"_str, R"cpp(import fixture.visibility.public_;
+
+auto main() -> int {
+    return fixture_default_symbol() == 42 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("visibility"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request("visibility"_str,
+                                         project->root.as_path(),
+                                         strings("fixture-default-app"_str,
+                                                 "fixture-hidden-app"_str));
+    auto result = lito::build(request);
+    if (result.is_err()) {
+        auto message = error_chain_text(result.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(2));
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(2));
+
+#if RSTD_OS_LINUX
+    for (const auto& artifact : result->artifacts) {
+        if (artifact.kind != lito::cpp::ArtifactKind::StaticLibrary) continue;
+        auto command = rstd::process::Command::make("/nix/opt/llvm/22/bin/llvm-readelf"_str);
+        command.arg("--symbols"_str).arg(artifact.path.as_path().as_os_str());
+        auto output = command.output();
+        ASSERT_TRUE(output.is_ok());
+        ASSERT_TRUE(output->status.success());
+        auto text = String::from_utf8(rstd::move(output->stdout_buf));
+        ASSERT_TRUE(text.is_ok());
+        if (artifact.target.package.as_str() == "fixture-hidden-lib"_str) {
+            EXPECT_TRUE(text->as_str().contains("HIDDEN"_str));
+            EXPECT_TRUE(text->as_str().contains("fixture_hidden_symbol"_str));
+            EXPECT_TRUE(text->as_str().contains("DEFAULT"_str));
+            EXPECT_TRUE(text->as_str().contains("fixture_explicit_public_symbol"_str));
+        } else if (artifact.target.package.as_str() == "fixture-default-lib"_str) {
+            EXPECT_TRUE(text->as_str().contains("DEFAULT"_str));
+            EXPECT_TRUE(text->as_str().contains("fixture_default_symbol"_str));
+        }
+    }
+#endif
+
+    auto hidden_manifest = project->root.join(PathBuf::from("hidden-lib/lito.toml"_str).as_path());
+    auto changed = rstd::fs::write(hidden_manifest.as_path(),
+                                   R"toml([package]
+name = "fixture-hidden-lib"
+version.workspace = true
+
+[lib]
+name = "fixture-hidden-lib"
+module = "fixture.visibility.hidden"
+archive = "fixture_hidden_lib"
+
+[usage]
+options = ["-fvisibility=default"]
+)toml"_str.as_bytes());
+    ASSERT_TRUE(changed.is_ok());
+    auto rebuilt = lito::build(request);
+    ASSERT_TRUE(rebuilt.is_ok());
+    EXPECT_EQ(rebuilt->frontend.persistent_scan_hits, usize(4));
+    EXPECT_EQ(rebuilt->frontend.persistent_scan_misses, usize {});
+    EXPECT_EQ(rebuilt->frontend.analyze_builds, usize {});
+    EXPECT_TRUE(rebuilt->compiled > usize {});
+
+    auto lto_request = project_build_request("visibility-lto"_str,
+                                             project->root.as_path(),
+                                             strings("fixture-default-app"_str,
+                                                     "fixture-hidden-app"_str),
+                                             build_profile("visibility-lto"_str));
+    auto lto = lito::build(lto_request);
+    ASSERT_TRUE(lto.is_ok());
+    EXPECT_EQ(artifact_count(*lto, lito::cpp::ArtifactKind::StaticLibrary), usize(2));
+    EXPECT_EQ(artifact_count(*lto, lito::cpp::ArtifactKind::Executable), usize(2));
 }

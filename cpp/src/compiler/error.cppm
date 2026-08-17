@@ -13,7 +13,7 @@ export namespace lito::cpp
 
 class CppOptionError {
     RSTD_ENUM(CppOptionError,
-              (Argument, (CompilerArgumentError source;)),
+              (Argument, (CompilerArgumentError source; String context;)),
               (Message, (String message;)))
 };
 
@@ -28,7 +28,7 @@ export namespace rstd
 template<>
 struct Impl<convert::From<lito::cpp::CompilerArgumentError>, lito::cpp::CppOptionError> {
     static auto from(lito::cpp::CompilerArgumentError error) -> lito::cpp::CppOptionError {
-        return lito::cpp::CppOptionError::Argument(rstd::move(error));
+        return lito::cpp::CppOptionError::Argument(rstd::move(error), String::make());
     }
 };
 
@@ -37,6 +37,11 @@ struct Impl<fmt::Display, lito::cpp::CppOptionError> : ImplBase<lito::cpp::CppOp
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Argument()) {
+            if (! error.as_Argument().context.is_empty()) {
+                return formatter.write_fmt(fmt::Arguments::make(
+                    "C++ compiler arguments from '{}' are invalid",
+                    error.as_Argument().context.as_str()));
+            }
             return formatter.write_raw("C++ compiler argument is invalid",
                                        sizeof("C++ compiler argument is invalid") - 1);
         }

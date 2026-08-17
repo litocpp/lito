@@ -208,6 +208,15 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             RSTD_CASE(PositionIndependentCode, enabled) {
                 input.codegen.position_independent_code = enabled;
             }
+            RSTD_CASE(SymbolVisibility, value) {
+                input.codegen.visibility.symbols = value;
+            }
+            RSTD_CASE(TypeVisibility, value) {
+                input.codegen.visibility.types = Some(value);
+            }
+            RSTD_CASE(InlineVisibilityHidden, enabled) {
+                input.codegen.visibility.inlines_hidden = enabled;
+            }
             RSTD_CASE(SizedDeallocation, value) {
                 input.language.sized_deallocation = value;
             }
@@ -299,6 +308,21 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
         .argument =
             CppCompilerArgument::PositionIndependentCode(extra.codegen.position_independent_code),
+    });
+    layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+        .argument = CppCompilerArgument::SymbolVisibility(extra.codegen.visibility.symbols),
+    });
+    if (extra.codegen.visibility.types.is_some()) {
+        layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::TypeVisibility(
+                CppSymbolVisibility(*extra.codegen.visibility.types)),
+        });
+    } else {
+        input.codegen.visibility.types = None();
+    }
+    layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
+        .argument = CppCompilerArgument::InlineVisibilityHidden(
+            extra.codegen.visibility.inlines_hidden),
     });
     for (const auto& value : extra.diagnostics.warnings) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {

@@ -118,10 +118,20 @@ auto run_clang_builtin_context_test() -> int {
         return 11;
     }
 
+    auto visibility = toolchain.builtin_context(context_with(options(
+        "-fvisibility=default"_str,
+        "-ftype-visibility=protected"_str,
+        "-fvisibility-inlines-hidden"_str)));
+    if (visibility.is_err()) return 12;
+    if (visibility->key.as_str() != llvm_debug_direct->key.as_str() ||
+        ! same_command(visibility->query_command, llvm_debug_direct->query_command)) {
+        return 13;
+    }
+
     auto cxx23 = toolchain.builtin_context(context_with_standard("c++23"_str));
     auto cxx17 = toolchain.builtin_context(context_with_standard("c++17"_str));
-    if (cxx23.is_err() || cxx23->key.as_str() == debug->key.as_str()) return 12;
-    if (cxx17.is_ok()) return 13;
+    if (cxx23.is_err() || cxx23->key.as_str() == debug->key.as_str()) return 14;
+    if (cxx17.is_ok()) return 15;
     return 0;
 }
 

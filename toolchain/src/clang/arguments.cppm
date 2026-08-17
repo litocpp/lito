@@ -60,6 +60,19 @@ auto add_warning(cpp::CppArgumentSchema& schema,
                      rstd::move(item));
 }
 
+auto add_visibility(cpp::CppArgumentSchema&      schema,
+                    cpp::CppCompilerArgumentKind kind,
+                    ref<str>                     name,
+                    ref<str>                     value) -> void {
+    auto item = definition(name);
+    spelling(item, value, cpp::CompilerArgumentValueForm::Equals);
+    item.allowed_values.push(String::make("default"_str));
+    item.allowed_values.push(String::make("hidden"_str));
+    item.allowed_values.push(String::make("internal"_str));
+    item.allowed_values.push(String::make("protected"_str));
+    schema.add(kind, rstd::move(item));
+}
+
 } // namespace lito
 
 export namespace lito
@@ -181,6 +194,24 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
     auto no_pic = definition("no-position-independent-code"_str);
     spelling(no_pic, "-fno-PIC"_str);
     schema.add_typed(cpp::CppCompilerArgument::PositionIndependentCode(false), rstd::move(no_pic));
+
+    add_visibility(schema,
+                   cpp::CppCompilerArgumentKind::SymbolVisibility,
+                   "symbol-visibility"_str,
+                   "-fvisibility"_str);
+    add_visibility(schema,
+                   cpp::CppCompilerArgumentKind::TypeVisibility,
+                   "type-visibility"_str,
+                   "-ftype-visibility"_str);
+    auto inline_visibility = definition("inline-visibility-hidden"_str);
+    spelling(inline_visibility, "-fvisibility-inlines-hidden"_str);
+    schema.add_typed(cpp::CppCompilerArgument::InlineVisibilityHidden(true),
+                     rstd::move(inline_visibility));
+    auto no_inline_visibility = definition("no-inline-visibility-hidden"_str);
+    spelling(no_inline_visibility, "-fno-visibility-inlines-hidden"_str);
+    schema.add_typed(cpp::CppCompilerArgument::InlineVisibilityHidden(false),
+                     rstd::move(no_inline_visibility));
+
     auto pic_aliases = definition("position-independent-code-aliases"_str);
     spelling(pic_aliases, "-fpic"_str);
     spelling(pic_aliases, "-fPIE"_str);

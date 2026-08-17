@@ -117,6 +117,15 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             RSTD_CASE(PositionIndependentCode, value) {
                 static_cast<void>(value);
             }
+            RSTD_CASE(SymbolVisibility, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(TypeVisibility, value) {
+                static_cast<void>(value);
+            }
+            RSTD_CASE(InlineVisibilityHidden, value) {
+                static_cast<void>(value);
+            }
             RSTD_CASE(SizedDeallocation, value) {
                 static_cast<void>(value);
             }

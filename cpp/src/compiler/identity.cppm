@@ -267,7 +267,7 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
 }
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-compile-context-v2\n"_str);
+    auto result = String::make("lito-cpp-compile-context-v3\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.codegen.optimization));
@@ -275,6 +275,16 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
     push_identity(result, "lto"_str, cpp_lto_option(options.codegen.lto));
     push_identity(
         result, "position-independent-code"_str, options.codegen.position_independent_code);
+    push_identity(result,
+                  "symbol-visibility"_str,
+                  cpp_symbol_visibility_name(options.codegen.visibility.symbols));
+    push_identity(result,
+                  "type-visibility"_str,
+                  options.codegen.visibility.types.is_some()
+                      ? cpp_symbol_visibility_name(*options.codegen.visibility.types)
+                      : "inherit"_str);
+    push_identity(
+        result, "inline-visibility-hidden"_str, options.codegen.visibility.inlines_hidden);
     for (const auto& value : options.codegen.modes) {
         push_identity(result,
                       rstd::format("codegen:{}", value.family.as_str()).as_str(),

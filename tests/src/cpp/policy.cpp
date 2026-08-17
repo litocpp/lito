@@ -51,6 +51,52 @@ TEST(Cpp, MaterializesTypedDefaultPositionIndependentCode) {
     EXPECT_FALSE(disabled.codegen.position_independent_code);
 }
 
+TEST(Cpp, AppliesTargetLocalVisibilityWithLastValueWins) {
+    auto defaults = cpp_options(
+        "c++20"_str, lito::manifest::CppOptimization::None, lito::manifest::CppDebugInfo::None);
+    EXPECT_EQ(defaults.codegen.visibility.symbols, cpp::CppSymbolVisibility::Hidden);
+    EXPECT_TRUE(defaults.codegen.visibility.types.is_none());
+    EXPECT_FALSE(defaults.codegen.visibility.inlines_hidden);
+
+    auto configured = cpp_options("c++20"_str,
+                                  lito::manifest::CppOptimization::None,
+                                  lito::manifest::CppDebugInfo::None,
+                                  strings("-fvisibility=internal"_str,
+                                          "-fvisibility=default"_str,
+                                          "-ftype-visibility=protected"_str,
+                                          "-fvisibility-inlines-hidden"_str,
+                                          "-fno-visibility-inlines-hidden"_str));
+    EXPECT_EQ(configured.codegen.visibility.symbols, cpp::CppSymbolVisibility::Default);
+    ASSERT_TRUE(configured.codegen.visibility.types.is_some());
+    EXPECT_EQ(*configured.codegen.visibility.types, cpp::CppSymbolVisibility::Protected);
+    EXPECT_FALSE(configured.codegen.visibility.inlines_hidden);
+
+    auto cloned = as<Clone>(configured).clone();
+    ASSERT_TRUE(cloned.codegen.visibility.types.is_some());
+    EXPECT_EQ(*cloned.codegen.visibility.types, cpp::CppSymbolVisibility::Protected);
+    auto merged = cpp::merge_cpp_options(as<Clone>(defaults).clone(), configured);
+    ASSERT_TRUE(merged.is_ok());
+    EXPECT_EQ(merged->codegen.visibility.symbols, cpp::CppSymbolVisibility::Default);
+    ASSERT_TRUE(merged->codegen.visibility.types.is_some());
+    EXPECT_EQ(*merged->codegen.visibility.types, cpp::CppSymbolVisibility::Protected);
+    auto reset = cpp::merge_cpp_options(rstd::move(cloned), defaults);
+    ASSERT_TRUE(reset.is_ok());
+    EXPECT_EQ(reset->codegen.visibility.symbols, cpp::CppSymbolVisibility::Hidden);
+    EXPECT_TRUE(reset->codegen.visibility.types.is_none());
+
+    EXPECT_NE(cpp::cpp_compile_identity(defaults).as_str(),
+              cpp::cpp_compile_identity(configured).as_str());
+    EXPECT_EQ(cpp::cpp_scan_identity(defaults).as_str(),
+              cpp::cpp_scan_identity(configured).as_str());
+    EXPECT_EQ(cpp::cpp_bmi_compatibility_identity(defaults).as_str(),
+              cpp::cpp_bmi_compatibility_identity(configured).as_str());
+    EXPECT_EQ(cpp::cpp_abi_compatibility_identity(defaults).as_str(),
+              cpp::cpp_abi_compatibility_identity(configured).as_str());
+    EXPECT_EQ(cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(defaults)).as_str(),
+              cpp::cpp_public_requirements_identity(cpp::cpp_public_requirements(configured))
+                  .as_str());
+}
+
 TEST(Cpp, MaterializesTypedSizedDeallocationPolicy) {
     auto automatic = cpp_options(
         "c++20"_str, lito::manifest::CppOptimization::None, lito::manifest::CppDebugInfo::None);

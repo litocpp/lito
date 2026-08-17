@@ -33,7 +33,8 @@ class CompilerArgumentError {
               (InvalidDefinition, (String name; String reason;)),
               (DuplicateSpelling, (String spelling;)),
               (MissingValue, (usize index; String spelling;)),
-              (EmptyValue, (usize index; String spelling;)))
+              (EmptyValue, (usize index; String spelling; String expected;)),
+              (InvalidValue, (usize index; String spelling; String value; String expected;)))
 };
 
 struct CompilerArgumentSpelling {
@@ -44,6 +45,7 @@ struct CompilerArgumentSpelling {
 struct CompilerArgumentDefinition {
     String                        name;
     Vec<CompilerArgumentSpelling> spellings;
+    Vec<String>                   allowed_values;
 };
 
 struct CompilerArgumentMatch {
@@ -135,6 +137,23 @@ auto requires_value(CompilerArgumentValueForm form) noexcept -> bool {
     return form != CompilerArgumentValueForm::None &&
            form != CompilerArgumentValueForm::OptionalJoined &&
            form != CompilerArgumentValueForm::OptionalEquals;
+}
+
+auto allowed_values_text(const CompilerArgumentDefinition& definition) -> String {
+    auto result = String::make();
+    for (auto index = usize {}; index < definition.allowed_values.len(); ++index) {
+        if (index != usize {}) result.push_str(", "_str);
+        result.push_str(definition.allowed_values[index].as_str());
+    }
+    return result;
+}
+
+auto allowed_value(const CompilerArgumentDefinition& definition, ref<str> value) -> bool {
+    if (definition.allowed_values.is_empty()) return true;
+    for (const auto& candidate : definition.allowed_values) {
+        if (candidate.as_str() == value) return true;
+    }
+    return false;
 }
 
 struct SpellingMatch {
@@ -247,20 +266,25 @@ auto CompilerArgumentParser::parse(const Vec<String>& arguments) const
             continue;
         }
 
-        auto selected = *matched;
-        auto value    = Option<String> {};
-        auto raw      = Vec<String>::make();
+        auto        selected   = *matched;
+        const auto& definition = definitions_[selected.definition];
+        auto        value      = Option<String> {};
+        auto        raw        = Vec<String>::make();
         raw.push(arguments[index].clone());
         if (selected.attached.is_some()) {
             if (selected.attached->is_empty()) {
                 return Err(
-                    CompilerArgumentError::EmptyValue(index, selected.spelling->value.clone()));
+                    CompilerArgumentError::EmptyValue(index,
+                                                      selected.spelling->value.clone(),
+                                                      allowed_values_text(definition)));
             }
             value = Some(String::make(*selected.attached));
         } else if (requires_value(selected.spelling->form)) {
             if (! accepts_separate(selected.spelling->form)) {
                 return Err(
-                    CompilerArgumentError::EmptyValue(index, selected.spelling->value.clone()));
+                    CompilerArgumentError::EmptyValue(index,
+                                                      selected.spelling->value.clone(),
+                                                      allowed_values_text(definition)));
             }
             if (index + usize(1) >= arguments.len()) {
                 return Err(
@@ -269,10 +293,17 @@ auto CompilerArgumentParser::parse(const Vec<String>& arguments) const
             ++index;
             if (arguments[index].is_empty()) {
                 return Err(CompilerArgumentError::EmptyValue(index - usize(1),
-                                                             selected.spelling->value.clone()));
+                                                             selected.spelling->value.clone(),
+                                                             allowed_values_text(definition)));
             }
             value = Some(arguments[index].clone());
             raw.push(arguments[index].clone());
+        }
+        if (value.is_some() && ! allowed_value(definition, value->as_str())) {
+            return Err(CompilerArgumentError::InvalidValue(index + usize(1) - raw.len(),
+                                                           selected.spelling->value.clone(),
+                                                           value->clone(),
+                                                           allowed_values_text(definition)));
         }
         auto range = CompilerArgumentSourceRange {
             .begin = index + usize(1) - raw.len(),
@@ -310,9 +341,24 @@ auto Impl<fmt::Display, lito::cpp::CompilerArgumentError>::fmt(fmt::Formatter& f
             return formatter.write_fmt(fmt::Arguments::make(
                 "compiler option '{}' at argument {} requires a value", spelling, index));
         }
-        RSTD_CASE(EmptyValue, index, spelling) {
+        RSTD_CASE(EmptyValue, index, spelling, expected) {
+            if (expected.is_empty()) {
+                return formatter.write_fmt(fmt::Arguments::make(
+                    "compiler option '{}' at argument {} has an empty value", spelling, index));
+            }
             return formatter.write_fmt(fmt::Arguments::make(
-                "compiler option '{}' at argument {} has an empty value", spelling, index));
+                "compiler option '{}' at argument {} has an empty value; expected one of {}",
+                spelling,
+                index,
+                expected));
+        }
+        RSTD_CASE(InvalidValue, index, spelling, value, expected) {
+            return formatter.write_fmt(fmt::Arguments::make(
+                "compiler option '{}' at argument {} has invalid value '{}'; expected one of {}",
+                spelling,
+                index,
+                value,
+                expected));
         }
     }
     rstd::unreachable();
