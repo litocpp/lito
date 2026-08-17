@@ -140,7 +140,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
-    auto first_events          = FileFetchEventCapture {};
+    auto first_events          = FileSourceEventCapture {};
     auto debug_materialization = debug_layout->source_materialization_root();
     auto first =
         lito::source::acquire_archive_frontier(rstd::move(requests),
@@ -151,18 +151,19 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
                                                {},
                                                lito::source::SourceEventSink {
                                                    .context = rstd::addressof(first_events),
-                                                   .notify  = capture_file_fetch,
+                                                   .notify  = capture_file_source_event,
                                                });
     ASSERT_TRUE(first.is_ok());
     ASSERT_EQ(first->len(), usize(1));
-    EXPECT_EQ(first_events.count, usize(1));
+    EXPECT_EQ(first_events.fetch, usize(1));
+    EXPECT_EQ(first_events.extract, usize(1));
     EXPECT_TRUE((*first)[usize {}].root.as_path().starts_with(debug_layout->output()));
 
     requests.push(lito::source::ArchiveSourceFetchRequest {
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
-    auto second_events     = FileFetchEventCapture {};
+    auto second_events     = FileSourceEventCapture {};
     auto cache_environment = lito::system::ResolvedProcessEnvironment::resolve(
         lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(cache_environment.is_ok());
@@ -176,11 +177,12 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
                                                {},
                                                lito::source::SourceEventSink {
                                                    .context = rstd::addressof(second_events),
-                                                   .notify  = capture_file_fetch,
+                                                   .notify  = capture_file_source_event,
                                                });
     ASSERT_TRUE(second.is_ok());
     ASSERT_EQ(second->len(), usize(1));
-    EXPECT_EQ(second_events.count, usize {});
+    EXPECT_EQ(second_events.fetch, usize {});
+    EXPECT_EQ(second_events.extract, usize(1));
     EXPECT_TRUE((*second)[usize {}].root.as_path().starts_with(release_layout->output()));
     EXPECT_NE((*first)[usize {}].root.as_path(), (*second)[usize {}].root.as_path());
     EXPECT_TRUE(debug_layout->scan_cache_directory().as_path().starts_with(debug_layout->output()));

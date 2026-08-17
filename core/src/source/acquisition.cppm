@@ -366,8 +366,8 @@ auto acquire_file_frontier(Vec<ArchiveSourceFetchRequest>    requests,
 auto materialize_archive(FetchedFile                       file,
                          ref<rstd::path::Path>             materialization_root,
                          ref<rstd::path::Path>             cmake_executable,
-                         const ResolvedProcessEnvironment& environment)
-    -> SourceResult<AcquiredSource> {
+                         const ResolvedProcessEnvironment& environment,
+                         SourceEventSink observer) -> SourceResult<AcquiredSource> {
     auto archives =
         PathBuf::from(materialization_root).join(PathBuf::from("archives"_str).as_path());
     auto area =
@@ -460,6 +460,11 @@ auto materialize_archive(FetchedFile                       file,
     arguments.push(String::make("tar"_str));
     arguments.push(String::make("xvf"_str));
     rstd_try(process_path(arguments, file.path.as_path()));
+    if (observer.notify != nullptr) {
+        observer.notify(
+            observer.context,
+            SourceEvent { SourceEventKind::Extract, file.identity.as_str(), extracted.as_path() });
+    }
     auto status = run_command(arguments, environment, Some(extracted.as_path()));
     if (status.is_err()) {
         return Err(SourceError::System(String::make("archive source extraction"_str),
@@ -582,19 +587,20 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     }
     auto group = rstd::move(created).unwrap_unchecked();
     for (usize index {}; index < files.len(); ++index) {
-        auto file       = rstd::move(files[index]);
-        auto task_root  = PathBuf::from(materialization_root);
-        auto executable = PathBuf::from(cmake_executable);
-        auto task_env   = environment.clone();
-        auto submitted =
-            group.submit([index,
-                          file        = rstd::move(file),
-                          root        = rstd::move(task_root),
-                          executable  = rstd::move(executable),
-                          environment = rstd::move(
-                              task_env)]() mutable -> SourceResult<MaterializedArchiveTask> {
+        auto file          = rstd::move(files[index]);
+        auto task_root     = PathBuf::from(materialization_root);
+        auto executable    = PathBuf::from(cmake_executable);
+        auto task_env      = environment.clone();
+        auto task_observer = observer;
+        auto submitted     = group.submit(
+            [index,
+             file        = rstd::move(file),
+             root        = rstd::move(task_root),
+             executable  = rstd::move(executable),
+             environment = rstd::move(task_env),
+             observer    = task_observer]() mutable -> SourceResult<MaterializedArchiveTask> {
                 auto source = materialize_archive(
-                    rstd::move(file), root.as_path(), executable.as_path(), environment);
+                    rstd::move(file), root.as_path(), executable.as_path(), environment, observer);
                 if (source.is_err()) return Err(rstd::move(source).unwrap_err());
                 return Ok(MaterializedArchiveTask {
                     .request = index,

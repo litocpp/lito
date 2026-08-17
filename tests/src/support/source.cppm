@@ -129,13 +129,18 @@ public:
     }
 };
 
-struct FileFetchEventCapture {
-    usize count {};
+struct FileSourceEventCapture {
+    usize fetch {};
+    usize extract {};
 };
 
-void capture_file_fetch(void* raw_context, const lito::source::SourceEvent& event) noexcept {
-    if (event.kind != lito::source::SourceEventKind::Fetch) return;
-    ++static_cast<FileFetchEventCapture*>(raw_context)->count;
+void capture_file_source_event(void* raw_context, const lito::source::SourceEvent& event) noexcept {
+    auto& context = *static_cast<FileSourceEventCapture*>(raw_context);
+    if (event.kind == lito::source::SourceEventKind::Fetch) {
+        ++context.fetch;
+    } else if (event.kind == lito::source::SourceEventKind::Extract) {
+        ++context.extract;
+    }
 }
 
 } // namespace lito_test

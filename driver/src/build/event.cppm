@@ -14,6 +14,7 @@ enum class BuildEventKind
 {
     Toolchain,
     Fetch,
+    Extract,
     Scan,
     ScanReuse,
     Compile,
@@ -69,6 +70,7 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         switch (this->self()) {
         case lito::BuildEventKind::Toolchain: name = "toolchain"_str; break;
         case lito::BuildEventKind::Fetch: name = "fetch"_str; break;
+        case lito::BuildEventKind::Extract: name = "extract"_str; break;
         case lito::BuildEventKind::Scan: name = "scan"_str; break;
         case lito::BuildEventKind::ScanReuse: name = "scan-reuse"_str; break;
         case lito::BuildEventKind::Compile: name = "compile"_str; break;

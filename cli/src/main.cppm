@@ -16,8 +16,8 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (event.completed) return;
     if (! context.verbose && event.kind != lito::BuildEventKind::Toolchain &&
-        event.kind != lito::BuildEventKind::Fetch && event.kind != lito::BuildEventKind::Scan &&
-        event.kind != lito::BuildEventKind::Compile &&
+        event.kind != lito::BuildEventKind::Fetch && event.kind != lito::BuildEventKind::Extract &&
+        event.kind != lito::BuildEventKind::Scan && event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::BuildToolFetch &&
         event.kind != lito::BuildEventKind::BuildToolRun &&

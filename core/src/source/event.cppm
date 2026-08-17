@@ -10,6 +10,7 @@ export namespace lito::source
 enum class SourceEventKind
 {
     Fetch,
+    Extract,
 };
 
 struct SourceEvent {
