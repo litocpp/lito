@@ -104,6 +104,10 @@ auto same_reference(const GitReference& left, const GitReference& right) -> bool
     return git_references_equal(left, right);
 }
 
+struct ManagedSourceEntry {
+    ResolvedPackageSource source;
+};
+
 } // namespace lito
 
 export namespace lito
@@ -112,7 +116,7 @@ export namespace lito
 class SourceManager {
     PathBuf                           graph_root_;
     SourceResolutionOptions           options_;
-    Vec<Box<ResolvedPackageSource>>   entries_;
+    Vec<ManagedSourceEntry>           entries_;
     IndexMap                          roots_ { IndexMap::make() };
     IndexMap                          source_identities_ { IndexMap::make() };
     IndexMap                          source_requests_ { IndexMap::make() };
@@ -123,8 +127,8 @@ class SourceManager {
     Option<SourceCacheSession>        cache_session_;
 
     struct FetchedPackageSource {
-        usize                      request {};
-        Box<ResolvedPackageSource> entry;
+        usize              request {};
+        ManagedSourceEntry entry;
     };
 
     struct FetchedExternalSource {
@@ -173,14 +177,12 @@ class SourceManager {
         return groups;
     }
 
-    auto take_entry(usize index) -> Box<ResolvedPackageSource> {
-        return rstd::move(entries_[index]);
-    }
+    auto take_entry(usize index) -> ManagedSourceEntry { return rstd::move(entries_[index]); }
 
-    auto absorb_entry(Box<ResolvedPackageSource> entry) -> usize {
-        auto existing = source_identities_.get(entry->identity.as_str());
+    auto absorb_entry(ManagedSourceEntry entry) -> usize {
+        auto existing = source_identities_.get(entry.source.identity.as_str());
         if (existing.is_some()) return **existing;
-        auto root_text = entry->root_directory.as_path().to_str();
+        auto root_text = entry.source.root_directory.as_path().to_str();
         if (root_text.is_some()) {
             auto by_root = roots_.get(*root_text);
             if (by_root.is_some()) {
@@ -189,7 +191,7 @@ class SourceManager {
         }
         auto index = entries_.len();
         if (root_text.is_some()) roots_.insert(String::make(*root_text), index);
-        source_identities_.insert(entry->identity.clone(), index);
+        source_identities_.insert(entry.source.identity.clone(), index);
         entries_.push(rstd::move(entry));
         return index;
     }
@@ -639,15 +641,17 @@ class SourceManager {
         auto normalized = rstd::move(relative).unwrap();
         auto id         = path_source_identity(normalized.as_path());
         auto index      = entries_.len();
-        auto source     = ResolvedPackageSource {
-            .identity       = rstd::move(id),
-            .kind           = PackageSourceKind::Path,
-            .root_directory = rstd::move(source_root),
-            .path           = rstd::move(normalized),
-        };
-        entries_.push(Box<ResolvedPackageSource>::make(rstd::move(source)));
+        entries_.push(ManagedSourceEntry {
+            .source =
+                ResolvedPackageSource {
+                    .identity       = rstd::move(id),
+                    .kind           = PackageSourceKind::Path,
+                    .root_directory = rstd::move(source_root),
+                    .path           = rstd::move(normalized),
+                },
+        });
         roots_.insert(rstd::move(root_key), index);
-        source_identities_.insert(entries_[index]->identity.clone(), index);
+        source_identities_.insert(entries_[index].source.identity.clone(), index);
         return Ok(index);
     }
 
@@ -676,19 +680,21 @@ class SourceManager {
         }
         auto root_key = String::make(*root_text);
         auto index    = entries_.len();
-        auto source   = ResolvedPackageSource {
-            .identity       = id.clone(),
-            .kind           = PackageSourceKind::Git,
-            .root_directory = rstd::move(checkout_root),
-            .git            = String::make(url),
-            .reference =
-                GitReference {
-                    .kind  = reference.kind,
-                    .value = reference.value.clone(),
+        entries_.push(ManagedSourceEntry {
+            .source =
+                ResolvedPackageSource {
+                    .identity       = id.clone(),
+                    .kind           = PackageSourceKind::Git,
+                    .root_directory = rstd::move(checkout_root),
+                    .git            = String::make(url),
+                    .reference =
+                        GitReference {
+                            .kind  = reference.kind,
+                            .value = reference.value.clone(),
+                        },
+                    .commit = rstd::move(precise_commit),
                 },
-            .commit = rstd::move(precise_commit),
-        };
-        entries_.push(Box<ResolvedPackageSource>::make(rstd::move(source)));
+        });
         roots_.insert(rstd::move(root_key), index);
         source_identities_.insert(rstd::move(id), index);
         return Ok(index);
@@ -783,8 +789,8 @@ class SourceManager {
         -> SourceResult<AcquiredSource> {
         auto source = rstd_try(acquire_seeded_git(requirement, rstd::move(seed)));
         return Ok(AcquiredSource {
-            .root      = entries_[source]->root_directory.clone(),
-            .identity  = entries_[source]->identity.clone(),
+            .root      = entries_[source].source.root_directory.clone(),
+            .identity  = entries_[source].source.identity.clone(),
             .cacheable = true,
         });
     }
@@ -871,7 +877,7 @@ public:
         auto requested = PathBuf::from(declaring_root).join(requirement.as_Path().path.as_path());
         auto acquired  = acquire_path(requested.as_path());
         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
-        return Ok(clone_source(*entries_[*acquired]));
+        return Ok(clone_source(entries_[*acquired].source));
     }
 
     auto acquire_root(ref<rstd::path::Path> root) -> SourceResult<usize> {
@@ -1001,7 +1007,7 @@ public:
             }
         }
         auto outcomes = rstd::move(group).join();
-        auto fetched  = Vec<Option<Box<ResolvedPackageSource>>>::with_capacity(unique.len());
+        auto fetched  = Vec<Option<ManagedSourceEntry>>::with_capacity(unique.len());
         for (usize index {}; index < unique.len(); ++index) fetched.push(None());
         for (auto& outcome : outcomes) {
             auto value = rstd::move(outcome).into_value();
@@ -1175,27 +1181,27 @@ public:
         if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
         const auto index = rstd::move(acquired).unwrap();
         return Ok(AcquiredSource {
-            .root      = entries_[index]->root_directory.clone(),
-            .identity  = entries_[index]->identity.clone(),
-            .cacheable = entries_[index]->kind == PackageSourceKind::Git,
+            .root      = entries_[index].source.root_directory.clone(),
+            .identity  = entries_[index].source.identity.clone(),
+            .cacheable = entries_[index].source.kind == PackageSourceKind::Git,
         });
     }
 
     auto source_identity(usize source) const noexcept -> ref<str> {
-        return entries_[source]->identity.as_str();
+        return entries_[source].source.identity.as_str();
     }
 
     auto resolved_source(usize source) const -> ResolvedPackageSource {
-        return clone_source(*entries_[source]);
+        return clone_source(entries_[source].source);
     }
 
     auto source_root(usize source) const -> PathBuf {
-        return entries_[source]->root_directory.clone();
+        return entries_[source].source.root_directory.clone();
     }
 
     auto finish() -> Vec<ResolvedPackageSource> {
         auto sources = Vec<ResolvedPackageSource>::with_capacity(entries_.len());
-        for (const auto& entry : entries_) sources.push(clone_source(*entry));
+        for (auto& entry : entries_) sources.push(rstd::move(entry.source));
         rstd::slice_::sort_unstable_by(
             sources.as_mut_slice().as_mut_ref(),
             [](const ResolvedPackageSource& left, const ResolvedPackageSource& right) {
