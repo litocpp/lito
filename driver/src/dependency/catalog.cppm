@@ -28,24 +28,24 @@ struct PreparedExternalCatalog {
     ExternalAssetCatalog      assets;
 };
 
-auto resolve_external_usage_catalog(const ResolvedPackageGraph&              graph,
+auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& graph,
                                     const Vec<String>&                       selected_package_names,
                                     const PreparedExternalDependencySources& external_sources,
-                                    const PkgConfigProviderConfig&           pkg_config,
-                                    const CMakeProviderConfig&               cmake_config,
-                                    const cpp::BuildConfiguration&           configuration,
-                                    const cpp::ProfileSpec&                  profile,
-                                    const BuildLayout&                       layout,
-                                    const BuildPlatform&                     platform,
-                                    const cpp::CppArgumentParser&            parser,
-                                    ToolResolver&                            tool_resolver,
+                                    const lito::dependency::PkgConfigProviderConfig& pkg_config,
+                                    const lito::dependency::CMakeProviderConfig&     cmake_config,
+                                    const cpp::BuildConfiguration&                   configuration,
+                                    const cpp::ProfileSpec&                          profile,
+                                    const BuildLayout&                               layout,
+                                    const BuildPlatform&                             platform,
+                                    const cpp::CppArgumentParser&                    parser,
+                                    ToolResolver&                                    tool_resolver,
                                     const ResolvedProcessEnvironment&        process_environment,
                                     usize                                    jobs,
                                     const Option<BuildEventSink>&            observer,
-                                    const PackageSourceConfig&               source_config = {})
-    -> DependencyResult<PreparedExternalCatalog> {
+                                    const lito::source::PackageSourceConfig& source_config = {})
+    -> lito::dependency::DependencyResult<PreparedExternalCatalog> {
     if (jobs == usize {}) {
-        return dependency_failure<PreparedExternalCatalog>(
+        return lito::dependency::dependency_failure<PreparedExternalCatalog>(
             "external dependency jobs must be greater than zero"_str);
     }
     auto selected = rstd::collections::BTreeMap<String, empty>::make();
@@ -110,7 +110,8 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
     auto resolved_tool =
         tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
     if (resolved_tool.is_err()) {
-        return Err(rstd::into<DependencyError>(rstd::move(resolved_tool).unwrap_err()));
+        return Err(
+            rstd::into<lito::dependency::DependencyError>(rstd::move(resolved_tool).unwrap_err()));
     }
     auto resolved_cmake       = cmake_config.clone();
     resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
@@ -118,13 +119,13 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
     resolved_cmake = rstd::move(identified).unwrap();
 
-    auto archive_requests = Vec<ArchiveSourceFetchRequest>::make();
+    auto archive_requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
     auto archive_bindings = Vec<usize>::make();
     for (usize index {}; index < bindings.len(); ++index) {
         const auto& source = bindings[index].requirement.source;
         if (! source.is_Archive()) continue;
         archive_bindings.push(usize(index));
-        archive_requests.push(ArchiveSourceFetchRequest {
+        archive_requests.push(lito::source::ArchiveSourceFetchRequest {
             .url    = source.as_Archive().url.clone(),
             .sha256 = source.as_Archive().sha256.clone(),
         });
@@ -132,24 +133,26 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
     if (! archive_requests.is_empty()) {
         auto fetch_observer       = source_observer(observer);
         auto materialization_root = layout.source_materialization_root();
-        auto fetched              = acquire_archive_frontier(rstd::move(archive_requests),
-                                                             jobs,
-                                                             materialization_root.as_path(),
-                                                             resolved_cmake.executable.as_path(),
-                                                             process_environment,
-                                                             source_config,
-                                                             fetch_observer);
+        auto fetched = lito::source::acquire_archive_frontier(rstd::move(archive_requests),
+                                                              jobs,
+                                                              materialization_root.as_path(),
+                                                              resolved_cmake.executable.as_path(),
+                                                              process_environment,
+                                                              source_config,
+                                                              fetch_observer);
         if (fetched.is_err()) {
-            return Err(rstd::into<DependencyError>(rstd::move(fetched).unwrap_err()));
+            return Err(
+                rstd::into<lito::dependency::DependencyError>(rstd::move(fetched).unwrap_err()));
         }
         for (usize index {}; index < fetched->len(); ++index) {
             auto acquired    = rstd::move((*fetched)[index]);
             auto cmake_lists = acquired.root.join(PathBuf::from("CMakeLists.txt"_str).as_path());
             auto has_project = rstd::fs::exists(cmake_lists.as_path());
             if (has_project.is_err()) {
-                return Err(DependencyError::Io(String::make("inspect archive CMake project"_str),
-                                               rstd::move(cmake_lists),
-                                               rstd::move(has_project).unwrap_err()));
+                return Err(lito::dependency::DependencyError::Io(
+                    String::make("inspect archive CMake project"_str),
+                    rstd::move(cmake_lists),
+                    rstd::move(has_project).unwrap_err()));
             }
             bindings[archive_bindings[index]].requirement.source =
                 ResolvedCMakeDependencySource::Directory(
@@ -175,11 +178,11 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
         if (plan.is_err()) return Err(rstd::move(plan).unwrap_err());
         auto key_text = plan->area.query_root.as_path().to_str();
         if (key_text.is_none()) {
-            return dependency_failure<PreparedExternalCatalog>(rstd::format(
+            return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
                 "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
         }
         auto cached = snapshots.get(*key_text);
-        auto usage  = [&]() -> DependencyResult<cpp::ResolvedExternalDependency> {
+        auto usage  = [&]() -> lito::dependency::DependencyResult<cpp::ResolvedExternalDependency> {
             if (cached.is_some()) return materialize_cmake_usage(*plan, **cached, parser);
             auto tool_observer = cmake_observer(observer);
             auto executed      = execute_cmake_package(*plan, process_environment, tool_observer);
@@ -197,7 +200,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
         result.packages[binding.catalog].dependencies.push(rstd::move(dependency));
         auto snapshot = snapshots.get(*key_text);
         if (snapshot.is_none()) {
-            return dependency_failure<PreparedExternalCatalog>(
+            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
                 String::make("CMake usage snapshot was not retained"_str));
         }
         for (const auto& set : (**snapshot).assets) {
@@ -207,7 +210,7 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
             for (const auto& prior : assets.sets) {
                 if (prior.alias == copied.alias.as_str() && prior.name == copied.name.as_str()) {
                     if (prior.entries.len() != copied.entries.len()) {
-                        return dependency_failure<PreparedExternalCatalog>(
+                        return lito::dependency::dependency_failure<PreparedExternalCatalog>(
                             rstd::format("external asset set '{}:{}' has conflicting definitions",
                                          copied.alias.as_str(),
                                          copied.name.as_str()));
@@ -217,10 +220,11 @@ auto resolve_external_usage_catalog(const ResolvedPackageGraph&              gra
                                 copied.entries[index].logical_path.as_path() ||
                             prior.entries[index].source.as_path() !=
                                 copied.entries[index].source.as_path()) {
-                            return dependency_failure<PreparedExternalCatalog>(rstd::format(
-                                "external asset set '{}:{}' has conflicting definitions",
-                                copied.alias.as_str(),
-                                copied.name.as_str()));
+                            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                                rstd::format(
+                                    "external asset set '{}:{}' has conflicting definitions",
+                                    copied.alias.as_str(),
+                                    copied.name.as_str()));
                         }
                     }
                     duplicate = true;

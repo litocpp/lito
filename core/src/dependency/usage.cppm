@@ -5,7 +5,7 @@ import rstd;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 enum class IncludeDirectoryRoot
@@ -35,4 +35,4 @@ struct DeclaredUsageRequirements {
     Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
 };
 
-} // namespace lito
+} // namespace lito::dependency

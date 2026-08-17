@@ -4,7 +4,7 @@ import rstd;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class SourceEventKind
@@ -23,4 +23,4 @@ struct SourceEventSink {
     void (*notify)(void*, const SourceEvent&) noexcept {};
 };
 
-} // namespace lito
+} // namespace lito::source

@@ -6,7 +6,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::config
 {
 
 enum class StandardLibrary
@@ -55,4 +55,4 @@ auto apply_toolchain_override(ToolchainSpec specification, ToolchainOverride val
     return specification;
 }
 
-} // namespace lito
+} // namespace lito::config

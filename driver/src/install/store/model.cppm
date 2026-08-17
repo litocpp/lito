@@ -12,10 +12,10 @@ export namespace lito
 {
 
 struct InstallLink {
-    PackageTargetId target;
-    PathBuf         destination;
-    PathBuf         relative_target;
-    InstallAction   action { InstallAction::Created };
+    lito::package::PackageTargetId target;
+    PathBuf                        destination;
+    PathBuf                        relative_target;
+    InstallAction                  action { InstallAction::Created };
 };
 
 struct InstallPackageRecord {

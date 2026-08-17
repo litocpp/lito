@@ -14,9 +14,7 @@ import :manifest.primitives;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto valid_module_name(ref<str> value) -> bool {
     if (value.size() == usize {}) return false;
@@ -356,5 +354,3 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
     }
     return Ok(rstd::move(result));
 }
-
-} // namespace lito

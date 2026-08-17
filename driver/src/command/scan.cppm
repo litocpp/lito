@@ -16,18 +16,18 @@ export namespace lito
 {
 
 struct ScanRequest {
-    PackageSelection         selection;
-    Vec<String>              targets;
-    PathBuf                  source;
-    ProcessEnvironmentSpec   environment;
-    cpp::BuildConfiguration  configuration;
-    LockConfig               lock;
-    Option<BuildProfileName> profile;
-    PackageSourceConfig      sources;
-    PkgConfigProviderConfig  pkg_config;
-    CMakeProviderConfig      cmake;
-    bool                     locked { false };
-    Option<BuildEventSink>   observer;
+    lito::package::PackageSelection           selection;
+    Vec<String>                               targets;
+    PathBuf                                   source;
+    ProcessEnvironmentSpec                    environment;
+    cpp::BuildConfiguration                   configuration;
+    lito::lock::LockConfig                    lock;
+    Option<lito::manifest::BuildProfileName>  profile;
+    lito::source::PackageSourceConfig         sources;
+    lito::dependency::PkgConfigProviderConfig pkg_config;
+    lito::dependency::CMakeProviderConfig     cmake;
+    bool                                      locked { false };
+    Option<BuildEventSink>                    observer;
 };
 
 struct ScanReport {

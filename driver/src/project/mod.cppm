@@ -23,9 +23,9 @@ namespace lito
 {
 
 struct ProjectResolution {
-    ResolvedPackageSelection          selection;
-    LockStatus                        lock;
-    PreparedExternalDependencySources external_sources;
+    lito::package::ResolvedPackageSelection selection;
+    lito::lock::LockStatus                  lock;
+    PreparedExternalDependencySources       external_sources;
 };
 
 } // namespace lito
@@ -34,41 +34,43 @@ namespace lito
 {
 
 struct StartedProjectResolution {
-    ResolvedPackageSelection selection;
-    LockSession              lock;
-    SourceResolutionOptions  external;
+    lito::package::ResolvedPackageSelection selection;
+    lito::lock::LockSession                 lock;
+    lito::source::SourceResolutionOptions   external;
 };
 
 auto observer_value(const Option<BuildEventSink>& observer) -> BuildEventSink {
     return observer.is_some() ? *observer : BuildEventSink {};
 }
 
-auto start_project_resolution(const PackageSelection&           selection,
-                              PackageSelectionPurpose           purpose,
-                              const PackageSourceConfig&        sources,
-                              const LockConfig&                 lock,
-                              bool                              locked,
-                              GitResolutionMode                 git,
-                              const TargetInfo*                 target,
-                              ToolResolver&                     tool_resolver,
-                              const ResolvedProcessEnvironment& environment,
-                              usize                             jobs     = usize(1),
-                              BuildEventSink                    observer = {},
-                              Option<WorkspaceCatalog>          catalog  = None())
+auto start_project_resolution(const lito::package::PackageSelection&    selection,
+                              lito::package::PackageSelectionPurpose    purpose,
+                              const lito::source::PackageSourceConfig&  sources,
+                              const lito::lock::LockConfig&             lock,
+                              bool                                      locked,
+                              lito::source::GitResolutionMode           git,
+                              const TargetInfo*                         target,
+                              ToolResolver&                             tool_resolver,
+                              const ResolvedProcessEnvironment&         environment,
+                              usize                                     jobs     = usize(1),
+                              BuildEventSink                            observer = {},
+                              Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> ProjectResult<StartedProjectResolution> {
-    auto lock_session  = rstd_try(load_lock_session(selection.root.as_path(), lock, locked, git));
-    auto resolution    = lock_session.take_resolution_options();
-    resolution.sources = sources.clone();
+    auto lock_session =
+        rstd_try(lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git));
+    auto resolution          = lock_session.take_resolution_options();
+    resolution.sources       = sources.clone();
     auto external_resolution = resolution.clone();
-    auto project = rstd_try(resolve_package_selection_with_environment(selection,
-                                                                       purpose,
-                                                                       rstd::move(resolution),
-                                                                       target,
-                                                                       tool_resolver,
-                                                                       environment,
-                                                                       jobs,
-                                                                       source_observer(observer),
-                                                                       rstd::move(catalog)));
+    auto project             = rstd_try(
+        lito::package::resolve_package_selection_with_environment(selection,
+                                                                  purpose,
+                                                                  rstd::move(resolution),
+                                                                  target,
+                                                                  tool_resolver,
+                                                                  environment,
+                                                                  jobs,
+                                                                  source_observer(observer),
+                                                                  rstd::move(catalog)));
     return Ok(StartedProjectResolution {
         .selection = rstd::move(project),
         .lock      = rstd::move(lock_session),
@@ -76,18 +78,18 @@ auto start_project_resolution(const PackageSelection&           selection,
     });
 }
 
-auto resolve_project(const PackageSelection&           selection,
-                     PackageSelectionPurpose           purpose,
-                     const PackageSourceConfig&        sources,
-                     const LockConfig&                 lock_config,
-                     bool                              locked,
-                     GitResolutionMode                 git,
-                     const TargetInfo*                 target,
-                     ToolResolver&                     tool_resolver,
-                     const ResolvedProcessEnvironment& environment,
-                     usize                             jobs     = usize(1),
-                     BuildEventSink                    observer = {},
-                     Option<WorkspaceCatalog>          catalog  = None())
+auto resolve_project(const lito::package::PackageSelection&    selection,
+                     lito::package::PackageSelectionPurpose    purpose,
+                     const lito::source::PackageSourceConfig&  sources,
+                     const lito::lock::LockConfig&             lock_config,
+                     bool                                      locked,
+                     lito::source::GitResolutionMode           git,
+                     const TargetInfo*                         target,
+                     ToolResolver&                             tool_resolver,
+                     const ResolvedProcessEnvironment&         environment,
+                     usize                                     jobs     = usize(1),
+                     BuildEventSink                            observer = {},
+                     Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> ProjectResult<ProjectResolution> {
     auto started = rstd_try(start_project_resolution(selection,
                                                      purpose,
@@ -109,7 +111,7 @@ auto resolve_project(const PackageSelection&           selection,
                                                      environment,
                                                      jobs,
                                                      observer));
-    auto lock = rstd_try(sync_lock(started.selection.graph, rstd::move(started.lock)));
+    auto lock = rstd_try(lito::lock::sync_lock(started.selection.graph, rstd::move(started.lock)));
     return Ok(ProjectResolution {
         .selection        = rstd::move(started.selection),
         .lock             = lock,
@@ -122,22 +124,22 @@ auto resolve_project(const PackageSelection&           selection,
 namespace lito
 {
 
-auto resolve_project_selection(const PackageSelection&           selection,
-                               PackageSelectionPurpose           purpose,
-                               const PackageSourceConfig&        sources,
-                               const LockConfig&                 lock,
-                               bool                              locked,
-                               ToolResolver&                     tool_resolver,
-                               const ResolvedProcessEnvironment& environment,
-                               usize                             jobs     = usize(1),
-                               const Option<BuildEventSink>&     observer = None())
-    -> ProjectResult<ResolvedPackageSelection> {
+auto resolve_project_selection(const lito::package::PackageSelection&   selection,
+                               lito::package::PackageSelectionPurpose   purpose,
+                               const lito::source::PackageSourceConfig& sources,
+                               const lito::lock::LockConfig&            lock,
+                               bool                                     locked,
+                               ToolResolver&                            tool_resolver,
+                               const ResolvedProcessEnvironment&        environment,
+                               usize                                    jobs     = usize(1),
+                               const Option<BuildEventSink>&            observer = None())
+    -> ProjectResult<lito::package::ResolvedPackageSelection> {
     auto started = start_project_resolution(selection,
                                             purpose,
                                             sources,
                                             lock,
                                             locked,
-                                            GitResolutionMode::ReuseLocked,
+                                            lito::source::GitResolutionMode::ReuseLocked,
                                             nullptr,
                                             tool_resolver,
                                             environment,
@@ -168,18 +170,18 @@ struct ResolvedProjectSession {
     BuildPlatform         platform;
 };
 
-auto resolve_project_session(const PackageSelection&           selection,
-                             const cpp::BuildConfiguration&    configuration,
-                             const PackageSourceConfig&        sources,
-                             const LockConfig&                 lock,
-                             const ClangToolchain&             toolchain,
-                             ToolResolver&                     tool_resolver,
-                             const ResolvedProcessEnvironment& environment,
-                             bool                              locked,
-                             PackageSelectionPurpose           purpose,
-                             usize                             jobs,
-                             const Option<BuildEventSink>&     observer = None(),
-                             Option<WorkspaceCatalog>          catalog  = None())
+auto resolve_project_session(const lito::package::PackageSelection&    selection,
+                             const cpp::BuildConfiguration&            configuration,
+                             const lito::source::PackageSourceConfig&  sources,
+                             const lito::lock::LockConfig&             lock,
+                             const ClangToolchain&                     toolchain,
+                             ToolResolver&                             tool_resolver,
+                             const ResolvedProcessEnvironment&         environment,
+                             bool                                      locked,
+                             lito::package::PackageSelectionPurpose    purpose,
+                             usize                                     jobs,
+                             const Option<BuildEventSink>&             observer = None(),
+                             Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> ProjectResult<ResolvedProjectSession> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
@@ -191,7 +193,7 @@ auto resolve_project_session(const PackageSelection&           selection,
                                              sources,
                                              lock,
                                              locked,
-                                             GitResolutionMode::ReuseLocked,
+                                             lito::source::GitResolutionMode::ReuseLocked,
                                              rstd::addressof(platform.effective_target),
                                              tool_resolver,
                                              environment,
@@ -205,18 +207,18 @@ auto resolve_project_session(const PackageSelection&           selection,
     });
 }
 
-auto resolve_project_metadata(ResolvedProjectSession            session,
-                              const cpp::BuildConfiguration&    configuration,
-                              const BuildProfileName&           profile,
-                              ref<rstd::path::Path>             requested_output,
-                              const PackageSourceConfig&        sources,
-                              const PkgConfigProviderConfig&    pkg_config,
-                              const CMakeProviderConfig&        cmake,
-                              const ClangToolchain&             toolchain,
-                              ToolResolver&                     tool_resolver,
-                              const ResolvedProcessEnvironment& environment,
-                              usize                             jobs,
-                              const Option<BuildEventSink>&     observer = None())
+auto resolve_project_metadata(ResolvedProjectSession                           session,
+                              const cpp::BuildConfiguration&                   configuration,
+                              const lito::manifest::BuildProfileName&          profile,
+                              ref<rstd::path::Path>                            requested_output,
+                              const lito::source::PackageSourceConfig&         sources,
+                              const lito::dependency::PkgConfigProviderConfig& pkg_config,
+                              const lito::dependency::CMakeProviderConfig&     cmake,
+                              const ClangToolchain&                            toolchain,
+                              ToolResolver&                                    tool_resolver,
+                              const ResolvedProcessEnvironment&                environment,
+                              usize                                            jobs,
+                              const Option<BuildEventSink>&                    observer = None())
     -> ProjectResult<ResolvedProjectMetadata> {
     auto external_sources                = rstd::move(session.project.external_sources);
     auto project                         = rstd::move(session.project.selection);
@@ -276,18 +278,18 @@ auto resolve_project_metadata(ResolvedProjectSession            session,
     });
 }
 
-auto prepare_resolved_build_project(ResolvedProjectSession            session,
-                                    const cpp::BuildConfiguration&    configuration,
-                                    const BuildProfileName&           profile,
-                                    ref<rstd::path::Path>             requested_output,
-                                    const PackageSourceConfig&        sources,
-                                    const PkgConfigProviderConfig&    pkg_config,
-                                    const CMakeProviderConfig&        cmake,
-                                    ClangToolchain                    toolchain,
-                                    ToolResolver&                     tool_resolver,
-                                    const ResolvedProcessEnvironment& environment,
-                                    usize                             jobs,
-                                    const Option<BuildEventSink>&     observer = None())
+auto prepare_resolved_build_project(ResolvedProjectSession                   session,
+                                    const cpp::BuildConfiguration&           configuration,
+                                    const lito::manifest::BuildProfileName&  profile,
+                                    ref<rstd::path::Path>                    requested_output,
+                                    const lito::source::PackageSourceConfig& sources,
+                                    const lito::dependency::PkgConfigProviderConfig& pkg_config,
+                                    const lito::dependency::CMakeProviderConfig&     cmake,
+                                    ClangToolchain                                   toolchain,
+                                    ToolResolver&                                    tool_resolver,
+                                    const ResolvedProcessEnvironment&                environment,
+                                    usize                                            jobs,
+                                    const Option<BuildEventSink>& observer = None())
     -> ProjectResult<PreparedBuildProject> {
     auto metadata = resolve_project_metadata(rstd::move(session),
                                              configuration,
@@ -312,22 +314,23 @@ auto prepare_resolved_build_project(ResolvedProjectSession            session,
     });
 }
 
-auto resolve_project_metadata(const PackageSelection&           selection,
-                              const cpp::BuildConfiguration&    configuration,
-                              const BuildProfileName&           profile,
-                              ref<rstd::path::Path>             requested_output,
-                              const PackageSourceConfig&        sources,
-                              const LockConfig&                 lock,
-                              const PkgConfigProviderConfig&    pkg_config,
-                              const CMakeProviderConfig&        cmake,
-                              const ClangToolchain&             toolchain,
-                              ToolResolver&                     tool_resolver,
-                              const ResolvedProcessEnvironment& environment,
-                              bool                              locked,
-                              PackageSelectionPurpose       purpose  = PackageSelectionPurpose::All,
-                              usize                         jobs     = usize(1),
-                              const Option<BuildEventSink>& observer = None(),
-                              Option<WorkspaceCatalog>      catalog  = None())
+auto resolve_project_metadata(
+    const lito::package::PackageSelection&           selection,
+    const cpp::BuildConfiguration&                   configuration,
+    const lito::manifest::BuildProfileName&          profile,
+    ref<rstd::path::Path>                            requested_output,
+    const lito::source::PackageSourceConfig&         sources,
+    const lito::lock::LockConfig&                    lock,
+    const lito::dependency::PkgConfigProviderConfig& pkg_config,
+    const lito::dependency::CMakeProviderConfig&     cmake,
+    const ClangToolchain&                            toolchain,
+    ToolResolver&                                    tool_resolver,
+    const ResolvedProcessEnvironment&                environment,
+    bool                                             locked,
+    lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
+    usize                                     jobs    = usize(1),
+    const Option<BuildEventSink>&             observer = None(),
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> ProjectResult<ResolvedProjectMetadata> {
     auto session = rstd_try(resolve_project_session(selection,
                                                     configuration,
@@ -355,21 +358,22 @@ auto resolve_project_metadata(const PackageSelection&           selection,
                                     observer);
 }
 
-auto prepare_build_project(const PackageSelection&           selection,
-                           const cpp::BuildConfiguration&    configuration,
-                           const BuildProfileName&           profile,
-                           ref<rstd::path::Path>             requested_output,
-                           const PackageSourceConfig&        sources,
-                           const LockConfig&                 lock,
-                           const PkgConfigProviderConfig&    pkg_config,
-                           const CMakeProviderConfig&        cmake,
-                           ToolResolver&                     tool_resolver,
-                           const ResolvedProcessEnvironment& environment,
-                           bool                              locked,
-                           PackageSelectionPurpose           purpose = PackageSelectionPurpose::All,
-                           usize                             jobs    = usize(1),
-                           const Option<BuildEventSink>&     observer = None(),
-                           Option<WorkspaceCatalog>          catalog  = None())
+auto prepare_build_project(
+    const lito::package::PackageSelection&           selection,
+    const cpp::BuildConfiguration&                   configuration,
+    const lito::manifest::BuildProfileName&          profile,
+    ref<rstd::path::Path>                            requested_output,
+    const lito::source::PackageSourceConfig&         sources,
+    const lito::lock::LockConfig&                    lock,
+    const lito::dependency::PkgConfigProviderConfig& pkg_config,
+    const lito::dependency::CMakeProviderConfig&     cmake,
+    ToolResolver&                                    tool_resolver,
+    const ResolvedProcessEnvironment&                environment,
+    bool                                             locked,
+    lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
+    usize                                     jobs    = usize(1),
+    const Option<BuildEventSink>&             observer = None(),
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> ProjectResult<PreparedBuildProject> {
     auto created = ClangToolchain::create(configuration.toolchain, tool_resolver, environment);
     if (created.is_err()) {
@@ -404,16 +408,16 @@ auto prepare_build_project(const PackageSelection&           selection,
     });
 }
 
-auto update_project_dependencies(ref<rstd::path::Path>         root,
-                                 const ProcessEnvironmentSpec& environment_spec,
-                                 const LockConfig&             lock,
-                                 const PackageSourceConfig&    sources,
-                                 const Option<BuildEventSink>& observer)
-    -> ProjectResult<LockStatus> {
+auto update_project_dependencies(ref<rstd::path::Path>                    root,
+                                 const ProcessEnvironmentSpec&            environment_spec,
+                                 const lito::lock::LockConfig&            lock,
+                                 const lito::source::PackageSourceConfig& sources,
+                                 const Option<BuildEventSink>&            observer)
+    -> ProjectResult<lito::lock::LockStatus> {
     if (root.is_empty()) {
         return Err(ProjectError::Message(String::make("update directory is required"_str)));
     }
-    auto selection = PackageSelection {
+    auto selection = lito::package::PackageSelection {
         .root = PathBuf::from(root),
     };
     auto environment   = rstd_try(ResolvedProcessEnvironment::resolve(environment_spec));
@@ -422,11 +426,11 @@ auto update_project_dependencies(ref<rstd::path::Path>         root,
     auto available     = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();
     auto resolved = rstd_try(resolve_project(selection,
-                                             PackageSelectionPurpose::All,
+                                             lito::package::PackageSelectionPurpose::All,
                                              sources,
                                              lock,
                                              false,
-                                             GitResolutionMode::Refresh,
+                                             lito::source::GitResolutionMode::Refresh,
                                              nullptr,
                                              tool_resolver,
                                              environment,

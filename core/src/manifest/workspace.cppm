@@ -7,7 +7,7 @@ import :manifest.dependency;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 struct WorkspacePackageDefaults {
@@ -27,4 +27,4 @@ struct WorkspaceManifest {
     Vec<WorkspaceCMakeExternalDependencyDefinition>     cmake_external_dependencies;
 };
 
-} // namespace lito
+} // namespace lito::manifest

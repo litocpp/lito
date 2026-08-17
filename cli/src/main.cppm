@@ -71,7 +71,7 @@ void observe_bench(void* raw_context, const lito::BenchEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (! context.verbose) return;
     rstd::io::println("[run] {} {} (cwd {})",
-                      lito::package_target_id_text(event.target),
+                      lito::package::package_target_id_text(event.target),
                       event.executable,
                       event.working_directory);
     for (const auto& argument : event.arguments) {
@@ -94,9 +94,9 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
                                         : rstd::path::PathBuf::from(root).join(path.as_path());
 }
 
-auto build_configuration(lito::ToolchainSpec   toolchain,
-                         lito::StandardLibrary standard_library,
-                         Vec<String>           options) -> lito::cpp::BuildConfiguration {
+auto build_configuration(lito::config::ToolchainSpec   toolchain,
+                         lito::config::StandardLibrary standard_library,
+                         Vec<String>                   options) -> lito::cpp::BuildConfiguration {
     return lito::cpp::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
         .standard_library  = standard_library,
@@ -156,12 +156,12 @@ auto make_timing_output(ref<rstd::path::Path>       root,
     };
 }
 
-void apply_source_options(lito::PackageSourceConfig& sources,
-                          ref<rstd::path::Path>      root,
-                          bool                       offline,
-                          bool                       frozen,
-                          Vec<rstd::path::PathBuf>   seeds) {
-    if (offline || frozen) sources.network = lito::NetworkPolicy::Offline;
+void apply_source_options(lito::source::PackageSourceConfig& sources,
+                          ref<rstd::path::Path>              root,
+                          bool                               offline,
+                          bool                               frozen,
+                          Vec<rstd::path::PathBuf>           seeds) {
+    if (offline || frozen) sources.network = lito::source::NetworkPolicy::Offline;
     for (auto& seed : seeds) {
         if (seed.as_path().is_relative()) {
             seed = rstd::path::PathBuf::from(root).join(seed.as_path());
@@ -213,7 +213,7 @@ extern "C++" int main() {
     if (invocation.command.is_Config()) {
         auto command = rstd::move(invocation.command).as_Config().command;
         if (command.is_Path()) {
-            auto path = lito::project_config_path(invocation.working_directory.as_path());
+            auto path = lito::config::project_config_path(invocation.working_directory.as_path());
             if (path.is_err()) {
                 auto error = rstd::move(path).unwrap_err();
                 report_error(error);
@@ -224,8 +224,8 @@ extern "C++" int main() {
         }
         if (command.is_Get()) {
             auto options = rstd::move(command).as_Get().options;
-            auto query   = lito::get_persisted_config(invocation.working_directory.as_path(),
-                                                      rstd::move(options.key));
+            auto query = lito::config::get_persisted_config(invocation.working_directory.as_path(),
+                                                            rstd::move(options.key));
             if (query.is_err()) {
                 auto error = rstd::move(query).unwrap_err();
                 report_error(error);
@@ -235,10 +235,11 @@ extern "C++" int main() {
             return 0;
         }
         if (command.is_Set()) {
-            auto options  = rstd::move(command).as_Set().options;
-            auto mutation = lito::set_persisted_config(invocation.working_directory.as_path(),
-                                                       options.key.as_str(),
-                                                       options.value.as_str());
+            auto options = rstd::move(command).as_Set().options;
+            auto mutation =
+                lito::config::set_persisted_config(invocation.working_directory.as_path(),
+                                                   options.key.as_str(),
+                                                   options.value.as_str());
             if (mutation.is_err()) {
                 auto error = rstd::move(mutation).unwrap_err();
                 report_error(error);
@@ -248,8 +249,8 @@ extern "C++" int main() {
             return 0;
         }
         auto options  = rstd::move(command).as_Unset().options;
-        auto mutation = lito::unset_persisted_config(invocation.working_directory.as_path(),
-                                                     options.key.as_str());
+        auto mutation = lito::config::unset_persisted_config(invocation.working_directory.as_path(),
+                                                             options.key.as_str());
         if (mutation.is_err()) {
             auto error = rstd::move(mutation).unwrap_err();
             report_error(error);
@@ -271,13 +272,13 @@ extern "C++" int main() {
     }
     auto config_root   = install_source.is_some() ? install_source->project.root.as_path()
                                                   : invocation.working_directory.as_path();
-    auto loaded_config = lito::load_project_config(
+    auto loaded_config = lito::config::load_project_config(
         config_root,
-        lito::ProjectConfigRequest {
-            .mode                       = invocation.no_config ? lito::ConfigLoadMode::LocalDisabled
-                                                               : lito::ConfigLoadMode::Enabled,
-            .overrides                  = rstd::move(invocation.config_overrides),
-            .toolchain                  = rstd::move(invocation.toolchain),
+        lito::config::ProjectConfigRequest {
+            .mode      = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                              : lito::config::ConfigLoadMode::Enabled,
+            .overrides = rstd::move(invocation.config_overrides),
+            .toolchain = rstd::move(invocation.toolchain),
             .toolchain_standard_library = rstd::move(invocation.toolchain_standard_library),
         });
     if (loaded_config.is_err()) {
@@ -295,7 +296,7 @@ extern "C++" int main() {
                                options.format.as_str());
             return 1;
         }
-        auto result = lito::export_flatpak_sources(
+        auto result = lito::lock::export_flatpak_sources(
             project.root.as_path(), project.lock, options.output.as_path());
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
@@ -419,7 +420,7 @@ extern "C++" int main() {
             report_error(error);
             return 1;
         }
-        if (*result == lito::LockStatus::Updated)
+        if (*result == lito::lock::LockStatus::Updated)
             rstd::io::println("updated {}", request.lock.path.as_path());
         else
             rstd::io::println("dependencies are up to date");
@@ -525,7 +526,7 @@ extern "C++" int main() {
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
-        request.build.purpose        = lito::PackageSelectionPurpose::Documentation;
+        request.build.purpose        = lito::package::PackageSelectionPurpose::Documentation;
         request.build.selection.packages = rstd::move(options.packages);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
@@ -672,24 +673,24 @@ extern "C++" int main() {
             if (execution.success()) {
                 ++passed;
                 rstd::io::println("[pass] {} ({} ms)",
-                                  lito::package_target_id_text(execution.target),
+                                  lito::package::package_target_id_text(execution.target),
                                   execution.elapsed.as_millis());
                 continue;
             }
             ++failed;
             if (execution.error.is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.error);
             } else if (execution.status->code().is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: exit code {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->code());
             } else {
                 rstd::io::eprintln("[fail] {} in {}: signal {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->signal());
             }
@@ -771,24 +772,24 @@ extern "C++" int main() {
             if (execution.success()) {
                 ++passed;
                 rstd::io::println("[pass] {} ({} ms)",
-                                  lito::package_target_id_text(execution.target),
+                                  lito::package::package_target_id_text(execution.target),
                                   execution.elapsed.as_millis());
                 continue;
             }
             ++failed;
             if (execution.error.is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.error);
             } else if (execution.status->code().is_some()) {
                 rstd::io::eprintln("[fail] {} in {}: exit code {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->code());
             } else {
                 rstd::io::eprintln("[fail] {} in {}: signal {}",
-                                   lito::package_target_id_text(execution.target),
+                                   lito::package::package_target_id_text(execution.target),
                                    execution.working_directory.as_path(),
                                    *execution.status->signal());
             }

@@ -18,14 +18,15 @@ using PathBuf = rstd::path::PathBuf;
 
 class BuildProfile : public ProjectFixture {
 protected:
-    auto profile_project(ref<str> name) -> lito::SourceTreeResult<lito::SourceMaterialization> {
+    auto profile_project(ref<str> name)
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         auto tree = build_profile_project_tree();
         if (tree.is_err()) return Err(rstd::move(tree).unwrap_err());
         return materialize(name, *tree);
     }
 
     auto manifest_project(ref<str> name, ref<str> contents)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             { "lito.toml"_str, contents },
         };
@@ -36,7 +37,7 @@ protected:
 TEST_F(BuildProfile, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
     auto default_project = profile_project("defaults"_str);
     ASSERT_TRUE(default_project.is_ok());
-    auto defaults = lito::resolve_package_graph(default_project->root.as_path());
+    auto defaults = lito::package::resolve_package_graph(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_TRUE(defaults->profile.exceptions);
     EXPECT_TRUE(defaults->profile.rtti);
@@ -55,7 +56,7 @@ exceptions = false
 rtti = false
 )toml"_str);
     ASSERT_TRUE(disabled_project.is_ok());
-    auto disabled = lito::resolve_package_graph(disabled_project->root.as_path());
+    auto disabled = lito::package::resolve_package_graph(disabled_project->root.as_path());
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_FALSE(disabled->profile.exceptions);
     EXPECT_FALSE(disabled->profile.rtti);
@@ -89,7 +90,7 @@ sources = ["main.cpp"]
     };
     auto workspace_project = materialize("workspace"_str, workspace_files);
     ASSERT_TRUE(workspace_project.is_ok());
-    auto workspace = lito::resolve_package_graph(workspace_project->root.as_path());
+    auto workspace = lito::package::resolve_package_graph(workspace_project->root.as_path());
     ASSERT_TRUE(workspace.is_ok());
     EXPECT_TRUE(workspace->profile.exceptions);
     EXPECT_FALSE(workspace->profile.rtti);
@@ -132,7 +133,7 @@ rtti = false
     auto dependency_project = materialize("dependency"_str, dependency_files);
     ASSERT_TRUE(dependency_project.is_ok());
     auto dependency_root = dependency_project->root.join(PathBuf::from("root"_str).as_path());
-    auto dependency      = lito::resolve_package_graph(dependency_root.as_path());
+    auto dependency      = lito::package::resolve_package_graph(dependency_root.as_path());
     ASSERT_TRUE(dependency.is_ok());
     EXPECT_TRUE(dependency->profile.exceptions);
     EXPECT_TRUE(dependency->profile.rtti);
@@ -141,7 +142,7 @@ rtti = false
 TEST_F(BuildProfile, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossBuildModes) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
-    auto project = lito::ProjectProfile {
+    auto project = lito::manifest::ProjectProfile {
         .exceptions = false,
         .rtti       = false,
     };
@@ -162,8 +163,10 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
     build_configuration.options.push(String::make("-pthread"_str));
-    auto profile = lito::cpp::make_profile_spec(
-        build_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
     ASSERT_TRUE(profile.is_ok());
     EXPECT_TRUE(profile->cpp.threading.posix);
     EXPECT_TRUE(profile->link_requirements.posix_threads);
@@ -174,48 +177,49 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
 TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     auto project = profile_project("profile-values"_str);
     ASSERT_TRUE(project.is_ok());
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
 
-    auto perf = lito::resolve_build_profile(graph->profile, build_profile("perf"_str));
+    auto perf = lito::manifest::resolve_build_profile(graph->profile, build_profile("perf"_str));
     ASSERT_TRUE(perf.is_ok());
-    EXPECT_EQ(perf->family, lito::BuildProfileFamily::Release);
-    EXPECT_EQ(perf->optimization, lito::CppOptimization::Level2);
-    EXPECT_EQ(perf->debug_info, lito::CppDebugInfo::LineTablesOnly);
-    EXPECT_EQ(perf->strip, lito::StripMode::None);
-    EXPECT_EQ(perf->lto, lito::CppLto::Off);
+    EXPECT_EQ(perf->family, lito::manifest::BuildProfileFamily::Release);
+    EXPECT_EQ(perf->optimization, lito::manifest::CppOptimization::Level2);
+    EXPECT_EQ(perf->debug_info, lito::manifest::CppDebugInfo::LineTablesOnly);
+    EXPECT_EQ(perf->strip, lito::manifest::StripMode::None);
+    EXPECT_EQ(perf->lto, lito::manifest::CppLto::Off);
     EXPECT_TRUE(perf->ndebug);
 
-    auto aliases = lito::resolve_build_profile(graph->profile, build_profile("aliases"_str));
+    auto aliases =
+        lito::manifest::resolve_build_profile(graph->profile, build_profile("aliases"_str));
     ASSERT_TRUE(aliases.is_ok());
-    EXPECT_EQ(aliases->optimization, lito::CppOptimization::SizeMin);
-    EXPECT_EQ(aliases->debug_info, lito::CppDebugInfo::Limited);
-    EXPECT_EQ(aliases->strip, lito::StripMode::Symbols);
-    EXPECT_EQ(aliases->lto, lito::CppLto::Fat);
+    EXPECT_EQ(aliases->optimization, lito::manifest::CppOptimization::SizeMin);
+    EXPECT_EQ(aliases->debug_info, lito::manifest::CppDebugInfo::Limited);
+    EXPECT_EQ(aliases->strip, lito::manifest::StripMode::Symbols);
+    EXPECT_EQ(aliases->lto, lito::manifest::CppLto::Fat);
 }
 
 TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
-    auto unknown = lito::ProjectProfile {};
-    unknown.build_profiles.push(lito::BuildProfileDefinition {
+    auto unknown = lito::manifest::ProjectProfile {};
+    unknown.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name     = build_profile("custom"_str),
         .inherits = Some(build_profile("missing"_str)),
     });
-    auto unknown_result = lito::validate_build_profiles(unknown);
+    auto unknown_result = lito::manifest::validate_build_profiles(unknown);
     ASSERT_TRUE(unknown_result.is_err());
     auto unknown_error = rstd::move(unknown_result).unwrap_err();
     ASSERT_TRUE(unknown_error.is_Message());
     EXPECT_TRUE(unknown_error.as_Message().message.as_str().contains("unknown profile"_str));
 
-    auto cycle = lito::ProjectProfile {};
-    cycle.build_profiles.push(lito::BuildProfileDefinition {
+    auto cycle = lito::manifest::ProjectProfile {};
+    cycle.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name     = build_profile("first"_str),
         .inherits = Some(build_profile("second"_str)),
     });
-    cycle.build_profiles.push(lito::BuildProfileDefinition {
+    cycle.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name     = build_profile("second"_str),
         .inherits = Some(build_profile("first"_str)),
     });
-    auto cycle_result = lito::validate_build_profiles(cycle);
+    auto cycle_result = lito::manifest::validate_build_profiles(cycle);
     ASSERT_TRUE(cycle_result.is_err());
     auto cycle_error = rstd::move(cycle_result).unwrap_err();
     ASSERT_TRUE(cycle_error.is_Message());
@@ -223,21 +227,23 @@ TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
 }
 
 TEST_F(BuildProfile, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentities) {
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::CppOptimization::Level2), "-O2"_str);
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::CppOptimization::Size), "-Os"_str);
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::CppOptimization::SizeMin), "-Oz"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::CppDebugInfo::LineDirectivesOnly),
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::Level2),
+              "-O2"_str);
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::Size), "-Os"_str);
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::SizeMin),
+              "-Oz"_str);
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::LineDirectivesOnly),
               "-gline-directives-only"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::CppDebugInfo::LineTablesOnly),
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::LineTablesOnly),
               "-gline-tables-only"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::CppDebugInfo::Limited), "-g1"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::CppLto::Off), "-fno-lto"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::CppLto::Thin), "-flto=thin"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::CppLto::Fat), "-flto=full"_str);
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::Limited), "-g1"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Off), "-fno-lto"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Thin), "-flto=thin"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Fat), "-flto=full"_str);
 
     auto project = profile_project("profile-codegen"_str);
     ASSERT_TRUE(project.is_ok());
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -267,8 +273,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
 
     auto compiler_configuration = configuration();
     compiler_configuration.options.push(String::make("-flto=auto"_str));
-    auto compiler = lito::cpp::make_profile_spec(
-        compiler_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    auto compiler = lito::cpp::make_profile_spec(compiler_configuration,
+                                                 lito::manifest::ProjectProfile {},
+                                                 build_profile("debug"_str),
+                                                 *parser);
     ASSERT_TRUE(compiler.is_err());
     auto compiler_error = rstd::move(compiler).unwrap_err();
     ASSERT_TRUE(compiler_error.is_Message());
@@ -276,8 +284,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
 
     auto linker_configuration = configuration();
     linker_configuration.linker_options.push(String::make("-Wl,--strip-debug"_str));
-    auto linker = lito::cpp::make_profile_spec(
-        linker_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    auto linker = lito::cpp::make_profile_spec(linker_configuration,
+                                               lito::manifest::ProjectProfile {},
+                                               build_profile("debug"_str),
+                                               *parser);
     ASSERT_TRUE(linker.is_err());
     auto linker_error = rstd::move(linker).unwrap_err();
     ASSERT_TRUE(linker_error.is_Message());
@@ -285,8 +295,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
 
     auto stdlib_configuration = configuration();
     stdlib_configuration.linker_options.push(String::make("-nostdlib++"_str));
-    auto stdlib = lito::cpp::make_profile_spec(
-        stdlib_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    auto stdlib = lito::cpp::make_profile_spec(stdlib_configuration,
+                                               lito::manifest::ProjectProfile {},
+                                               build_profile("debug"_str),
+                                               *parser);
     ASSERT_TRUE(stdlib.is_err());
     auto stdlib_error = rstd::move(stdlib).unwrap_err();
     ASSERT_TRUE(stdlib_error.is_Message());
@@ -294,8 +306,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
 
     auto pthread_configuration = configuration();
     pthread_configuration.linker_options.push(String::make("-pthread"_str));
-    auto pthread = lito::cpp::make_profile_spec(
-        pthread_configuration, lito::ProjectProfile {}, build_profile("debug"_str), *parser);
+    auto pthread = lito::cpp::make_profile_spec(pthread_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
     ASSERT_TRUE(pthread.is_err());
     EXPECT_TRUE(rstd::format("{}", pthread.unwrap_err()).as_str().contains("build.options"_str));
 }
@@ -314,16 +328,16 @@ sources = ["main.cpp"]
 options = ["-O2"]
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
 
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto packages = strings("fixture-profile-owned_option"_str);
-    auto targets  = Vec<lito::PackageTargetId>::make();
-    targets.push(lito::PackageTargetId {
+    auto targets  = Vec<lito::package::PackageTargetId>::make();
+    targets.push(lito::package::PackageTargetId {
         .package = String::make("fixture-profile-owned_option"_str),
-        .kind    = lito::PackageTargetKind::Binary,
+        .kind    = lito::package::PackageTargetKind::Binary,
         .name    = String::make("profile-owned-option"_str),
     });
     auto build_configuration = configuration();
@@ -404,13 +418,13 @@ private-definitions = ["NDEBUG"]
         const auto& item = cases[index.to_primitive()];
         auto project = manifest_project(rstd::format("usage-{}", index).as_str(), item.manifest);
         ASSERT_TRUE(project.is_ok());
-        auto graph = lito::resolve_package_graph(project->root.as_path());
+        auto graph = lito::package::resolve_package_graph(project->root.as_path());
         ASSERT_TRUE(graph.is_ok());
         auto packages = strings(item.package);
-        auto targets  = Vec<lito::PackageTargetId>::make();
-        targets.push(lito::PackageTargetId {
+        auto targets  = Vec<lito::package::PackageTargetId>::make();
+        targets.push(lito::package::PackageTargetId {
             .package = String::make(item.package),
-            .kind    = lito::PackageTargetKind::Binary,
+            .kind    = lito::package::PackageTargetKind::Binary,
             .name    = String::make(item.target),
         });
         auto build_configuration = configuration();

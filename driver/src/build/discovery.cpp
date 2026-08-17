@@ -70,7 +70,7 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::
         return discovery_failure<cpp::ResolvedSource>(
             rstd::format("declared source '{}' is not a file", declared));
     }
-    if (! supported_manifest_source(resolved.as_path())) {
+    if (! lito::manifest::supported_manifest_source(resolved.as_path())) {
         return discovery_failure<cpp::ResolvedSource>(
             rstd::format("unsupported C++ source extension: {}", declared));
     }
@@ -109,7 +109,8 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
             if (nested.is_err()) return nested;
             continue;
         }
-        if (! type->is_file() || ! supported_manifest_source(path.as_path())) continue;
+        if (! type->is_file() || ! lito::manifest::supported_manifest_source(path.as_path()))
+            continue;
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
             return discovery_io_failure<empty>(
@@ -260,7 +261,7 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
     auto highest_priority = usize {};
     for (auto visible : plan.visible_targets[importer]) {
         const auto& target = package.targets[visible];
-        if (target.source.discovery == SourceDiscoveryMode::Explicit) continue;
+        if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Explicit) continue;
         auto exists = cpp::module_source_exists(target, logical_name);
         if (exists.is_err()) {
             return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(
@@ -321,8 +322,11 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
             return Err(BuildError::Discovery(cpp::SourceDiscoveryError::Message(rstd::format(
                 "module import '{}' is provided by both '{}' and '{}'",
                 logical_name,
-                package_target_id_text(package.targets[candidates[*selected].target].id).as_str(),
-                package_target_id_text(package.targets[candidate.target].id).as_str()))));
+                lito::package::package_target_id_text(
+                    package.targets[candidates[*selected].target].id)
+                    .as_str(),
+                lito::package::package_target_id_text(package.targets[candidate.target].id)
+                    .as_str()))));
         }
         candidate.source.frontend_analysis = Some(rstd::move(value));
         selected                           = Some(index);
@@ -340,8 +344,9 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
 namespace lito
 {
 
-static auto discover_explicit_sources_impl(ref<rstd::path::Path>       source_root,
-                                           const TargetSourceManifest& source_manifest)
+static auto
+discover_explicit_sources_impl(ref<rstd::path::Path>                       source_root,
+                               const lito::manifest::TargetSourceManifest& source_manifest)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
     auto       seen    = StringSet::make();
     auto       entries = Vec<SourceEntry>::make();
@@ -389,12 +394,13 @@ auto discover_explicit_sources(const cpp::ResolvedTarget& target)
     return discover_explicit_sources_impl(target.source_root.as_path(), target.source);
 }
 
-auto discover_format_sources(const PackageManifest& manifest)
+auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
     auto entries          = Vec<SourceEntry>::make();
     auto module_discovery = false;
     for (const auto& target : manifest.targets) {
-        if (package_target_source(target).discovery == SourceDiscoveryMode::Module) {
+        if (lito::manifest::package_target_source(target).discovery ==
+            lito::manifest::SourceDiscoveryMode::Module) {
             module_discovery = true;
             break;
         }
@@ -420,7 +426,7 @@ auto discover_format_sources(const PackageManifest& manifest)
         return Ok(empty {});
     };
     for (const auto& target : manifest.targets) {
-        const auto& source = package_target_source(target);
+        const auto& source = lito::manifest::package_target_source(target);
         for (const auto& declared : source.declared_sources) {
             auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
@@ -431,7 +437,7 @@ auto discover_format_sources(const PackageManifest& manifest)
                 if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
             }
         }
-        auto attachments = package_target_attachments(target);
+        auto attachments = lito::manifest::package_target_attachments(target);
         if (attachments.is_none()) continue;
         for (const auto& attachment : **attachments) {
             for (const auto& declared : attachment.sources) {
@@ -466,7 +472,8 @@ auto resolve_source_target(const cpp::PackageMetadata&     package,
     auto exact = Option<cpp::TargetId> {};
     for (auto target : discovery.target_order) {
         const auto& resolved_target = package.targets[target];
-        if (resolved_target.source.discovery != SourceDiscoveryMode::Explicit) continue;
+        if (resolved_target.source.discovery != lito::manifest::SourceDiscoveryMode::Explicit)
+            continue;
         auto discovered = discover_explicit_sources(resolved_target);
         if (discovered.is_err()) return Err(rstd::move(discovered).unwrap_err());
         for (const auto& candidate : discovered->sources) {
@@ -502,10 +509,10 @@ auto resolve_source_target(const cpp::PackageMetadata&     package,
     }
     auto relative = source.strip_prefix(package.targets[*selected].source_root.as_path());
     if (relative.is_none() || relative->is_empty()) {
-        return discovery_failure<cpp::TargetId>(
-            rstd::format("source '{}' does not name a file inside target '{}'",
-                         source,
-                         package_target_id_text(package.targets[*selected].id).as_str()));
+        return discovery_failure<cpp::TargetId>(rstd::format(
+            "source '{}' does not name a file inside target '{}'",
+            source,
+            lito::package::package_target_id_text(package.targets[*selected].id).as_str()));
     }
     return Ok(*selected);
 }
@@ -532,7 +539,7 @@ auto discover_sources(const cpp::PackageMetadata&     package,
 
     for (auto target : plan.target_order) {
         const auto& resolved_target = package.targets[target];
-        if (resolved_target.source.discovery == SourceDiscoveryMode::Explicit) {
+        if (resolved_target.source.discovery == lito::manifest::SourceDiscoveryMode::Explicit) {
             auto explicit_sources = discover_explicit_sources(resolved_target);
             if (explicit_sources.is_err()) {
                 return Err(rstd::into<BuildError>(rstd::move(explicit_sources).unwrap_err()));
@@ -664,7 +671,7 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                 if (facts.is_err()) return Err(rstd::move(facts).unwrap_err());
                 frontend_analysis = rstd::move(facts).unwrap();
             }
-            auto target_identity = package_target_id_text(target.id);
+            auto target_identity = lito::package::package_target_id_text(target.id);
             if (observer.is_some() && observer->notify != nullptr) {
                 auto kind =
                     frontend_analysis.origin == frontend::FrontendAnalysisOrigin::PersistentCache

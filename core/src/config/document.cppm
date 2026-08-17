@@ -7,7 +7,7 @@ import :config.project;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::config
 {
 
 struct ConfigQuery {
@@ -37,4 +37,4 @@ auto set_persisted_config(ref<rstd::path::Path> root, ref<str> key, ref<str> val
 auto unset_persisted_config(ref<rstd::path::Path> root, ref<str> key)
     -> ConfigResult<ConfigMutation>;
 
-} // namespace lito
+} // namespace lito::config

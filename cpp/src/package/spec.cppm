@@ -16,7 +16,7 @@ export namespace lito::cpp
 using TargetId = usize;
 
 struct TargetSpec {
-    PackageTargetId                 id;
+    lito::package::PackageTargetId  id;
     ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
     String                          artifact_name;
     bool                            link_stdlib { true };
@@ -33,14 +33,14 @@ struct TargetSpec {
 };
 
 struct PackageSpec {
-    String               name;
-    PathBuf              root;
-    PathBuf              manifest_path;
-    String               default_profile;
-    Vec<PackageTargetId> default_targets;
-    ToolchainSpec        toolchain;
-    Vec<ProfileSpec>     profiles;
-    Vec<TargetSpec>      targets;
+    String                              name;
+    PathBuf                             root;
+    PathBuf                             manifest_path;
+    String                              default_profile;
+    Vec<lito::package::PackageTargetId> default_targets;
+    lito::config::ToolchainSpec         toolchain;
+    Vec<ProfileSpec>                    profiles;
+    Vec<TargetSpec>                     targets;
 };
 
 struct CompileContext {

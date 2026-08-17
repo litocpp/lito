@@ -5,7 +5,7 @@ import rstd;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 auto supported_manifest_source(ref<rstd::path::Path> path) noexcept -> bool {
@@ -24,4 +24,4 @@ auto runnable_manifest_source(ref<rstd::path::Path> path) noexcept -> bool {
     return *text == "cpp"_str || *text == "cc"_str || *text == "cxx"_str;
 }
 
-} // namespace lito
+} // namespace lito::manifest

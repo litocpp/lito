@@ -33,8 +33,8 @@ auto error_chain_text(const Error& error) -> String {
     return text;
 }
 
-auto build_profile(ref<str> name) -> lito::BuildProfileName {
-    return lito::parse_build_profile(name).unwrap();
+auto build_profile(ref<str> name) -> lito::manifest::BuildProfileName {
+    return lito::manifest::parse_build_profile(name).unwrap();
 }
 
 auto configuration() -> lito::cpp::BuildConfiguration {
@@ -51,26 +51,26 @@ auto configuration() -> lito::cpp::BuildConfiguration {
         resolver.resolve(PathBuf::from("llvm-ar"_str).as_path(), "llvm-ar"_str).unwrap().executable;
     return lito::cpp::BuildConfiguration {
         .toolchain =
-            lito::ToolchainSpec {
+            lito::config::ToolchainSpec {
                 .cxx    = rstd::move(compiler),
                 .ld     = rstd::move(linker),
                 .ar     = rstd::move(archiver),
                 .strip  = PathBuf::from("llvm-strip"_str),
                 .format = PathBuf::from("clang-format"_str),
             },
-        .standard_library  = lito::StandardLibrary::Libcxx,
+        .standard_library  = lito::config::StandardLibrary::Libcxx,
         .bmi_mode          = lito::cpp::BmiMode::Reduced,
         .language_standard = String::make("c++20"_str),
     };
 }
 
-auto build_request(ref<rstd::path::Path>  root,
-                   ref<rstd::path::Path>  output,
-                   Vec<String>            packages,
-                   lito::BuildProfileName profile = {}) -> lito::BuildRequest {
+auto build_request(ref<rstd::path::Path>            root,
+                   ref<rstd::path::Path>            output,
+                   Vec<String>                      packages,
+                   lito::manifest::BuildProfileName profile = {}) -> lito::BuildRequest {
     return lito::BuildRequest {
         .selection =
-            lito::PackageSelection {
+            lito::package::PackageSelection {
                 .root     = PathBuf::from(root),
                 .packages = rstd::move(packages),
             },

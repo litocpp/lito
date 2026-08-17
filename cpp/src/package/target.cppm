@@ -24,8 +24,10 @@ enum class ArtifactKind
 };
 
 struct DependencySpec {
-    PackageTargetId      target;
-    DependencyVisibility visibility { DependencyVisibility::Private };
+    lito::package::PackageTargetId         target;
+    lito::dependency::DependencyVisibility visibility {
+        lito::dependency::DependencyVisibility::Private
+    };
 };
 
 struct TargetSource {
@@ -36,17 +38,17 @@ struct TargetSource {
 };
 
 struct TestAttachmentTarget {
-    PackageTargetId test_target;
-    PackageTargetId library_target;
+    lito::package::PackageTargetId test_target;
+    lito::package::PackageTargetId library_target;
 };
 
 struct ResolvedCompileTestCase {
-    String             name;
-    PathBuf            source;
-    CompileTestOutcome outcome { CompileTestOutcome::Failure };
-    CppArgumentLayer   arguments;
-    Vec<String>        diagnostic_contains;
-    Vec<String>        diagnostic_contains_any;
+    String                             name;
+    PathBuf                            source;
+    lito::manifest::CompileTestOutcome outcome { lito::manifest::CompileTestOutcome::Failure };
+    CppArgumentLayer                   arguments;
+    Vec<String>                        diagnostic_contains;
+    Vec<String>                        diagnostic_contains_any;
 };
 
 } // namespace lito::cpp

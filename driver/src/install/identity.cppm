@@ -26,7 +26,7 @@ export namespace lito
 {
 
 auto install_package_id(ref<str> name, ref<str> source_identity) -> InstallStoreResult<String> {
-    if (! valid_package_name(name) || source_identity.is_empty()) {
+    if (! lito::manifest::valid_package_name(name) || source_identity.is_empty()) {
         return identity_failure<String>(String::make("install package identity is invalid"_str));
     }
     auto key = String::make(name);

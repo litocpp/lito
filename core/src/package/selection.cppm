@@ -18,8 +18,9 @@ using namespace lito::system;
 using namespace rstd::literals;
 using IndexMap  = rstd::collections::BTreeMap<String, usize>;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
+using namespace lito;
 
-export namespace lito
+export namespace lito::package
 {
 
 enum class PackageSelectionPurpose
@@ -45,22 +46,25 @@ struct ResolvedPackageSelection {
     Vec<PackageTargetId> selected_targets;
 };
 
-} // namespace lito
+} // namespace lito::package
 
 export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::PackageSelectionPurpose> : ImplBase<lito::PackageSelectionPurpose> {
+struct Impl<fmt::Display, lito::package::PackageSelectionPurpose>
+    : ImplBase<lito::package::PackageSelectionPurpose> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto name = "unknown"_str;
         switch (this->self()) {
-        case lito::PackageSelectionPurpose::All: name = "all"_str; break;
-        case lito::PackageSelectionPurpose::Production: name = "production"_str; break;
-        case lito::PackageSelectionPurpose::Documentation: name = "documentation"_str; break;
-        case lito::PackageSelectionPurpose::Install: name = "install"_str; break;
-        case lito::PackageSelectionPurpose::Test: name = "test"_str; break;
-        case lito::PackageSelectionPurpose::Benchmark: name = "benchmark"_str; break;
+        case lito::package::PackageSelectionPurpose::All: name = "all"_str; break;
+        case lito::package::PackageSelectionPurpose::Production: name = "production"_str; break;
+        case lito::package::PackageSelectionPurpose::Documentation:
+            name = "documentation"_str;
+            break;
+        case lito::package::PackageSelectionPurpose::Install: name = "install"_str; break;
+        case lito::package::PackageSelectionPurpose::Test: name = "test"_str; break;
+        case lito::package::PackageSelectionPurpose::Benchmark: name = "benchmark"_str; break;
         }
         return formatter.write_str(name);
     }
@@ -68,8 +72,7 @@ struct Impl<fmt::Display, lito::PackageSelectionPurpose> : ImplBase<lito::Packag
 
 } // namespace rstd
 
-namespace lito
-{
+using namespace lito::package;
 
 template<typename T>
 auto package_selection_failure(String message) -> PackageSelectionResult<T> {
@@ -110,18 +113,18 @@ auto selected_by_purpose(ProjectRootRole         role,
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
 }
 
-auto append_selected_targets(Vec<PackageTargetId>&   output,
-                             const PackageManifest&  package,
-                             ProjectRootRole         role,
-                             PackageSelectionPurpose purpose) -> bool {
+auto append_selected_targets(Vec<PackageTargetId>&                  output,
+                             const lito::manifest::PackageManifest& package,
+                             ProjectRootRole                        role,
+                             PackageSelectionPurpose                purpose) -> bool {
     auto selected = false;
     for (const auto& target : package.targets) {
-        const auto kind = package_target_kind(target);
+        const auto kind = lito::manifest::package_target_kind(target);
         if (! selected_by_purpose(role, kind, purpose)) continue;
         output.push(PackageTargetId {
             .package = package.name.clone(),
             .kind    = kind,
-            .name    = String::make(package_target_name(target)),
+            .name    = String::make(lito::manifest::package_target_name(target)),
         });
         selected = true;
     }
@@ -194,20 +197,19 @@ auto selected_closure(const ResolvedPackageGraph& graph,
     return Ok(rstd::move(result));
 }
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::package
 {
 
-auto resolve_package_selection_with_environment(const PackageSelection&           selection,
-                                                PackageSelectionPurpose           purpose,
-                                                SourceResolutionOptions           options,
-                                                const TargetInfo*                 target,
-                                                ToolResolver&                     tool_resolver,
-                                                const ResolvedProcessEnvironment& environment,
-                                                usize                             jobs = usize(1),
-                                                SourceEventSink                   observer = {},
-                                                Option<WorkspaceCatalog>          catalog  = None())
+auto resolve_package_selection_with_environment(
+    const PackageSelection&                   selection,
+    PackageSelectionPurpose                   purpose,
+    lito::source::SourceResolutionOptions     options,
+    const TargetInfo*                         target,
+    ToolResolver&                             tool_resolver,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    lito::source::SourceEventSink             observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> PackageSelectionResult<ResolvedPackageSelection> {
     auto resolved = resolve_package_graph_with_environment(selection.root.as_path(),
                                                            rstd::move(options),
@@ -226,9 +228,9 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     auto selected_targets = Vec<PackageTargetId>::make();
     if (selection.packages.is_empty()) {
         for (const auto& root : graph.roots) {
-            const auto&            name      = root.name;
-            auto                   supported = true;
-            const PackageManifest* manifest  = nullptr;
+            const auto&                            name      = root.name;
+            auto                                   supported = true;
+            const lito::manifest::PackageManifest* manifest  = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str()) {
@@ -253,7 +255,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
     } else {
         auto selected_names = StringSet::make();
         for (const auto& name : selection.packages) {
-            if (! valid_package_name(name.as_str())) {
+            if (! lito::manifest::valid_package_name(name.as_str())) {
                 return package_selection_failure<ResolvedPackageSelection>(
                     rstd::format("package selection '{}' must contain only ASCII "
                                  "letters, digits, '-' or '_'",
@@ -268,7 +270,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                 return package_selection_failure<ResolvedPackageSelection>(
                     rstd::format("project has no root package named '{}'", name.as_str()));
             }
-            const PackageManifest* manifest = nullptr;
+            const lito::manifest::PackageManifest* manifest = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() != name.as_str()) continue;
@@ -324,7 +326,7 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
                 }
             }
             if (already_selected) continue;
-            const PackageManifest* manifest = nullptr;
+            const lito::manifest::PackageManifest* manifest = nullptr;
             for (const auto& package : graph.packages) {
                 if (package.manifest.name == name.as_str()) {
                     manifest = rstd::addressof(package.manifest);
@@ -364,8 +366,8 @@ auto resolve_package_selection_with_environment(const PackageSelection&         
 
 auto resolve_package_selection(const PackageSelection& selection,
                                PackageSelectionPurpose purpose = PackageSelectionPurpose::All,
-                               SourceResolutionOptions options = {},
-                               const TargetInfo*       target  = nullptr)
+                               lito::source::SourceResolutionOptions options = {},
+                               const TargetInfo*                     target  = nullptr)
     -> PackageSelectionResult<ResolvedPackageSelection> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) {
@@ -376,4 +378,4 @@ auto resolve_package_selection(const PackageSelection& selection,
         selection, purpose, rstd::move(options), target, resolver, *environment);
 }
 
-} // namespace lito
+} // namespace lito::package

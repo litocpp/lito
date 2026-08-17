@@ -119,12 +119,12 @@ public:
         };
     }
 
-    auto prepare(const PackageTargetId&     target,
-                 ref<rstd::path::Path>      relative_source,
-                 ref<rstd::path::Path>      source,
-                 const cpp::CompileContext& context,
-                 ref<rstd::path::Path>      working_directory,
-                 ScanSourceOrigin           origin) -> BuildResult<FrontendAnalysisTask> {
+    auto prepare(const lito::package::PackageTargetId& target,
+                 ref<rstd::path::Path>                 relative_source,
+                 ref<rstd::path::Path>                 source,
+                 const cpp::CompileContext&            context,
+                 ref<rstd::path::Path>                 working_directory,
+                 ScanSourceOrigin origin) -> BuildResult<FrontendAnalysisTask> {
         auto record = layout_.cache_scan(target, relative_source);
         if (record.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
@@ -139,7 +139,7 @@ public:
         if (environment.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
         }
-        auto target_identity = package_target_id_text(target);
+        auto target_identity = lito::package::package_target_id_text(target);
         auto profile         = profiler_.task(target_identity.as_str(), source, origin);
         if (profile.is_err()) {
             return Err(BuildError::Message(rstd::move(profile).unwrap_err_unchecked()));
@@ -170,11 +170,11 @@ public:
         return rstd::move(outcome.analysis);
     }
 
-    auto analyze(const PackageTargetId&     target,
-                 ref<rstd::path::Path>      relative_source,
-                 ref<rstd::path::Path>      source,
-                 const cpp::CompileContext& context,
-                 ref<rstd::path::Path>      working_directory)
+    auto analyze(const lito::package::PackageTargetId& target,
+                 ref<rstd::path::Path>                 relative_source,
+                 ref<rstd::path::Path>                 source,
+                 const cpp::CompileContext&            context,
+                 ref<rstd::path::Path>                 working_directory)
         -> BuildResult<frontend::FrontendAnalysis> {
         auto task = prepare(target,
                             relative_source,

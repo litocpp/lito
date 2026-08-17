@@ -10,22 +10,23 @@ using namespace rstd::literals;
 namespace lito
 {
 
-void forward_source_event(void* context, const SourceEvent& event) noexcept {
+void forward_source_event(void* context, const lito::source::SourceEvent& event) noexcept {
     auto* observer = static_cast<const BuildEventSink*>(context);
     if (observer == nullptr || observer->notify == nullptr) return;
     observer->notify(observer->context,
                      BuildEvent { BuildEventKind::Fetch, event.source, event.destination });
 }
 
-auto source_observer(const BuildEventSink& observer) noexcept -> SourceEventSink {
+auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::SourceEventSink {
     if (observer.notify == nullptr) return {};
-    return SourceEventSink {
+    return lito::source::SourceEventSink {
         .context = const_cast<BuildEventSink*>(rstd::addressof(observer)),
         .notify  = forward_source_event,
     };
 }
 
-auto source_observer(const Option<BuildEventSink>& observer) noexcept -> SourceEventSink {
+auto source_observer(const Option<BuildEventSink>& observer) noexcept
+    -> lito::source::SourceEventSink {
     if (observer.is_none()) return {};
     return source_observer(*observer);
 }

@@ -14,7 +14,7 @@ using namespace lito_test;
 
 class ScanCommand : public ProjectFixture {};
 
-auto scan_command_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto scan_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"scan([workspace]
 name = "scan-command"
@@ -155,7 +155,7 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
     auto root   = project->root.clone();
     auto native = lito::scan(lito::ScanRequest {
         .selection =
-            lito::PackageSelection {
+            lito::package::PackageSelection {
                 .root     = root.clone(),
                 .packages = strings("fixture-preprocessor-native"_str),
             },
@@ -192,7 +192,7 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
 
     auto definitions = lito::scan(lito::ScanRequest {
         .selection =
-            lito::PackageSelection {
+            lito::package::PackageSelection {
                 .root     = root.clone(),
                 .packages = strings("fixture-scan-definitions"_str),
             },

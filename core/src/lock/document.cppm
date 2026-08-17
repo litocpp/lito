@@ -9,7 +9,7 @@ import :source.git;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::lock
 {
 
 inline constexpr auto LOCK_FORMAT_VERSION = u64(1);
@@ -17,14 +17,14 @@ inline constexpr auto LOCK_FORMAT_VERSION = u64(1);
 class LockedPackageSource {
     RSTD_ENUM(LockedPackageSource,
               (Path, (PathBuf path;)),
-              (Git, (String url; GitReference reference; String commit;)))
+              (Git, (String url; lito::source::GitReference reference; String commit;)))
 };
 
 class LockedExternalSource {
     RSTD_ENUM(LockedExternalSource,
               (Path, (PathBuf path;)),
               (Package, (PathBuf path;)),
-              (Git, (String url; GitReference reference; String commit;)),
+              (Git, (String url; lito::source::GitReference reference; String commit;)),
               (Archive, (String url; String sha256;)))
 };
 
@@ -58,4 +58,4 @@ struct LockedProject {
     Vec<LockedExternal> externals;
 };
 
-} // namespace lito
+} // namespace lito::lock

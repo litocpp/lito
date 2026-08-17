@@ -18,7 +18,7 @@ using PathBuf = rstd::path::PathBuf;
 class Manifest : public ProjectFixture {
 protected:
     auto manifest(ref<str> name, ref<str> contents, ref<str> filename = "lito.toml"_str)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             { filename, contents },
         };
@@ -397,7 +397,7 @@ TEST_F(Manifest, InvalidManifestDocumentsAreRejectedByManifestOwner) {
         SCOPED_TRACE(item.name);
         auto project = manifest(item.name, item.contents);
         ASSERT_TRUE(project.is_ok());
-        auto loaded = lito::load_manifest_document(project->root.as_path());
+        auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
@@ -405,7 +405,7 @@ TEST_F(Manifest, InvalidManifestDocumentsAreRejectedByManifestOwner) {
 TEST_F(Manifest, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
     auto project = manifest("discovery-field"_str, invalid_manifest_cases[1].contents);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_manifest_document(project->root.as_path());
+    auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
     ASSERT_TRUE(loaded.is_err());
     auto error = rstd::move(loaded).unwrap_err();
     ASSERT_TRUE(error.is_File());
@@ -420,13 +420,13 @@ TEST_F(Manifest, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
 
     auto manifest_source = as<rstd::error::Error>(error).source();
     ASSERT_TRUE(manifest_source.is_some());
-    EXPECT_TRUE(rstd::error::is<lito::ManifestFileError>(*manifest_source));
+    EXPECT_TRUE(rstd::error::is<lito::manifest::ManifestFileError>(*manifest_source));
     auto file_source = (*manifest_source)->source();
     ASSERT_TRUE(file_source.is_some());
-    EXPECT_TRUE(rstd::error::is<lito::ManifestFileCause>(*file_source));
+    EXPECT_TRUE(rstd::error::is<lito::manifest::ManifestFileCause>(*file_source));
     auto cause_source = (*file_source)->source();
     ASSERT_TRUE(cause_source.is_some());
-    EXPECT_TRUE(rstd::error::is<lito::ManifestSchemaError>(*cause_source));
+    EXPECT_TRUE(rstd::error::is<lito::manifest::ManifestSchemaError>(*cause_source));
 }
 
 TEST_F(Manifest, PackageManifestOwnsTypedTargetCollection) {
@@ -471,7 +471,7 @@ sources = ["src/main.cpp"]
 link-stdlib = false
 )toml"_str);
     ASSERT_TRUE(multi_target.is_ok());
-    auto loaded = lito::load_package_manifest(multi_target->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(multi_target->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->targets.len(), usize(7));
 
@@ -481,15 +481,15 @@ link-stdlib = false
     auto benchmarks = usize {};
     auto no_stdlib  = usize {};
     for (const auto& target : loaded->targets) {
-        switch (lito::package_target_kind(target)) {
-        case lito::PackageTargetKind::Library: ++libraries; break;
-        case lito::PackageTargetKind::Binary: ++binaries; break;
-        case lito::PackageTargetKind::Test: ++tests; break;
-        case lito::PackageTargetKind::Benchmark: ++benchmarks; break;
-        case lito::PackageTargetKind::TestAttachment:
-        case lito::PackageTargetKind::CompileTest: break;
+        switch (lito::manifest::package_target_kind(target)) {
+        case lito::package::PackageTargetKind::Library: ++libraries; break;
+        case lito::package::PackageTargetKind::Binary: ++binaries; break;
+        case lito::package::PackageTargetKind::Test: ++tests; break;
+        case lito::package::PackageTargetKind::Benchmark: ++benchmarks; break;
+        case lito::package::PackageTargetKind::TestAttachment:
+        case lito::package::PackageTargetKind::CompileTest: break;
         }
-        if (! lito::package_target_links_stdlib(target)) ++no_stdlib;
+        if (! lito::manifest::package_target_links_stdlib(target)) ++no_stdlib;
     }
     EXPECT_EQ(libraries, usize(1));
     EXPECT_EQ(binaries, usize(2));
@@ -498,8 +498,8 @@ link-stdlib = false
     EXPECT_EQ(no_stdlib, usize(6));
 
     for (const auto& target : loaded->targets) {
-        EXPECT_EQ(lito::package_target_source(target).discovery,
-                  lito::SourceDiscoveryMode::Explicit);
+        EXPECT_EQ(lito::manifest::package_target_source(target).discovery,
+                  lito::manifest::SourceDiscoveryMode::Explicit);
     }
 
     auto module_project = manifest("directory-markers"_str, R"toml([package]
@@ -512,11 +512,11 @@ module = "fixture.convention.markers"
 archive = "fixture.convention.markers"
 )toml"_str);
     ASSERT_TRUE(module_project.is_ok());
-    auto module = lito::load_package_manifest(module_project->root.as_path());
+    auto module = lito::manifest::load_package_manifest(module_project->root.as_path());
     ASSERT_TRUE(module.is_ok());
     ASSERT_EQ(module->targets.len(), usize(1));
-    EXPECT_EQ(lito::package_target_source(module->targets[usize {}]).discovery,
-              lito::SourceDiscoveryMode::Module);
+    EXPECT_EQ(lito::manifest::package_target_source(module->targets[usize {}]).discovery,
+              lito::manifest::SourceDiscoveryMode::Module);
 
     auto group_project = manifest("source-groups"_str, R"toml([package]
 name = "fixture-compile-lib"
@@ -533,11 +533,11 @@ source-groups = [
 ]
 )toml"_str);
     ASSERT_TRUE(group_project.is_ok());
-    auto groups = lito::load_package_manifest(group_project->root.as_path());
+    auto groups = lito::manifest::load_package_manifest(group_project->root.as_path());
     ASSERT_TRUE(groups.is_ok());
     ASSERT_EQ(groups->targets.len(), usize(1));
-    EXPECT_EQ(lito::package_target_source(groups->targets[usize {}]).discovery,
-              lito::SourceDiscoveryMode::Explicit);
+    EXPECT_EQ(lito::manifest::package_target_source(groups->targets[usize {}]).discovery,
+              lito::manifest::SourceDiscoveryMode::Explicit);
 }
 
 TEST_F(Manifest, UsageSeparatesLocalOptionsFromTypedLinkRequirements) {
@@ -558,7 +558,7 @@ threads = true
 system-libraries = ["dl", "user32"]
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->usage.options.len(), usize(1));
     EXPECT_EQ(loaded->usage.options[usize {}].as_str(), "-Wall"_str);
@@ -595,7 +595,7 @@ url = "https://example.com/generator-aarch64.tgz"
 sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->build_tools.len(), usize(1));
     const auto& tool = loaded->build_tools[usize {}];
@@ -614,7 +614,7 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
     EXPECT_TRUE(has_aarch64);
 
     ASSERT_EQ(loaded->targets.len(), usize(1));
-    auto resources = lito::package_target_resources(loaded->targets[usize {}]);
+    auto resources = lito::manifest::package_target_resources(loaded->targets[usize {}]);
     ASSERT_TRUE(resources.is_some());
     ASSERT_EQ((**resources).len(), usize(1));
     EXPECT_EQ((**resources)[usize {}].name.as_str(), "frontend"_str);
@@ -654,7 +654,7 @@ archive = "fixture.manifest.legacy"
 )toml"_str,
                                    "tenon.toml"_str);
     ASSERT_TRUE(legacy_project.is_ok());
-    auto legacy = lito::load_package_manifest(legacy_project->root.as_path());
+    auto legacy = lito::manifest::load_package_manifest(legacy_project->root.as_path());
     ASSERT_TRUE(legacy.is_ok());
     EXPECT_EQ(legacy->name.as_str(), "legacy-manifest"_str);
 
@@ -668,7 +668,7 @@ module = "fixture.manifest.preferred"
 archive = "fixture.manifest.preferred"
 )toml"_str);
     ASSERT_TRUE(preferred_project.is_ok());
-    auto preferred = lito::load_package_manifest(preferred_project->root.as_path());
+    auto preferred = lito::manifest::load_package_manifest(preferred_project->root.as_path());
     ASSERT_TRUE(preferred.is_ok());
     EXPECT_EQ(preferred->name.as_str(), "preferred-manifest"_str);
 }
@@ -703,7 +703,7 @@ sources = ["src/shared.cppm"]
     auto project = materialize("shared-source-root"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto package = project->root.join(PathBuf::from("packages/library"_str).as_path());
-    auto loaded  = lito::load_package_manifest(package.as_path());
+    auto loaded  = lito::manifest::load_package_manifest(package.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_NE(loaded->root.as_path(), loaded->source_root.as_path());
     EXPECT_EQ(loaded->source_root.as_path(), project->root.as_path());
@@ -726,12 +726,12 @@ commit = "0123456789abcdef0123456789abcdef01234567"
 visibility = "private"
 )toml"_str);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     const auto& source = loaded->dependencies[usize {}].source;
     ASSERT_TRUE(source.is_Git());
-    EXPECT_EQ(source.as_Git().reference.kind, lito::GitReferenceKind::Commit);
+    EXPECT_EQ(source.as_Git().reference.kind, lito::source::GitReferenceKind::Commit);
     EXPECT_EQ(source.as_Git().reference.value.as_str(),
               "0123456789abcdef0123456789abcdef01234567"_str);
 }

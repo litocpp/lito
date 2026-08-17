@@ -12,7 +12,7 @@ using namespace lito_test;
 class Lock : public ProjectFixture {
 protected:
     auto project(ref<str> name, ref<str> lock)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             {
                 "lito.toml"_str,
@@ -33,7 +33,7 @@ sources = ["main.cpp"]
     }
 
     auto project_without_lock(ref<str> name)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             {
                 "lito.toml"_str,
@@ -53,12 +53,12 @@ sources = ["main.cpp"]
     }
 
     auto current(ref<rstd::path::Path> directory) -> bool {
-        auto session = lito::load_lock_session(directory, true);
+        auto session = lito::lock::load_lock_session(directory, true);
         if (session.is_err()) return false;
         auto options = session->take_resolution_options();
-        auto graph   = lito::resolve_package_graph(directory, rstd::move(options));
+        auto graph   = lito::package::resolve_package_graph(directory, rstd::move(options));
         if (graph.is_err()) return false;
-        return lito::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
+        return lito::lock::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
     }
 };
 
@@ -135,7 +135,7 @@ TEST_F(Lock, OnlyCurrentLockVersionIsAcceptedByLockStore) {
 
     auto future_version = project("future-version-error"_str, invalid[2].contents);
     ASSERT_TRUE(future_version.is_ok());
-    auto loaded = lito::load_lock_session(future_version->root.as_path(), false);
+    auto loaded = lito::lock::load_lock_session(future_version->root.as_path(), false);
     ASSERT_TRUE(loaded.is_err());
     auto version_error = rstd::move(loaded).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
@@ -150,12 +150,14 @@ TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
 })json"_str;
     auto           fixture     = project("future-version"_str, future_lock);
     ASSERT_TRUE(fixture.is_ok());
-    auto loading = lito::load_lock_session(fixture->root.as_path(), false);
+    auto loading = lito::lock::load_lock_session(fixture->root.as_path(), false);
     ASSERT_TRUE(loading.is_err());
-    auto update = lito::load_lock_session(
-        fixture->root.as_path(), lito::LockConfig {}, false, lito::GitResolutionMode::Refresh);
+    auto update = lito::lock::load_lock_session(fixture->root.as_path(),
+                                                lito::lock::LockConfig {},
+                                                false,
+                                                lito::source::GitResolutionMode::Refresh);
     ASSERT_TRUE(update.is_err());
-    auto locked = lito::load_lock_session(fixture->root.as_path(), true);
+    auto locked = lito::lock::load_lock_session(fixture->root.as_path(), true);
     ASSERT_TRUE(locked.is_err());
     auto loading_error = rstd::move(loading).unwrap_err();
     ASSERT_TRUE(loading_error.is_Schema());

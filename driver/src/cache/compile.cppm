@@ -231,8 +231,9 @@ public:
         root.insert(String::make("case"_str), cache_string(test.name.as_str()));
         root.insert(String::make("compile"_str), decision.complete_.clone());
         root.insert(String::make("expected"_str),
-                    cache_string(test.outcome == CompileTestOutcome::Success ? "success"_str
-                                                                             : "failure"_str));
+                    cache_string(test.outcome == lito::manifest::CompileTestOutcome::Success
+                                     ? "success"_str
+                                     : "failure"_str));
         root.insert(String::make("state"_str), cache_string("running"_str));
         root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
         return write_json(record, Json::Object(rstd::move(root)));
@@ -262,7 +263,7 @@ public:
         root.insert(String::make("case"_str), cache_string(execution.name.as_str()));
         root.insert(String::make("compile"_str), decision.complete_.clone());
         root.insert(String::make("expected"_str),
-                    cache_string(execution.expected == CompileTestOutcome::Success
+                    cache_string(execution.expected == lito::manifest::CompileTestOutcome::Success
                                      ? "success"_str
                                      : "failure"_str));
         root.insert(String::make("result"_str), Json::Object(rstd::move(result)));
@@ -308,9 +309,9 @@ public:
         return write_json(decision.record_.as_path(), complete);
     }
 
-    auto finish_target(const BuildLayout&     layout,
-                       const PackageTargetId& target,
-                       const Vec<PathBuf>&    current_records) -> CacheResult<empty> {
+    auto finish_target(const BuildLayout&                    layout,
+                       const lito::package::PackageTargetId& target,
+                       const Vec<PathBuf>& current_records) -> CacheResult<empty> {
         auto directory = layout.cache_target_directory(target);
         return finish_directory(directory.as_path(), current_records);
     }

@@ -20,16 +20,16 @@ TEST(SourceTree, ValidatesPortablePathsAndTopology) {
         "C:/prefix"_str,
     };
     for (auto path : invalid_paths) {
-        auto tree = lito::SourceTree::make();
+        auto tree = lito::source::SourceTree::make();
         EXPECT_TRUE(tree.add_text(path, "value"_str).is_err());
     }
 
-    auto tree = lito::SourceTree::make();
+    auto tree = lito::source::SourceTree::make();
     ASSERT_TRUE(tree.add_text("src"_str, "file"_str).is_ok());
     EXPECT_TRUE(tree.add_text("src/lib.cppm"_str, "module"_str).is_err());
     EXPECT_TRUE(tree.add_directory("src"_str).is_err());
 
-    auto nested = lito::SourceTree::make();
+    auto nested = lito::source::SourceTree::make();
     ASSERT_TRUE(nested.add_text("src/lib.cppm"_str, "module"_str).is_ok());
     EXPECT_TRUE(nested.add_text("src"_str, "file"_str).is_err());
     ASSERT_TRUE(nested.add_directory("src"_str).is_ok());
@@ -37,11 +37,11 @@ TEST(SourceTree, ValidatesPortablePathsAndTopology) {
 }
 
 TEST(SourceTree, CombinesAndMutatesOnlyThroughExplicitOperations) {
-    auto base = lito::SourceTree::make();
+    auto base = lito::source::SourceTree::make();
     ASSERT_TRUE(base.add_text("lito.toml"_str, "first"_str).is_ok());
     ASSERT_TRUE(base.add_text("src/lib.cppm"_str, "library"_str).is_ok());
 
-    auto addition = lito::SourceTree::make();
+    auto addition = lito::source::SourceTree::make();
     ASSERT_TRUE(addition.add_text("src/lib.cppm"_str, "duplicate"_str).is_ok());
     ASSERT_TRUE(addition.add_text("src/value.cpp"_str, "value"_str).is_ok());
     auto before = base.clone();
@@ -60,7 +60,7 @@ TEST(SourceTree, MaterializesForTheExistingManifestOwnerWithoutOverwriting) {
     ASSERT_TRUE(temporary.is_ok());
     auto owner = rstd::move(temporary).unwrap();
 
-    auto tree = lito::SourceTree::make();
+    auto tree = lito::source::SourceTree::make();
     ASSERT_TRUE(tree.add_text("lito.toml"_str,
                               "[package]\n"
                               "name = \"inline-source-tree\"\n"
@@ -77,11 +77,11 @@ TEST(SourceTree, MaterializesForTheExistingManifestOwnerWithoutOverwriting) {
     ASSERT_TRUE(tree.add_directory("empty"_str).is_ok());
     ASSERT_TRUE(tree.add_text("tools/helper"_str,
                               "#!/bin/sh\nexit 0\n"_str,
-                              lito::SourceFileMode::Executable)
+                              lito::source::SourceFileMode::Executable)
                     .is_ok());
 
     auto root         = PathBuf::from(owner.path()).join(PathBuf::from("project"_str).as_path());
-    auto materialized = lito::materialize_source_tree(tree, root.as_path());
+    auto materialized = lito::source::materialize_source_tree(tree, root.as_path());
     ASSERT_TRUE(materialized.is_ok());
     EXPECT_EQ(materialized->entries, usize(4));
     EXPECT_EQ(
@@ -99,7 +99,7 @@ TEST(SourceTree, MaterializesForTheExistingManifestOwnerWithoutOverwriting) {
     EXPECT_NE(tool->permissions().mode() & u32(0111), u32 {});
 #endif
 
-    auto manifest = lito::load_package_manifest(root.as_path());
+    auto manifest = lito::manifest::load_package_manifest(root.as_path());
     if (manifest.is_err()) {
         auto message = error_chain_text(manifest.unwrap_err());
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
@@ -111,12 +111,12 @@ TEST(SourceTree, MaterializesForTheExistingManifestOwnerWithoutOverwriting) {
     ASSERT_TRUE(rstd::fs::create_dir(occupied.as_path()).is_ok());
     auto marker = occupied.join(PathBuf::from("marker"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(marker.as_path(), "preserved"_str.as_bytes()).is_ok());
-    EXPECT_TRUE(lito::materialize_source_tree(tree, occupied.as_path()).is_err());
+    EXPECT_TRUE(lito::source::materialize_source_tree(tree, occupied.as_path()).is_err());
     EXPECT_EQ(rstd::fs::read_to_string(marker.as_path()).unwrap().as_str(), "preserved"_str);
 }
 
 TEST_F(InlineProjectFixture, OwnsIndependentProjectAndOutputRoots) {
-    auto tree = lito::SourceTree::make();
+    auto tree = lito::source::SourceTree::make();
     ASSERT_TRUE(tree.add_text("lito.toml"_str,
                               "[package]\n"
                               "name = \"inline-project\"\n"

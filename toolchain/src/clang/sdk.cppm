@@ -40,14 +40,14 @@ export namespace lito
 {
 
 struct ClangSdk {
-    PathBuf         prefix;
-    PathBuf         cmake_search_path;
-    PathBuf         clang_cpp;
-    PathBuf         llvm_config;
-    StandardLibrary standard_library { StandardLibrary::Libstdcxx };
-    bool            exceptions { false };
-    bool            rtti { false };
-    String          identity;
+    PathBuf                       prefix;
+    PathBuf                       cmake_search_path;
+    PathBuf                       clang_cpp;
+    PathBuf                       llvm_config;
+    lito::config::StandardLibrary standard_library { lito::config::StandardLibrary::Libstdcxx };
+    bool                          exceptions { false };
+    bool                          rtti { false };
+    String                        identity;
 };
 
 auto resolve_clang_sdk(const CompilerIdentity&           compiler,
@@ -85,8 +85,8 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
     }
     auto cxxflags         = trim_ascii(rstd::move(flags->standard_output));
     auto standard_library = cxxflags.as_str().contains("-stdlib=libc++"_str)
-                                ? StandardLibrary::Libcxx
-                                : StandardLibrary::Libstdcxx;
+                                ? lito::config::StandardLibrary::Libcxx
+                                : lito::config::StandardLibrary::Libstdcxx;
     auto exceptions       = ! cxxflags.as_str().contains("-fno-exceptions"_str);
     auto rtti             = ! cxxflags.as_str().contains("-fno-rtti"_str);
     auto library_metadata = rstd::fs::metadata(clang_cpp.as_path());

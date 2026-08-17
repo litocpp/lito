@@ -22,20 +22,20 @@ export namespace lito
 {
 
 template<typename T>
-auto cmake_failure(String message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(rstd::move(message)));
+auto cmake_failure(String message) -> lito::dependency::DependencyResult<T> {
+    return Err(lito::dependency::DependencyError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto cmake_failure(ref<str> message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(String::make(message)));
+auto cmake_failure(ref<str> message) -> lito::dependency::DependencyResult<T> {
+    return Err(lito::dependency::DependencyError::Message(String::make(message)));
 }
 
 template<typename T>
 auto cmake_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
-    -> DependencyResult<T> {
-    return Err(
-        DependencyError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
+    -> lito::dependency::DependencyResult<T> {
+    return Err(lito::dependency::DependencyError::Io(
+        String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
 auto emit_cmake(const Option<ToolchainEventSink>& observer,
@@ -61,7 +61,8 @@ auto execute_observed(const Option<ToolchainEventSink>& observer,
     return result;
 }
 
-auto path_text(ref<rstd::path::Path> path, ref<str> context) -> DependencyResult<String> {
+auto path_text(ref<rstd::path::Path> path, ref<str> context)
+    -> lito::dependency::DependencyResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
         return cmake_failure<String>(
@@ -78,11 +79,13 @@ auto append_identity(String& output, ref<str> value) -> void {
 }
 
 auto cmake_build_type(const cpp::ProfileSpec& profile) -> ref<str> {
-    return profile.family == BuildProfileFamily::Debug ? "Debug"_str : "Release"_str;
+    return profile.family == lito::manifest::BuildProfileFamily::Debug ? "Debug"_str
+                                                                       : "Release"_str;
 }
 
-auto append_search_path_identity(String& output, const CMakeProviderConfig& provider)
-    -> DependencyResult<empty> {
+auto append_search_path_identity(String&                                      output,
+                                 const lito::dependency::CMakeProviderConfig& provider)
+    -> lito::dependency::DependencyResult<empty> {
     for (const auto& path : provider.search_paths) {
         auto value = path_text(path.as_path(), "CMake search path"_str);
         if (value.is_err()) return Err(rstd::move(value).unwrap_err());
@@ -119,7 +122,7 @@ auto source_identity(const ResolvedCMakeDependencyRequirement& requirement) -> S
     return String::make("installed"_str);
 }
 
-auto cmake_quoted(ref<str> value, ref<str> context) -> DependencyResult<String> {
+auto cmake_quoted(ref<str> value, ref<str> context) -> lito::dependency::DependencyResult<String> {
     if (value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
         value.contains("\n"_str) || value.contains("\r"_str)) {
         return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
@@ -149,26 +152,28 @@ enum class CMakePackageOperation
 };
 
 struct CMakePackagePlan {
-    ResolvedCMakeDependencyRequirement requirement;
-    CMakeProviderConfig                provider;
-    cpp::BuildConfiguration            configuration;
-    cpp::ProfileSpec                   profile;
-    CMakeWorkArea                      area;
-    String                             effective_target;
-    Vec<CMakePackageOperation>         operations;
-    usize                              jobs { usize(1) };
+    ResolvedCMakeDependencyRequirement    requirement;
+    lito::dependency::CMakeProviderConfig provider;
+    cpp::BuildConfiguration               configuration;
+    cpp::ProfileSpec                      profile;
+    CMakeWorkArea                         area;
+    String                                effective_target;
+    Vec<CMakePackageOperation>            operations;
+    usize                                 jobs { usize(1) };
 };
 
 template<typename T>
-auto with_operation_context(DependencyResult<T>     result,
-                            const CMakePackagePlan& plan,
-                            CMakePackageOperation   operation) -> DependencyResult<T> {
+auto with_operation_context(lito::dependency::DependencyResult<T> result,
+                            const CMakePackagePlan&               plan,
+                            CMakePackageOperation                 operation)
+    -> lito::dependency::DependencyResult<T> {
     if (result.is_ok()) return result;
     auto error = rstd::move(result).unwrap_err();
-    return Err(DependencyError::CMakeOperation(plan.requirement.alias.clone(),
-                                               rstd::format("{}", operation),
-                                               plan.area.root.clone(),
-                                               Box<DependencyError>::make(rstd::move(error))));
+    return Err(lito::dependency::DependencyError::CMakeOperation(
+        plan.requirement.alias.clone(),
+        rstd::format("{}", operation),
+        plan.area.root.clone(),
+        Box<lito::dependency::DependencyError>::make(rstd::move(error))));
 }
 
 auto clone_cmake_source(const ResolvedCMakeDependencySource& source)
@@ -188,16 +193,17 @@ auto clone_cmake_source(const ResolvedCMakeDependencySource& source)
 
 auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requirement)
     -> ResolvedCMakeDependencyRequirement {
-    auto cache = Vec<CMakeCacheEntry>::with_capacity(requirement.cache.len());
+    auto cache = Vec<lito::dependency::CMakeCacheEntry>::with_capacity(requirement.cache.len());
     for (const auto& entry : requirement.cache) {
-        cache.push(CMakeCacheEntry {
+        cache.push(lito::dependency::CMakeCacheEntry {
             .name  = entry.name.clone(),
             .value = entry.value.clone(),
         });
     }
-    auto targets = Vec<CMakeTargetRequirement>::with_capacity(requirement.targets.len());
+    auto targets =
+        Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(requirement.targets.len());
     for (const auto& target : requirement.targets) {
-        targets.push(CMakeTargetRequirement {
+        targets.push(lito::dependency::CMakeTargetRequirement {
             .name       = target.name.clone(),
             .visibility = target.visibility,
         });
@@ -230,12 +236,13 @@ auto clone_profile(const cpp::ProfileSpec& profile) -> cpp::ProfileSpec {
     };
 }
 
-auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
-               const CMakeProviderConfig&                provider,
-               const cpp::BuildConfiguration&            build,
-               const cpp::ProfileSpec&                   profile,
-               ref<str>                                  effective_target,
-               ref<rstd::path::Path> profile_cmake_root) -> DependencyResult<CMakeWorkArea> {
+auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
+               const lito::dependency::CMakeProviderConfig& provider,
+               const cpp::BuildConfiguration&               build,
+               const cpp::ProfileSpec&                      profile,
+               ref<str>                                     effective_target,
+               ref<rstd::path::Path>                        profile_cmake_root)
+    -> lito::dependency::DependencyResult<CMakeWorkArea> {
     auto recipe = String::make("lito-cmake-install-v4\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
@@ -260,8 +267,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(recipe, cmake_build_type(profile));
     append_identity(recipe, profile.cpp.language.standard.as_str());
     append_identity(recipe,
-                    profile.cpp.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
-                                                                                : "libstdc++"_str);
+                    profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
+                        ? "libc++"_str
+                        : "libstdc++"_str);
     append_identity(recipe,
                     profile.cpp.language.exceptions ? "exceptions"_str : "no-exceptions"_str);
     append_identity(recipe, profile.cpp.language.rtti ? "rtti"_str : "no-rtti"_str);
@@ -278,8 +286,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement& requirement,
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());
     append_identity(query_recipe,
-                    requirement.integration == CMakeIntegration::BuildTree ? "build-tree"_str
-                                                                           : "install"_str);
+                    requirement.integration == lito::dependency::CMakeIntegration::BuildTree
+                        ? "build-tree"_str
+                        : "install"_str);
     append_identity(query_recipe,
                     requirement.add_subdirectory ? "add-subdirectory"_str
                                                  : "adapter-owned-source"_str);

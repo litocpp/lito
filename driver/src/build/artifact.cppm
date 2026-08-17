@@ -10,30 +10,30 @@ export namespace lito
 {
 
 struct BuiltArtifact {
-    PackageTargetId   target;
-    cpp::ArtifactKind kind { cpp::ArtifactKind::StaticLibrary };
-    PathBuf           path;
-    PathBuf           package_root;
+    lito::package::PackageTargetId target;
+    cpp::ArtifactKind              kind { cpp::ArtifactKind::StaticLibrary };
+    PathBuf                        path;
+    PathBuf                        package_root;
 };
 
 struct BuiltRuntimeResource {
-    PackageTargetId target;
-    String          name;
-    PathBuf         root;
-    String          identity;
-    Vec<PathBuf>    files;
+    lito::package::PackageTargetId target;
+    String                         name;
+    PathBuf                        root;
+    String                         identity;
+    Vec<PathBuf>                   files;
 };
 
 struct CompileTestExecution {
-    String               package;
-    String               name;
-    PathBuf              source;
-    CompileTestOutcome   expected { CompileTestOutcome::Failure };
-    i32                  exit_code {};
-    String               standard_output;
-    String               standard_error;
-    Option<String>       mismatch;
-    rstd::time::Duration elapsed;
+    String                             package;
+    String                             name;
+    PathBuf                            source;
+    lito::manifest::CompileTestOutcome expected { lito::manifest::CompileTestOutcome::Failure };
+    i32                                exit_code {};
+    String                             standard_output;
+    String                             standard_error;
+    Option<String>                     mismatch;
+    rstd::time::Duration               elapsed;
 
     auto success() const noexcept -> bool { return mismatch.is_none(); }
 };

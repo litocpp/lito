@@ -12,7 +12,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 enum class SourceDiscoveryMode
@@ -62,11 +62,12 @@ class PackageTargetManifest {
               (Benchmark, (String name; TargetSourceManifest source; bool link_stdlib;)))
 };
 
-auto package_target_kind(const PackageTargetManifest& target) noexcept -> PackageTargetKind {
-    if (target.is_Library()) return PackageTargetKind::Library;
-    if (target.is_Binary()) return PackageTargetKind::Binary;
-    if (target.is_Test()) return PackageTargetKind::Test;
-    return PackageTargetKind::Benchmark;
+auto package_target_kind(const PackageTargetManifest& target) noexcept
+    -> lito::package::PackageTargetKind {
+    if (target.is_Library()) return lito::package::PackageTargetKind::Library;
+    if (target.is_Binary()) return lito::package::PackageTargetKind::Binary;
+    if (target.is_Test()) return lito::package::PackageTargetKind::Test;
+    return lito::package::PackageTargetKind::Benchmark;
 }
 
 auto package_target_name(const PackageTargetManifest& target) noexcept -> ref<str> {
@@ -132,4 +133,4 @@ struct CompileTestCase {
     Vec<String>        diagnostic_contains_any;
 };
 
-} // namespace lito
+} // namespace lito::manifest

@@ -11,7 +11,7 @@ export namespace lito
 
 auto discover_explicit_sources(const cpp::ResolvedTarget& target)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet>;
-auto discover_format_sources(const PackageManifest& manifest)
+auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet>;
 auto resolve_source_target(const cpp::PackageMetadata&     package,
                            const cpp::SourceDiscoveryPlan& discovery,

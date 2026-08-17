@@ -5,11 +5,11 @@ import rstd;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::lock
 {
 
 struct LockConfig {
     PathBuf path;
 };
 
-} // namespace lito
+} // namespace lito::lock

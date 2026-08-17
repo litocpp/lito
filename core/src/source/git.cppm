@@ -5,7 +5,7 @@ import rstd;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class GitReferenceKind
@@ -65,4 +65,4 @@ struct GitSourcePin {
     String       commit;
 };
 
-} // namespace lito
+} // namespace lito::source

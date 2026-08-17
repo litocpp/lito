@@ -34,10 +34,11 @@ auto evaluate_compile_test(ref<str>                            package,
                            ref<rstd::path::Path>               source,
                            CompileCommandResult                output) -> CompileTestExecution {
     auto mismatch = Option<String> {};
-    if (test.outcome == CompileTestOutcome::Success && output.exit_code != i32 {}) {
+    if (test.outcome == lito::manifest::CompileTestOutcome::Success && output.exit_code != i32 {}) {
         mismatch = Some(rstd::format("expected compilation to succeed, but clang exited with {}",
                                      output.exit_code));
-    } else if (test.outcome == CompileTestOutcome::Failure && output.exit_code == i32 {}) {
+    } else if (test.outcome == lito::manifest::CompileTestOutcome::Failure &&
+               output.exit_code == i32 {}) {
         mismatch = Some(String::make("expected compilation to fail, but clang succeeded"_str));
     }
     if (mismatch.is_none() && output.exit_code != i32 {}) {

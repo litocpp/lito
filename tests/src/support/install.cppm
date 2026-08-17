@@ -21,14 +21,15 @@ export namespace lito_test
 {
 auto local_provenance(ref<rstd::path::Path> root) -> lito::InstallSourceProvenance {
     return lito::InstallSourceProvenance::Local(PathBuf::from(root),
-                                                lito::path_source_identity(root));
+                                                lito::source::path_source_identity(root));
 }
 
 auto managed_destination(ref<rstd::path::Path> root) -> lito::InstallDestination {
     return lito::InstallDestination::Managed(lito::InstallRoot { .path = PathBuf::from(root) });
 }
 
-auto install_script_input(const lito::PackageManifest& manifest) -> lito::PackageInstallInput {
+auto install_script_input(const lito::manifest::PackageManifest& manifest)
+    -> lito::PackageInstallInput {
     auto root = manifest.root.clone();
     return lito::PackageInstallInput {
         .name          = manifest.name.clone(),
@@ -37,9 +38,9 @@ auto install_script_input(const lito::PackageManifest& manifest) -> lito::Packag
         .manifest_path = manifest.manifest_path.clone(),
         .script        = Some(manifest.install_script->clone()),
         .source =
-            lito::ResolvedPackageSource {
-                .identity       = lito::path_source_identity(root.as_path()),
-                .kind           = lito::PackageSourceKind::Path,
+            lito::source::ResolvedPackageSource {
+                .identity       = lito::source::path_source_identity(root.as_path()),
+                .kind           = lito::source::PackageSourceKind::Path,
                 .root_directory = rstd::move(root),
                 .path           = PathBuf::from("."_str),
             },

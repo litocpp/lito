@@ -77,21 +77,22 @@ auto append_entry(Vec<InstallEntry>& entries, InstallEntry entry)
     return Ok(empty {});
 }
 
-auto artifact_for(const BuildSummary& summary, const PackageTargetId& target)
+auto artifact_for(const BuildSummary& summary, const lito::package::PackageTargetId& target)
     -> InstallMaterializeResult<const BuiltArtifact*> {
     const BuiltArtifact* result = nullptr;
     for (const auto& artifact : summary.artifacts) {
         if (artifact.target != target) continue;
         if (result != nullptr) {
-            return materialize_failure<const BuiltArtifact*>(rstd::format(
-                "build returned duplicate artifact for '{}'", package_target_id_text(target)));
+            return materialize_failure<const BuiltArtifact*>(
+                rstd::format("build returned duplicate artifact for '{}'",
+                             lito::package::package_target_id_text(target)));
         }
         result = rstd::addressof(artifact);
     }
     if (result == nullptr || result->kind != cpp::ArtifactKind::Executable) {
         return materialize_failure<const BuiltArtifact*>(
             rstd::format("build did not return an executable artifact for '{}'",
-                         package_target_id_text(target)));
+                         lito::package::package_target_id_text(target)));
     }
     return Ok(result);
 }

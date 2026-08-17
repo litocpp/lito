@@ -20,7 +20,7 @@ auto run_cmake(Vec<String>                       arguments,
                ref<str>                          operation,
                const ResolvedProcessEnvironment& environment,
                Option<ref<rstd::path::Path>>     working_directory = None(),
-               bool                              stream_output = true) -> DependencyResult<empty> {
+               bool stream_output = true) -> lito::dependency::DependencyResult<empty> {
     auto output = [&]() -> SystemResult<CommandOutput> {
         if (! stream_output) return run_command(arguments, environment, working_directory);
         auto observer = rstd::process::OutputObserver {
@@ -33,8 +33,8 @@ auto run_cmake(Vec<String>                       arguments,
         return run_command_observed(arguments, environment, observer, working_directory);
     }();
     if (output.is_err()) {
-        return Err(
-            DependencyError::Operation(String::make(operation), rstd::move(output).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Operation(String::make(operation),
+                                                                rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
         auto diagnostics = output->standard_output.clone();
@@ -53,7 +53,7 @@ auto run_cmake(Vec<String>                       arguments,
 auto push_path_argument(Vec<String>&          arguments,
                         ref<str>              prefix,
                         ref<rstd::path::Path> path,
-                        ref<str>              context) -> DependencyResult<empty> {
+                        ref<str> context) -> lito::dependency::DependencyResult<empty> {
     auto text = path_text(path, context);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
     auto argument = String::make(prefix);
@@ -63,7 +63,7 @@ auto push_path_argument(Vec<String>&          arguments,
 }
 
 auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration& configuration)
-    -> DependencyResult<empty> {
+    -> lito::dependency::DependencyResult<empty> {
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_COMPILER="_str,
                                 configuration.toolchain.cc.as_path(),
@@ -86,8 +86,9 @@ auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration&
     return Ok(empty {});
 }
 
-auto push_cmake_search_path(Vec<String>& arguments, const CMakeProviderConfig& provider)
-    -> DependencyResult<empty> {
+auto push_cmake_search_path(Vec<String>&                                 arguments,
+                            const lito::dependency::CMakeProviderConfig& provider)
+    -> lito::dependency::DependencyResult<empty> {
     if (provider.search_paths.is_empty()) return Ok(empty {});
     auto value = String::make("-DCMAKE_PREFIX_PATH="_str);
     for (usize index {}; index < provider.search_paths.len(); ++index) {
@@ -107,9 +108,10 @@ auto cmake_cxx_standard(ref<str> value) -> ref<str> {
 }
 
 auto cmake_cxx_flags(const cpp::ProfileSpec& profile) -> String {
-    auto result = String::make(profile.cpp.abi.standard_library == StandardLibrary::Libcxx
-                                   ? "-stdlib=libc++"_str
-                                   : "-stdlib=libstdc++"_str);
+    auto result =
+        String::make(profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
+                         ? "-stdlib=libc++"_str
+                         : "-stdlib=libstdc++"_str);
     result.push_str(profile.cpp.language.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
     result.push_str(profile.cpp.language.rtti ? " -frtti"_str : " -fno-rtti"_str);
     result.push_ascii(' ');
@@ -125,7 +127,7 @@ auto source_install_receipt(const CMakeWorkArea& area) -> PathBuf {
     return area.root.join(PathBuf::from("install-receipt-v1"_str).as_path());
 }
 
-auto source_install_current(const CMakeWorkArea& area) -> DependencyResult<bool> {
+auto source_install_current(const CMakeWorkArea& area) -> lito::dependency::DependencyResult<bool> {
     auto marker = source_install_receipt(area);
     auto ready  = rstd::fs::exists(marker.as_path());
     if (ready.is_err()) {
@@ -145,12 +147,13 @@ auto source_install_current(const CMakeWorkArea& area) -> DependencyResult<bool>
     return Ok(true);
 }
 
-auto configure_source(const ResolvedCMakeDependencyRequirement& requirement,
-                      const CMakeProviderConfig&                provider,
-                      const cpp::BuildConfiguration&            configuration,
-                      const cpp::ProfileSpec&                   profile,
-                      const CMakeWorkArea&                      area,
-                      const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
+auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
+                      const lito::dependency::CMakeProviderConfig& provider,
+                      const cpp::BuildConfiguration&               configuration,
+                      const cpp::ProfileSpec&                      profile,
+                      const CMakeWorkArea&                         area,
+                      const ResolvedProcessEnvironment&            environment)
+    -> lito::dependency::DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -185,12 +188,13 @@ auto configure_source(const ResolvedCMakeDependencyRequirement& requirement,
     return Ok(empty {});
 }
 
-auto build_source(const ResolvedCMakeDependencyRequirement& requirement,
-                  const CMakeProviderConfig&                provider,
-                  const cpp::ProfileSpec&                   profile,
-                  const CMakeWorkArea&                      area,
-                  usize                                     jobs,
-                  const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
+auto build_source(const ResolvedCMakeDependencyRequirement&    requirement,
+                  const lito::dependency::CMakeProviderConfig& provider,
+                  const cpp::ProfileSpec&                      profile,
+                  const CMakeWorkArea&                         area,
+                  usize                                        jobs,
+                  const ResolvedProcessEnvironment&            environment)
+    -> lito::dependency::DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -211,12 +215,13 @@ auto build_source(const ResolvedCMakeDependencyRequirement& requirement,
         true);
 }
 
-auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
-                    const CMakeProviderConfig&                provider,
-                    const cpp::ProfileSpec&                   profile,
-                    const CMakeWorkArea&                      area,
-                    bool                                      publish_receipt,
-                    const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
+auto install_source(const ResolvedCMakeDependencyRequirement&    requirement,
+                    const lito::dependency::CMakeProviderConfig& provider,
+                    const cpp::ProfileSpec&                      profile,
+                    const CMakeWorkArea&                         area,
+                    bool                                         publish_receipt,
+                    const ResolvedProcessEnvironment&            environment)
+    -> lito::dependency::DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -243,7 +248,7 @@ auto install_source(const ResolvedCMakeDependencyRequirement& requirement,
 }
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
-    -> DependencyResult<String> {
+    -> lito::dependency::DependencyResult<String> {
     auto result = String::make(
         "cmake_minimum_required(VERSION 3.29)\n"
         "project(lito_cmake_probe LANGUAGES C CXX)\n"
@@ -274,7 +279,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
         "\"${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
         "  endforeach()\n"
         "endfunction()\n"_str);
-    if (requirement.integration == CMakeIntegration::BuildTree) {
+    if (requirement.integration == lito::dependency::CMakeIntegration::BuildTree) {
         auto source = path_text(area.source.as_path(), "CMake build-tree source"_str);
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
         auto quoted_source = cmake_quoted(source->as_str(), "CMake build-tree source"_str);
@@ -343,7 +348,7 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
 }
 
 auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
-                       const CMakeWorkArea&                      area) -> DependencyResult<empty> {
+                       const CMakeWorkArea& area) -> lito::dependency::DependencyResult<empty> {
     auto query =
         area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-lito"_str).as_path());
     auto directories = Vec<PathBuf>::make();
@@ -390,12 +395,13 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     return Ok(empty {});
 }
 
-auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
-                     const CMakeProviderConfig&                provider,
-                     const cpp::BuildConfiguration&            configuration,
-                     const cpp::ProfileSpec&                   profile,
-                     const CMakeWorkArea&                      area,
-                     const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
+auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
+                     const lito::dependency::CMakeProviderConfig& provider,
+                     const cpp::BuildConfiguration&               configuration,
+                     const cpp::ProfileSpec&                      profile,
+                     const CMakeWorkArea&                         area,
+                     const ResolvedProcessEnvironment&            environment)
+    -> lito::dependency::DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -418,7 +424,8 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
-    if (requirement.integration == CMakeIntegration::Install && requirement.source.is_Directory()) {
+    if (requirement.integration == lito::dependency::CMakeIntegration::Install &&
+        requirement.source.is_Directory()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
                                     area.install.as_path(),
@@ -430,7 +437,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
                 arguments, prefix.as_str(), directory.as_path(), "CMake config directory"_str));
         }
     }
-    if (requirement.integration == CMakeIntegration::BuildTree) {
+    if (requirement.integration == lito::dependency::CMakeIntegration::BuildTree) {
         for (const auto& entry : requirement.cache) {
             arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
         }
@@ -441,13 +448,14 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement& requirement,
         environment);
 }
 
-auto build_probe(const ResolvedCMakeDependencyRequirement& requirement,
-                 const CMakeProviderConfig&                provider,
+auto build_probe(const ResolvedCMakeDependencyRequirement&    requirement,
+                 const lito::dependency::CMakeProviderConfig& provider,
                  const cpp::BuildConfiguration&,
                  const cpp::ProfileSpec&           profile,
                  const CMakeWorkArea&              area,
                  usize                             jobs,
-                 const ResolvedProcessEnvironment& environment) -> DependencyResult<empty> {
+                 const ResolvedProcessEnvironment& environment)
+    -> lito::dependency::DependencyResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());

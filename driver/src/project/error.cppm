@@ -19,14 +19,14 @@ export namespace lito
 
 class ProjectError {
     RSTD_ENUM(ProjectError,
-              (Workspace, (PackageSelectionError source;)),
-              (Package, (PackageError source;)),
-              (Dependency, (DependencyError source;)),
+              (Workspace, (lito::package::PackageSelectionError source;)),
+              (Package, (lito::package::PackageError source;)),
+              (Dependency, (lito::dependency::DependencyError source;)),
               (System, (SystemError source;)),
               (Toolchain, (ToolchainError source;)),
-              (Lock, (LockError source;)),
+              (Lock, (lito::lock::LockError source;)),
               (Platform, (PlatformError source;)),
-              (Profile, (BuildProfileError source;)),
+              (Profile, (lito::manifest::BuildProfileError source;)),
               (Layout, (BuildLayoutError source;)),
               (Message, (String message;)))
 };
@@ -40,22 +40,22 @@ export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::PackageSelectionError>, lito::ProjectError> {
-    static auto from(lito::PackageSelectionError error) -> lito::ProjectError {
+struct Impl<convert::From<lito::package::PackageSelectionError>, lito::ProjectError> {
+    static auto from(lito::package::PackageSelectionError error) -> lito::ProjectError {
         return lito::ProjectError::Workspace(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::PackageError>, lito::ProjectError> {
-    static auto from(lito::PackageError error) -> lito::ProjectError {
+struct Impl<convert::From<lito::package::PackageError>, lito::ProjectError> {
+    static auto from(lito::package::PackageError error) -> lito::ProjectError {
         return lito::ProjectError::Package(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::DependencyError>, lito::ProjectError> {
-    static auto from(lito::DependencyError error) -> lito::ProjectError {
+struct Impl<convert::From<lito::dependency::DependencyError>, lito::ProjectError> {
+    static auto from(lito::dependency::DependencyError error) -> lito::ProjectError {
         return lito::ProjectError::Dependency(rstd::move(error));
     }
 };
@@ -75,8 +75,8 @@ struct Impl<convert::From<lito::ToolchainError>, lito::ProjectError> {
 };
 
 template<>
-struct Impl<convert::From<lito::LockError>, lito::ProjectError> {
-    static auto from(lito::LockError error) -> lito::ProjectError {
+struct Impl<convert::From<lito::lock::LockError>, lito::ProjectError> {
+    static auto from(lito::lock::LockError error) -> lito::ProjectError {
         return lito::ProjectError::Lock(rstd::move(error));
     }
 };
@@ -89,8 +89,8 @@ struct Impl<convert::From<lito::system::PlatformError>, lito::ProjectError> {
 };
 
 template<>
-struct Impl<convert::From<lito::BuildProfileError>, lito::ProjectError> {
-    static auto from(lito::BuildProfileError error) -> lito::ProjectError {
+struct Impl<convert::From<lito::manifest::BuildProfileError>, lito::ProjectError> {
+    static auto from(lito::manifest::BuildProfileError error) -> lito::ProjectError {
         return lito::ProjectError::Profile(rstd::move(error));
     }
 };

@@ -78,7 +78,7 @@ struct TestSummary {
 };
 
 auto test(TestRequest request) -> CommandResult<TestSummary> {
-    request.build.purpose = PackageSelectionPurpose::Test;
+    request.build.purpose = lito::package::PackageSelectionPurpose::Test;
     auto environment      = ResolvedProcessEnvironment::resolve(request.build.environment);
     if (environment.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));

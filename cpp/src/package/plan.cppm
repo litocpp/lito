@@ -17,13 +17,13 @@ namespace lito::cpp
 {
 
 template<typename T>
-auto plan_failure(String message) -> PackageResult<T> {
-    return Err(PackageError::Message(rstd::move(message)));
+auto plan_failure(String message) -> lito::package::PackageResult<T> {
+    return Err(lito::package::PackageError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto plan_failure(ref<str> message) -> PackageResult<T> {
-    return Err(PackageError::Message(String::make(message)));
+auto plan_failure(ref<str> message) -> lito::package::PackageResult<T> {
+    return Err(lito::package::PackageError::Message(String::make(message)));
 }
 
 auto append_unique(Vec<String>& output, const Vec<String>& input) -> void {
@@ -122,19 +122,23 @@ auto append_unique(Vec<TargetId>& output, const Vec<TargetId>& input) -> void {
     for (auto value : input) append_unique(output, value);
 }
 
-auto target_text(const PackageTargetId& id) -> String {
-    return rstd::format(
-        "{}::{}::{}", id.package.as_str(), package_target_kind_name(id.kind), id.name.as_str());
+auto target_text(const lito::package::PackageTargetId& id) -> String {
+    return rstd::format("{}::{}::{}",
+                        id.package.as_str(),
+                        lito::package::package_target_kind_name(id.kind),
+                        id.name.as_str());
 }
 
-auto target_index(const PackageMetadata& package, const PackageTargetId& id) -> Option<TargetId> {
+auto target_index(const PackageMetadata& package, const lito::package::PackageTargetId& id)
+    -> Option<TargetId> {
     for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
         if (package.targets[candidate].id == id) return Some(candidate);
     }
     return None();
 }
 
-auto target_index(const PackageSpec& package, const PackageTargetId& id) -> Option<TargetId> {
+auto target_index(const PackageSpec& package, const lito::package::PackageTargetId& id)
+    -> Option<TargetId> {
     for (auto candidate = TargetId {}; candidate < package.targets.len(); ++candidate) {
         if (package.targets[candidate].id == id) return Some(candidate);
     }
@@ -151,7 +155,7 @@ struct PublicUsage {
 auto visit_target(const PackageMetadata& package,
                   TargetId               target,
                   Vec<uint8_t>&          colors,
-                  Vec<TargetId>&         target_order) -> PackageResult<empty> {
+                  Vec<TargetId>&         target_order) -> lito::package::PackageResult<empty> {
     auto& color = colors[target];
     if (color == 2) return Ok(empty {});
     if (color == 1) {
@@ -163,7 +167,9 @@ auto visit_target(const PackageMetadata& package,
     for (auto pass = usize {}; pass < usize(2); ++pass) {
         const auto link_only = pass == usize {};
         for (const auto& dependency : package.targets[target].dependencies) {
-            if ((dependency.visibility == DependencyVisibility::LinkOnly) != link_only) continue;
+            if ((dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) !=
+                link_only)
+                continue;
             auto found = target_index(package, dependency.target);
             if (found.is_none()) {
                 return plan_failure<empty>(
@@ -182,7 +188,8 @@ auto visit_target(const PackageMetadata& package,
 
 auto resolve_import_requirements(const PackageMetadata& package,
                                  const Vec<TargetId>&   target_order,
-                                 Vec<CompileContext>&   contexts) -> PackageResult<empty> {
+                                 Vec<CompileContext>&   contexts)
+    -> lito::package::PackageResult<empty> {
     if (contexts.len() != package.targets.len()) {
         return plan_failure<empty>("import requirement contexts do not match package targets"_str);
     }
@@ -197,7 +204,8 @@ auto resolve_import_requirements(const PackageMetadata& package,
         changed = false;
         for (auto importer : target_order) {
             for (const auto& dependency : package.targets[importer].dependencies) {
-                if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
+                if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly)
+                    continue;
                 auto provider = target_index(package, dependency.target);
                 if (provider.is_none() || ! selected[*provider]) {
                     return plan_failure<empty>(rstd::format(
@@ -247,7 +255,8 @@ auto scan_context_id(const CompileContext& context) -> String {
 
 auto attachment_context(const CompileContext&       library,
                         const CompileContext&       test,
-                        const TestAttachmentTarget& attachment) -> PackageResult<CompileContext> {
+                        const TestAttachmentTarget& attachment)
+    -> lito::package::PackageResult<CompileContext> {
     if (library.bmi.representation != test.bmi.representation ||
         library.bmi.source_embedding != test.bmi.source_embedding) {
         return plan_failure<CompileContext>(
@@ -261,7 +270,8 @@ auto attachment_context(const CompileContext&       library,
     };
     auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
     if (merged.is_err()) {
-        return Err(PackageError::Configuration(erase_error(rstd::move(merged).unwrap_err())));
+        return Err(lito::package::PackageError::Configuration(
+            erase_error(rstd::move(merged).unwrap_err())));
     }
     result.cpp                 = rstd::move(merged).unwrap();
     result.public_requirements = merge_cpp_public_requirements(
@@ -281,7 +291,7 @@ export namespace lito::cpp
 {
 
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
-    -> PackageResult<CompileContext> {
+    -> lito::package::PackageResult<CompileContext> {
     auto context = CompileContext {
         .bmi                 = base.bmi,
         .cpp                 = as<Clone>(base.cpp).clone(),
@@ -292,7 +302,8 @@ auto compile_test_context(const CompileContext& base, const ResolvedCompileTestC
     layer.arguments = as<Clone>(test.arguments).clone();
     auto applied    = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(layer));
     if (applied.is_err()) {
-        return Err(PackageError::Configuration(erase_error(rstd::move(applied).unwrap_err())));
+        return Err(lito::package::PackageError::Configuration(
+            erase_error(rstd::move(applied).unwrap_err())));
     }
     context.cpp     = rstd::move(applied).unwrap();
     context.id      = context_id(context);
@@ -300,11 +311,11 @@ auto compile_test_context(const CompileContext& base, const ResolvedCompileTestC
     return Ok(rstd::move(context));
 }
 
-auto resolve_source_selection(const PackageMetadata&      package,
-                              ref<str>                    requested_profile,
-                              const Vec<String>&          requested_targets,
-                              const Vec<PackageTargetId>& exact_targets = {})
-    -> PackageResult<SourceTargetSelection> {
+auto resolve_source_selection(const PackageMetadata&                     package,
+                              ref<str>                                   requested_profile,
+                              const Vec<String>&                         requested_targets,
+                              const Vec<lito::package::PackageTargetId>& exact_targets = {})
+    -> lito::package::PackageResult<SourceTargetSelection> {
     auto profile_name =
         requested_profile.size() == usize {} ? package.default_profile.as_str() : requested_profile;
     auto profile = Option<usize> {};
@@ -319,13 +330,14 @@ auto resolve_source_selection(const PackageMetadata&      package,
             rstd::format("unknown profile '{}'", profile_name));
     }
 
-    auto selected_identities = Vec<PackageTargetId>::make();
+    auto selected_identities = Vec<lito::package::PackageTargetId>::make();
     if (! requested_targets.is_empty() && ! exact_targets.is_empty()) {
         return plan_failure<SourceTargetSelection>(
             "target selectors and exact target identities cannot be combined"_str);
     }
     if (! exact_targets.is_empty()) {
-        selected_identities = Vec<PackageTargetId>::with_capacity(exact_targets.len());
+        selected_identities =
+            Vec<lito::package::PackageTargetId>::with_capacity(exact_targets.len());
         for (const auto& exact : exact_targets) {
             auto found = false;
             for (const auto& candidate : package.default_targets) {
@@ -335,39 +347,40 @@ auto resolve_source_selection(const PackageMetadata&      package,
                 }
             }
             if (! found) {
-                return plan_failure<SourceTargetSelection>(
-                    rstd::format("unknown exact target '{}'", package_target_id_text(exact)));
+                return plan_failure<SourceTargetSelection>(rstd::format(
+                    "unknown exact target '{}'", lito::package::package_target_id_text(exact)));
             }
             for (const auto& prior : selected_identities) {
                 if (prior == exact) {
                     return plan_failure<SourceTargetSelection>(
                         rstd::format("exact target '{}' was selected more than once",
-                                     package_target_id_text(exact)));
+                                     lito::package::package_target_id_text(exact)));
                 }
             }
             selected_identities.push(exact.clone());
         }
     } else if (requested_targets.is_empty()) {
-        selected_identities = Vec<PackageTargetId>::with_capacity(package.default_targets.len());
+        selected_identities =
+            Vec<lito::package::PackageTargetId>::with_capacity(package.default_targets.len());
         for (const auto& target : package.default_targets) {
             selected_identities.push(target.clone());
         }
     } else {
         for (const auto& requested : requested_targets) {
             auto separated = requested.as_str().split_once(":"_str);
-            auto kind      = Option<PackageTargetKind> {};
+            auto kind      = Option<lito::package::PackageTargetKind> {};
             auto name      = requested.as_str();
             if (separated.is_some()) {
                 auto kind_text = separated->get<0>();
                 name           = separated->get<1>();
                 if (kind_text == "lib"_str)
-                    kind = Some(PackageTargetKind::Library);
+                    kind = Some(lito::package::PackageTargetKind::Library);
                 else if (kind_text == "bin"_str)
-                    kind = Some(PackageTargetKind::Binary);
+                    kind = Some(lito::package::PackageTargetKind::Binary);
                 else if (kind_text == "test"_str)
-                    kind = Some(PackageTargetKind::Test);
+                    kind = Some(lito::package::PackageTargetKind::Test);
                 else if (kind_text == "bench"_str)
-                    kind = Some(PackageTargetKind::Benchmark);
+                    kind = Some(lito::package::PackageTargetKind::Benchmark);
                 else
                     return plan_failure<SourceTargetSelection>(
                         rstd::format("target selector '{}' has unknown kind '{}'",
@@ -378,8 +391,9 @@ auto resolve_source_selection(const PackageMetadata&      package,
                         rstd::format("target selector '{}' is missing a name", requested.as_str()));
                 }
             }
-            auto matched_packages = rstd::collections::BTreeMap<String, PackageTargetKind>::make();
-            auto matches          = usize {};
+            auto matched_packages =
+                rstd::collections::BTreeMap<String, lito::package::PackageTargetKind>::make();
+            auto matches = usize {};
             for (const auto& candidate : package.default_targets) {
                 if (candidate.name != name || (kind.is_some() && candidate.kind != *kind)) {
                     continue;
@@ -390,7 +404,7 @@ auto resolve_source_selection(const PackageMetadata&      package,
                         "target selector '{}' is ambiguous in package '{}'; use '{}:{}'",
                         requested.as_str(),
                         candidate.package.as_str(),
-                        package_target_kind_name(candidate.kind),
+                        lito::package::package_target_kind_name(candidate.kind),
                         candidate.name.as_str()));
                 }
                 matched_packages.insert(candidate.package.clone(), candidate.kind);
@@ -429,7 +443,7 @@ auto resolve_source_selection(const PackageMetadata&      package,
 
 auto resolve_build_script_packages(const PackageMetadata&       package,
                                    const SourceTargetSelection& selection)
-    -> PackageResult<Vec<String>> {
+    -> lito::package::PackageResult<Vec<String>> {
     auto result = Vec<String>::make();
     for (auto target : selection.selected_targets) {
         if (target >= package.targets.len()) {
@@ -450,7 +464,7 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
 }
 
 auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelection selection)
-    -> PackageResult<SourceDiscoveryPlan> {
+    -> lito::package::PackageResult<SourceDiscoveryPlan> {
     if (selection.profile >= package.profiles.len()) {
         return plan_failure<SourceDiscoveryPlan>(
             "source target selection does not match package profile"_str);
@@ -484,13 +498,14 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
     for (auto target : target_order) {
         const auto& spec  = package.targets[target];
         auto        usage = PublicUsage {};
-        if (spec.id.kind == PackageTargetKind::Library) {
+        if (spec.id.kind == lito::package::PackageTargetKind::Library) {
             append_unique(usage.include_directories, spec.usage.public_include_directories);
             append_unique(usage.definitions, spec.usage.public_definitions);
             append_unique(usage.arguments, spec.usage.interface_arguments);
             for (const auto& dependency : spec.external_dependencies) {
                 for (const auto& target : dependency.targets) {
-                    if (target.visibility != DependencyVisibility::Public) continue;
+                    if (target.visibility != lito::dependency::DependencyVisibility::Public)
+                        continue;
                     append_unique(usage.arguments, target.compile_arguments);
                     append_unique(usage.external_identities, target.identity.as_str());
                 }
@@ -500,7 +515,7 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto exported_targets = Vec<TargetId>::make();
         append_unique(exported_targets, target);
         for (const auto& dependency : spec.dependencies) {
-            if (dependency.visibility != DependencyVisibility::Public) continue;
+            if (dependency.visibility != lito::dependency::DependencyVisibility::Public) continue;
             auto  dependency_id = *target_index(package, dependency.target);
             auto& nested_usage  = *public_usage[dependency_id];
             append_unique(usage.include_directories, nested_usage.include_directories);
@@ -527,8 +542,8 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto public_cpp = apply_cpp_option_layer(as<Clone>(selected_profile.cpp).clone(),
                                                  rstd::move(public_layer));
         if (public_cpp.is_err()) {
-            return Err(
-                PackageError::Configuration(erase_error(rstd::move(public_cpp).unwrap_err())));
+            return Err(lito::package::PackageError::Configuration(
+                erase_error(rstd::move(public_cpp).unwrap_err())));
         }
         context.public_requirements = cpp_public_requirements(*public_cpp);
         context.cpp                 = rstd::move(public_cpp).unwrap();
@@ -541,9 +556,9 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         for (const auto& dependency : spec.external_dependencies) {
             for (const auto& external_target : dependency.targets) {
                 const auto consumed_publicly =
-                    spec.id.kind != PackageTargetKind::Library &&
-                    external_target.visibility == DependencyVisibility::Public;
-                if (external_target.visibility != DependencyVisibility::Private &&
+                    spec.id.kind != lito::package::PackageTargetKind::Library &&
+                    external_target.visibility == lito::dependency::DependencyVisibility::Public;
+                if (external_target.visibility != lito::dependency::DependencyVisibility::Private &&
                     ! consumed_publicly) {
                     continue;
                 }
@@ -555,10 +570,10 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         auto visible = Vec<TargetId>::make();
         append_unique(visible, target);
         for (const auto& dependency : spec.dependencies) {
-            if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
+            if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) continue;
             auto dependency_id = *target_index(package, dependency.target);
             append_unique(visible, public_targets[dependency_id]);
-            if (dependency.visibility == DependencyVisibility::Public) continue;
+            if (dependency.visibility == lito::dependency::DependencyVisibility::Public) continue;
             const auto& usage = *public_usage[dependency_id];
             append_unique(private_layer.include_directories, usage.include_directories);
             append_unique(private_layer.definitions, usage.definitions);
@@ -567,7 +582,8 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         }
         auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
         if (applied.is_err()) {
-            return Err(PackageError::Configuration(erase_error(rstd::move(applied).unwrap_err())));
+            return Err(lito::package::PackageError::Configuration(
+                erase_error(rstd::move(applied).unwrap_err())));
         }
         context.cpp             = rstd::move(applied).unwrap();
         contexts[target]        = rstd::move(context);
@@ -662,7 +678,8 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         }
     }
 
-    auto target_identities = Vec<PackageTargetId>::with_capacity(package.targets.len());
+    auto target_identities =
+        Vec<lito::package::PackageTargetId>::with_capacity(package.targets.len());
     for (const auto& target : package.targets) {
         target_identities.push(target.id.clone());
     }
@@ -682,14 +699,14 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
 auto resolve_source_discovery(const PackageMetadata& package,
                               ref<str>               requested_profile,
                               const Vec<String>&     requested_targets)
-    -> PackageResult<SourceDiscoveryPlan> {
+    -> lito::package::PackageResult<SourceDiscoveryPlan> {
     auto selection = resolve_source_selection(package, requested_profile, requested_targets);
     if (selection.is_err()) return Err(rstd::move(selection).unwrap_err());
     return resolve_source_discovery(package, rstd::move(selection).unwrap());
 }
 
 auto finalize_package_plan(const PackageSpec& package, SourceDiscoveryPlan discovery)
-    -> PackageResult<PackagePlan> {
+    -> lito::package::PackageResult<PackagePlan> {
     if (discovery.profile >= package.profiles.len() ||
         discovery.target_identities.len() != package.targets.len()) {
         return plan_failure<PackagePlan>(

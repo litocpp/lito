@@ -21,10 +21,12 @@ TEST(Reporting, UserFacingEnumsImplementDisplay) {
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Fetch).as_str(), "fetch"_str);
     EXPECT_EQ(rstd::to_string(lito::BuildEventKind::CMakeQueryBuild).as_str(),
               "cmake-query-build"_str);
-    EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Benchmark).as_str(),
+    EXPECT_EQ(rstd::format("{}", lito::package::PackageSelectionPurpose::Benchmark).as_str(),
               "benchmark"_str);
-    EXPECT_EQ(rstd::format("{}", lito::PackageSelectionPurpose::Install).as_str(), "install"_str);
-    EXPECT_EQ(rstd::format("{}", lito::ProjectRootRole::AssociatedTest).as_str(), "test"_str);
+    EXPECT_EQ(rstd::format("{}", lito::package::PackageSelectionPurpose::Install).as_str(),
+              "install"_str);
+    EXPECT_EQ(rstd::format("{}", lito::package::ProjectRootRole::AssociatedTest).as_str(),
+              "test"_str);
     EXPECT_EQ(rstd::format("{}", lito::CMakePackageOperation::WriteQuery).as_str(),
               "query materialization"_str);
     EXPECT_EQ(rstd::format("{}", lito::cpp::BmiCompatibilityField::TargetFeatures).as_str(),

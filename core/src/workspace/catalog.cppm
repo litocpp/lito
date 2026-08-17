@@ -14,11 +14,10 @@ import :workspace.member;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
-using PackageMap = rstd::collections::BTreeMap<String, lito::PackageManifest>;
+using PackageMap = rstd::collections::BTreeMap<String, lito::manifest::PackageManifest>;
 using StringSet  = rstd::collections::BTreeMap<String, empty>;
-
-namespace lito
-{
+using namespace lito;
+using namespace lito::workspace;
 
 template<typename T>
 auto catalog_failure(String message) -> WorkspaceResult<T> {
@@ -34,8 +33,8 @@ auto path_text(ref<rstd::path::Path> path) -> WorkspaceResult<String> {
     return Ok(String::make(*text));
 }
 
-auto workspace_contains(const WorkspaceManifest& workspace, ref<rstd::path::Path> package_root)
-    -> WorkspaceResult<bool> {
+auto workspace_contains(const lito::manifest::WorkspaceManifest& workspace,
+                        ref<rstd::path::Path> package_root) -> WorkspaceResult<bool> {
     for (const auto& declared : workspace.members) {
         auto member =
             workspace_member_directory(workspace, declared.as_path(), "workspace member"_str);
@@ -45,45 +44,47 @@ auto workspace_contains(const WorkspaceManifest& workspace, ref<rstd::path::Path
     return Ok(false);
 }
 
-auto test_only_package(const PackageManifest& package) -> bool {
+auto test_only_package(const lito::manifest::PackageManifest& package) -> bool {
     if (package.targets.is_empty()) return ! package.compile_tests.is_empty();
     for (const auto& target : package.targets) {
-        if (package_target_kind(target) != PackageTargetKind::Test) return false;
+        if (lito::manifest::package_target_kind(target) != lito::package::PackageTargetKind::Test)
+            return false;
     }
     return true;
 }
 
-auto associated_package_matches(const PackageManifest& package, ProjectRootRole role) -> bool {
-    if (role == ProjectRootRole::AssociatedTest) return test_only_package(package);
+auto associated_package_matches(const lito::manifest::PackageManifest& package,
+                                lito::package::ProjectRootRole         role) -> bool {
+    if (role == lito::package::ProjectRootRole::AssociatedTest) return test_only_package(package);
     return false;
 }
 
-auto associated_declarations(ProjectRootRole role) noexcept -> ref<str> {
-    if (role == ProjectRootRole::AssociatedTest) return "[[test]] or [compile-test]"_str;
+auto associated_declarations(lito::package::ProjectRootRole role) noexcept -> ref<str> {
+    if (role == lito::package::ProjectRootRole::AssociatedTest)
+        return "[[test]] or [compile-test]"_str;
     return "associated targets"_str;
 }
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::workspace
 {
 
 class WorkspaceCatalog {
-    String                    name_;
-    PathBuf                   root_;
-    PathBuf                   manifest_path_;
-    ProjectProfile            profile_;
-    Vec<String>               names_;
-    PackageMap                packages_ { PackageMap::make() };
-    StringSet                 member_roots_ { StringSet::make() };
-    Option<WorkspaceManifest> workspace_manifest_;
-    bool                      workspace_ { false };
-    bool                      profile_declared_ { false };
+    String                                    name_;
+    PathBuf                                   root_;
+    PathBuf                                   manifest_path_;
+    lito::manifest::ProjectProfile            profile_;
+    Vec<String>                               names_;
+    PackageMap                                packages_ { PackageMap::make() };
+    StringSet                                 member_roots_ { StringSet::make() };
+    Option<lito::manifest::WorkspaceManifest> workspace_manifest_;
+    bool                                      workspace_ { false };
+    bool                                      profile_declared_ { false };
 
 public:
     WorkspaceCatalog() = default;
 
-    static auto single(PackageManifest manifest) -> WorkspaceResult<WorkspaceCatalog> {
+    static auto single(lito::manifest::PackageManifest manifest)
+        -> WorkspaceResult<WorkspaceCatalog> {
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_runtime_dependencies.is_empty() ||
@@ -112,7 +113,8 @@ public:
         return Ok(rstd::move(catalog));
     }
 
-    static auto associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
+    static auto associated_package(lito::manifest::PackageManifest manifest,
+                                   const WorkspaceCatalog&         primary)
         -> WorkspaceResult<WorkspaceCatalog>;
 
     auto name() const noexcept -> ref<str> { return name_.as_str(); }
@@ -127,24 +129,28 @@ public:
 
     auto is_workspace() const noexcept -> bool { return workspace_; }
 
-    auto profile() const -> ProjectProfile { return profile_.clone(); }
+    auto profile() const -> lito::manifest::ProjectProfile { return profile_.clone(); }
 
-    auto take_package(ref<str> name) -> Option<PackageManifest> { return packages_.remove(name); }
+    auto take_package(ref<str> name) -> Option<lito::manifest::PackageManifest> {
+        return packages_.remove(name);
+    }
 
     auto contains_package_root(ref<rstd::path::Path> root) const -> bool {
         auto text = root.to_str();
         return text.is_some() && member_roots_.contains_key(*text);
     }
 
-    friend auto load_workspace_catalog(WorkspaceManifest       workspace,
-                                       Option<PackageManifest> preloaded)
+    friend auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
+                                       Option<lito::manifest::PackageManifest> preloaded)
         -> WorkspaceResult<WorkspaceCatalog>;
-    friend auto validate_associated_catalog(const WorkspaceCatalog& primary,
-                                            const WorkspaceCatalog& associated,
-                                            ProjectRootRole         role) -> WorkspaceResult<empty>;
+    friend auto validate_associated_catalog(const WorkspaceCatalog&        primary,
+                                            const WorkspaceCatalog&        associated,
+                                            lito::package::ProjectRootRole role)
+        -> WorkspaceResult<empty>;
 };
 
-auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest> preloaded = None())
+auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
+                            Option<lito::manifest::PackageManifest> preloaded = None())
     -> WorkspaceResult<WorkspaceCatalog> {
     auto catalog           = WorkspaceCatalog {};
     catalog.workspace_     = true;
@@ -168,16 +174,16 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
                 "workspace member directory '{}' is listed more than once", declared.as_path()));
         }
 
-        auto manifest = PackageManifest {};
+        auto manifest = lito::manifest::PackageManifest {};
         if (preloaded.is_some() && same_path(preloaded->root.as_path(), directory.as_path())) {
             manifest = rstd::move(preloaded).unwrap();
         } else {
-            auto document = load_manifest_document(directory.as_path());
+            auto document = lito::manifest::load_manifest_document(directory.as_path());
             if (document.is_err()) {
                 return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
             }
             auto loaded = rstd::move(document).unwrap();
-            if (loaded.kind != ManifestKind::Package || loaded.package.is_none()) {
+            if (loaded.kind != lito::manifest::ManifestKind::Package || loaded.package.is_none()) {
                 return catalog_failure<WorkspaceCatalog>(rstd::format(
                     "workspace member '{}' must contain a package manifest", declared.as_path()));
             }
@@ -228,7 +234,8 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
     return Ok(rstd::move(catalog));
 }
 
-auto WorkspaceCatalog::associated_package(PackageManifest manifest, const WorkspaceCatalog& primary)
+auto WorkspaceCatalog::associated_package(lito::manifest::PackageManifest manifest,
+                                          const WorkspaceCatalog&         primary)
     -> WorkspaceResult<WorkspaceCatalog> {
     if (primary.workspace_manifest_.is_some()) {
         rstd_try(resolve_workspace_member(manifest, *primary.workspace_manifest_));
@@ -236,10 +243,10 @@ auto WorkspaceCatalog::associated_package(PackageManifest manifest, const Worksp
     return WorkspaceCatalog::single(rstd::move(manifest));
 }
 
-auto validate_associated_catalog(const WorkspaceCatalog& primary,
-                                 const WorkspaceCatalog& associated,
-                                 ProjectRootRole         role) -> WorkspaceResult<empty> {
-    if (role != ProjectRootRole::AssociatedTest) {
+auto validate_associated_catalog(const WorkspaceCatalog&        primary,
+                                 const WorkspaceCatalog&        associated,
+                                 lito::package::ProjectRootRole role) -> WorkspaceResult<empty> {
+    if (role != lito::package::ProjectRootRole::AssociatedTest) {
         return catalog_failure<empty>(String::make("invalid associated catalog role"_str));
     }
     const auto kind = role;
@@ -277,7 +284,8 @@ auto validate_associated_catalog(const WorkspaceCatalog& primary,
                              manifest.manifest_path.as_path(),
                              associated_declarations(role)));
         }
-        if (! associated.workspace_ && manifest.version.source == PackageVersionSource::Workspace &&
+        if (! associated.workspace_ &&
+            manifest.version.source == lito::manifest::PackageVersionSource::Workspace &&
             manifest.version.value.is_none()) {
             return catalog_failure<empty>(rstd::format(
                 "associated {} package '{}' at '{}' cannot inherit a workspace version",
@@ -306,23 +314,24 @@ auto validate_associated_catalog(const WorkspaceCatalog& primary,
     return Ok(empty {});
 }
 
-auto try_containing_workspace(const PackageManifest& manifest)
-    -> WorkspaceResult<Option<WorkspaceManifest>> {
+auto try_containing_workspace(const lito::manifest::PackageManifest& manifest)
+    -> WorkspaceResult<Option<lito::manifest::WorkspaceManifest>> {
     auto directory = manifest.root.clone();
     while (directory.pop()) {
-        auto located = try_locate_manifest(directory.as_path());
+        auto located = lito::manifest::try_locate_manifest(directory.as_path());
         if (located.is_err()) {
-            return Err(
-                WorkspaceError::Manifest(ManifestError::Locate(rstd::move(located).unwrap_err())));
+            return Err(WorkspaceError::Manifest(
+                lito::manifest::ManifestError::Locate(rstd::move(located).unwrap_err())));
         }
         if (located->is_none()) continue;
 
-        auto document = load_manifest_document(directory.as_path());
+        auto document = lito::manifest::load_manifest_document(directory.as_path());
         if (document.is_err()) {
             return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
         }
         auto loaded = rstd::move(document).unwrap();
-        if (loaded.kind != ManifestKind::Workspace || loaded.workspace.is_none()) continue;
+        if (loaded.kind != lito::manifest::ManifestKind::Workspace || loaded.workspace.is_none())
+            continue;
         auto workspace = rstd::move(loaded.workspace).unwrap();
         auto contains  = workspace_contains(workspace, manifest.root.as_path());
         if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
@@ -339,15 +348,15 @@ struct ResolvedProjectEntry {
 
 auto resolve_project_entry(ref<rstd::path::Path> requested_root)
     -> WorkspaceResult<ResolvedProjectEntry> {
-    auto document = rstd_try(load_manifest_document(requested_root));
-    if (document.kind == ManifestKind::Workspace && document.workspace.is_some()) {
+    auto document = rstd_try(lito::manifest::load_manifest_document(requested_root));
+    if (document.kind == lito::manifest::ManifestKind::Workspace && document.workspace.is_some()) {
         auto catalog = rstd_try(load_workspace_catalog(rstd::move(document.workspace).unwrap()));
         return Ok(ResolvedProjectEntry {
             .root    = PathBuf::from(catalog.root()),
             .catalog = rstd::move(catalog),
         });
     }
-    if (document.kind != ManifestKind::Package || document.package.is_none()) {
+    if (document.kind != lito::manifest::ManifestKind::Package || document.package.is_none()) {
         return catalog_failure<ResolvedProjectEntry>(
             String::make("project manifest has no package or workspace"_str));
     }
@@ -363,4 +372,4 @@ auto resolve_project_entry(ref<rstd::path::Path> requested_root)
     });
 }
 
-} // namespace lito
+} // namespace lito::workspace

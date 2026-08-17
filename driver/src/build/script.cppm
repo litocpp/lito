@@ -1051,7 +1051,7 @@ auto materialize_generated_includes(cpp::PackageMetadata&             metadata,
     for (auto target_id : selection.target_order) {
         auto& target = metadata.targets[target_id];
         for (const auto& requirement : target.usage.private_include_directory_requirements) {
-            if (requirement.root != IncludeDirectoryRoot::Generated) continue;
+            if (requirement.root != lito::dependency::IncludeDirectoryRoot::Generated) continue;
             auto generated =
                 rstd_try(layout.generated_package_directory(target.id.package.as_str()));
             auto requested = generated.join(requirement.path.as_path());
@@ -1099,17 +1099,17 @@ auto has_generated_includes(const cpp::PackageMetadata&       metadata,
 namespace lito
 {
 
-auto execute_build_script(cpp::PackageMetadata&             metadata,
-                          const BuildLayout&                layout,
-                          ref<str>                          profile,
-                          const Vec<String>&                selected_packages,
-                          const cpp::SourceTargetSelection& selection,
-                          const Option<BuildEventSink>&     observer,
-                          const HostInfo&                   host,
-                          const CMakeProviderConfig&        cmake,
-                          ToolResolver&                     resolver,
-                          const ResolvedProcessEnvironment& environment,
-                          const PackageSourceConfig&        sources,
+auto execute_build_script(cpp::PackageMetadata&                        metadata,
+                          const BuildLayout&                           layout,
+                          ref<str>                                     profile,
+                          const Vec<String>&                           selected_packages,
+                          const cpp::SourceTargetSelection&            selection,
+                          const Option<BuildEventSink>&                observer,
+                          const HostInfo&                              host,
+                          const lito::dependency::CMakeProviderConfig& cmake,
+                          ToolResolver&                                resolver,
+                          const ResolvedProcessEnvironment&            environment,
+                          const lito::source::PackageSourceConfig&     sources,
                           usize jobs) -> BuildScriptResult<BuildScriptReport> {
     auto script = metadata.root.join(PathBuf::from("build.lua"_str).as_path());
     auto exists = rstd::fs::exists(script.as_path());

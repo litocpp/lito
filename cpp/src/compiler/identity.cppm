@@ -73,8 +73,8 @@ auto string_options_identity(ref<str> key, const Vec<String>& values) -> String 
     return result;
 }
 
-auto standard_library_name(StandardLibrary value) -> ref<str> {
-    return value == StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
+auto standard_library_name(lito::config::StandardLibrary value) -> ref<str> {
+    return value == lito::config::StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
 }
 
 auto push_identity(String& output, ref<str> key, ref<str> value) -> void {
@@ -108,8 +108,9 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
                   cpp_sized_deallocation_name(options.language.sized_deallocation));
     push_identity(output,
                   "stdlib"_str,
-                  options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
-                                                                             : "libc++"_str);
+                  options.abi.standard_library == lito::config::StandardLibrary::Libstdcxx
+                      ? "libstdc++"_str
+                      : "libc++"_str);
     if (options.abi.resolved_standard_library.is_some()) {
         push_identity(output,
                       "resolved-stdlib"_str,
@@ -188,8 +189,9 @@ auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String 
     auto result = String::make("lito-cpp-abi-compatibility-v1\n"_str);
     push_identity(result,
                   "stdlib"_str,
-                  options.abi.standard_library == StandardLibrary::Libstdcxx ? "libstdc++"_str
-                                                                             : "libc++"_str);
+                  options.abi.standard_library == lito::config::StandardLibrary::Libstdcxx
+                      ? "libstdc++"_str
+                      : "libc++"_str);
     if (options.abi.resolved_standard_library.is_some()) {
         push_identity(result,
                       "resolved-stdlib"_str,

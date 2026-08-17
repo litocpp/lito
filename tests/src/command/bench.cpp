@@ -14,7 +14,7 @@ using namespace lito_test;
 
 class BenchCommand : public ProjectFixture {};
 
-auto bench_command_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto bench_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"bench([workspace]
 name = "bench-command"

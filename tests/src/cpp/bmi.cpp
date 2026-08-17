@@ -13,11 +13,13 @@ using namespace lito;
 using namespace lito_test;
 
 TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
-    auto provider = cpp_options(
-        "c++20"_str, lito::CppOptimization::None, lito::CppDebugInfo::Full, strings("-Wall"_str));
+    auto provider            = cpp_options("c++20"_str,
+                                           lito::manifest::CppOptimization::None,
+                                           lito::manifest::CppDebugInfo::Full,
+                                           strings("-Wall"_str));
     auto consumer            = cpp_options("c++20"_str,
-                                           lito::CppOptimization::Level3,
-                                           lito::CppDebugInfo::None,
+                                           lito::manifest::CppOptimization::Level3,
+                                           lito::manifest::CppDebugInfo::None,
                                            strings("-Wpedantic"_str));
     auto provider_format     = format();
     auto consumer_format     = format();
@@ -29,16 +31,16 @@ TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
               cpp::cpp_compile_identity(consumer).as_str());
 
     auto pthread = cpp_options("c++20"_str,
-                               lito::CppOptimization::None,
-                               lito::CppDebugInfo::None,
+                               lito::manifest::CppOptimization::None,
+                               lito::manifest::CppDebugInfo::None,
                                strings("-pthread"_str));
     EXPECT_FALSE(cpp::check_bmi_compatibility(
                      provider_format, provider, public_requirements, consumer_format, pthread)
                      .compatible());
     EXPECT_NE(cpp::cpp_scan_identity(provider).as_str(), cpp::cpp_scan_identity(pthread).as_str());
 
-    auto incompatible =
-        cpp_options("c++23"_str, lito::CppOptimization::Level3, lito::CppDebugInfo::None);
+    auto incompatible = cpp_options(
+        "c++23"_str, lito::manifest::CppOptimization::Level3, lito::manifest::CppDebugInfo::None);
     auto result = cpp::check_bmi_compatibility(
         provider_format, provider, public_requirements, consumer_format, incompatible);
     ASSERT_FALSE(result.compatible());
@@ -52,7 +54,8 @@ TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
 }
 
 TEST(Bmi, ReportsConservativeSemanticDifferencesByField) {
-    auto provider = cpp_options("c++20"_str, lito::CppOptimization::None, lito::CppDebugInfo::None);
+    auto provider = cpp_options(
+        "c++20"_str, lito::manifest::CppOptimization::None, lito::manifest::CppDebugInfo::None);
     const auto expect_field = [&](const cpp::CppCompileOptions& consumer,
                                   cpp::BmiCompatibilityField    expected) {
         auto identity     = format();
@@ -64,23 +67,23 @@ TEST(Bmi, ReportsConservativeSemanticDifferencesByField) {
     };
 
     auto standard_library = cpp::make_cpp_options("c++20"_str,
-                                                  StandardLibrary::Libstdcxx,
+                                                  lito::config::StandardLibrary::Libstdcxx,
                                                   false,
                                                   false,
-                                                  lito::CppOptimization::None,
-                                                  lito::CppDebugInfo::None);
+                                                  lito::manifest::CppOptimization::None,
+                                                  lito::manifest::CppDebugInfo::None);
     auto exceptions       = cpp::make_cpp_options("c++20"_str,
-                                                  StandardLibrary::Libcxx,
+                                                  lito::config::StandardLibrary::Libcxx,
                                                   true,
                                                   false,
-                                                  lito::CppOptimization::None,
-                                                  lito::CppDebugInfo::None);
+                                                  lito::manifest::CppOptimization::None,
+                                                  lito::manifest::CppDebugInfo::None);
     auto rtti             = cpp::make_cpp_options("c++20"_str,
-                                                  StandardLibrary::Libcxx,
+                                                  lito::config::StandardLibrary::Libcxx,
                                                   false,
                                                   true,
-                                                  lito::CppOptimization::None,
-                                                  lito::CppDebugInfo::None);
+                                                  lito::manifest::CppOptimization::None,
+                                                  lito::manifest::CppDebugInfo::None);
     ASSERT_TRUE(standard_library.is_ok());
     ASSERT_TRUE(exceptions.is_ok());
     ASSERT_TRUE(rtti.is_ok());
@@ -88,50 +91,50 @@ TEST(Bmi, ReportsConservativeSemanticDifferencesByField) {
     expect_field(*exceptions, cpp::BmiCompatibilityField::Exceptions);
     expect_field(*rtti, cpp::BmiCompatibilityField::Rtti);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("-fno-sized-deallocation"_str)),
                  cpp::BmiCompatibilityField::SizedDeallocation);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("-ffreestanding"_str)),
                  cpp::BmiCompatibilityField::LanguageModes);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("-fshort-enums"_str)),
                  cpp::BmiCompatibilityField::AbiModes);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("--target=other-target"_str)),
                  cpp::BmiCompatibilityField::Target);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("--sysroot=/other-sysroot"_str)),
                  cpp::BmiCompatibilityField::Sysroot);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("-msse2"_str)),
                  cpp::BmiCompatibilityField::TargetFeatures);
     expect_field(cpp_options("c++20"_str,
-                             lito::CppOptimization::None,
-                             lito::CppDebugInfo::None,
+                             lito::manifest::CppOptimization::None,
+                             lito::manifest::CppDebugInfo::None,
                              strings("-funknown-lito-option"_str)),
                  cpp::BmiCompatibilityField::VendorSemantics);
 }
 
 TEST(Bmi, TreatsStandardLibraryModesAsAnExplicitConsistencyDomain) {
     auto provider     = cpp_options("c++20"_str,
-                                    lito::CppOptimization::None,
-                                    lito::CppDebugInfo::None,
+                                    lito::manifest::CppOptimization::None,
+                                    lito::manifest::CppDebugInfo::None,
                                     strings("-D_GLIBCXX_USE_CXX11_ABI=0"_str));
     auto consumer     = cpp_options("c++20"_str,
-                                    lito::CppOptimization::None,
-                                    lito::CppDebugInfo::None,
+                                    lito::manifest::CppOptimization::None,
+                                    lito::manifest::CppDebugInfo::None,
                                     strings("-D_GLIBCXX_USE_CXX11_ABI=1"_str));
     auto identity     = format();
     auto requirements = cpp::cpp_public_requirements(provider);
@@ -173,29 +176,29 @@ TEST(Bmi, ArtifactIdentityIncludesRepresentationEmbeddingAndDependencies) {
 TEST(Bmi, RequiresPublicPreprocessorSemanticsWithoutLeakingPrivateInputs) {
     auto provider = cpp::make_cpp_options(
         "c++20"_str,
-        StandardLibrary::Libcxx,
+        lito::config::StandardLibrary::Libcxx,
         false,
         false,
-        lito::CppOptimization::None,
-        lito::CppDebugInfo::None,
+        lito::manifest::CppOptimization::None,
+        lito::manifest::CppDebugInfo::None,
         cpp::CppOptionLayer {
             .definitions = strings("PRIVATE_VALUE=1"_str, "PUBLIC_VALUE=1"_str),
         });
     auto public_context = cpp::make_cpp_options("c++20"_str,
-                                                StandardLibrary::Libcxx,
+                                                lito::config::StandardLibrary::Libcxx,
                                                 false,
                                                 false,
-                                                lito::CppOptimization::None,
-                                                lito::CppDebugInfo::None,
+                                                lito::manifest::CppOptimization::None,
+                                                lito::manifest::CppDebugInfo::None,
                                                 cpp::CppOptionLayer {
                                                     .definitions = strings("PUBLIC_VALUE=1"_str),
                                                 });
     auto consumer       = cpp::make_cpp_options("c++20"_str,
-                                                StandardLibrary::Libcxx,
+                                                lito::config::StandardLibrary::Libcxx,
                                                 false,
                                                 false,
-                                                lito::CppOptimization::None,
-                                                lito::CppDebugInfo::None,
+                                                lito::manifest::CppOptimization::None,
+                                                lito::manifest::CppDebugInfo::None,
                                                 cpp::CppOptionLayer {
                                                     .definitions = strings("PUBLIC_VALUE=1"_str),
                                                 });
@@ -208,11 +211,11 @@ TEST(Bmi, RequiresPublicPreprocessorSemanticsWithoutLeakingPrivateInputs) {
                     .compatible());
 
     auto incompatible = cpp::make_cpp_options("c++20"_str,
-                                              StandardLibrary::Libcxx,
+                                              lito::config::StandardLibrary::Libcxx,
                                               false,
                                               false,
-                                              lito::CppOptimization::None,
-                                              lito::CppDebugInfo::None,
+                                              lito::manifest::CppOptimization::None,
+                                              lito::manifest::CppDebugInfo::None,
                                               cpp::CppOptionLayer {
                                                   .definitions = strings("PUBLIC_VALUE=2"_str),
                                               });

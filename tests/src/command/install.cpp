@@ -63,7 +63,7 @@ int main() { return FIXTURE_PROFILE[0] == 'r' ? 0 : 1; }
                                     output.as_path(),
                                     strings("fixture-configure-file"_str),
                                     build_profile("release"_str));
-    request.purpose = lito::PackageSelectionPurpose::Install;
+    request.purpose = lito::package::PackageSelectionPurpose::Install;
     request.targets = strings("bin:configure-file"_str);
     auto built = lito::build_resolved_project(rstd::move(request), rstd::move(resolved.project));
     if (built.is_err()) {
@@ -73,7 +73,7 @@ int main() { return FIXTURE_PROFILE[0] == 'r' ? 0 : 1; }
     }
     ASSERT_EQ(built->selected_targets.len(), usize(1));
     EXPECT_EQ(built->selected_targets[usize {}].package.as_str(), "fixture-configure-file"_str);
-    EXPECT_EQ(built->selected_targets[usize {}].kind, lito::PackageTargetKind::Binary);
+    EXPECT_EQ(built->selected_targets[usize {}].kind, lito::package::PackageTargetKind::Binary);
 }
 
 TEST_F(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
@@ -139,9 +139,9 @@ TEST_F(InstallCommand, ConcurrentInstallStoreUpdatesPreserveBothPackages) {
         auto binaries = Vec<lito::InstallBinary>::make();
         binaries.push(lito::InstallBinary {
             .target =
-                lito::PackageTargetId {
+                lito::package::PackageTargetId {
                     .package = String::make(package_name),
-                    .kind    = lito::PackageTargetKind::Binary,
+                    .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make(binary_name),
                 },
             .source = rstd::move(source),

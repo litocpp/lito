@@ -5,7 +5,7 @@ import rstd;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::package
 {
 
 enum class PackageTargetKind
@@ -53,4 +53,4 @@ auto package_target_id_text(const PackageTargetId& id) -> String {
         "{}::{}::{}", id.package.as_str(), package_target_kind_name(id.kind), id.name.as_str());
 }
 
-} // namespace lito
+} // namespace lito::package

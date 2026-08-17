@@ -25,8 +25,8 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     auto project = materialize("cmake-package"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto platform = native_platform();
-    auto targets  = Vec<lito::CMakeTargetRequirement>::make();
-    targets.push(lito::CMakeTargetRequirement {
+    auto targets  = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
         .name = String::make("Fixture::fixture"_str),
     });
     auto prepared = lito::PreparedCMakeDependencyRequirement {
@@ -72,7 +72,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_EQ(first->area.root.as_path(), parallel->area.root.as_path());
     EXPECT_EQ(first->area.query_root.as_path(), parallel->area.query_root.as_path());
 
-    requirement->integration = lito::CMakeIntegration::BuildTree;
+    requirement->integration = lito::dependency::CMakeIntegration::BuildTree;
     auto build_tree          = lito::plan_cmake_package(*requirement,
                                                         fixture_cmake(),
                                                         configuration(),
@@ -87,7 +87,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_EQ(build_tree->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
     EXPECT_EQ(build_tree->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
 
-    requirement->integration = lito::CMakeIntegration::Install;
+    requirement->integration = lito::dependency::CMakeIntegration::Install;
     requirement->source      = lito::ResolvedCMakeDependencySource::Installed();
     auto installed           = lito::plan_cmake_package(*requirement,
                                                         fixture_cmake(),

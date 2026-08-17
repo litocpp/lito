@@ -11,7 +11,7 @@ using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::source
 {
 
 class SourceError {
@@ -24,10 +24,9 @@ class SourceError {
 template<typename T>
 using SourceResult = Result<T, SourceError>;
 
-} // namespace lito
+} // namespace lito::source
 
-namespace lito
-{
+using namespace lito::source;
 
 template<typename T>
 auto source_failure(String message) -> SourceResult<T> {
@@ -46,20 +45,19 @@ auto source_io_failure(ref<str>               operation,
     return Err(SourceError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
-} // namespace lito
-
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::system::SystemError>, lito::SourceError> {
-    static auto from(lito::system::SystemError error) -> lito::SourceError {
-        return lito::SourceError::System(String::make("source operation"_str), rstd::move(error));
+struct Impl<convert::From<lito::system::SystemError>, lito::source::SourceError> {
+    static auto from(lito::system::SystemError error) -> lito::source::SourceError {
+        return lito::source::SourceError::System(String::make("source operation"_str),
+                                                 rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::SourceError> : ImplBase<lito::SourceError> {
+struct Impl<fmt::Display, lito::source::SourceError> : ImplBase<lito::source::SourceError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_System()) return formatter.write_str(error.as_System().operation.as_str());
@@ -73,14 +71,14 @@ struct Impl<fmt::Display, lito::SourceError> : ImplBase<lito::SourceError> {
 };
 
 template<>
-struct Impl<fmt::Debug, lito::SourceError> : ImplBase<lito::SourceError> {
+struct Impl<fmt::Debug, lito::source::SourceError> : ImplBase<lito::source::SourceError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::SourceError> : ImplBase<lito::SourceError> {
+struct Impl<error::Error, lito::source::SourceError> : ImplBase<lito::source::SourceError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_System()) {

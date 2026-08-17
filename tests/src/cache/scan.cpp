@@ -14,7 +14,7 @@ using namespace lito_test;
 
 class ScanCache : public ProjectFixture {};
 
-auto scan_cache_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto scan_cache_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "high/unused.hpp"_str, R"cache(#pragma once
 )cache"_str },
@@ -92,7 +92,7 @@ export auto scan_cache_value() -> int {
     return source_tree(files);
 }
 
-auto dynamic_cache_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto dynamic_cache_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"cache([package]
 name = "fixture-scan-cache-dynamic"

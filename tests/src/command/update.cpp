@@ -54,7 +54,7 @@ sources = ["main.cpp"]
         .root = project->root.clone(),
     });
     ASSERT_TRUE(updated.is_ok());
-    EXPECT_EQ(*updated, lito::LockStatus::Unchanged);
+    EXPECT_EQ(*updated, lito::lock::LockStatus::Unchanged);
 }
 
 TEST_F(Update, DependencyUpdateWritesConfiguredLocalLock) {
@@ -79,7 +79,7 @@ sources = ["source.cppm"]
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
 
-    auto config = lito::load_project_config(directory.as_path());
+    auto config = lito::config::load_project_config(directory.as_path());
     ASSERT_TRUE(config.is_ok());
     auto configured_lock = config->lock.path.clone();
     auto updated         = lito::update_dependencies(lito::UpdateRequest {
@@ -87,7 +87,7 @@ sources = ["source.cppm"]
         .lock = rstd::move(config->lock),
     });
     ASSERT_TRUE(updated.is_ok());
-    EXPECT_EQ(*updated, lito::LockStatus::Updated);
+    EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
     auto local_exists = rstd::fs::exists(configured_lock.as_path());
     ASSERT_TRUE(local_exists.is_ok());
     EXPECT_TRUE(*local_exists);
@@ -96,15 +96,15 @@ sources = ["source.cppm"]
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_FALSE(*root_exists);
 
-    auto defaults =
-        lito::load_project_config(directory.as_path(), lito::ConfigLoadMode::LocalDisabled);
+    auto defaults = lito::config::load_project_config(directory.as_path(),
+                                                      lito::config::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(defaults.is_ok());
     auto repository_updated = lito::update_dependencies(lito::UpdateRequest {
         .root = defaults->root.clone(),
         .lock = rstd::move(defaults->lock),
     });
     ASSERT_TRUE(repository_updated.is_ok());
-    EXPECT_EQ(*repository_updated, lito::LockStatus::Updated);
+    EXPECT_EQ(*repository_updated, lito::lock::LockStatus::Updated);
     root_exists = rstd::fs::exists(root_lock.as_path());
     ASSERT_TRUE(root_exists.is_ok());
     EXPECT_TRUE(*root_exists);

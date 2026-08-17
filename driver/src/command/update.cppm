@@ -13,13 +13,13 @@ export namespace lito
 {
 
 struct UpdateRequest {
-    PathBuf                root;
-    ProcessEnvironmentSpec environment;
-    LockConfig             lock;
-    PackageSourceConfig    sources;
-    Option<BuildEventSink> observer;
+    PathBuf                           root;
+    ProcessEnvironmentSpec            environment;
+    lito::lock::LockConfig            lock;
+    lito::source::PackageSourceConfig sources;
+    Option<BuildEventSink>            observer;
 };
 
-auto update_dependencies(const UpdateRequest& request) -> CommandResult<LockStatus>;
+auto update_dependencies(const UpdateRequest& request) -> CommandResult<lito::lock::LockStatus>;
 
 } // namespace lito

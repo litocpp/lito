@@ -18,9 +18,7 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto exact_build_tool_version(ref<str> value) noexcept -> bool {
     if (value.is_empty() || value.trim_ascii() != value || value == "latest"_str) return false;
@@ -156,5 +154,3 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
     }
     return Ok(rstd::move(result));
 }
-
-} // namespace lito

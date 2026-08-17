@@ -9,25 +9,29 @@ import :dependency.pkg_config;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 struct DeclaredDependency {
-    String                   name;
-    PackageSourceRequirement source;
-    DependencyVisibility     visibility { DependencyVisibility::Private };
-    Option<PathBuf>          declaration_root;
+    String                                 name;
+    lito::source::PackageSourceRequirement source;
+    lito::dependency::DependencyVisibility visibility {
+        lito::dependency::DependencyVisibility::Private
+    };
+    Option<PathBuf> declaration_root;
 };
 
 struct WorkspaceDependencyReference {
-    String               name;
-    DependencyVisibility visibility { DependencyVisibility::Private };
+    String                                 name;
+    lito::dependency::DependencyVisibility visibility {
+        lito::dependency::DependencyVisibility::Private
+    };
 };
 
 struct DeclaredRuntimeDependency {
-    String                   name;
-    PackageSourceRequirement source;
-    Option<PathBuf>          declaration_root;
+    String                                 name;
+    lito::source::PackageSourceRequirement source;
+    Option<PathBuf>                        declaration_root;
 };
 
 struct WorkspaceRuntimeDependencyReference {
@@ -35,34 +39,36 @@ struct WorkspaceRuntimeDependencyReference {
 };
 
 struct WorkspacePkgConfigExternalDependencyReference {
-    String               alias;
-    DependencyVisibility visibility { DependencyVisibility::Private };
+    String                                 alias;
+    lito::dependency::DependencyVisibility visibility {
+        lito::dependency::DependencyVisibility::Private
+    };
 };
 
 struct WorkspaceCMakeExternalDependencyReference {
-    String                      alias;
-    Vec<CMakeTargetRequirement> targets;
+    String                                        alias;
+    Vec<lito::dependency::CMakeTargetRequirement> targets;
 };
 
 struct WorkspaceDependencyDefinition {
-    String                   name;
-    PackageSourceRequirement source;
+    String                                 name;
+    lito::source::PackageSourceRequirement source;
 };
 
 struct WorkspacePkgConfigExternalDependencyDefinition {
-    String                         alias;
-    PkgConfigDependencyRequirement requirement;
+    String                                           alias;
+    lito::dependency::PkgConfigDependencyRequirement requirement;
 };
 
 struct WorkspaceCMakeExternalDependencyDefinition {
-    String                alias;
-    String                package;
-    CMakeDependencySource source;
-    CMakeIntegration      integration { CMakeIntegration::Install };
-    bool                  add_subdirectory { true };
-    Option<PathBuf>       adapter;
-    Option<PathBuf>       config_directory;
-    Vec<CMakeCacheEntry>  cache;
+    String                                  alias;
+    String                                  package;
+    lito::dependency::CMakeDependencySource source;
+    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
+    bool                               add_subdirectory { true };
+    Option<PathBuf>                    adapter;
+    Option<PathBuf>                    config_directory;
+    Vec<lito::dependency::CMakeCacheEntry> cache;
 };
 
-} // namespace lito
+} // namespace lito::manifest

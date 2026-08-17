@@ -14,7 +14,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 enum class PackageVersionSource
@@ -41,17 +41,17 @@ struct PackageManifest {
     Vec<PackageTargetManifest>                         targets;
     TargetPredicate                                    target;
     Vec<CompileTestCase>                               compile_tests;
-    DeclaredUsageRequirements                          usage;
+    lito::dependency::DeclaredUsageRequirements        usage;
     Vec<DeclaredDependency>                            dependencies;
     Vec<DeclaredDependency>                            dev_dependencies;
     Vec<DeclaredRuntimeDependency>                     runtime_dependencies;
     Vec<WorkspaceDependencyReference>                  workspace_dependencies;
     Vec<WorkspaceDependencyReference>                  workspace_dev_dependencies;
     Vec<WorkspaceRuntimeDependencyReference>           workspace_runtime_dependencies;
-    Vec<PkgConfigExternalDependency>                   pkg_config_external_dependencies;
+    Vec<lito::dependency::PkgConfigExternalDependency> pkg_config_external_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
-    Vec<CMakeDependencyRequirement>                    cmake_external_dependencies;
+    Vec<lito::dependency::CMakeDependencyRequirement>  cmake_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
 };
 
-} // namespace lito
+} // namespace lito::manifest

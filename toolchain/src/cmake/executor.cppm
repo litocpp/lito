@@ -20,14 +20,15 @@ using namespace rstd::literals;
 export namespace lito
 {
 
-auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
-                        const CMakeProviderConfig&                provider,
-                        const cpp::BuildConfiguration&            configuration,
-                        const cpp::ProfileSpec&                   profile,
-                        const TargetInfo&                         default_target,
-                        ref<str>                                  effective_target,
-                        ref<rstd::path::Path>                     profile_cmake_root,
-                        usize jobs = usize(1)) -> DependencyResult<CMakePackagePlan> {
+auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement,
+                        const lito::dependency::CMakeProviderConfig& provider,
+                        const cpp::BuildConfiguration&               configuration,
+                        const cpp::ProfileSpec&                      profile,
+                        const TargetInfo&                            default_target,
+                        ref<str>                                     effective_target,
+                        ref<rstd::path::Path>                        profile_cmake_root,
+                        usize                                        jobs = usize(1))
+    -> lito::dependency::DependencyResult<CMakePackagePlan> {
     if (jobs == usize {}) {
         return cmake_failure<CMakePackagePlan>("CMake build jobs must be greater than zero"_str);
     }
@@ -47,7 +48,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
         requirement, provider, configuration, profile, effective_target, profile_cmake_root);
     if (area.is_err()) return Err(rstd::move(area).unwrap_err());
     auto operations = Vec<CMakePackageOperation>::make();
-    if (requirement.integration == CMakeIntegration::Install &&
+    if (requirement.integration == lito::dependency::CMakeIntegration::Install &&
         ! requirement.source.is_Installed()) {
         operations.push(CMakePackageOperation::ConfigureSource);
         operations.push(CMakePackageOperation::BuildSource);
@@ -69,9 +70,9 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement& requirement,
     });
 }
 
-auto identify_cmake_provider(CMakeProviderConfig               provider,
-                             const ResolvedProcessEnvironment& environment)
-    -> DependencyResult<CMakeProviderConfig> {
+auto identify_cmake_provider(lito::dependency::CMakeProviderConfig provider,
+                             const ResolvedProcessEnvironment&     environment)
+    -> lito::dependency::DependencyResult<lito::dependency::CMakeProviderConfig> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto arguments = Vec<String>::make();
@@ -79,11 +80,11 @@ auto identify_cmake_provider(CMakeProviderConfig               provider,
     arguments.push(String::make("--version"_str));
     auto output = run_command(arguments, environment);
     if (output.is_err()) {
-        return Err(DependencyError::Operation(String::make("CMake provider identity"_str),
-                                              rstd::move(output).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Operation(
+            String::make("CMake provider identity"_str), rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        return cmake_failure<CMakeProviderConfig>(
+        return cmake_failure<lito::dependency::CMakeProviderConfig>(
             rstd::format("CMake provider identity failed with exit code {}:\n{}{}",
                          output->exit_code,
                          output->standard_output.as_str(),
@@ -91,7 +92,8 @@ auto identify_cmake_provider(CMakeProviderConfig               provider,
     }
     provider.identity = String::make(output->standard_output.as_str().trim_ascii());
     if (provider.identity.is_empty()) {
-        return cmake_failure<CMakeProviderConfig>("CMake provider returned an empty identity"_str);
+        return cmake_failure<lito::dependency::CMakeProviderConfig>(
+            "CMake provider returned an empty identity"_str);
     }
     return Ok(rstd::move(provider));
 }
@@ -99,7 +101,7 @@ auto identify_cmake_provider(CMakeProviderConfig               provider,
 auto execute_cmake_package(const CMakePackagePlan&           plan,
                            const ResolvedProcessEnvironment& environment,
                            const Option<ToolchainEventSink>& observer = None())
-    -> DependencyResult<CMakeUsageSnapshot> {
+    -> lito::dependency::DependencyResult<CMakeUsageSnapshot> {
     const auto& requirement   = plan.requirement;
     const auto& provider      = plan.provider;
     const auto& configuration = plan.configuration;
@@ -268,7 +270,7 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
 auto materialize_cmake_usage(const CMakePackagePlan&       plan,
                              const CMakeUsageSnapshot&     snapshots,
                              const cpp::CppArgumentParser& parser)
-    -> DependencyResult<cpp::ResolvedExternalDependency> {
+    -> lito::dependency::DependencyResult<cpp::ResolvedExternalDependency> {
     const auto& requirement        = plan.requirement;
     const auto& provider           = plan.provider;
     const auto& effective_target   = plan.effective_target;
@@ -290,7 +292,7 @@ auto materialize_cmake_usage(const CMakePackagePlan&       plan,
                                             target.name.as_str());
         auto        compile  = parser.parse(snapshot.compile, source.as_str());
         if (compile.is_err()) {
-            return Err(DependencyError::Configuration(
+            return Err(lito::dependency::DependencyError::Configuration(
                 source.clone(), erase_error(rstd::move(compile).unwrap_err())));
         }
         auto identity = target_snapshot_identity(provider,

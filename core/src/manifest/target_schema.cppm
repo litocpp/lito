@@ -21,9 +21,7 @@ using namespace lito::system;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto valid_artifact_name(ref<str> value) -> bool {
     if (value.size() == usize {} || value == "."_str || value == ".."_str) return false;
@@ -434,8 +432,9 @@ auto parse_runtime_resources(Option<ref<Toml>> value, ref<str> context)
     return Ok(rstd::move(result));
 }
 
-auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref<str> key)
-    -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
+auto parse_runnable_targets(Option<ref<Toml>>                value,
+                            lito::package::PackageTargetKind kind,
+                            ref<str> key) -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
     auto result = Vec<PackageTargetManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
@@ -451,9 +450,10 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
         const auto  context = rstd::format("manifest.{}[{}]", key, index);
         const auto& item    = (**entries)[index];
         auto        table   = rstd_try(table_value(item, context.as_str()));
-        auto        allowed = kind == PackageTargetKind::Test
-                                  ? test_key
-                                  : (kind == PackageTargetKind::Binary ? binary_key : runnable_key);
+        auto        allowed =
+            kind == lito::package::PackageTargetKind::Test
+                ? test_key
+                : (kind == lito::package::PackageTargetKind::Binary ? binary_key : runnable_key);
         rstd_try(reject_unknown(*table, context.as_str(), allowed));
         auto name = rstd_try(required_string(item, "name"_str, context.as_str()));
         if (! package_name_is_valid(name.as_str())) {
@@ -477,12 +477,12 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
             }
             link_stdlib = *parsed;
         }
-        if (kind == PackageTargetKind::Binary) {
+        if (kind == lito::package::PackageTargetKind::Binary) {
             auto resources =
                 rstd_try(parse_runtime_resources(member(item, "resources"_str), context.as_str()));
             result.push(PackageTargetManifest::Binary(
                 rstd::move(name), rstd::move(source), link_stdlib, rstd::move(resources)));
-        } else if (kind == PackageTargetKind::Benchmark) {
+        } else if (kind == lito::package::PackageTargetKind::Benchmark) {
             result.push(PackageTargetManifest::Benchmark(
                 rstd::move(name), rstd::move(source), link_stdlib));
         } else {
@@ -496,8 +496,8 @@ auto parse_runnable_targets(Option<ref<Toml>> value, PackageTargetKind kind, ref
 }
 
 struct ResolvedIncludeDirectories {
-    Vec<PathBuf>                     physical;
-    Vec<IncludeDirectoryRequirement> deferred;
+    Vec<PathBuf>                                       physical;
+    Vec<lito::dependency::IncludeDirectoryRequirement> deferred;
 };
 
 auto resolve_package_include_directory(PathBuf path, ref<rstd::path::Path> root, ref<str> context)
@@ -580,8 +580,8 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
             return manifest_schema_failure<ResolvedIncludeDirectories>(rstd::format(
                 "{} does not support generated public include directories", item_context.as_str()));
         }
-        result.deferred.push(IncludeDirectoryRequirement {
-            .root = IncludeDirectoryRoot::Generated,
+        result.deferred.push(lito::dependency::IncludeDirectoryRequirement {
+            .root = lito::dependency::IncludeDirectoryRoot::Generated,
             .path = rstd::move(relative).unwrap(),
         });
     }
@@ -678,8 +678,8 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Co
 }
 
 auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
-    -> ManifestSchemaResult<DeclaredUsageRequirements> {
-    if (value.is_none()) return Ok(DeclaredUsageRequirements {});
+    -> ManifestSchemaResult<lito::dependency::DeclaredUsageRequirements> {
+    if (value.is_none()) return Ok(lito::dependency::DeclaredUsageRequirements {});
     auto table = table_value(**value, "manifest.usage"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto known = reject_unknown(**table, "manifest.usage"_str, usage_key);
@@ -709,7 +709,7 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
     if (declared_threads.is_some()) {
         auto parsed = (**declared_threads).as_bool();
         if (parsed.is_none()) {
-            return manifest_schema_failure<DeclaredUsageRequirements>(
+            return manifest_schema_failure<lito::dependency::DeclaredUsageRequirements>(
                 "usage.threads must be a boolean"_str);
         }
         threads = *parsed;
@@ -728,7 +728,7 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
     auto option_values             = rstd::move(options).unwrap();
     auto linker_option_values      = rstd::move(linker_options).unwrap();
     auto system_library_values     = rstd::move(system_libraries).unwrap();
-    return Ok(DeclaredUsageRequirements {
+    return Ok(lito::dependency::DeclaredUsageRequirements {
         .public_include_directories             = rstd::move(public_include_values.physical),
         .private_include_directories            = rstd::move(private_include_values.physical),
         .public_definitions                     = rstd::move(public_definition_values),
@@ -740,5 +740,3 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
         .private_include_directory_requirements = rstd::move(private_include_values.deferred),
     });
 }
-
-} // namespace lito

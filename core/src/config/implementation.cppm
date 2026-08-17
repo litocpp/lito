@@ -14,9 +14,7 @@ using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
-
-namespace lito
-{
+using namespace lito::config;
 
 struct ConfigLocation {
     PathBuf root;
@@ -379,17 +377,12 @@ auto write_config_document(const ConfigDocument& document) -> ConfigResult<empty
     return Ok(empty {});
 }
 
-} // namespace lito
-
-namespace lito
-{
-
-auto project_config_path(ref<rstd::path::Path> root) -> ConfigResult<PathBuf> {
+auto lito::config::project_config_path(ref<rstd::path::Path> root) -> ConfigResult<PathBuf> {
     auto location = rstd_try(resolve_config_location(root));
     return Ok(rstd::move(location.path));
 }
 
-auto load_project_config(ref<rstd::path::Path> root, ProjectConfigRequest request)
+auto lito::config::load_project_config(ref<rstd::path::Path> root, ProjectConfigRequest request)
     -> ConfigResult<ProjectConfig> {
     auto document = rstd_try(open_config_document(root, request.mode));
     for (usize index {}; index < request.overrides.len(); ++index) {
@@ -400,7 +393,7 @@ auto load_project_config(ref<rstd::path::Path> root, ProjectConfigRequest reques
     return decode_project_config(document.location.root.clone(), document.value);
 }
 
-auto load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode)
+auto lito::config::load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode)
     -> ConfigResult<ProjectConfig> {
     return load_project_config(root,
                                ProjectConfigRequest {
@@ -408,7 +401,7 @@ auto load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode)
                                });
 }
 
-auto get_persisted_config(ref<rstd::path::Path> root, Option<String> key)
+auto lito::config::get_persisted_config(ref<rstd::path::Path> root, Option<String> key)
     -> ConfigResult<ConfigQuery> {
     auto location = rstd_try(resolve_config_location(root));
     auto document = rstd_try(read_config_document(rstd::move(location), true));
@@ -440,7 +433,7 @@ auto get_persisted_config(ref<rstd::path::Path> root, Option<String> key)
     });
 }
 
-auto set_persisted_config(ref<rstd::path::Path> root, ref<str> key, ref<str> value)
+auto lito::config::set_persisted_config(ref<rstd::path::Path> root, ref<str> key, ref<str> value)
     -> ConfigResult<ConfigMutation> {
     auto parsed_key   = rstd_try(parse_config_key(key, "configuration key"_str));
     auto parsed_value = rstd_try(parse_config_value(value));
@@ -456,7 +449,7 @@ auto set_persisted_config(ref<rstd::path::Path> root, ref<str> key, ref<str> val
     });
 }
 
-auto unset_persisted_config(ref<rstd::path::Path> root, ref<str> key)
+auto lito::config::unset_persisted_config(ref<rstd::path::Path> root, ref<str> key)
     -> ConfigResult<ConfigMutation> {
     auto parsed_key = rstd_try(parse_config_key(key, "configuration key"_str));
     auto normalized = rstd::toml::to_key_string(parsed_key);
@@ -470,5 +463,3 @@ auto unset_persisted_config(ref<rstd::path::Path> root, ref<str> key)
         .key  = rstd::move(normalized),
     });
 }
-
-} // namespace lito

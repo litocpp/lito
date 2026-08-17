@@ -19,13 +19,13 @@ export namespace lito::cpp
 {
 
 struct ProfileSpec {
-    String              name;
-    BuildProfileFamily  family { BuildProfileFamily::Debug };
-    BmiRequest          bmi;
-    CppCompileOptions   cpp;
-    CppLinkRequirements link_requirements;
-    StripMode           strip { StripMode::None };
-    Vec<String>         linker_options;
+    String                             name;
+    lito::manifest::BuildProfileFamily family { lito::manifest::BuildProfileFamily::Debug };
+    BmiRequest                         bmi;
+    CppCompileOptions                  cpp;
+    CppLinkRequirements                link_requirements;
+    lito::manifest::StripMode          strip { lito::manifest::StripMode::None };
+    Vec<String>                        linker_options;
 };
 
 } // namespace lito::cpp
@@ -53,8 +53,8 @@ auto is_profile_owned_linker_option(ref<str> option) -> bool {
 namespace lito::cpp
 {
 
-auto profile_failure(String message) -> BuildProfileResult<ProfileSpec> {
-    return Err(BuildProfileError::Message(rstd::move(message)));
+auto profile_failure(String message) -> lito::manifest::BuildProfileResult<ProfileSpec> {
+    return Err(lito::manifest::BuildProfileError::Message(rstd::move(message)));
 }
 
 } // namespace lito::cpp
@@ -63,18 +63,20 @@ export namespace lito::cpp
 {
 
 auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
-    -> BuildProfileResult<CppArgumentLayer> {
+    -> lito::manifest::BuildProfileResult<CppArgumentLayer> {
     return parser.parse(configuration.options, "build.options"_str)
         .map_err([](CppOptionError error) {
-            return BuildProfileError::Options(erase_error(rstd::move(error)));
+            return lito::manifest::BuildProfileError::Options(erase_error(rstd::move(error)));
         });
 }
 
-auto make_profile_spec(const BuildConfiguration& configuration,
-                       const ProjectProfile&     project_profile,
-                       const BuildProfileName&   selected_profile,
-                       CppArgumentLayer          arguments) -> BuildProfileResult<ProfileSpec> {
-    auto selected          = rstd_try(resolve_build_profile(project_profile, selected_profile));
+auto make_profile_spec(const BuildConfiguration&               configuration,
+                       const lito::manifest::ProjectProfile&   project_profile,
+                       const lito::manifest::BuildProfileName& selected_profile,
+                       CppArgumentLayer                        arguments)
+    -> lito::manifest::BuildProfileResult<ProfileSpec> {
+    auto selected =
+        rstd_try(lito::manifest::resolve_build_profile(project_profile, selected_profile));
     auto link_requirements = CppLinkRequirements {};
     for (const auto& occurrence : arguments.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
@@ -156,7 +158,8 @@ auto make_profile_spec(const BuildConfiguration& configuration,
                                        selected.debug_info,
                                        rstd::move(layer));
     if (cpp_result.is_err()) {
-        return Err(BuildProfileError::Options(erase_error(rstd::move(cpp_result).unwrap_err())));
+        return Err(lito::manifest::BuildProfileError::Options(
+            erase_error(rstd::move(cpp_result).unwrap_err())));
     }
     auto cpp        = rstd::move(cpp_result).unwrap();
     cpp.codegen.lto = selected.lto;
@@ -172,10 +175,11 @@ auto make_profile_spec(const BuildConfiguration& configuration,
     });
 }
 
-auto make_profile_spec(const BuildConfiguration& configuration,
-                       const ProjectProfile&     project_profile,
-                       const BuildProfileName&   selected_profile,
-                       const CppArgumentParser&  parser) -> BuildProfileResult<ProfileSpec> {
+auto make_profile_spec(const BuildConfiguration&               configuration,
+                       const lito::manifest::ProjectProfile&   project_profile,
+                       const lito::manifest::BuildProfileName& selected_profile,
+                       const CppArgumentParser&                parser)
+    -> lito::manifest::BuildProfileResult<ProfileSpec> {
     auto arguments = rstd_try(parse_build_arguments(configuration, parser));
     return make_profile_spec(
         configuration, project_profile, selected_profile, rstd::move(arguments));

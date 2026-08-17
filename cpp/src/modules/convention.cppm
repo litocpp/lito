@@ -16,9 +16,10 @@ using namespace rstd::literals;
 namespace lito::cpp
 {
 
-auto runnable_target(PackageTargetKind kind) -> bool {
-    return kind == PackageTargetKind::Binary || kind == PackageTargetKind::Test ||
-           kind == PackageTargetKind::Benchmark;
+auto runnable_target(lito::package::PackageTargetKind kind) -> bool {
+    return kind == lito::package::PackageTargetKind::Binary ||
+           kind == lito::package::PackageTargetKind::Test ||
+           kind == lito::package::PackageTargetKind::Benchmark;
 }
 
 template<typename T>

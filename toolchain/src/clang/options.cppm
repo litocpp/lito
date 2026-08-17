@@ -49,12 +49,13 @@ inline constexpr auto LINKER_ARGUMENT     = "-Xlinker"_str;
 inline constexpr auto FORCE_LOAD          = "-force_load"_str;
 inline constexpr auto NO_STANDARD_LIBRARY = "-nostdlib++"_str;
 
-constexpr auto standard_library(StandardLibrary value) noexcept -> ref<str> {
-    return value == StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str : "-stdlib=libc++"_str;
+constexpr auto standard_library(lito::config::StandardLibrary value) noexcept -> ref<str> {
+    return value == lito::config::StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str
+                                                             : "-stdlib=libc++"_str;
 }
 
-constexpr auto standard_library_linker_option(StandardLibrary value, bool link) noexcept
-    -> ref<str> {
+constexpr auto standard_library_linker_option(lito::config::StandardLibrary value,
+                                              bool link) noexcept -> ref<str> {
     return link ? standard_library(value) : NO_STANDARD_LIBRARY;
 }
 

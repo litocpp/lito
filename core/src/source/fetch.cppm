@@ -7,7 +7,7 @@ import rstd;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::source
 {
 
 class FetchIdentity {
@@ -40,4 +40,4 @@ auto fetch_identity_stable_key(const FetchIdentity& identity) -> String {
     return rstd::crypto::sha256_hex(serialized.as_str());
 }
 
-} // namespace lito
+} // namespace lito::source

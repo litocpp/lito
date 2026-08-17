@@ -14,7 +14,7 @@ using PathBuf = rstd::path::PathBuf;
 class Workspace : public ProjectFixture {
 protected:
     auto manifest(ref<str> name, ref<str> contents)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             { "lito.toml"_str, contents },
         };
@@ -25,7 +25,7 @@ protected:
 TEST_F(Workspace, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
     auto missing_project = manifest("name-missing"_str, "[workspace]\nmembers = []\n"_str);
     ASSERT_TRUE(missing_project.is_ok());
-    auto missing = lito::load_manifest_document(missing_project->root.as_path());
+    auto missing = lito::manifest::load_manifest_document(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_err());
     auto missing_error = rstd::move(missing).unwrap_err();
     EXPECT_TRUE(error_chain_text(missing_error).as_str().contains("missing 'name'"_str));
@@ -33,7 +33,7 @@ TEST_F(Workspace, WorkspaceNameIsRequiredAndValidatedByManifestOwner) {
     auto invalid_project =
         manifest("name-invalid"_str, "[workspace]\nname = \"fixture.invalid\"\nmembers = []\n"_str);
     ASSERT_TRUE(invalid_project.is_ok());
-    auto invalid = lito::load_manifest_document(invalid_project->root.as_path());
+    auto invalid = lito::manifest::load_manifest_document(invalid_project->root.as_path());
     ASSERT_TRUE(invalid.is_err());
     auto invalid_error = rstd::move(invalid).unwrap_err();
     EXPECT_TRUE(error_chain_text(invalid_error).as_str().contains("workspace.name"_str));
@@ -55,7 +55,7 @@ sources = ["main.cpp"]
     };
     auto valid_project = materialize("name-valid"_str, valid_files);
     ASSERT_TRUE(valid_project.is_ok());
-    auto valid = lito::load_manifest_document(valid_project->root.as_path());
+    auto valid = lito::manifest::load_manifest_document(valid_project->root.as_path());
     ASSERT_TRUE(valid.is_ok());
     ASSERT_TRUE(valid->workspace.is_some());
     EXPECT_EQ(valid->workspace->name.as_str(), "demo-workspace"_str);
@@ -77,7 +77,7 @@ path = "helper"
 visibility = "private"
 )toml"_str);
     ASSERT_TRUE(visibility_project.is_ok());
-    auto visibility = lito::load_package_manifest(visibility_project->root.as_path());
+    auto visibility = lito::manifest::load_package_manifest(visibility_project->root.as_path());
     ASSERT_TRUE(visibility.is_err());
     auto visibility_error = rstd::move(visibility).unwrap_err();
     EXPECT_TRUE(error_chain_text(visibility_error).as_str().contains("visibility"_str));
@@ -100,7 +100,7 @@ visibility = "private"
 path = "helper"
 )toml"_str);
     ASSERT_TRUE(duplicate_project.is_ok());
-    auto duplicate = lito::load_package_manifest(duplicate_project->root.as_path());
+    auto duplicate = lito::manifest::load_package_manifest(duplicate_project->root.as_path());
     ASSERT_TRUE(duplicate.is_err());
     auto duplicate_error = rstd::move(duplicate).unwrap_err();
     EXPECT_TRUE(error_chain_text(duplicate_error)
@@ -191,7 +191,7 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
     auto app_path  = directory.join(PathBuf::from("app"_str).as_path());
-    auto member    = lito::load_package_manifest(app_path.as_path());
+    auto member    = lito::manifest::load_package_manifest(app_path.as_path());
     ASSERT_TRUE(member.is_ok());
     EXPECT_TRUE(member->dependencies.is_empty());
     EXPECT_TRUE(member->pkg_config_external_dependencies.is_empty());
@@ -200,7 +200,7 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(member->workspace_pkg_config_external_dependencies.len(), usize(1));
     ASSERT_EQ(member->workspace_cmake_external_dependencies.len(), usize(1));
 
-    auto document = lito::load_manifest_document(directory.as_path());
+    auto document = lito::manifest::load_manifest_document(directory.as_path());
     ASSERT_TRUE(document.is_ok());
     ASSERT_TRUE(document->workspace.is_some());
     ASSERT_EQ(document->workspace->dependencies.len(), usize(1));
@@ -209,7 +209,7 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_TRUE(document->workspace->dependencies[usize {}].source.is_Path());
     EXPECT_TRUE(document->workspace->cmake_external_dependencies[usize {}].source.is_Path());
 
-    auto graph = lito::resolve_package_graph(directory.as_path());
+    auto graph = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(2));
     const auto& app = graph->packages[usize {}];
@@ -227,15 +227,15 @@ set(LitoFixture_VERSION "1.2.3")
     const auto& curl = app.manifest.pkg_config_external_dependencies[usize {}];
     EXPECT_EQ(curl.alias.as_str(), "curl"_str);
     EXPECT_EQ(curl.requirement.module.as_str(), "libcurl"_str);
-    EXPECT_EQ(curl.requirement.mode, lito::PkgConfigQueryMode::Static);
-    EXPECT_EQ(curl.visibility, lito::DependencyVisibility::Public);
+    EXPECT_EQ(curl.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
+    EXPECT_EQ(curl.visibility, lito::dependency::DependencyVisibility::Public);
 
     ASSERT_EQ(app.manifest.cmake_external_dependencies.len(), usize(1));
     const auto& cmake = app.manifest.cmake_external_dependencies[usize {}];
     EXPECT_EQ(cmake.alias.as_str(), "fixture"_str);
     ASSERT_EQ(cmake.targets.len(), usize(1));
     EXPECT_EQ(cmake.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
-    EXPECT_EQ(cmake.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_EQ(cmake.integration, lito::dependency::CMakeIntegration::BuildTree);
     EXPECT_FALSE(cmake.add_subdirectory);
     ASSERT_TRUE(cmake.adapter.is_some());
     EXPECT_EQ(cmake.adapter->as_path().to_str().unwrap(), "fixture-adapter.cmake"_str);
@@ -256,7 +256,7 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(resolved.adapter->as_path(),
               directory.join(PathBuf::from("fixture-adapter.cmake"_str).as_path()).as_path());
 
-    auto member_graph = lito::resolve_package_graph(app_path.as_path());
+    auto member_graph = lito::package::resolve_package_graph(app_path.as_path());
     ASSERT_TRUE(member_graph.is_ok());
     EXPECT_TRUE(member_graph->root_is_workspace);
     ASSERT_EQ(member_graph->packages.len(), usize(2));

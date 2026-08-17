@@ -13,12 +13,12 @@ using PathBuf  = rstd::path::PathBuf;
 using ErrorBox = Box<dyn<rstd::error::Error>>;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 class DependencyError {
     RSTD_ENUM(DependencyError,
-              (Source, (SourceError source;)),
+              (Source, (lito::source::SourceError source;)),
               (System, (SystemError source;)),
               (Operation, (String operation; SystemError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
@@ -43,27 +43,28 @@ auto dependency_failure(ref<str> message) -> DependencyResult<T> {
     return Err(DependencyError::Message(String::make(message)));
 }
 
-} // namespace lito
+} // namespace lito::dependency
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::SourceError>, lito::DependencyError> {
-    static auto from(lito::SourceError error) -> lito::DependencyError {
-        return lito::DependencyError::Source(rstd::move(error));
+struct Impl<convert::From<lito::source::SourceError>, lito::dependency::DependencyError> {
+    static auto from(lito::source::SourceError error) -> lito::dependency::DependencyError {
+        return lito::dependency::DependencyError::Source(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::system::SystemError>, lito::DependencyError> {
-    static auto from(lito::system::SystemError error) -> lito::DependencyError {
-        return lito::DependencyError::System(rstd::move(error));
+struct Impl<convert::From<lito::system::SystemError>, lito::dependency::DependencyError> {
+    static auto from(lito::system::SystemError error) -> lito::dependency::DependencyError {
+        return lito::dependency::DependencyError::System(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::DependencyError> : ImplBase<lito::DependencyError> {
+struct Impl<fmt::Display, lito::dependency::DependencyError>
+    : ImplBase<lito::dependency::DependencyError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Source()) return as<fmt::Display>(error.as_Source().source).fmt(formatter);
@@ -103,14 +104,16 @@ struct Impl<fmt::Display, lito::DependencyError> : ImplBase<lito::DependencyErro
 };
 
 template<>
-struct Impl<fmt::Debug, lito::DependencyError> : ImplBase<lito::DependencyError> {
+struct Impl<fmt::Debug, lito::dependency::DependencyError>
+    : ImplBase<lito::dependency::DependencyError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::DependencyError> : ImplBase<lito::DependencyError> {
+struct Impl<error::Error, lito::dependency::DependencyError>
+    : ImplBase<lito::dependency::DependencyError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Source()) {

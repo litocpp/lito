@@ -12,26 +12,26 @@ export namespace lito::cpp
 {
 
 struct ResolvedTarget {
-    PackageTargetId                 id;
-    ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
-    String                          artifact_name;
-    bool                            link_stdlib { true };
-    TargetSourceManifest            source;
-    PathBuf                         root;
-    PathBuf                         source_root;
-    UsageRequirements               usage;
-    Vec<ResolvedCompileTestCase>    compile_tests;
-    Vec<TestAttachmentManifest>     attachments;
-    Vec<RuntimeResourceManifest>    runtime_resources;
-    Vec<DependencySpec>             dependencies;
-    Vec<ResolvedExternalDependency> external_dependencies;
-    Option<TestAttachmentTarget>    test_attachment;
+    lito::package::PackageTargetId               id;
+    ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
+    String                                       artifact_name;
+    bool                                         link_stdlib { true };
+    lito::manifest::TargetSourceManifest         source;
+    PathBuf                                      root;
+    PathBuf                                      source_root;
+    UsageRequirements                            usage;
+    Vec<ResolvedCompileTestCase>                 compile_tests;
+    Vec<lito::manifest::TestAttachmentManifest>  attachments;
+    Vec<lito::manifest::RuntimeResourceManifest> runtime_resources;
+    Vec<DependencySpec>                          dependencies;
+    Vec<ResolvedExternalDependency>              external_dependencies;
+    Option<TestAttachmentTarget>                 test_attachment;
 };
 
 struct PackageBuildToolRequirement {
-    String               package;
-    PathBuf              root;
-    BuildToolRequirement requirement;
+    String                               package;
+    PathBuf                              root;
+    lito::manifest::BuildToolRequirement requirement;
 };
 
 struct SelectedPackageMetadata {
@@ -42,17 +42,17 @@ struct SelectedPackageMetadata {
 };
 
 struct PackageMetadata {
-    String                           name;
-    PathBuf                          root;
-    PathBuf                          manifest_path;
-    Vec<String>                      build_script_packages;
-    String                           default_profile;
-    Vec<PackageTargetId>             default_targets;
-    Vec<SelectedPackageMetadata>     selected_packages;
-    Vec<PackageBuildToolRequirement> build_tools;
-    ToolchainSpec                    toolchain;
-    Vec<ProfileSpec>                 profiles;
-    Vec<ResolvedTarget>              targets;
+    String                              name;
+    PathBuf                             root;
+    PathBuf                             manifest_path;
+    Vec<String>                         build_script_packages;
+    String                              default_profile;
+    Vec<lito::package::PackageTargetId> default_targets;
+    Vec<SelectedPackageMetadata>        selected_packages;
+    Vec<PackageBuildToolRequirement>    build_tools;
+    lito::config::ToolchainSpec         toolchain;
+    Vec<ProfileSpec>                    profiles;
+    Vec<ResolvedTarget>                 targets;
 };
 
 } // namespace lito::cpp

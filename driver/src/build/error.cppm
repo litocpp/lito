@@ -23,7 +23,7 @@ export namespace lito
 class BuildError {
     RSTD_ENUM(BuildError,
               (Project, (ProjectError source;)),
-              (Package, (PackageError source;)),
+              (Package, (lito::package::PackageError source;)),
               (Toolchain, (ToolchainError source;)),
               (System, (SystemError source;)),
               (Cache, (CacheError source;)),
@@ -50,8 +50,8 @@ struct Impl<convert::From<lito::ProjectError>, lito::BuildError> {
 };
 
 template<>
-struct Impl<convert::From<lito::PackageError>, lito::BuildError> {
-    static auto from(lito::PackageError error) -> lito::BuildError {
+struct Impl<convert::From<lito::package::PackageError>, lito::BuildError> {
+    static auto from(lito::package::PackageError error) -> lito::BuildError {
         return lito::BuildError::Package(rstd::move(error));
     }
 };

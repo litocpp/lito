@@ -13,27 +13,27 @@ export namespace lito
 {
 
 template<typename T>
-auto toolchain_dependency_failure(String message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(rstd::move(message)));
+auto toolchain_dependency_failure(String message) -> lito::dependency::DependencyResult<T> {
+    return Err(lito::dependency::DependencyError::Message(rstd::move(message)));
 }
 
 template<typename T>
-auto toolchain_dependency_failure(ref<str> message) -> DependencyResult<T> {
-    return Err(DependencyError::Message(String::make(message)));
+auto toolchain_dependency_failure(ref<str> message) -> lito::dependency::DependencyResult<T> {
+    return Err(lito::dependency::DependencyError::Message(String::make(message)));
 }
 
-auto version_operator(PkgConfigVersionOperator value) noexcept -> ref<str> {
+auto version_operator(lito::dependency::PkgConfigVersionOperator value) noexcept -> ref<str> {
     switch (value) {
-    case PkgConfigVersionOperator::Equal: return "="_str;
-    case PkgConfigVersionOperator::Less: return "<"_str;
-    case PkgConfigVersionOperator::Greater: return ">"_str;
-    case PkgConfigVersionOperator::LessEqual: return "<="_str;
-    case PkgConfigVersionOperator::GreaterEqual: return ">="_str;
+    case lito::dependency::PkgConfigVersionOperator::Equal: return "="_str;
+    case lito::dependency::PkgConfigVersionOperator::Less: return "<"_str;
+    case lito::dependency::PkgConfigVersionOperator::Greater: return ">"_str;
+    case lito::dependency::PkgConfigVersionOperator::LessEqual: return "<="_str;
+    case lito::dependency::PkgConfigVersionOperator::GreaterEqual: return ">="_str;
     }
     return "="_str;
 }
 
-auto module_spec(const PkgConfigDependencyRequirement& requirement) -> String {
+auto module_spec(const lito::dependency::PkgConfigDependencyRequirement& requirement) -> String {
     auto result = requirement.module.clone();
     if (requirement.version.is_some()) {
         result.push_ascii(u8(' '));
@@ -44,7 +44,8 @@ auto module_spec(const PkgConfigDependencyRequirement& requirement) -> String {
     return result;
 }
 
-auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target) -> DependencyResult<String> {
+auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target)
+    -> lito::dependency::DependencyResult<String> {
     auto result    = String::make();
     auto separator = target.family == TargetFamily::Windows ? u8(';') : u8(':');
     for (const auto& path : paths) {
@@ -59,8 +60,9 @@ auto path_list(const Vec<PathBuf>& paths, const TargetInfo& target) -> Dependenc
     return Ok(rstd::move(result));
 }
 
-auto provider_environment(const PkgConfigProviderConfig& config, const TargetInfo& target)
-    -> DependencyResult<CommandEnvironment> {
+auto provider_environment(const lito::dependency::PkgConfigProviderConfig& config,
+                          const TargetInfo&                                target)
+    -> lito::dependency::DependencyResult<CommandEnvironment> {
     auto result = CommandEnvironment {};
     if (! config.search_paths.is_empty()) {
         auto value = path_list(config.search_paths, target);
@@ -110,12 +112,13 @@ struct PkgConfigSnapshot {
     }
 };
 
-auto query_pkg_config(const PkgConfigProviderConfig&        config,
-                      const PkgConfigDependencyRequirement& requirement,
-                      ref<str>                              alias,
-                      ref<str>                              query,
-                      const CommandEnvironment&             overrides,
-                      const ResolvedProcessEnvironment& environment) -> DependencyResult<String> {
+auto query_pkg_config(const lito::dependency::PkgConfigProviderConfig&        config,
+                      const lito::dependency::PkgConfigDependencyRequirement& requirement,
+                      ref<str>                                                alias,
+                      ref<str>                                                query,
+                      const CommandEnvironment&                               overrides,
+                      const ResolvedProcessEnvironment&                       environment)
+    -> lito::dependency::DependencyResult<String> {
     auto executable = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return toolchain_dependency_failure<String>(rstd::format(
@@ -123,7 +126,7 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
     }
     auto arguments = Vec<String>::make();
     arguments.push(String::make(*executable));
-    if (requirement.mode == PkgConfigQueryMode::Static) {
+    if (requirement.mode == lito::dependency::PkgConfigQueryMode::Static) {
         arguments.push(String::make("--static"_str));
     }
     arguments.push(String::make("--print-errors"_str));
@@ -135,7 +138,7 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
                     None(),
                     Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides))));
     if (output.is_err()) {
-        return Err(DependencyError::Operation(
+        return Err(lito::dependency::DependencyError::Operation(
             rstd::format("pkg-config dependency '{}' module '{}' {} query",
                          alias,
                          requirement.module.as_str(),
@@ -155,10 +158,11 @@ auto query_pkg_config(const PkgConfigProviderConfig&        config,
     return Ok(rstd::move(value.standard_output));
 }
 
-auto provider_version(const PkgConfigProviderConfig&     config,
-                      const CommandEnvironment&          overrides,
-                      const ResolvedProcessEnvironment&  environment,
-                      const PkgConfigExternalDependency& declaration) -> DependencyResult<String> {
+auto provider_version(const lito::dependency::PkgConfigProviderConfig&     config,
+                      const CommandEnvironment&                            overrides,
+                      const ResolvedProcessEnvironment&                    environment,
+                      const lito::dependency::PkgConfigExternalDependency& declaration)
+    -> lito::dependency::DependencyResult<String> {
     const auto& requirement = declaration.requirement;
     auto        executable  = config.executable.as_path().to_str();
     if (executable.is_none()) {
@@ -176,7 +180,7 @@ auto provider_version(const PkgConfigProviderConfig&     config,
                     None(),
                     Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides))));
     if (output.is_err()) {
-        return Err(DependencyError::Operation(
+        return Err(lito::dependency::DependencyError::Operation(
             rstd::format("pkg-config dependency '{}' module '{}' provider '{}'",
                          declaration.alias.as_str(),
                          requirement.module.as_str(),
@@ -207,9 +211,9 @@ auto append_identity_value(String& output, ref<str> value) -> void {
     output.push_str(rstd::format("{}:{}\n", value.len(), value).as_str());
 }
 
-auto provider_identity(const PkgConfigProviderConfig& config,
-                       ref<str>                       effective_target,
-                       ref<str>                       version) -> DependencyResult<String> {
+auto provider_identity(const lito::dependency::PkgConfigProviderConfig& config,
+                       ref<str>                                         effective_target,
+                       ref<str> version) -> lito::dependency::DependencyResult<String> {
     auto executable = config.executable.as_path().to_str();
     if (executable.is_none()) {
         return toolchain_dependency_failure<String>(
@@ -240,17 +244,19 @@ auto provider_identity(const PkgConfigProviderConfig& config,
     return Ok(rstd::move(result));
 }
 
-auto snapshot_identity(ref<str>                              provider,
-                       const PkgConfigDependencyRequirement& requirement,
-                       ref<str>                              version,
-                       const Vec<String>&                    cflags,
-                       const Vec<String>&                    libs) -> String {
+auto snapshot_identity(ref<str>                                                provider,
+                       const lito::dependency::PkgConfigDependencyRequirement& requirement,
+                       ref<str>                                                version,
+                       const Vec<String>&                                      cflags,
+                       const Vec<String>&                                      libs) -> String {
     auto result = String::make("lito-external-dependency-v1\n"_str);
     append_identity_value(result, provider);
     append_identity_value(result, module_spec(requirement).as_str());
     append_identity_value(result, version);
-    append_identity_value(
-        result, requirement.mode == PkgConfigQueryMode::Static ? "static"_str : "shared"_str);
+    append_identity_value(result,
+                          requirement.mode == lito::dependency::PkgConfigQueryMode::Static
+                              ? "static"_str
+                              : "shared"_str);
     for (const auto& value : cflags) append_identity_value(result, value.as_str());
     for (const auto& value : libs) append_identity_value(result, value.as_str());
     return result;

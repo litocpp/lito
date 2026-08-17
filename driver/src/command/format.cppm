@@ -20,13 +20,13 @@ enum class FormatMode
 };
 
 struct FormatRequest {
-    PackageSelection       selection;
-    ProcessEnvironmentSpec environment;
-    ToolchainSpec          toolchain;
-    LockConfig             lock;
-    PackageSourceConfig    sources;
-    FormatMode             mode { FormatMode::Write };
-    Option<BuildEventSink> observer;
+    lito::package::PackageSelection   selection;
+    ProcessEnvironmentSpec            environment;
+    lito::config::ToolchainSpec       toolchain;
+    lito::lock::LockConfig            lock;
+    lito::source::PackageSourceConfig sources;
+    FormatMode                        mode { FormatMode::Write };
+    Option<BuildEventSink>            observer;
 };
 
 struct FormatSummary {

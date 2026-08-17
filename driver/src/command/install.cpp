@@ -47,9 +47,10 @@ namespace lito
 
 auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     request.build.selection.root = request.source.project.root.clone();
-    request.build.purpose        = PackageSelectionPurpose::Install;
+    request.build.purpose        = lito::package::PackageSelectionPurpose::Install;
     if (request.build.profile.is_none()) {
-        request.build.profile = Some(BuildProfileName { .value = String::make("release"_str) });
+        request.build.profile =
+            Some(lito::manifest::BuildProfileName { .value = String::make("release"_str) });
     }
     if (! request.build.targets.is_empty()) {
         return install_failure<InstallSummary>(
@@ -84,7 +85,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 resolver,
                                 *environment,
                                 request.build.locked,
-                                PackageSelectionPurpose::Install,
+                                lito::package::PackageSelectionPurpose::Install,
                                 jobs,
                                 request.build.observer,
                                 Some(rstd::move(request.source.project.catalog)))));

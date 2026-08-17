@@ -21,8 +21,8 @@ auto bool_text(bool value) -> ref<str> {
     return value ? "true"_str : "false"_str;
 }
 
-auto standard_library_text(StandardLibrary value) -> ref<str> {
-    return value == StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
+auto standard_library_text(lito::config::StandardLibrary value) -> ref<str> {
+    return value == lito::config::StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
 }
 
 auto family_identity(ref<str> prefix, const Vec<CppFamilyOption>& options) -> String {

@@ -10,7 +10,7 @@ import :manifest.profile;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 enum class ManifestKind;
@@ -72,55 +72,61 @@ using ManifestSchemaResult = Result<T, ManifestSchemaError>;
 template<typename T>
 using ManifestResult = Result<T, ManifestError>;
 
-} // namespace lito
+} // namespace lito::manifest
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::ManifestLocatorError>, lito::ManifestSchemaError> {
-    static auto from(lito::ManifestLocatorError error) -> lito::ManifestSchemaError {
-        return lito::ManifestSchemaError::Locate(rstd::move(error));
+struct Impl<convert::From<lito::manifest::ManifestLocatorError>,
+            lito::manifest::ManifestSchemaError> {
+    static auto from(lito::manifest::ManifestLocatorError error)
+        -> lito::manifest::ManifestSchemaError {
+        return lito::manifest::ManifestSchemaError::Locate(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::BuildProfileError>, lito::ManifestSchemaError> {
-    static auto from(lito::BuildProfileError error) -> lito::ManifestSchemaError {
-        return lito::ManifestSchemaError::Profile(rstd::move(error));
+struct Impl<convert::From<lito::manifest::BuildProfileError>, lito::manifest::ManifestSchemaError> {
+    static auto from(lito::manifest::BuildProfileError error)
+        -> lito::manifest::ManifestSchemaError {
+        return lito::manifest::ManifestSchemaError::Profile(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::ManifestLocatorError>, lito::ManifestError> {
-    static auto from(lito::ManifestLocatorError error) -> lito::ManifestError {
-        return lito::ManifestError::Locate(rstd::move(error));
+struct Impl<convert::From<lito::manifest::ManifestLocatorError>, lito::manifest::ManifestError> {
+    static auto from(lito::manifest::ManifestLocatorError error) -> lito::manifest::ManifestError {
+        return lito::manifest::ManifestError::Locate(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::ManifestFileError>, lito::ManifestError> {
-    static auto from(lito::ManifestFileError error) -> lito::ManifestError {
-        return lito::ManifestError::File(rstd::move(error));
+struct Impl<convert::From<lito::manifest::ManifestFileError>, lito::manifest::ManifestError> {
+    static auto from(lito::manifest::ManifestFileError error) -> lito::manifest::ManifestError {
+        return lito::manifest::ManifestError::File(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestNodePath> : ImplBase<lito::ManifestNodePath> {
+struct Impl<fmt::Display, lito::manifest::ManifestNodePath>
+    : ImplBase<lito::manifest::ManifestNodePath> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return formatter.write_str(this->self().value.as_str());
     }
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestNodePath> : ImplBase<lito::ManifestNodePath> {
+struct Impl<fmt::Debug, lito::manifest::ManifestNodePath>
+    : ImplBase<lito::manifest::ManifestNodePath> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return formatter.write_str(this->self().value.as_str());
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestLocatorError> : ImplBase<lito::ManifestLocatorError> {
+struct Impl<fmt::Display, lito::manifest::ManifestLocatorError>
+    : ImplBase<lito::manifest::ManifestLocatorError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Io()) {
@@ -143,14 +149,16 @@ struct Impl<fmt::Display, lito::ManifestLocatorError> : ImplBase<lito::ManifestL
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestLocatorError> : ImplBase<lito::ManifestLocatorError> {
+struct Impl<fmt::Debug, lito::manifest::ManifestLocatorError>
+    : ImplBase<lito::manifest::ManifestLocatorError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ManifestLocatorError> : ImplBase<lito::ManifestLocatorError> {
+struct Impl<error::Error, lito::manifest::ManifestLocatorError>
+    : ImplBase<lito::manifest::ManifestLocatorError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (! value.is_Io()) return None();
@@ -159,7 +167,8 @@ struct Impl<error::Error, lito::ManifestLocatorError> : ImplBase<lito::ManifestL
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestSchemaError> : ImplBase<lito::ManifestSchemaError> {
+struct Impl<fmt::Display, lito::manifest::ManifestSchemaError>
+    : ImplBase<lito::manifest::ManifestSchemaError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_UnknownField()) {
@@ -195,14 +204,16 @@ struct Impl<fmt::Display, lito::ManifestSchemaError> : ImplBase<lito::ManifestSc
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestSchemaError> : ImplBase<lito::ManifestSchemaError> {
+struct Impl<fmt::Debug, lito::manifest::ManifestSchemaError>
+    : ImplBase<lito::manifest::ManifestSchemaError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ManifestSchemaError> : ImplBase<lito::ManifestSchemaError> {
+struct Impl<error::Error, lito::manifest::ManifestSchemaError>
+    : ImplBase<lito::manifest::ManifestSchemaError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (value.is_Io()) return Some(dyn<error::Error>::from_ref(value.as_Io().source));
@@ -215,7 +226,8 @@ struct Impl<error::Error, lito::ManifestSchemaError> : ImplBase<lito::ManifestSc
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestFileCause> : ImplBase<lito::ManifestFileCause> {
+struct Impl<fmt::Display, lito::manifest::ManifestFileCause>
+    : ImplBase<lito::manifest::ManifestFileCause> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& value = this->self();
         if (value.is_Read()) {
@@ -230,14 +242,16 @@ struct Impl<fmt::Display, lito::ManifestFileCause> : ImplBase<lito::ManifestFile
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestFileCause> : ImplBase<lito::ManifestFileCause> {
+struct Impl<fmt::Debug, lito::manifest::ManifestFileCause>
+    : ImplBase<lito::manifest::ManifestFileCause> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ManifestFileCause> : ImplBase<lito::ManifestFileCause> {
+struct Impl<error::Error, lito::manifest::ManifestFileCause>
+    : ImplBase<lito::manifest::ManifestFileCause> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (value.is_Read()) return Some(dyn<error::Error>::from_ref(value.as_Read().source));
@@ -247,7 +261,8 @@ struct Impl<error::Error, lito::ManifestFileCause> : ImplBase<lito::ManifestFile
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestFileError> : ImplBase<lito::ManifestFileError> {
+struct Impl<fmt::Display, lito::manifest::ManifestFileError>
+    : ImplBase<lito::manifest::ManifestFileError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return formatter.write_fmt(
             fmt::Arguments::make("cannot load manifest '{}'", this->self().path.as_path()));
@@ -255,21 +270,23 @@ struct Impl<fmt::Display, lito::ManifestFileError> : ImplBase<lito::ManifestFile
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestFileError> : ImplBase<lito::ManifestFileError> {
+struct Impl<fmt::Debug, lito::manifest::ManifestFileError>
+    : ImplBase<lito::manifest::ManifestFileError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ManifestFileError> : ImplBase<lito::ManifestFileError> {
+struct Impl<error::Error, lito::manifest::ManifestFileError>
+    : ImplBase<lito::manifest::ManifestFileError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         return Some(dyn<error::Error>::from_ref(this->self().cause));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::ManifestError> : ImplBase<lito::ManifestError> {
+struct Impl<fmt::Display, lito::manifest::ManifestError> : ImplBase<lito::manifest::ManifestError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& value = this->self();
         if (value.is_Locate()) {
@@ -287,14 +304,14 @@ struct Impl<fmt::Display, lito::ManifestError> : ImplBase<lito::ManifestError> {
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ManifestError> : ImplBase<lito::ManifestError> {
+struct Impl<fmt::Debug, lito::manifest::ManifestError> : ImplBase<lito::manifest::ManifestError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ManifestError> : ImplBase<lito::ManifestError> {
+struct Impl<error::Error, lito::manifest::ManifestError> : ImplBase<lito::manifest::ManifestError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (value.is_Locate()) return Some(dyn<error::Error>::from_ref(value.as_Locate().source));

@@ -14,13 +14,14 @@ export namespace lito_test
 {
 
 struct ProjectFile {
-    ref<str>             path;
-    ref<str>             contents;
-    lito::SourceFileMode mode { lito::SourceFileMode::Regular };
+    ref<str>                     path;
+    ref<str>                     contents;
+    lito::source::SourceFileMode mode { lito::source::SourceFileMode::Regular };
 };
 
-auto source_tree(slice<ProjectFile> files) -> lito::SourceTreeResult<lito::SourceTree> {
-    auto tree = lito::SourceTree::make();
+auto source_tree(slice<ProjectFile> files)
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
+    auto tree = lito::source::SourceTree::make();
     for (const auto& file : files) {
         auto added = tree.add_text(file.path, file.contents, file.mode);
         if (added.is_err()) return Err(rstd::move(added).unwrap_err());
@@ -29,7 +30,8 @@ auto source_tree(slice<ProjectFile> files) -> lito::SourceTreeResult<lito::Sourc
 }
 
 template<rstd::size_t Size>
-auto source_tree(const ProjectFile (&files)[Size]) -> lito::SourceTreeResult<lito::SourceTree> {
+auto source_tree(const ProjectFile (&files)[Size])
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     return source_tree(slice<ProjectFile>::from_raw_parts(files, usize(Size)));
 }
 
@@ -75,14 +77,14 @@ protected:
     auto cache_root(ref<str> name) const -> PathBuf { return directory("cache"_str, name); }
     auto tool_root(ref<str> name) const -> PathBuf { return directory("tools"_str, name); }
 
-    auto materialize(ref<str> name, const lito::SourceTree& tree)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+    auto materialize(ref<str> name, const lito::source::SourceTree& tree)
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         auto root = source_root(name);
-        return lito::materialize_source_tree(tree, root.as_path());
+        return lito::source::materialize_source_tree(tree, root.as_path());
     }
 
     auto materialize(ref<str> name, slice<ProjectFile> files)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         auto tree = source_tree(files);
         if (tree.is_err()) return Err(rstd::move(tree).unwrap_err());
         return materialize(name, *tree);
@@ -90,14 +92,15 @@ protected:
 
     template<rstd::size_t Size>
     auto materialize(ref<str> name, const ProjectFile (&files)[Size])
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         return materialize(name, slice<ProjectFile>::from_raw_parts(files, usize(Size)));
     }
 
-    auto project_build_request(ref<str>               name,
-                               ref<rstd::path::Path>  project,
-                               Vec<String>            packages,
-                               lito::BuildProfileName profile = {}) const -> lito::BuildRequest {
+    auto project_build_request(ref<str>                         name,
+                               ref<rstd::path::Path>            project,
+                               Vec<String>                      packages,
+                               lito::manifest::BuildProfileName profile = {}) const
+        -> lito::BuildRequest {
         auto output = build_root(name);
         return lito_test::build_request(
             project, output.as_path(), rstd::move(packages), rstd::move(profile));

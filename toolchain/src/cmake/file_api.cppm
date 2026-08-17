@@ -19,7 +19,8 @@ using JsonArray = rstd::json::Array;
 export namespace lito
 {
 
-auto read_json(ref<rstd::path::Path> path, ref<str> context) -> DependencyResult<Json> {
+auto read_json(ref<rstd::path::Path> path, ref<str> context)
+    -> lito::dependency::DependencyResult<Json> {
     auto contents = rstd::fs::read_to_string(path);
     if (contents.is_err()) {
         return cmake_io_failure<Json>(
@@ -27,14 +28,14 @@ auto read_json(ref<rstd::path::Path> path, ref<str> context) -> DependencyResult
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) {
-        return Err(DependencyError::Json(
+        return Err(lito::dependency::DependencyError::Json(
             String::make(context), PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     return Ok(rstd::move(parsed).unwrap());
 }
 
 auto required_json_member(const Json& value, ref<str> key, ref<str> context)
-    -> DependencyResult<ref<Json>> {
+    -> lito::dependency::DependencyResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
         return cmake_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
@@ -43,7 +44,7 @@ auto required_json_member(const Json& value, ref<str> key, ref<str> context)
 }
 
 auto required_json_string(const Json& value, ref<str> key, ref<str> context)
-    -> DependencyResult<ref<str>> {
+    -> lito::dependency::DependencyResult<ref<str>> {
     auto member = required_json_member(value, key, context);
     if (member.is_err()) return Err(rstd::move(member).unwrap_err());
     auto text = (**member).as_str();
@@ -54,7 +55,7 @@ auto required_json_string(const Json& value, ref<str> key, ref<str> context)
 }
 
 auto required_json_array(const Json& value, ref<str> key, ref<str> context)
-    -> DependencyResult<ref<JsonArray>> {
+    -> lito::dependency::DependencyResult<ref<JsonArray>> {
     auto member = required_json_member(value, key, context);
     if (member.is_err()) return Err(rstd::move(member).unwrap_err());
     auto array = (**member).as_array();
@@ -64,7 +65,8 @@ auto required_json_array(const Json& value, ref<str> key, ref<str> context)
     return Ok(*array);
 }
 
-auto current_reply_index(ref<rstd::path::Path> reply) -> DependencyResult<PathBuf> {
+auto current_reply_index(ref<rstd::path::Path> reply)
+    -> lito::dependency::DependencyResult<PathBuf> {
     auto opened = rstd::fs::read_dir(reply);
     if (opened.is_err()) {
         return cmake_io_failure<PathBuf>(
@@ -96,7 +98,7 @@ auto current_reply_index(ref<rstd::path::Path> reply) -> DependencyResult<PathBu
     return Ok(rstd::move(selected).unwrap());
 }
 
-auto codemodel_path(const CMakeWorkArea& area) -> DependencyResult<PathBuf> {
+auto codemodel_path(const CMakeWorkArea& area) -> lito::dependency::DependencyResult<PathBuf> {
     auto reply      = area.query_build.join(PathBuf::from(".cmake/api/v1/reply"_str).as_path());
     auto index_path = current_reply_index(reply.as_path());
     if (index_path.is_err()) return Err(rstd::move(index_path).unwrap_err());
@@ -130,7 +132,7 @@ struct ProbeTargets {
 
 auto probe_target_paths(const CMakeWorkArea&                      area,
                         const ResolvedCMakeDependencyRequirement& requirement)
-    -> DependencyResult<ProbeTargets> {
+    -> lito::dependency::DependencyResult<ProbeTargets> {
     auto path = codemodel_path(area);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     auto model = read_json(path->as_path(), "CMake File API codemodel"_str);
@@ -186,16 +188,16 @@ auto probe_target_paths(const CMakeWorkArea&                      area,
 }
 
 auto append_fragment_tokens(Vec<String>& output, ref<str> fragment, ref<str> context)
-    -> DependencyResult<empty> {
+    -> lito::dependency::DependencyResult<empty> {
     auto tokens = tokenize_command_fragments(fragment, context);
     if (tokens.is_err()) {
-        return Err(rstd::into<DependencyError>(rstd::move(tokens).unwrap_err()));
+        return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tokens).unwrap_err()));
     }
     for (auto& token : *tokens) output.push(rstd::move(token));
     return Ok(empty {});
 }
 
-auto compile_tokens(const Json& target) -> DependencyResult<Vec<String>> {
+auto compile_tokens(const Json& target) -> lito::dependency::DependencyResult<Vec<String>> {
     auto result = Vec<String>::make();
     auto groups = target.get("compileGroups"_str);
     if (groups.is_none()) return Ok(rstd::move(result));
@@ -259,7 +261,7 @@ auto compile_tokens(const Json& target) -> DependencyResult<Vec<String>> {
     return Ok(rstd::move(result));
 }
 
-auto link_tokens(const Json& target) -> DependencyResult<Vec<String>> {
+auto link_tokens(const Json& target) -> lito::dependency::DependencyResult<Vec<String>> {
     auto result = Vec<String>::make();
     auto link   = target.get("link"_str);
     if (link.is_none()) return Ok(rstd::move(result));
@@ -325,7 +327,7 @@ auto asset_source_allowed(const CMakeWorkArea& area, ref<rstd::path::Path> sourc
 auto validate_asset_snapshot(const CMakeWorkArea&                      area,
                              const ResolvedCMakeDependencyRequirement& requirement,
                              Vec<ExternalAssetSet>                     sets)
-    -> DependencyResult<Vec<ExternalAssetSet>> {
+    -> lito::dependency::DependencyResult<Vec<ExternalAssetSet>> {
     for (usize set_index {}; set_index < sets.len(); ++set_index) {
         auto& set = sets[set_index];
         if (set.name.is_empty() || set.name.as_str().contains("\t"_str) ||
@@ -393,7 +395,7 @@ auto validate_asset_snapshot(const CMakeWorkArea&                      area,
 
 auto read_asset_snapshot(const CMakeWorkArea&                      area,
                          const ResolvedCMakeDependencyRequirement& requirement)
-    -> DependencyResult<Vec<ExternalAssetSet>> {
+    -> lito::dependency::DependencyResult<Vec<ExternalAssetSet>> {
     auto path     = area.query_build.join(PathBuf::from("lito-assets-v1.txt"_str).as_path());
     auto contents = rstd::fs::read_to_string(path.as_path());
     if (contents.is_err()) {
@@ -444,7 +446,7 @@ auto read_asset_snapshot(const CMakeWorkArea&                      area,
 }
 
 auto snapshot_from_targets(const Json& baseline, const Json& dependency)
-    -> DependencyResult<CMakeTargetUsageSnapshot> {
+    -> lito::dependency::DependencyResult<CMakeTargetUsageSnapshot> {
     auto baseline_compile   = compile_tokens(baseline);
     auto baseline_link      = link_tokens(baseline);
     auto dependency_compile = compile_tokens(dependency);
@@ -461,7 +463,7 @@ auto snapshot_from_targets(const Json& baseline, const Json& dependency)
 
 auto read_probe_snapshots(const CMakeWorkArea&                      area,
                           const ResolvedCMakeDependencyRequirement& requirement)
-    -> DependencyResult<CMakeUsageSnapshot> {
+    -> lito::dependency::DependencyResult<CMakeUsageSnapshot> {
     auto paths = probe_target_paths(area, requirement);
     if (paths.is_err()) return Err(rstd::move(paths).unwrap_err());
     auto baseline = read_json(paths->baseline.as_path(), "CMake baseline target"_str);

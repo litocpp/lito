@@ -6,9 +6,7 @@ import :manifest.error;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 inline constexpr ref<str> MANIFEST_NAMES[] = { "lito.toml"_str, "tenon.toml"_str };
 
@@ -68,9 +66,7 @@ auto try_manifest_path(ref<rstd::path::Path> directory) -> ManifestLocatorResult
     return Ok(None());
 }
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::manifest
 {
 
 struct ManifestLocation {
@@ -112,4 +108,4 @@ auto locate_manifest(ref<rstd::path::Path> requested_directory)
     return Ok(rstd::move(manifest).unwrap());
 }
 
-} // namespace lito
+} // namespace lito::manifest

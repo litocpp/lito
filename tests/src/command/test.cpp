@@ -14,7 +14,7 @@ using namespace lito_test;
 
 class TestCommand : public ProjectFixture {};
 
-auto test_command_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto test_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"test([workspace]
 name = "test-command"
@@ -458,7 +458,7 @@ sources = ["main.cpp"]
     };
     auto artifact = materialize("invalid-artifact"_str, artifact_files);
     ASSERT_TRUE(artifact.is_ok());
-    auto multiple = lito::load_manifest_document(artifact->root.as_path());
+    auto multiple = lito::manifest::load_manifest_document(artifact->root.as_path());
     EXPECT_TRUE(multiple.is_err());
 
     const ProjectFile dependency_files[] = {

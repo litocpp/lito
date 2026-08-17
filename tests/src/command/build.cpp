@@ -14,7 +14,7 @@ using namespace lito_test;
 
 class BuildCommand : public ProjectFixture {};
 
-auto build_command_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto build_command_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"build([workspace]
 name = "build-command"
@@ -99,13 +99,13 @@ TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
     auto root    = project->root.clone();
     auto output  = build_root("build-doc"_str);
     auto request = build_request(root.as_path(), output.as_path(), strings("fixture-test-lib"_str));
-    request.purpose = lito::PackageSelectionPurpose::Documentation;
+    request.purpose = lito::package::PackageSelectionPurpose::Documentation;
     auto summary    = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*summary, lito::cpp::ArtifactKind::Executable), usize {});
     ASSERT_FALSE(summary->documentation_units.is_empty());
     for (const auto& unit : summary->documentation_units) {
-        EXPECT_EQ(unit.target.kind, lito::PackageTargetKind::Library);
+        EXPECT_EQ(unit.target.kind, lito::package::PackageTargetKind::Library);
     }
 }

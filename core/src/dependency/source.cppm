@@ -11,14 +11,14 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 class ResolvedExternalSource {
     RSTD_ENUM(ResolvedExternalSource,
               (Path, (PathBuf path;)),
               (Package, (PathBuf path;)),
-              (Git, (String url; GitReference reference; String commit;)),
+              (Git, (String url; lito::source::GitReference reference; String commit;)),
               (Archive, (String url; String sha256;)))
 };
 
@@ -38,4 +38,4 @@ struct ResolvedExternalSourceRecord {
     ResolvedExternalSource                  source;
 };
 
-} // namespace lito
+} // namespace lito::dependency

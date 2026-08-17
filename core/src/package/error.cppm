@@ -15,7 +15,7 @@ using ErrorBox = Box<dyn<rstd::error::Error>>;
 using namespace lito::system;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::package
 {
 
 enum class PackageDependencyKind
@@ -38,10 +38,10 @@ struct PackageDependencyCycleError {
 
 class PackageError {
     RSTD_ENUM(PackageError,
-              (Source, (SourceError source;)),
-              (Dependency, (DependencyError source;)),
-              (Manifest, (ManifestError source;)),
-              (Workspace, (WorkspaceError source;)),
+              (Source, (lito::source::SourceError source;)),
+              (Dependency, (lito::dependency::DependencyError source;)),
+              (Manifest, (lito::manifest::ManifestError source;)),
+              (Workspace, (lito::workspace::WorkspaceError source;)),
               (System, (SystemError source;)),
               (Configuration, (ErrorBox source;)),
               (Cycle, (PackageDependencyCycleError cycle;)),
@@ -51,48 +51,48 @@ class PackageError {
 template<typename T>
 using PackageResult = Result<T, PackageError>;
 
-} // namespace lito
+} // namespace lito::package
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::SourceError>, lito::PackageError> {
-    static auto from(lito::SourceError error) -> lito::PackageError {
-        return lito::PackageError::Source(rstd::move(error));
+struct Impl<convert::From<lito::source::SourceError>, lito::package::PackageError> {
+    static auto from(lito::source::SourceError error) -> lito::package::PackageError {
+        return lito::package::PackageError::Source(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::DependencyError>, lito::PackageError> {
-    static auto from(lito::DependencyError error) -> lito::PackageError {
-        return lito::PackageError::Dependency(rstd::move(error));
+struct Impl<convert::From<lito::dependency::DependencyError>, lito::package::PackageError> {
+    static auto from(lito::dependency::DependencyError error) -> lito::package::PackageError {
+        return lito::package::PackageError::Dependency(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::ManifestError>, lito::PackageError> {
-    static auto from(lito::ManifestError error) -> lito::PackageError {
-        return lito::PackageError::Manifest(rstd::move(error));
+struct Impl<convert::From<lito::manifest::ManifestError>, lito::package::PackageError> {
+    static auto from(lito::manifest::ManifestError error) -> lito::package::PackageError {
+        return lito::package::PackageError::Manifest(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::WorkspaceError>, lito::PackageError> {
-    static auto from(lito::WorkspaceError error) -> lito::PackageError {
-        return lito::PackageError::Workspace(rstd::move(error));
+struct Impl<convert::From<lito::workspace::WorkspaceError>, lito::package::PackageError> {
+    static auto from(lito::workspace::WorkspaceError error) -> lito::package::PackageError {
+        return lito::package::PackageError::Workspace(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::system::SystemError>, lito::PackageError> {
-    static auto from(lito::system::SystemError error) -> lito::PackageError {
-        return lito::PackageError::System(rstd::move(error));
+struct Impl<convert::From<lito::system::SystemError>, lito::package::PackageError> {
+    static auto from(lito::system::SystemError error) -> lito::package::PackageError {
+        return lito::package::PackageError::System(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::PackageError> : ImplBase<lito::PackageError> {
+struct Impl<fmt::Display, lito::package::PackageError> : ImplBase<lito::package::PackageError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Source()) {
@@ -133,14 +133,14 @@ struct Impl<fmt::Display, lito::PackageError> : ImplBase<lito::PackageError> {
 };
 
 template<>
-struct Impl<fmt::Debug, lito::PackageError> : ImplBase<lito::PackageError> {
+struct Impl<fmt::Debug, lito::package::PackageError> : ImplBase<lito::package::PackageError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::PackageError> : ImplBase<lito::PackageError> {
+struct Impl<error::Error, lito::package::PackageError> : ImplBase<lito::package::PackageError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Source()) {

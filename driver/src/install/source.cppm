@@ -30,10 +30,10 @@ class InstallSourceRequirement {
 };
 
 struct ResolvedInstallSource {
-    ResolvedProjectEntry    project;
-    InstallSourceProvenance provenance;
-    String                  identity;
-    InstallSourceStorage    storage { InstallSourceStorage::BorrowedLocal };
+    lito::workspace::ResolvedProjectEntry project;
+    InstallSourceProvenance               provenance;
+    String                                identity;
+    InstallSourceStorage                  storage { InstallSourceStorage::BorrowedLocal };
 };
 
 } // namespace lito
@@ -128,7 +128,7 @@ auto resolve_install_source(InstallSourceRequirement requirement)
 auto install_source_identity(const InstallSourceProvenance& provenance)
     -> InstallSourceResult<String>;
 
-auto install_source_provenance(const ResolvedPackageSource& source)
+auto install_source_provenance(const lito::source::ResolvedPackageSource& source)
     -> InstallSourceResult<InstallSourceProvenance>;
 
 auto serialize_install_source_provenance(const InstallSourceProvenance& provenance)
@@ -137,13 +137,14 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
 auto parse_install_source_provenance(const Json& source)
     -> InstallSourceResult<InstallSourceProvenance>;
 
-auto resolve_install_root(ref<rstd::path::Path> invocation_root,
-                          Option<PathBuf>       command_root,
-                          const InstallConfig&  config) -> InstallSourceResult<InstallRoot>;
+auto resolve_install_root(ref<rstd::path::Path>              invocation_root,
+                          Option<PathBuf>                    command_root,
+                          const lito::config::InstallConfig& config)
+    -> InstallSourceResult<InstallRoot>;
 
-auto resolve_install_destination(ref<rstd::path::Path>         invocation_root,
-                                 InstallDestinationRequirement requirement,
-                                 const InstallConfig&          config)
+auto resolve_install_destination(ref<rstd::path::Path>              invocation_root,
+                                 InstallDestinationRequirement      requirement,
+                                 const lito::config::InstallConfig& config)
     -> InstallSourceResult<InstallDestination>;
 
 auto resolve_install_source(InstallSourceRequirement requirement)
@@ -152,14 +153,14 @@ auto resolve_install_source(InstallSourceRequirement requirement)
         return Err(InstallSourceError::Message(
             String::make("unsupported install source requirement"_str)));
     }
-    auto project =
-        rstd_try(resolve_project_entry(requirement.as_LocalProject().requested_root.as_path()));
-    auto root = project.root.clone();
+    auto project = rstd_try(lito::workspace::resolve_project_entry(
+        requirement.as_LocalProject().requested_root.as_path()));
+    auto root    = project.root.clone();
     return Ok(ResolvedInstallSource {
-        .project = rstd::move(project),
-        .provenance =
-            InstallSourceProvenance::Local(root.clone(), path_source_identity(root.as_path())),
-        .identity = path_source_identity(root.as_path()),
+        .project    = rstd::move(project),
+        .provenance = InstallSourceProvenance::Local(
+            root.clone(), lito::source::path_source_identity(root.as_path())),
+        .identity = lito::source::path_source_identity(root.as_path()),
         .storage  = InstallSourceStorage::BorrowedLocal,
     });
 }
@@ -168,10 +169,11 @@ auto install_source_identity(const InstallSourceProvenance& provenance)
     -> InstallSourceResult<String> {
     if (provenance.is_Git()) {
         const auto& source = provenance.as_Git();
-        if (! git_commit_is_valid(source.commit.as_str()) || source.url.is_empty()) {
+        if (! lito::source::git_commit_is_valid(source.commit.as_str()) || source.url.is_empty()) {
             return install_source_failure<String>("installed Git source is invalid"_str);
         }
-        auto expected = git_source_identity(source.url.as_str(), source.commit.as_str());
+        auto expected =
+            lito::source::git_source_identity(source.url.as_str(), source.commit.as_str());
         if (source.identity != expected.as_str()) {
             return install_source_failure<String>(
                 "installed Git source identity does not match its URL and commit"_str);
@@ -189,13 +191,13 @@ auto install_source_identity(const InstallSourceProvenance& provenance)
     return Ok(source.identity.clone());
 }
 
-auto install_source_provenance(const ResolvedPackageSource& source)
+auto install_source_provenance(const lito::source::ResolvedPackageSource& source)
     -> InstallSourceResult<InstallSourceProvenance> {
     if (source.identity.is_empty()) {
         return install_source_failure<InstallSourceProvenance>(
             "resolved package source identity is empty"_str);
     }
-    if (source.kind == PackageSourceKind::Path) {
+    if (source.kind == lito::source::PackageSourceKind::Path) {
         if (! source.root_directory.as_path().is_absolute()) {
             return install_source_failure<InstallSourceProvenance>(
                 "resolved package source root must be absolute"_str);
@@ -203,7 +205,7 @@ auto install_source_provenance(const ResolvedPackageSource& source)
         return Ok(
             InstallSourceProvenance::Local(source.root_directory.clone(), source.identity.clone()));
     }
-    if (! git_commit_is_valid(source.commit.as_str())) {
+    if (! lito::source::git_commit_is_valid(source.commit.as_str())) {
         return install_source_failure<InstallSourceProvenance>(
             "resolved Git package source commit is invalid"_str);
     }
@@ -223,8 +225,9 @@ auto serialize_install_source_provenance(const InstallSourceProvenance& provenan
         source.insert(String::make("commit"_str), Json::String(git.commit.clone()));
         source.insert(String::make("kind"_str), Json::String(String::make("git"_str)));
         source.insert(String::make("reference"_str), Json::String(git.reference.value.clone()));
-        source.insert(String::make("reference-kind"_str),
-                      Json::String(String::make(git_reference_kind_name(git.reference.kind))));
+        source.insert(
+            String::make("reference-kind"_str),
+            Json::String(String::make(lito::source::git_reference_kind_name(git.reference.kind))));
         source.insert(String::make("url"_str), Json::String(git.url.clone()));
         return Ok(Json::Object(rstd::move(source)));
     }
@@ -251,22 +254,22 @@ auto parse_install_source_provenance(const Json& source)
     if (kind == "git"_str) {
         rstd_try(reject_source_fields(source, git_install_source_key));
         auto reference_kind = rstd_try(required_source_string(source, "reference-kind"_str));
-        auto parsed_kind    = GitReferenceKind::DefaultBranch;
+        auto parsed_kind    = lito::source::GitReferenceKind::DefaultBranch;
         if (reference_kind == "branch"_str)
-            parsed_kind = GitReferenceKind::Branch;
+            parsed_kind = lito::source::GitReferenceKind::Branch;
         else if (reference_kind == "tag"_str)
-            parsed_kind = GitReferenceKind::Tag;
+            parsed_kind = lito::source::GitReferenceKind::Tag;
         else if (reference_kind == "rev"_str)
-            parsed_kind = GitReferenceKind::Rev;
+            parsed_kind = lito::source::GitReferenceKind::Rev;
         else if (reference_kind == "commit"_str)
-            parsed_kind = GitReferenceKind::Commit;
+            parsed_kind = lito::source::GitReferenceKind::Commit;
         else if (reference_kind != "default"_str) {
             return install_source_failure<InstallSourceProvenance>(
                 "installed Git source reference kind is invalid"_str);
         }
         auto provenance = InstallSourceProvenance::Git(
             rstd_try(required_source_string(source, "url"_str)),
-            GitReference {
+            lito::source::GitReference {
                 .kind  = parsed_kind,
                 .value = rstd_try(required_source_text(source, "reference"_str)),
             },
@@ -288,9 +291,10 @@ auto parse_install_source_provenance(const Json& source)
     return Ok(rstd::move(provenance));
 }
 
-auto resolve_install_root(ref<rstd::path::Path> invocation_root,
-                          Option<PathBuf>       command_root,
-                          const InstallConfig&  config) -> InstallSourceResult<InstallRoot> {
+auto resolve_install_root(ref<rstd::path::Path>              invocation_root,
+                          Option<PathBuf>                    command_root,
+                          const lito::config::InstallConfig& config)
+    -> InstallSourceResult<InstallRoot> {
     if (command_root.is_some()) {
         if (command_root->is_empty()) {
             return install_source_failure<InstallRoot>("install root must not be empty"_str);
@@ -320,9 +324,9 @@ auto resolve_install_root(ref<rstd::path::Path> invocation_root,
     return Ok(InstallRoot { .path = rstd::move(root) });
 }
 
-auto resolve_install_destination(ref<rstd::path::Path>         invocation_root,
-                                 InstallDestinationRequirement requirement,
-                                 const InstallConfig&          config)
+auto resolve_install_destination(ref<rstd::path::Path>              invocation_root,
+                                 InstallDestinationRequirement      requirement,
+                                 const lito::config::InstallConfig& config)
     -> InstallSourceResult<InstallDestination> {
     if (requirement.is_Prefix()) {
         auto path = rstd::move(requirement).as_Prefix().path;

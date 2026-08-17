@@ -128,10 +128,10 @@ auto resolve_scan_execution(const ScanExecutionPolicy& policy)
 namespace lito
 {
 
-auto build_with_environment_impl(const BuildRequest&               request,
-                                 const ResolvedProcessEnvironment& process_environment,
-                                 Option<WorkspaceCatalog>          catalog,
-                                 Option<PreparedBuildProject>      prepared = None())
+auto build_with_environment_impl(const BuildRequest&                       request,
+                                 const ResolvedProcessEnvironment&         process_environment,
+                                 Option<lito::workspace::WorkspaceCatalog> catalog,
+                                 Option<PreparedBuildProject>              prepared = None())
     -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build directory is required"_str);
@@ -140,8 +140,9 @@ auto build_with_environment_impl(const BuildRequest&               request,
     auto profile =
         request.profile.is_some()
             ? request.profile->clone()
-            : BuildProfileName {
-                  .value = String::make(request.purpose == PackageSelectionPurpose::Benchmark
+            : lito::manifest::BuildProfileName {
+                  .value = String::make(request.purpose ==
+                                                lito::package::PackageSelectionPurpose::Benchmark
                                             ? "release"_str
                                             : "debug"_str),
               };
@@ -220,7 +221,8 @@ auto build_with_environment_impl(const BuildRequest&               request,
     if (selected.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(selected).unwrap_err()));
     }
-    auto selected_targets = Vec<PackageTargetId>::with_capacity(selected->selected_targets.len());
+    auto selected_targets =
+        Vec<lito::package::PackageTargetId>::with_capacity(selected->selected_targets.len());
     for (auto target : selected->selected_targets) {
         selected_targets.push(metadata.targets[target].id.clone());
     }
@@ -273,7 +275,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
     }
     auto discovery_plan = rstd::move(resolved).unwrap();
     auto stripper       = Option<PathBuf> {};
-    if (metadata.profiles[discovery_plan.profile].strip != StripMode::None) {
+    if (metadata.profiles[discovery_plan.profile].strip != lito::manifest::StripMode::None) {
         auto resolved_stripper = tool_resolver.resolve(
             request.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
         if (resolved_stripper.is_err()) {
@@ -431,7 +433,8 @@ auto build_with_environment_impl(const BuildRequest&               request,
         auto records = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) {
             if (units[unit].unit.compile_test == nullptr ||
-                units[unit].unit.compile_test->outcome == CompileTestOutcome::Success) {
+                units[unit].unit.compile_test->outcome ==
+                    lito::manifest::CompileTestOutcome::Success) {
                 records.push(units[unit].unit.cache_record.clone());
             }
             if (units[unit].unit.compile_test_record.is_some()) {
@@ -462,7 +465,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
                 : layout.archive(target_spec.id, target_spec.artifact_name.as_str());
         auto objects = Vec<PathBuf>::with_capacity(target_units[target].len());
         for (auto unit : target_units[target]) objects.push(units[unit].unit.object.clone());
-        auto target_identity = package_target_id_text(target_spec.id);
+        auto target_identity = lito::package::package_target_id_text(target_spec.id);
         emit(request, BuildEventKind::Archive, target_identity.as_str(), archive_path.as_path());
         auto archived =
             toolchain.archive(archive_path.as_path(), objects, target_spec.root.as_path());
@@ -497,11 +500,12 @@ auto build_with_environment_impl(const BuildRequest&               request,
                     continue;
                 }
                 if (archive_paths[candidate].is_none()) {
-                    return build_failure<BuildSummary>(rstd::format(
-                        "test target '{}' has no attachment archive for '{}'",
-                        package_target_id_text(target_spec.id).as_str(),
-                        package_target_id_text(candidate_spec.test_attachment->library_target)
-                            .as_str()));
+                    return build_failure<BuildSummary>(
+                        rstd::format("test target '{}' has no attachment archive for '{}'",
+                                     lito::package::package_target_id_text(target_spec.id).as_str(),
+                                     lito::package::package_target_id_text(
+                                         candidate_spec.test_attachment->library_target)
+                                         .as_str()));
                 }
                 link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                     .path = (*archive_paths[candidate]).clone(),
@@ -519,11 +523,11 @@ auto build_with_environment_impl(const BuildRequest&               request,
             const auto& dependency_spec = package.targets[dependency];
             if (dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary ||
                 archive_paths[dependency].is_none()) {
-                return build_failure<BuildSummary>(
-                    rstd::format("executable target '{}' depends on unavailable "
-                                 "library target '{}'",
-                                 package_target_id_text(target_spec.id).as_str(),
-                                 package_target_id_text(dependency_spec.id).as_str()));
+                return build_failure<BuildSummary>(rstd::format(
+                    "executable target '{}' depends on unavailable "
+                    "library target '{}'",
+                    lito::package::package_target_id_text(target_spec.id).as_str(),
+                    lito::package::package_target_id_text(dependency_spec.id).as_str()));
             }
             link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
                 .path = (*archive_paths[dependency]).clone(),
@@ -537,7 +541,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
         } else if (target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
             executable_path = layout.benchmark(target_spec.id, target_spec.artifact_name.as_str());
         }
-        auto target_identity = package_target_id_text(target_spec.id);
+        auto target_identity = lito::package::package_target_id_text(target_spec.id);
         emit(request, BuildEventKind::Link, target_identity.as_str(), executable_path.as_path());
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
@@ -553,7 +557,7 @@ auto build_with_environment_impl(const BuildRequest&               request,
             return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
         }
         build_timing.record(BuildOperation::Link, *linked);
-        if (package_plan.profile->strip != StripMode::None) {
+        if (package_plan.profile->strip != lito::manifest::StripMode::None) {
             if (stripper.is_none()) {
                 return build_failure<BuildSummary>("strip tool was not resolved"_str);
             }
@@ -616,7 +620,7 @@ auto build_with_environment(const BuildRequest&               request,
     return build_with_environment_impl(request, process_environment, None(), None());
 }
 
-auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
+auto build_resolved_project(BuildRequest request, lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary> {
     request.selection.root = rstd::move(project.root);
     auto environment       = ResolvedProcessEnvironment::resolve(request.environment);

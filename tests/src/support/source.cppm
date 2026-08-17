@@ -40,32 +40,35 @@ auto git_succeeds(ref<rstd::path::Path> repository, Arguments... arguments) -> b
     return status.is_ok() && status->success();
 }
 
-auto external_git_graph(ref<str>              url,
-                        ref<rstd::path::Path> root_directory,
-                        lito::GitReference    reference) -> lito::ResolvedPackageGraph {
-    auto declarations = Vec<lito::CMakeDependencyRequirement>::make();
-    declarations.push(lito::CMakeDependencyRequirement {
+auto external_git_graph(ref<str>                   url,
+                        ref<rstd::path::Path>      root_directory,
+                        lito::source::GitReference reference)
+    -> lito::package::ResolvedPackageGraph {
+    auto declarations = Vec<lito::dependency::CMakeDependencyRequirement>::make();
+    declarations.push(lito::dependency::CMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
         .package = String::make("Fixture"_str),
-        .source  = lito::CMakeDependencySource::Git(String::make(url), rstd::move(reference)),
+        .source =
+            lito::dependency::CMakeDependencySource::Git(String::make(url), rstd::move(reference)),
     });
-    auto packages = Vec<lito::ResolvedPackage>::make();
-    packages.push(lito::ResolvedPackage {
+    auto packages = Vec<lito::package::ResolvedPackage>::make();
+    packages.push(lito::package::ResolvedPackage {
         .manifest =
-            lito::PackageManifest {
+            lito::manifest::PackageManifest {
                 .name                        = String::make("fixture-root"_str),
                 .cmake_external_dependencies = rstd::move(declarations),
             },
     });
-    return lito::ResolvedPackageGraph {
+    return lito::package::ResolvedPackageGraph {
         .root_directory = PathBuf::from(root_directory),
         .packages       = rstd::move(packages),
     };
 }
 
-auto resolved_git_commit(const lito::ResolvedPackageGraph& graph) -> Option<ref<str>> {
+auto resolved_git_commit(const lito::package::ResolvedPackageGraph& graph) -> Option<ref<str>> {
     for (const auto& source : graph.sources) {
-        if (source.kind == lito::PackageSourceKind::Git) return Some(source.commit.as_str());
+        if (source.kind == lito::source::PackageSourceKind::Git)
+            return Some(source.commit.as_str());
     }
     return None();
 }
@@ -97,8 +100,8 @@ void capture_fetch(void* raw_context, const lito::BuildEvent& event) noexcept {
     record_fetch(context, event.target, event.path);
 }
 
-void capture_source_fetch(void* raw_context, const lito::SourceEvent& event) noexcept {
-    if (event.kind != lito::SourceEventKind::Fetch) return;
+void capture_source_fetch(void* raw_context, const lito::source::SourceEvent& event) noexcept {
+    if (event.kind != lito::source::SourceEventKind::Fetch) return;
     auto& context = *static_cast<FetchEventCapture*>(raw_context);
     record_fetch(context, event.source, event.destination);
 }
@@ -130,8 +133,8 @@ struct FileFetchEventCapture {
     usize count {};
 };
 
-void capture_file_fetch(void* raw_context, const lito::SourceEvent& event) noexcept {
-    if (event.kind != lito::SourceEventKind::Fetch) return;
+void capture_file_fetch(void* raw_context, const lito::source::SourceEvent& event) noexcept {
+    if (event.kind != lito::source::SourceEventKind::Fetch) return;
     ++static_cast<FileFetchEventCapture*>(raw_context)->count;
 }
 

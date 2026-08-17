@@ -12,7 +12,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 struct CMakeCacheEntry {
@@ -30,7 +30,7 @@ class CMakeDependencySource {
     RSTD_ENUM(CMakeDependencySource,
               (Installed),
               (Path, (PathBuf path;)),
-              (Git, (String url; GitReference reference;)),
+              (Git, (String url; lito::source::GitReference reference;)),
               (Archive, (String url; String sha256;)),
               (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
 
@@ -39,7 +39,7 @@ public:
         if (is_Path()) return CMakeDependencySource::Path(as_Path().path.clone());
         if (is_Git()) {
             return CMakeDependencySource::Git(as_Git().url.clone(),
-                                              GitReference {
+                                              lito::source::GitReference {
                                                   .kind  = as_Git().reference.kind,
                                                   .value = as_Git().reference.value.clone(),
                                               });
@@ -136,4 +136,4 @@ struct CMakeProviderConfig {
     }
 };
 
-} // namespace lito
+} // namespace lito::dependency

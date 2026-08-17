@@ -36,7 +36,7 @@ auto build_with_environment(const BuildRequest&               request,
 export namespace lito
 {
 
-auto build_resolved_project(BuildRequest request, ResolvedProjectEntry project)
+auto build_resolved_project(BuildRequest request, lito::workspace::ResolvedProjectEntry project)
     -> BuildResult<BuildSummary>;
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary>;
 

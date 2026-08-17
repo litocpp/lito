@@ -8,7 +8,7 @@ import rstd.json;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::lock
 {
 
 class LockError {
@@ -21,13 +21,13 @@ class LockError {
 template<typename T>
 using LockResult = Result<T, LockError>;
 
-} // namespace lito
+} // namespace lito::lock
 
 export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::LockError> : ImplBase<lito::LockError> {
+struct Impl<fmt::Display, lito::lock::LockError> : ImplBase<lito::lock::LockError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
@@ -42,14 +42,14 @@ struct Impl<fmt::Display, lito::LockError> : ImplBase<lito::LockError> {
 };
 
 template<>
-struct Impl<fmt::Debug, lito::LockError> : ImplBase<lito::LockError> {
+struct Impl<fmt::Debug, lito::lock::LockError> : ImplBase<lito::lock::LockError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::LockError> : ImplBase<lito::LockError> {
+struct Impl<error::Error, lito::lock::LockError> : ImplBase<lito::lock::LockError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));

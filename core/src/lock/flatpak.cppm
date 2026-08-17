@@ -16,9 +16,7 @@ using namespace rstd::literals;
 using Json  = rstd::json::Value;
 using Map   = rstd::json::Map;
 using Array = rstd::json::Array;
-
-namespace lito
-{
+using namespace lito::lock;
 
 template<typename T>
 auto flatpak_failure(String message) -> LockResult<T> {
@@ -49,10 +47,10 @@ auto public_http_url(ref<str> value) -> bool {
 }
 
 struct FlatpakCandidate {
-    FetchIdentity identity;
-    Vec<String>   architectures;
-    Vec<String>   owners;
-    bool          all_architectures { false };
+    lito::source::FetchIdentity identity;
+    Vec<String>                 architectures;
+    Vec<String>                 owners;
+    bool                        all_architectures { false };
 };
 
 auto candidate_owners(const FlatpakCandidate& candidate) -> String {
@@ -91,10 +89,10 @@ auto merge_architectures(FlatpakCandidate& candidate, const Vec<String>& archite
 }
 
 auto add_candidate(rstd::collections::BTreeMap<String, FlatpakCandidate>& candidates,
-                   FetchIdentity                                          identity,
+                   lito::source::FetchIdentity                            identity,
                    const Vec<String>&                                     architectures,
                    String owner) -> LockResult<empty> {
-    auto key      = fetch_identity_text(identity);
+    auto key      = lito::source::fetch_identity_text(identity);
     auto existing = candidates.get_mut(key.as_str());
     if (existing.is_some()) {
         auto duplicate = false;
@@ -148,10 +146,11 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         }
         const auto& source        = package.source.as_Git();
         auto        architectures = Vec<String>::make();
-        rstd_try(add_candidate(candidates,
-                               git_fetch_identity(source.url.as_str(), source.commit.as_str()),
-                               architectures,
-                               rstd::format("package '{}'", package.name.as_str())));
+        rstd_try(add_candidate(
+            candidates,
+            lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),
+            architectures,
+            rstd::format("package '{}'", package.name.as_str())));
     }
     for (const auto& external : project.externals) {
         auto owner = rstd::format("{}:{}", external.package.as_str(), external.alias.as_str());
@@ -181,25 +180,28 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
                 continue;
             }
             const auto& source = package.source.as_Git();
-            rstd_try(add_candidate(candidates,
-                                   git_fetch_identity(source.url.as_str(), source.commit.as_str()),
-                                   external.architectures,
-                                   rstd::format("external '{}'", owner.as_str())));
+            rstd_try(add_candidate(
+                candidates,
+                lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),
+                external.architectures,
+                rstd::format("external '{}'", owner.as_str())));
             continue;
         }
         if (external.source.is_Git()) {
             const auto& source = external.source.as_Git();
-            rstd_try(add_candidate(candidates,
-                                   git_fetch_identity(source.url.as_str(), source.commit.as_str()),
-                                   external.architectures,
-                                   rstd::format("external '{}'", owner.as_str())));
+            rstd_try(add_candidate(
+                candidates,
+                lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),
+                external.architectures,
+                rstd::format("external '{}'", owner.as_str())));
             continue;
         }
         const auto& source = external.source.as_Archive();
-        rstd_try(add_candidate(candidates,
-                               archive_fetch_identity(source.url.as_str(), source.sha256.as_str()),
-                               external.architectures,
-                               rstd::format("external '{}'", owner.as_str())));
+        rstd_try(add_candidate(
+            candidates,
+            lito::source::archive_fetch_identity(source.url.as_str(), source.sha256.as_str()),
+            external.architectures,
+            rstd::format("external '{}'", owner.as_str())));
     }
 
     auto sources         = Array::make();
@@ -207,10 +209,10 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
     auto values          = candidates.values();
     for (auto value = values.next(); value.is_some(); value = values.next()) {
         const auto& candidate    = **value;
-        auto        stable_key   = fetch_identity_stable_key(candidate.identity);
+        auto        stable_key   = lito::source::fetch_identity_stable_key(candidate.identity);
         auto        flatpak      = Map::make();
         auto        catalog      = Map::make();
-        auto        identity     = fetch_identity_text(candidate.identity);
+        auto        identity     = lito::source::fetch_identity_text(candidate.identity);
         auto        architecture = architecture_json(candidate);
         catalog.insert(String::make("identity"_str), flatpak_string(identity.as_str()));
         if (candidate.identity.is_Git()) {
@@ -273,9 +275,7 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
     return Ok(Json::Array(rstd::move(sources)));
 }
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::lock
 {
 
 auto flatpak_sources_json(const LockedProject& project) -> LockResult<String> {
@@ -300,4 +300,4 @@ auto export_flatpak_sources(ref<rstd::path::Path> root,
     return Ok(empty {});
 }
 
-} // namespace lito
+} // namespace lito::lock

@@ -21,7 +21,7 @@ using PathBuf = rstd::path::PathBuf;
 
 export namespace lito_test
 {
-auto build_profile_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto build_profile_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         {
             "lito.toml"_str,
@@ -74,7 +74,7 @@ strip = "debuginfo"
     return source_tree(files);
 }
 
-auto environment_tool_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto environment_tool_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         {
             "append-path/.lito/config.toml"_str,
@@ -102,16 +102,16 @@ sources = ["src/main.cpp"]
         { "append-path/src/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
         { "append-path/tools/ld"_str,
           "#!/bin/sh\nexec /usr/bin/ld \"$@\"\n"_str,
-          lito::SourceFileMode::Executable },
+          lito::source::SourceFileMode::Executable },
         { "append-path/tools/lito-fixture-clang++"_str,
           "#!/bin/sh\nexec /nix/opt/llvm/22/bin/clang++ \"$@\"\n"_str,
-          lito::SourceFileMode::Executable },
+          lito::source::SourceFileMode::Executable },
         { "append-path/tools/lito-fixture-clang-format"_str,
           "#!/bin/sh\nexec /nix/opt/llvm/22/bin/clang-format \"$@\"\n"_str,
-          lito::SourceFileMode::Executable },
+          lito::source::SourceFileMode::Executable },
         { "append-path/tools/lito-fixture-llvm-ar"_str,
           "#!/bin/sh\nexec /nix/opt/llvm/22/bin/llvm-ar \"$@\"\n"_str,
-          lito::SourceFileMode::Executable },
+          lito::source::SourceFileMode::Executable },
         {
             "test-path/.lito/config.toml"_str,
             R"toml([environment]
@@ -153,7 +153,7 @@ auto main() -> int {
     return source_tree(files);
 }
 
-auto install_selection_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto install_selection_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"([workspace]
 name = "lito-test-install-project"
@@ -230,8 +230,8 @@ auto executable(const lito::BuildSummary& summary) -> Option<ref<rstd::path::Pat
     return None();
 }
 
-auto project_root_role(const lito::ResolvedPackageGraph& graph, ref<str> name)
-    -> Option<lito::ProjectRootRole> {
+auto project_root_role(const lito::package::ResolvedPackageGraph& graph, ref<str> name)
+    -> Option<lito::package::ProjectRootRole> {
     for (const auto& root : graph.roots) {
         if (root.name.as_str() == name) {
             auto role = root.role;

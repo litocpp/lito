@@ -16,7 +16,7 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-auto pkg_config_provider_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto pkg_config_provider_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         {
             .path     = "lito-fixture.pc"_str,
@@ -88,7 +88,7 @@ case "$query" in
     ;;
 esac
 )"_str,
-            .mode     = lito::SourceFileMode::Executable,
+            .mode     = lito::source::SourceFileMode::Executable,
         },
     };
     return source_tree(files);
@@ -111,10 +111,10 @@ protected:
         }
     }
 
-    auto fixture_pkg_config() const -> lito::PkgConfigProviderConfig {
+    auto fixture_pkg_config() const -> lito::dependency::PkgConfigProviderConfig {
         auto library_paths = Vec<PathBuf>::make();
         library_paths.push(source_root("pkg-config-provider"_str));
-        return lito::PkgConfigProviderConfig {
+        return lito::dependency::PkgConfigProviderConfig {
             .executable    = PathBuf::from("pkg-config"_str),
             .library_paths = rstd::move(library_paths),
         };
@@ -148,7 +148,7 @@ visibility = "public"
     };
     auto project = materialize("valid-manifest"_str, files);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->dependencies.is_empty());
     ASSERT_EQ(loaded->pkg_config_external_dependencies.len(), usize(2));
@@ -157,11 +157,12 @@ visibility = "public"
     const auto& requirement = curl.requirement;
     EXPECT_EQ(requirement.module.as_str(), "libcurl"_str);
     ASSERT_TRUE(requirement.version.is_some());
-    EXPECT_EQ(requirement.version->comparison, lito::PkgConfigVersionOperator::GreaterEqual);
+    EXPECT_EQ(requirement.version->comparison,
+              lito::dependency::PkgConfigVersionOperator::GreaterEqual);
     EXPECT_EQ(requirement.version->value.as_str(), "7.86.0"_str);
-    EXPECT_EQ(requirement.mode, lito::PkgConfigQueryMode::Shared);
+    EXPECT_EQ(requirement.mode, lito::dependency::PkgConfigQueryMode::Shared);
 
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     EXPECT_TRUE(graph->packages[usize {}].dependencies.is_empty());
@@ -251,7 +252,7 @@ visibility = "private"
         };
         auto project = materialize(manifest.name, files);
         ASSERT_TRUE(project.is_ok());
-        auto loaded = lito::load_manifest_document(project->root.as_path());
+        auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
@@ -281,11 +282,11 @@ TEST_F(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirement
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture("fixture"_str,
-                                        lito::PkgConfigVersionOperator::GreaterEqual,
+                                        lito::dependency::PkgConfigVersionOperator::GreaterEqual,
                                         "2.0.0"_str,
-                                        lito::PkgConfigQueryMode::Static));
+                                        lito::dependency::PkgConfigQueryMode::Static));
     auto resolved = lito::resolve_external_dependencies(declarations,
                                                         config,
                                                         fixture_cmake(),
@@ -325,7 +326,7 @@ TEST_F(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirement
         EXPECT_NE(token.as_str(), "-ldl"_str);
     }
 
-    declarations[usize {}].requirement.mode = lito::PkgConfigQueryMode::Shared;
+    declarations[usize {}].requirement.mode = lito::dependency::PkgConfigQueryMode::Shared;
     auto shared = lito::resolve_external_dependencies(declarations,
                                                       config,
                                                       fixture_cmake(),
@@ -344,17 +345,18 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
-    declarations.push(
-        versioned_fixture("equal"_str, lito::PkgConfigVersionOperator::Equal, "2.3.4"_str));
-    declarations.push(
-        versioned_fixture("less"_str, lito::PkgConfigVersionOperator::Less, "3.0.0"_str));
-    declarations.push(
-        versioned_fixture("greater"_str, lito::PkgConfigVersionOperator::Greater, "2.0.0"_str));
+    auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
-        "less-equal"_str, lito::PkgConfigVersionOperator::LessEqual, "2.3.4"_str));
+        "equal"_str, lito::dependency::PkgConfigVersionOperator::Equal, "2.3.4"_str));
     declarations.push(versioned_fixture(
-        "greater-equal"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.3.4"_str));
+        "less"_str, lito::dependency::PkgConfigVersionOperator::Less, "3.0.0"_str));
+    declarations.push(versioned_fixture(
+        "greater"_str, lito::dependency::PkgConfigVersionOperator::Greater, "2.0.0"_str));
+    declarations.push(versioned_fixture(
+        "less-equal"_str, lito::dependency::PkgConfigVersionOperator::LessEqual, "2.3.4"_str));
+    declarations.push(versioned_fixture("greater-equal"_str,
+                                        lito::dependency::PkgConfigVersionOperator::GreaterEqual,
+                                        "2.3.4"_str));
     auto resolved = lito::resolve_external_dependencies(declarations,
                                                         config,
                                                         fixture_cmake(),
@@ -365,9 +367,9 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
 
-    auto incompatible = Vec<lito::PkgConfigExternalDependency>::make();
+    auto incompatible = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     incompatible.push(versioned_fixture(
-        "incompatible"_str, lito::PkgConfigVersionOperator::Greater, "99.0.0"_str));
+        "incompatible"_str, lito::dependency::PkgConfigVersionOperator::Greater, "99.0.0"_str));
     auto failed = lito::resolve_external_dependencies(incompatible,
                                                       config,
                                                       fixture_cmake(),
@@ -387,9 +389,9 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
     auto target       = pkg_config_target();
-    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
+    auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
-        "fixture"_str, lito::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
+        "fixture"_str, lito::dependency::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
 
     auto implicit_cross =
         lito::resolve_external_dependencies(declarations,
@@ -448,18 +450,18 @@ TEST_F(PkgConfig, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
     ASSERT_TRUE(parser.is_ok());
     auto directory = cache_root("pkg-config-counting-provider"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
-    auto config = lito::PkgConfigProviderConfig {
+    auto config = lito::dependency::PkgConfigProviderConfig {
         .executable        = source_root("pkg-config-provider"_str)
                                  .join(PathBuf::from("counting-provider"_str).as_path()),
         .sysroot           = Some(directory.clone()),
         .target_configured = true,
     };
     auto target       = pkg_config_target();
-    auto declarations = Vec<lito::PkgConfigExternalDependency>::make();
-    declarations.push(
-        versioned_fixture("first"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
-    declarations.push(
-        versioned_fixture("second"_str, lito::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
+    auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
+    declarations.push(versioned_fixture(
+        "first"_str, lito::dependency::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
+    declarations.push(versioned_fixture(
+        "second"_str, lito::dependency::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
     auto resolved = lito::resolve_external_dependencies(declarations,
                                                         config,
                                                         fixture_cmake(),

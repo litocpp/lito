@@ -13,9 +13,9 @@ using PathBuf = rstd::path::PathBuf;
 
 class ModuleDiscovery : public ProjectFixture {};
 
-using ModuleProjectFactory = lito::SourceTreeResult<lito::SourceTree> (*)();
+using ModuleProjectFactory = lito::source::SourceTreeResult<lito::source::SourceTree> (*)();
 
-auto cache_long_path_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto cache_long_path_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-cache-long-path"
@@ -35,7 +35,8 @@ sources = ["src/segment01_abcdefghijklmnopqrstuvwxyz/segment02_abcdefghijklmnopq
     return source_tree(files);
 }
 
-auto modules_discovery_ambiguous_relative_app_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_discovery_ambiguous_relative_app_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "alpha/lito.toml"_str, R"module([package]
 name = "fixture-ambiguous-alpha"
@@ -107,7 +108,8 @@ export auto beta_value() -> int {
     return source_tree(files);
 }
 
-auto modules_discovery_preprocess_app_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_discovery_preprocess_app_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/lito.toml"_str, R"module([package]
 name = "fixture-discovery-app"
@@ -172,7 +174,8 @@ export auto discovery_value() -> int {
     return source_tree(files);
 }
 
-auto manifest_multiple_primary_modules_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto manifest_multiple_primary_modules_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-multiple-primary-modules"
@@ -215,7 +218,8 @@ int main() {
     return source_tree(files);
 }
 
-auto manifest_toml_module_directory_markers_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto manifest_toml_module_directory_markers_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-convention-markers"
@@ -249,7 +253,7 @@ auto marker_value() -> int {
 }
 
 auto manifest_toml_module_multiple_implementations_tree()
-    -> lito::SourceTreeResult<lito::SourceTree> {
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-convention-implementations"
@@ -281,7 +285,8 @@ auto second_value() -> int {
     return source_tree(files);
 }
 
-auto modules_scanner_module_kinds_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_scanner_module_kinds_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-scanner-module-kinds"
@@ -333,7 +338,8 @@ auto scanner_private_value() -> int {
     return source_tree(files);
 }
 
-auto modules_scanner_stdlib_header_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_scanner_stdlib_header_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-scanner-stdlib-header"
@@ -354,7 +360,8 @@ auto main() -> int {
     return source_tree(files);
 }
 
-auto workspace_shared_source_root_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_shared_source_root_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/main.cpp"_str, R"module(import fixture.shared_source_root;
 
@@ -401,7 +408,8 @@ export int shared_source_root_value() { return 19; }
     return source_tree(files);
 }
 
-auto modules_discovery_import_cycle_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_discovery_import_cycle_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-discovery-cycle"
@@ -424,7 +432,8 @@ import fixture.discovery.cycle;
     return source_tree(files);
 }
 
-auto manifest_toml_module_logical_mismatch_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto manifest_toml_module_logical_mismatch_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-convention-mismatch"
@@ -441,7 +450,8 @@ archive = "fixture.convention.mismatch"
     return source_tree(files);
 }
 
-auto manifest_toml_module_missing_primary_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto manifest_toml_module_missing_primary_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-convention-missing"
@@ -458,7 +468,8 @@ archive = "fixture.convention.missing"
     return source_tree(files);
 }
 
-auto manifest_toml_module_partition_collision_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto manifest_toml_module_partition_collision_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-convention-partition"
@@ -482,7 +493,8 @@ export import :detail;
     return source_tree(files);
 }
 
-auto modules_scanner_header_unit_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto modules_scanner_header_unit_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"module([package]
 name = "fixture-scanner-header-unit"
@@ -502,7 +514,7 @@ import <vector>;
     return source_tree(files);
 }
 
-auto explicit_visible_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto explicit_visible_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/lito.toml"_str, R"module([package]
 name = "fixture-convention-consumer"

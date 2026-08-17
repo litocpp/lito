@@ -15,7 +15,7 @@ export namespace lito
 {
 
 struct ArtifactExecution {
-    PackageTargetId                   target;
+    lito::package::PackageTargetId    target;
     PathBuf                           executable;
     PathBuf                           working_directory;
     Option<rstd::process::ExitStatus> status;

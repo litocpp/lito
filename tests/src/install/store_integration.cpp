@@ -26,9 +26,9 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     const auto make_binary = [&](ref<rstd::path::Path> source, ref<str> name) {
         return lito::InstallBinary {
             .target =
-                lito::PackageTargetId {
+                lito::package::PackageTargetId {
                     .package = String::make("fixture-tool"_str),
-                    .kind    = lito::PackageTargetKind::Binary,
+                    .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make(name),
                 },
             .source = PathBuf::from(source),
@@ -90,9 +90,9 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     auto binaries = Vec<lito::InstallBinary>::make();
     binaries.push(lito::InstallBinary {
         .target =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("fixture-other"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("unmanaged"_str),
             },
         .source = rstd::move(external),
@@ -121,9 +121,9 @@ TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     auto forced_source   = source_directory.join(PathBuf::from("unmanaged"_str).as_path());
     forced_binaries.push(lito::InstallBinary {
         .target =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("fixture-other"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("unmanaged"_str),
             },
         .source = rstd::move(forced_source),
@@ -159,9 +159,9 @@ TEST_F(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
         auto binaries = Vec<lito::InstallBinary>::make();
         binaries.push(lito::InstallBinary {
             .target =
-                lito::PackageTargetId {
+                lito::package::PackageTargetId {
                     .package = String::make(name),
-                    .kind    = lito::PackageTargetKind::Binary,
+                    .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make(binary_name),
                 },
             .source = rstd::move(source),
@@ -213,9 +213,9 @@ TEST_F(InstallStore, InstallStoreCommitsMultiplePackagesTogether) {
         auto binaries = Vec<lito::InstallBinary>::make();
         binaries.push(lito::InstallBinary {
             .target =
-                lito::PackageTargetId {
+                lito::package::PackageTargetId {
                     .package = String::make(name),
-                    .kind    = lito::PackageTargetKind::Binary,
+                    .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make("collision"_str),
                 },
             .source = rstd::move(source),
@@ -290,7 +290,7 @@ TEST_F(InstallStore, InstallStoreRejectsForceThatWouldBreakRuntimeDependencies) 
     auto app     = package("fixture-app"_str, "bin/app"_str, "app"_str);
     app.runtime_dependencies.push(lito::InstallRuntimeDependency {
         .name            = String::make("fixture-runtime"_str),
-        .source_identity = lito::path_source_identity(source_directory.as_path()),
+        .source_identity = lito::source::path_source_identity(source_directory.as_path()),
     });
     auto initial = Vec<lito::InstallPackageRecord>::make();
     initial.push(rstd::move(runtime));
@@ -369,7 +369,8 @@ TEST_F(InstallStore, InstallStorePublishesNestedGenericEntries) {
     EXPECT_EQ(first->entries[usize {}].action, lito::InstallAction::Created);
     EXPECT_EQ(first->entries[usize(1)].action, lito::InstallAction::Created);
     auto package_id = lito::install_package_id(
-        "fixture-generic"_str, lito::path_source_identity(source_directory.as_path()).as_str());
+        "fixture-generic"_str,
+        lito::source::path_source_identity(source_directory.as_path()).as_str());
     ASSERT_TRUE(package_id.is_ok());
     auto private_root = first->managed_layout->packages_directory.join(
         PathBuf::from(package_id->as_str()).as_path());

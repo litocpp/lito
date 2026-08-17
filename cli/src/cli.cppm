@@ -16,98 +16,98 @@ export namespace lito::cli
 {
 
 struct BuildOptions {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              targets;
-    Option<PathBuf>          output;
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
-    bool                     verbose {};
-    Option<PathBuf>          timing_file;
-    bool                     no_timing {};
-    Option<usize>            jobs;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              targets;
+    Option<PathBuf>                          output;
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
+    bool                                     verbose {};
+    Option<PathBuf>                          timing_file;
+    bool                                     no_timing {};
+    Option<usize>                            jobs;
 };
 
 struct ScanOptions {
-    PathBuf                  source;
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              targets;
-    ScanOutputFormat         format { ScanOutputFormat::Lito };
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
+    PathBuf                                  source;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              targets;
+    ScanOutputFormat                         format { ScanOutputFormat::Lito };
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
 };
 
 struct DocOptions {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              targets;
-    Option<PathBuf>          output;
-    Option<PathBuf>          data_output;
-    Option<PathBuf>          frontend;
-    bool                     data_only {};
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
-    bool                     verbose {};
-    Option<PathBuf>          timing_file;
-    bool                     no_timing {};
-    Option<usize>            jobs;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              targets;
+    Option<PathBuf>                          output;
+    Option<PathBuf>                          data_output;
+    Option<PathBuf>                          frontend;
+    bool                                     data_only {};
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
+    bool                                     verbose {};
+    Option<PathBuf>                          timing_file;
+    bool                                     no_timing {};
+    Option<usize>                            jobs;
 };
 
 struct InstallOptions {
-    Vec<String>                   packages;
-    Option<BuildProfileName>      profile;
-    Vec<String>                   binaries;
-    InstallDestinationRequirement destination;
-    bool                          force {};
-    bool                          locked {};
-    bool                          offline {};
-    bool                          frozen {};
-    Vec<PathBuf>                  fetch_seeds;
-    bool                          verbose {};
-    Option<PathBuf>               timing_file;
-    bool                          no_timing {};
-    Option<usize>                 jobs;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              binaries;
+    InstallDestinationRequirement            destination;
+    bool                                     force {};
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
+    bool                                     verbose {};
+    Option<PathBuf>                          timing_file;
+    bool                                     no_timing {};
+    Option<usize>                            jobs;
 };
 
 struct TestOptions {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              targets;
-    Option<PathBuf>          output;
-    Vec<String>              arguments;
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
-    bool                     no_run {};
-    bool                     verbose {};
-    Option<PathBuf>          timing_file;
-    bool                     no_timing {};
-    Option<usize>            jobs;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              targets;
+    Option<PathBuf>                          output;
+    Vec<String>                              arguments;
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
+    bool                                     no_run {};
+    bool                                     verbose {};
+    Option<PathBuf>                          timing_file;
+    bool                                     no_timing {};
+    Option<usize>                            jobs;
 };
 
 struct BenchOptions {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
-    Vec<String>              targets;
-    Option<PathBuf>          output;
-    Vec<String>              arguments;
-    bool                     locked {};
-    bool                     offline {};
-    bool                     frozen {};
-    Vec<PathBuf>             fetch_seeds;
-    bool                     no_run {};
-    bool                     verbose {};
-    Option<PathBuf>          timing_file;
-    bool                     no_timing {};
-    Option<usize>            jobs;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
+    Vec<String>                              targets;
+    Option<PathBuf>                          output;
+    Vec<String>                              arguments;
+    bool                                     locked {};
+    bool                                     offline {};
+    bool                                     frozen {};
+    Vec<PathBuf>                             fetch_seeds;
+    bool                                     no_run {};
+    bool                                     verbose {};
+    Option<PathBuf>                          timing_file;
+    bool                                     no_timing {};
+    Option<usize>                            jobs;
 };
 
 struct FormatOptions {
@@ -168,7 +168,7 @@ class CliOutcome {
     RSTD_ENUM(CliOutcome,
               (Parsed,
                (PathBuf working_directory; bool no_config; Vec<String> config_overrides;
-                ToolchainOverride                                      toolchain;
+                lito::config::ToolchainOverride                        toolchain;
                 Option<String>                                         toolchain_standard_library;
                 CliCommand                                             command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
@@ -181,10 +181,10 @@ namespace lito::cli
 
 class BuildProfileParser {
 public:
-    auto parse(ref<OsStr> value) const -> Result<BuildProfileName, ValueError> {
+    auto parse(ref<OsStr> value) const -> Result<lito::manifest::BuildProfileName, ValueError> {
         auto text = value.to_str();
         if (text.is_none()) return Err(ValueError::InvalidUtf8());
-        auto profile = parse_build_profile(*text);
+        auto profile = lito::manifest::parse_build_profile(*text);
         if (profile.is_ok()) return Ok(rstd::move(profile).unwrap());
         return Err(ValueError::Message(rstd::format("{}", rstd::move(profile).unwrap_err())));
     }
@@ -217,8 +217,8 @@ class CliDecodeError {
 };
 
 struct PackageProfileArgs {
-    ArgKey<String>           package;
-    ArgKey<BuildProfileName> profile;
+    ArgKey<String>                           package;
+    ArgKey<lito::manifest::BuildProfileName> profile;
 };
 
 struct SourceAcquisitionArgs {
@@ -420,8 +420,8 @@ auto package_arg() -> Arg<String> {
         .append();
 }
 
-auto profile_arg() -> Arg<BuildProfileName> {
-    return Arg<BuildProfileName>::value("profile"_str, BuildProfileParser {})
+auto profile_arg() -> Arg<lito::manifest::BuildProfileName> {
+    return Arg<lito::manifest::BuildProfileName>::value("profile"_str, BuildProfileParser {})
         .long_name("profile"_str)
         .value_name("PROFILE"_str)
         .help("Select the build profile"_str);
@@ -976,11 +976,11 @@ auto optional_string(const Matches& matches, const ArgKey<String>& key)
     return Ok(Some((**value).clone()));
 }
 
-auto optional_profile(const Matches& matches, const ArgKey<BuildProfileName>& key)
-    -> Result<Option<BuildProfileName>, CliDecodeError> {
+auto optional_profile(const Matches& matches, const ArgKey<lito::manifest::BuildProfileName>& key)
+    -> Result<Option<lito::manifest::BuildProfileName>, CliDecodeError> {
     auto value = rstd_try(optional_value(matches, key));
     if (value.is_none()) return Ok(None());
-    return Ok(Some<BuildProfileName>((**value).clone()));
+    return Ok(Some<lito::manifest::BuildProfileName>((**value).clone()));
 }
 
 auto optional_jobs(const Matches& matches, const ArgKey<usize>& key)
@@ -998,8 +998,8 @@ auto required_string(const Matches& matches, const ArgKey<String>& key, ref<str>
 }
 
 struct PackageProfileValues {
-    Vec<String>              packages;
-    Option<BuildProfileName> profile;
+    Vec<String>                              packages;
+    Option<lito::manifest::BuildProfileName> profile;
 };
 
 auto decode_package_profile(const Matches& matches, const PackageProfileArgs& args)
@@ -1291,23 +1291,23 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
 }
 
 struct CliInvocation {
-    PathBuf           working_directory;
-    bool              no_config {};
-    Vec<String>       config_overrides;
-    ToolchainOverride toolchain;
-    Option<String>    toolchain_standard_library;
-    CliCommand        command;
+    PathBuf                         working_directory;
+    bool                            no_config {};
+    Vec<String>                     config_overrides;
+    lito::config::ToolchainOverride toolchain;
+    Option<String>                  toolchain_standard_library;
+    CliCommand                      command;
 };
 
-auto has_toolchain_override(const ToolchainOverride& value, const Option<String>& standard_library)
-    -> bool {
+auto has_toolchain_override(const lito::config::ToolchainOverride& value,
+                            const Option<String>&                  standard_library) -> bool {
     return value.cc.is_some() || value.cxx.is_some() || value.ld.is_some() || value.ar.is_some() ||
            value.strip.is_some() || value.format.is_some() || standard_library.is_some();
 }
 
 auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
-    -> Result<ToolchainOverride, CliDecodeError> {
-    return Ok(ToolchainOverride {
+    -> Result<lito::config::ToolchainOverride, CliDecodeError> {
+    return Ok(lito::config::ToolchainOverride {
         .cc     = rstd_try(optional_path(matches, args.cc)),
         .cxx    = rstd_try(optional_path(matches, args.cxx)),
         .ld     = rstd_try(optional_path(matches, args.ld)),

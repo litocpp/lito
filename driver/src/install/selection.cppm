@@ -27,25 +27,26 @@ auto selection_failure(ref<str> message) -> InstallResult<T> {
     return selection_failure<T>(String::make(message));
 }
 
-auto resolved_package(const ResolvedPackageGraph& graph, ref<str> name)
-    -> InstallResult<const ResolvedPackage*> {
-    const ResolvedPackage* result = nullptr;
+auto resolved_package(const lito::package::ResolvedPackageGraph& graph, ref<str> name)
+    -> InstallResult<const lito::package::ResolvedPackage*> {
+    const lito::package::ResolvedPackage* result = nullptr;
     for (const auto& package : graph.packages) {
         if (package.manifest.name != name) continue;
         if (result != nullptr) {
-            return selection_failure<const ResolvedPackage*>(
+            return selection_failure<const lito::package::ResolvedPackage*>(
                 rstd::format("resolved graph contains package '{}' more than once", name));
         }
         result = rstd::addressof(package);
     }
     if (result == nullptr) {
-        return selection_failure<const ResolvedPackage*>(
+        return selection_failure<const lito::package::ResolvedPackage*>(
             rstd::format("install package '{}' is missing from the resolved graph", name));
     }
     return Ok(result);
 }
 
-auto direct_package(const ResolvedPackageSelection& selection, ref<str> name) -> bool {
+auto direct_package(const lito::package::ResolvedPackageSelection& selection, ref<str> name)
+    -> bool {
     for (const auto& direct : selection.selected_root_names) {
         if (direct == name) return true;
     }
@@ -57,8 +58,8 @@ auto direct_package(const ResolvedPackageSelection& selection, ref<str> name) ->
 export namespace lito
 {
 
-auto resolve_install_packages(const ResolvedPackageSelection& selection, const TargetInfo& target)
-    -> InstallResult<Vec<PackageInstallInput>> {
+auto resolve_install_packages(const lito::package::ResolvedPackageSelection& selection,
+                              const TargetInfo& target) -> InstallResult<Vec<PackageInstallInput>> {
     auto result = Vec<PackageInstallInput>::make();
     for (const auto& name : selection.install_package_names) {
         const auto* package = rstd_try(resolved_package(selection.graph, name.as_str()));
@@ -74,15 +75,18 @@ auto resolve_install_packages(const ResolvedPackageSelection& selection, const T
         }
         auto binaries = Vec<PackageInstallTarget>::make();
         for (const auto& candidate : package->manifest.targets) {
-            if (package_target_kind(candidate) != PackageTargetKind::Binary) continue;
+            if (lito::manifest::package_target_kind(candidate) !=
+                lito::package::PackageTargetKind::Binary)
+                continue;
             binaries.push(PackageInstallTarget {
                 .target =
-                    PackageTargetId {
+                    lito::package::PackageTargetId {
                         .package = package->manifest.name.clone(),
-                        .kind    = PackageTargetKind::Binary,
-                        .name    = String::make(package_target_name(candidate)),
+                        .kind    = lito::package::PackageTargetKind::Binary,
+                        .name    = String::make(lito::manifest::package_target_name(candidate)),
                     },
-                .artifact_name = String::make(package_target_artifact_name(candidate)),
+                .artifact_name =
+                    String::make(lito::manifest::package_target_artifact_name(candidate)),
             });
         }
         if (package->manifest.install_script.is_none() && binaries.is_empty()) {
@@ -121,9 +125,9 @@ auto resolve_install_packages(const ResolvedPackageSelection& selection, const T
     return Ok(rstd::move(result));
 }
 
-auto resolve_install_build_requirements(const ResolvedPackageSelection& selection,
-                                        const Vec<InstallRecipe>&       recipes,
-                                        const TargetInfo&               target)
+auto resolve_install_build_requirements(const lito::package::ResolvedPackageSelection& selection,
+                                        const Vec<InstallRecipe>&                      recipes,
+                                        const TargetInfo&                              target)
     -> InstallResult<InstallBuildRequirements> {
     auto requirements = InstallBuildRequirements {};
     for (const auto& recipe : recipes) {
@@ -147,13 +151,14 @@ auto resolve_install_build_requirements(const ResolvedPackageSelection& selectio
                     return selection_failure<InstallBuildRequirements>(
                         rstd::format("install recipe '{}' repeats artifact target '{}'",
                                      recipe.owner.as_str(),
-                                     package_target_id_text(artifact.target)));
+                                     lito::package::package_target_id_text(artifact.target)));
                 }
             }
             auto found = false;
             for (const auto& candidate : owner->manifest.targets) {
-                if (package_target_kind(candidate) == artifact.target.kind &&
-                    package_target_name(candidate) == artifact.target.name.as_str()) {
+                if (lito::manifest::package_target_kind(candidate) == artifact.target.kind &&
+                    lito::manifest::package_target_name(candidate) ==
+                        artifact.target.name.as_str()) {
                     found = true;
                     break;
                 }
@@ -161,7 +166,7 @@ auto resolve_install_build_requirements(const ResolvedPackageSelection& selectio
             if (! found) {
                 return selection_failure<InstallBuildRequirements>(
                     rstd::format("unknown install artifact target '{}'",
-                                 package_target_id_text(artifact.target)));
+                                 lito::package::package_target_id_text(artifact.target)));
             }
             auto duplicate = false;
             for (const auto& selected : requirements.targets) {

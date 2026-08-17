@@ -13,9 +13,7 @@ using namespace rstd::literals;
 using Toml         = rstd::toml::Value;
 using Table        = rstd::toml::Table;
 using KeyPredicate = bool (*)(ref<str>);
-
-namespace lito
-{
+using namespace lito::manifest;
 
 template<typename T>
 auto manifest_schema_failure(ref<str> message) -> ManifestSchemaResult<T> {
@@ -160,5 +158,3 @@ auto sha256_is_valid(ref<str> value) -> bool {
 auto workspace_root_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "profile"_str;
 }
-
-} // namespace lito

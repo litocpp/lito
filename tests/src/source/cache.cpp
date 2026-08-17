@@ -135,29 +135,30 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_TRUE(debug_layout.is_ok());
     ASSERT_TRUE(release_layout.is_ok());
 
-    auto requests = Vec<lito::ArchiveSourceFetchRequest>::make();
-    requests.push(lito::ArchiveSourceFetchRequest {
+    auto requests = Vec<lito::source::ArchiveSourceFetchRequest>::make();
+    requests.push(lito::source::ArchiveSourceFetchRequest {
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
     auto first_events          = FileFetchEventCapture {};
     auto debug_materialization = debug_layout->source_materialization_root();
-    auto first = lito::acquire_archive_frontier(rstd::move(requests),
-                                                usize(1),
-                                                debug_materialization.as_path(),
-                                                cmake->executable.as_path(),
-                                                *environment,
-                                                {},
-                                                lito::SourceEventSink {
-                                                    .context = rstd::addressof(first_events),
-                                                    .notify  = capture_file_fetch,
-                                                });
+    auto first =
+        lito::source::acquire_archive_frontier(rstd::move(requests),
+                                               usize(1),
+                                               debug_materialization.as_path(),
+                                               cmake->executable.as_path(),
+                                               *environment,
+                                               {},
+                                               lito::source::SourceEventSink {
+                                                   .context = rstd::addressof(first_events),
+                                                   .notify  = capture_file_fetch,
+                                               });
     ASSERT_TRUE(first.is_ok());
     ASSERT_EQ(first->len(), usize(1));
     EXPECT_EQ(first_events.count, usize(1));
     EXPECT_TRUE((*first)[usize {}].root.as_path().starts_with(debug_layout->output()));
 
-    requests.push(lito::ArchiveSourceFetchRequest {
+    requests.push(lito::source::ArchiveSourceFetchRequest {
         .url    = url.clone(),
         .sha256 = digest.clone(),
     });
@@ -166,16 +167,17 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(cache_environment.is_ok());
     auto release_materialization = release_layout->source_materialization_root();
-    auto second = lito::acquire_archive_frontier(rstd::move(requests),
-                                                 usize(1),
-                                                 release_materialization.as_path(),
-                                                 cmake->executable.as_path(),
-                                                 *cache_environment,
-                                                 {},
-                                                 lito::SourceEventSink {
-                                                     .context = rstd::addressof(second_events),
-                                                     .notify  = capture_file_fetch,
-                                                 });
+    auto second =
+        lito::source::acquire_archive_frontier(rstd::move(requests),
+                                               usize(1),
+                                               release_materialization.as_path(),
+                                               cmake->executable.as_path(),
+                                               *cache_environment,
+                                               {},
+                                               lito::source::SourceEventSink {
+                                                   .context = rstd::addressof(second_events),
+                                                   .notify  = capture_file_fetch,
+                                               });
     ASSERT_TRUE(second.is_ok());
     ASSERT_EQ(second->len(), usize(1));
     EXPECT_EQ(second_events.count, usize {});
@@ -185,8 +187,8 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_TRUE(
         release_layout->scan_cache_directory().as_path().starts_with(release_layout->output()));
 
-    auto fetch_identity = lito::archive_fetch_identity(url.as_str(), digest.as_str());
-    auto file_key       = lito::fetch_identity_stable_key(fetch_identity);
+    auto fetch_identity = lito::source::archive_fetch_identity(url.as_str(), digest.as_str());
+    auto file_key       = lito::source::fetch_identity_stable_key(fetch_identity);
     auto file_bucket    = data_home.join(PathBuf::from("lito/files"_str).as_path())
                               .join(PathBuf::from(file_key).as_path());
     EXPECT_TRUE(rstd::fs::exists(file_bucket.join(PathBuf::from("source"_str).as_path()).as_path())
@@ -205,7 +207,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         ++entry_count;
     }
     EXPECT_EQ(entry_count, usize(1));
-    auto archive_identity = lito::archive_source_identity(url.as_str(), digest.as_str());
+    auto archive_identity = lito::source::archive_source_identity(url.as_str(), digest.as_str());
     auto debug_receipt    = debug_layout->archive_materialization(archive_identity.as_str())
                                 .join(PathBuf::from("source-v2"_str).as_path());
     auto receipt          = rstd::fs::read_to_string(debug_receipt.as_path());

@@ -22,9 +22,9 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
+using namespace lito;
 
-namespace lito
-{
+using namespace lito::package;
 
 template<typename T>
 auto package_resolution_failure(String message) -> PackageResult<T> {
@@ -36,15 +36,17 @@ auto package_resolution_failure(ref<str> message) -> PackageResult<T> {
     return Err(PackageError::Message(String::make(message)));
 }
 
-auto clone_dependency_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
+auto clone_dependency_source(const lito::source::PackageSourceRequirement& source)
+    -> lito::source::PackageSourceRequirement {
     if (source.is_Path()) {
-        return PackageSourceRequirement::Path(source.as_Path().path.clone());
+        return lito::source::PackageSourceRequirement::Path(source.as_Path().path.clone());
     }
-    return PackageSourceRequirement::Git(source.as_Git().url.clone(),
-                                         GitReference {
-                                             .kind  = source.as_Git().reference.kind,
-                                             .value = source.as_Git().reference.value.clone(),
-                                         });
+    return lito::source::PackageSourceRequirement::Git(
+        source.as_Git().url.clone(),
+        lito::source::GitReference {
+            .kind  = source.as_Git().reference.kind,
+            .value = source.as_Git().reference.value.clone(),
+        });
 }
 
 struct PackageCoordinate {
@@ -56,10 +58,10 @@ struct PackageCoordinate {
 using CoordinateMap = rstd::collections::BTreeMap<String, PackageCoordinate>;
 
 struct SelectedSourcePackage {
-    String                source_identity;
-    ResolvedPackageSource source;
-    PathBuf               manifest;
-    PackageManifest       package;
+    String                              source_identity;
+    lito::source::ResolvedPackageSource source;
+    PathBuf                             manifest;
+    lito::manifest::PackageManifest     package;
 };
 
 struct AcquiredProjectSources {
@@ -71,47 +73,48 @@ auto same_source_root(ref<rstd::path::Path> left, ref<rstd::path::Path> right) n
     return left.starts_with(right) && right.starts_with(left);
 }
 
-auto load_package_catalog(ref<rstd::path::Path>   root,
-                          const WorkspaceCatalog* associated_primary = nullptr)
-    -> PackageResult<WorkspaceCatalog> {
-    auto document = load_manifest_document(root);
+auto load_package_catalog(ref<rstd::path::Path>                    root,
+                          const lito::workspace::WorkspaceCatalog* associated_primary = nullptr)
+    -> PackageResult<lito::workspace::WorkspaceCatalog> {
+    auto document = lito::manifest::load_manifest_document(root);
     if (document.is_err()) {
         return Err(rstd::into<PackageError>(rstd::move(document).unwrap_err()));
     }
     auto loaded = rstd::move(document).unwrap();
-    if (loaded.kind == ManifestKind::Workspace && loaded.workspace.is_some()) {
-        auto catalog = load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
+    if (loaded.kind == lito::manifest::ManifestKind::Workspace && loaded.workspace.is_some()) {
+        auto catalog =
+            lito::workspace::load_workspace_catalog(rstd::move(loaded.workspace).unwrap());
         if (catalog.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(catalog).unwrap_err()));
         }
         return Ok(rstd::move(catalog).unwrap());
     }
-    if (loaded.kind != ManifestKind::Package || loaded.package.is_none()) {
-        return package_resolution_failure<WorkspaceCatalog>(
+    if (loaded.kind != lito::manifest::ManifestKind::Package || loaded.package.is_none()) {
+        return package_resolution_failure<lito::workspace::WorkspaceCatalog>(
             "source manifest has no package or workspace"_str);
     }
     auto package = rstd::move(loaded.package).unwrap();
     if (associated_primary != nullptr) {
-        auto catalog =
-            WorkspaceCatalog::associated_package(rstd::move(package), *associated_primary);
+        auto catalog = lito::workspace::WorkspaceCatalog::associated_package(rstd::move(package),
+                                                                             *associated_primary);
         if (catalog.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(catalog).unwrap_err()));
         }
         return Ok(rstd::move(catalog).unwrap());
     }
-    auto containing = try_containing_workspace(package);
+    auto containing = lito::workspace::try_containing_workspace(package);
     if (containing.is_err()) {
         return Err(rstd::into<PackageError>(rstd::move(containing).unwrap_err()));
     }
     if (containing->is_some()) {
-        auto catalog = load_workspace_catalog(rstd::move(containing).unwrap().unwrap(),
-                                              Some(rstd::move(package)));
+        auto catalog = lito::workspace::load_workspace_catalog(
+            rstd::move(containing).unwrap().unwrap(), Some(rstd::move(package)));
         if (catalog.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(catalog).unwrap_err()));
         }
         return Ok(rstd::move(catalog).unwrap());
     }
-    auto catalog = WorkspaceCatalog::single(rstd::move(package));
+    auto catalog = lito::workspace::WorkspaceCatalog::single(rstd::move(package));
     if (catalog.is_err()) {
         return Err(rstd::into<PackageError>(rstd::move(catalog).unwrap_err()));
     }
@@ -119,14 +122,14 @@ auto load_package_catalog(ref<rstd::path::Path>   root,
 }
 
 auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<PackageCoordinate> {
-    if (selected.package.version.source == PackageVersionSource::Workspace &&
+    if (selected.package.version.source == lito::manifest::PackageVersionSource::Workspace &&
         selected.package.version.value.is_none()) {
         return package_resolution_failure<PackageCoordinate>(rstd::format(
             "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
     }
     auto requires_version = false;
     for (const auto& target : selected.package.targets) {
-        const auto kind = package_target_kind(target);
+        const auto kind = lito::manifest::package_target_kind(target);
         if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
             kind == PackageTargetKind::Benchmark) {
             requires_version = true;
@@ -163,34 +166,36 @@ auto package_conflict(ref<str>                 name,
 }
 
 class PackageGraphResolver {
-    PathBuf                       root_directory_;
-    SourceManager                 sources_;
-    Vec<Option<WorkspaceCatalog>> catalogs_;
-    Vec<ResolvedPackage>          packages_;
-    CoordinateMap                 coordinates_ { CoordinateMap::make() };
-    StringSet                     active_ { StringSet::make() };
-    Vec<String>                   active_path_;
-    Vec<PackageDependencyKind>    active_kinds_;
-    usize                         jobs_ { usize(1) };
+    PathBuf                                        root_directory_;
+    lito::source::SourceManager                    sources_;
+    Vec<Option<lito::workspace::WorkspaceCatalog>> catalogs_;
+    Vec<ResolvedPackage>                           packages_;
+    CoordinateMap                                  coordinates_ { CoordinateMap::make() };
+    StringSet                                      active_ { StringSet::make() };
+    Vec<String>                                    active_path_;
+    Vec<PackageDependencyKind>                     active_kinds_;
+    usize                                          jobs_ { usize(1) };
 
     auto ensure_catalog_slot(usize source) -> void {
         while (catalogs_.len() <= source) catalogs_.push(None());
     }
 
-    auto store_catalog(usize source, WorkspaceCatalog catalog) -> void {
+    auto store_catalog(usize source, lito::workspace::WorkspaceCatalog catalog) -> void {
         ensure_catalog_slot(source);
         if (catalogs_[source].is_none()) catalogs_[source] = Some(rstd::move(catalog));
     }
 
-    auto catalog(usize source) noexcept -> WorkspaceCatalog& { return *catalogs_[source]; }
-
-    auto catalog(usize source) const noexcept -> const WorkspaceCatalog& {
+    auto catalog(usize source) noexcept -> lito::workspace::WorkspaceCatalog& {
         return *catalogs_[source];
     }
 
-    auto acquire_catalog_root(ref<rstd::path::Path>    root,
-                              Option<WorkspaceCatalog> preloaded          = None(),
-                              const WorkspaceCatalog*  associated_primary = nullptr)
+    auto catalog(usize source) const noexcept -> const lito::workspace::WorkspaceCatalog& {
+        return *catalogs_[source];
+    }
+
+    auto acquire_catalog_root(ref<rstd::path::Path>                     root,
+                              Option<lito::workspace::WorkspaceCatalog> preloaded         = None(),
+                              const lito::workspace::WorkspaceCatalog* associated_primary = nullptr)
         -> PackageResult<usize> {
         auto loaded = preloaded.is_some() ? Ok(rstd::move(preloaded).unwrap())
                                           : load_package_catalog(root, associated_primary);
@@ -212,7 +217,7 @@ class PackageGraphResolver {
         auto catalog = load_package_catalog(root.as_path());
         if (catalog.is_err()) return Err(rstd::move(catalog).unwrap_err());
         auto resolved = sources_.resolved_source(source);
-        if (resolved.kind == PackageSourceKind::Git &&
+        if (resolved.kind == lito::source::PackageSourceKind::Git &&
             ! same_source_root(catalog->root(), root.as_path())) {
             return package_resolution_failure<empty>(
                 rstd::format("Git source manifest root '{}' does not match checkout root '{}'",
@@ -227,10 +232,10 @@ class PackageGraphResolver {
         -> PackageResult<Option<usize>> {
         auto& primary = catalog(primary_source);
         auto  root    = PathBuf::from(primary.root()).join(PathBuf::from(directory).as_path());
-        auto  located = try_locate_manifest(root.as_path());
+        auto  located = lito::manifest::try_locate_manifest(root.as_path());
         if (located.is_err()) {
-            return Err(
-                PackageError::Manifest(ManifestError::Locate(rstd::move(located).unwrap_err())));
+            return Err(PackageError::Manifest(
+                lito::manifest::ManifestError::Locate(rstd::move(located).unwrap_err())));
         }
         if (located->is_none()) return Ok(None());
         const auto& location = **located;
@@ -246,17 +251,19 @@ class PackageGraphResolver {
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
         // Storing the associated catalog can grow `catalogs_` and invalidate `primary`.
         // Resolve it again before validation instead of retaining a reference into the vector.
-        auto validated =
-            validate_associated_catalog(catalog(primary_source), catalog(*source), role);
+        auto validated = lito::workspace::validate_associated_catalog(
+            catalog(primary_source), catalog(*source), role);
         if (validated.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(validated).unwrap_err()));
         }
         return Ok(Some(*source));
     }
 
-    auto acquire_frontier(Vec<PackageSourceFetchRequest> requests) -> PackageResult<Vec<usize>> {
-        auto prepared = Vec<PackageSourceFetchRequest>::with_capacity(requests.len());
-        auto catalogs = Vec<Option<WorkspaceCatalog>>::with_capacity(requests.len());
+    auto acquire_frontier(Vec<lito::source::PackageSourceFetchRequest> requests)
+        -> PackageResult<Vec<usize>> {
+        auto prepared = Vec<lito::source::PackageSourceFetchRequest>::with_capacity(requests.len());
+        auto catalogs =
+            Vec<Option<lito::workspace::WorkspaceCatalog>>::with_capacity(requests.len());
         for (auto& request : requests) {
             if (request.source.is_Git()) {
                 prepared.push(rstd::move(request));
@@ -267,8 +274,8 @@ class PackageGraphResolver {
             auto catalog   = load_package_catalog(requested.as_path());
             if (catalog.is_err()) return Err(rstd::move(catalog).unwrap_err());
             auto root = PathBuf::from(catalog->root());
-            prepared.push(PackageSourceFetchRequest {
-                .source         = PackageSourceRequirement::Path(PathBuf::from("."_str)),
+            prepared.push(lito::source::PackageSourceFetchRequest {
+                .source = lito::source::PackageSourceRequirement::Path(PathBuf::from("."_str)),
                 .declaring_root = rstd::move(root),
             });
             catalogs.push(Some(rstd::move(catalog).unwrap()));
@@ -320,17 +327,17 @@ class PackageGraphResolver {
     }
 
 public:
-    explicit PackageGraphResolver(ref<rstd::path::Path>             root_directory,
-                                  SourceResolutionOptions           options,
-                                  ToolResolver&                     resolver,
-                                  const ResolvedProcessEnvironment& environment,
-                                  usize                             jobs,
-                                  SourceEventSink                   observer)
+    explicit PackageGraphResolver(ref<rstd::path::Path>                 root_directory,
+                                  lito::source::SourceResolutionOptions options,
+                                  ToolResolver&                         resolver,
+                                  const ResolvedProcessEnvironment&     environment,
+                                  usize                                 jobs,
+                                  lito::source::SourceEventSink         observer)
         : root_directory_(PathBuf::from(root_directory)),
           sources_(root_directory, rstd::move(options), resolver, environment, observer),
           jobs_(jobs) {}
 
-    auto acquire_root(ref<rstd::path::Path> root, Option<WorkspaceCatalog> catalog)
+    auto acquire_root(ref<rstd::path::Path> root, Option<lito::workspace::WorkspaceCatalog> catalog)
         -> PackageResult<AcquiredProjectSources> {
         auto primary = acquire_catalog_root(root, rstd::move(catalog));
         if (primary.is_err()) return Err(rstd::move(primary).unwrap_err());
@@ -363,7 +370,9 @@ public:
         return catalog(source).is_workspace();
     }
 
-    auto source_profile(usize source) const -> ProjectProfile { return catalog(source).profile(); }
+    auto source_profile(usize source) const -> lito::manifest::ProjectProfile {
+        return catalog(source).profile();
+    }
 
     auto resolve(usize                 source,
                  ref<str>              expected_name,
@@ -426,17 +435,17 @@ public:
         active_path_.push(loaded.package.name.clone());
         active_kinds_.push(rstd::move(incoming));
 
-        auto fetch_requests = Vec<PackageSourceFetchRequest>::with_capacity(
+        auto fetch_requests = Vec<lito::source::PackageSourceFetchRequest>::with_capacity(
             loaded.package.dependencies.len() + loaded.package.dev_dependencies.len() +
             loaded.package.runtime_dependencies.len());
         const auto append_fetch_requests =
-            [&](const Vec<DeclaredDependency>& declarations) -> void {
+            [&](const Vec<lito::manifest::DeclaredDependency>& declarations) -> void {
             for (const auto& dependency : declarations) {
                 auto declaring_root = loaded.package.root.clone();
                 if (dependency.declaration_root.is_some()) {
                     declaring_root = dependency.declaration_root->clone();
                 }
-                fetch_requests.push(PackageSourceFetchRequest {
+                fetch_requests.push(lito::source::PackageSourceFetchRequest {
                     .source         = clone_dependency_source(dependency.source),
                     .declaring_root = rstd::move(declaring_root),
                 });
@@ -449,7 +458,7 @@ public:
             if (dependency.declaration_root.is_some()) {
                 declaring_root = dependency.declaration_root->clone();
             }
-            fetch_requests.push(PackageSourceFetchRequest {
+            fetch_requests.push(lito::source::PackageSourceFetchRequest {
                 .source         = clone_dependency_source(dependency.source),
                 .declaring_root = rstd::move(declaring_root),
             });
@@ -457,8 +466,8 @@ public:
         auto       fetched_sources = rstd_try(acquire_frontier(rstd::move(fetch_requests)));
         auto       source_offset   = usize {};
         const auto resolve_dependencies =
-            [&](const Vec<DeclaredDependency>& declarations,
-                PackageDependencyKind          kind) -> PackageResult<Vec<ResolvedDependency>> {
+            [&](const Vec<lito::manifest::DeclaredDependency>& declarations,
+                PackageDependencyKind kind) -> PackageResult<Vec<ResolvedDependency>> {
             auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
             for (const auto& dependency : declarations) {
                 auto dependency_name =
@@ -516,11 +525,11 @@ public:
         return Ok(String::make(expected_name));
     }
 
-    auto finish(String                   name,
-                Vec<ResolvedProjectRoot> roots,
-                PathBuf                  manifest_path,
-                bool                     root_is_workspace,
-                ProjectProfile           profile) -> ResolvedPackageGraph {
+    auto finish(String                         name,
+                Vec<ResolvedProjectRoot>       roots,
+                PathBuf                        manifest_path,
+                bool                           root_is_workspace,
+                lito::manifest::ProjectProfile profile) -> ResolvedPackageGraph {
         rstd::slice_::sort_unstable_by(
             packages_.as_mut_slice().as_mut_ref(),
             [](const ResolvedPackage& left, const ResolvedPackage& right) {
@@ -544,19 +553,17 @@ public:
     }
 };
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::package
 {
 
-auto resolve_package_graph_with_environment(ref<rstd::path::Path>             requested_root,
-                                            SourceResolutionOptions           options,
-                                            ToolResolver&                     tool_resolver,
-                                            const ResolvedProcessEnvironment& environment,
-                                            usize                             jobs     = usize(1),
-                                            SourceEventSink                   observer = {},
-                                            Option<WorkspaceCatalog>          catalog  = None())
-    -> PackageResult<ResolvedPackageGraph> {
+auto resolve_package_graph_with_environment(ref<rstd::path::Path>                 requested_root,
+                                            lito::source::SourceResolutionOptions options,
+                                            ToolResolver&                         tool_resolver,
+                                            const ResolvedProcessEnvironment&     environment,
+                                            usize                                 jobs = usize(1),
+                                            lito::source::SourceEventSink         observer = {},
+                                            Option<lito::workspace::WorkspaceCatalog> catalog =
+                                                None()) -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return package_resolution_failure<ResolvedPackageGraph>(
             String::make("source fetch jobs must be greater than zero"_str));
@@ -609,8 +616,8 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>             re
                               rstd::move(profile)));
 }
 
-auto resolve_package_graph(ref<rstd::path::Path>   requested_root,
-                           SourceResolutionOptions options = {})
+auto resolve_package_graph(ref<rstd::path::Path>                 requested_root,
+                           lito::source::SourceResolutionOptions options = {})
     -> PackageResult<ResolvedPackageGraph> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) {
@@ -621,4 +628,4 @@ auto resolve_package_graph(ref<rstd::path::Path>   requested_root,
         requested_root, rstd::move(options), resolver, *environment);
 }
 
-} // namespace lito
+} // namespace lito::package

@@ -13,7 +13,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::config
 {
 
 enum class ConfigLoadMode
@@ -32,17 +32,17 @@ struct DocConfig {
 };
 
 struct ProjectConfig {
-    PathBuf                 root;
-    LockConfig              lock;
-    ProcessEnvironmentSpec  environment;
-    ToolchainSpec           toolchain;
-    StandardLibrary         standard_library { StandardLibrary::Libcxx };
-    Vec<String>             build_options;
-    PackageSourceConfig     sources;
-    PkgConfigProviderConfig pkg_config;
-    CMakeProviderConfig     cmake;
-    InstallConfig           install;
-    DocConfig               doc;
+    PathBuf                                   root;
+    lito::lock::LockConfig                    lock;
+    ProcessEnvironmentSpec                    environment;
+    ToolchainSpec                             toolchain;
+    StandardLibrary                           standard_library { StandardLibrary::Libcxx };
+    Vec<String>                               build_options;
+    lito::source::PackageSourceConfig         sources;
+    lito::dependency::PkgConfigProviderConfig pkg_config;
+    lito::dependency::CMakeProviderConfig     cmake;
+    InstallConfig                             install;
+    DocConfig                                 doc;
 };
 
 struct ProjectConfigRequest {
@@ -52,4 +52,4 @@ struct ProjectConfigRequest {
     Option<String>    toolchain_standard_library;
 };
 
-} // namespace lito
+} // namespace lito::config

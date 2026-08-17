@@ -26,12 +26,12 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
     const auto install = [&](bool isolated) {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
-            .origin               = lito::InstallEntryOrigin::BuildArtifact(lito::PackageTargetId {
+            .origin  = lito::InstallEntryOrigin::BuildArtifact(lito::package::PackageTargetId {
                 .package = String::make("fixture-layout"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("tool"_str),
             }),
-            .payload              = lito::InstallEntryPayload::CopyFile(tool.clone()),
+            .payload = lito::InstallEntryPayload::CopyFile(tool.clone()),
             .relative_destination = PathBuf::from("bin/nested/tool"_str),
         });
         if (isolated) {
@@ -67,7 +67,8 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
     EXPECT_FALSE(metadata->is_symlink());
 
     auto package_id = lito::install_package_id(
-        "fixture-layout"_str, lito::path_source_identity(source_directory.as_path()).as_str());
+        "fixture-layout"_str,
+        lito::source::path_source_identity(source_directory.as_path()).as_str());
     ASSERT_TRUE(package_id.is_ok());
     auto private_root = direct->managed_layout->packages_directory.join(
         PathBuf::from(package_id->as_str()).as_path());
@@ -124,12 +125,12 @@ TEST_F(InstallLayout, PrefixInstallPublishesAnUntrackedLogicalTree) {
     const auto install = [&]() {
         auto entries = Vec<lito::InstallEntry>::make();
         entries.push(lito::InstallEntry {
-            .origin               = lito::InstallEntryOrigin::BuildArtifact(lito::PackageTargetId {
+            .origin  = lito::InstallEntryOrigin::BuildArtifact(lito::package::PackageTargetId {
                 .package = String::make("fixture-prefix"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("tool"_str),
             }),
-            .payload              = lito::InstallEntryPayload::CopyFile(tool.clone()),
+            .payload = lito::InstallEntryPayload::CopyFile(tool.clone()),
             .relative_destination = PathBuf::from("bin/tool"_str),
         });
         entries.push(lito::InstallEntry {
@@ -213,9 +214,9 @@ TEST_F(InstallLayout, ManagedInstallRecoversPreparedTransactionsBeforeCatalogLoa
         auto binaries = Vec<lito::InstallBinary>::make();
         binaries.push(lito::InstallBinary {
             .target =
-                lito::PackageTargetId {
+                lito::package::PackageTargetId {
                     .package = String::make("fixture-recovery"_str),
-                    .kind    = lito::PackageTargetKind::Binary,
+                    .kind    = lito::package::PackageTargetKind::Binary,
                     .name    = String::make("tool"_str),
                 },
             .source = source.clone(),
@@ -272,9 +273,9 @@ TEST_F(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
     auto binaries = Vec<lito::InstallBinary>::make();
     binaries.push(lito::InstallBinary {
         .target =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("fixture-invalid-info"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("tool"_str),
             },
         .source = source.clone(),
@@ -294,9 +295,9 @@ TEST_F(InstallLayout, ManagedCatalogRejectsInvalidPackageInfo) {
     });
     ASSERT_TRUE(installed.is_ok());
     ASSERT_TRUE(installed->managed_layout.is_some());
-    auto package_id =
-        lito::install_package_id("fixture-invalid-info"_str,
-                                 lito::path_source_identity(source_directory.as_path()).as_str());
+    auto package_id = lito::install_package_id(
+        "fixture-invalid-info"_str,
+        lito::source::path_source_identity(source_directory.as_path()).as_str());
     ASSERT_TRUE(package_id.is_ok());
     auto info = installed->managed_layout->packages_directory.join(
         PathBuf::from(rstd::format("{}.info", package_id->as_str())).as_path());

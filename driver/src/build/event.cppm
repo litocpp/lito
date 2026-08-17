@@ -103,8 +103,9 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
 namespace lito
 {
 
-auto source_observer(const BuildEventSink& observer) noexcept -> SourceEventSink;
-auto source_observer(const Option<BuildEventSink>& observer) noexcept -> SourceEventSink;
+auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::SourceEventSink;
+auto source_observer(const Option<BuildEventSink>& observer) noexcept
+    -> lito::source::SourceEventSink;
 auto cmake_observer(const Option<BuildEventSink>& observer) noexcept -> Option<ToolchainEventSink>;
 auto emit_build_toolchain(const Option<BuildEventSink>& observer,
                           const ClangToolchain&         toolchain) noexcept -> void;

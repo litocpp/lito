@@ -10,25 +10,25 @@ export namespace lito
 {
 
 struct PackageInstallTarget {
-    PackageTargetId target;
-    String          artifact_name;
+    lito::package::PackageTargetId target;
+    String                         artifact_name;
 };
 
 struct PackageInstallInput {
-    String                        name;
-    String                        version;
-    PathBuf                       root;
-    PathBuf                       manifest_path;
-    Option<PathBuf>               script;
-    Vec<PackageInstallTarget>     binaries;
-    ResolvedPackageSource         source;
-    Vec<InstallRuntimeDependency> runtime_dependencies;
-    bool                          direct { false };
+    String                              name;
+    String                              version;
+    PathBuf                             root;
+    PathBuf                             manifest_path;
+    Option<PathBuf>                     script;
+    Vec<PackageInstallTarget>           binaries;
+    lito::source::ResolvedPackageSource source;
+    Vec<InstallRuntimeDependency>       runtime_dependencies;
+    bool                                direct { false };
 };
 
 struct InstallArtifactRecipe {
-    PackageTargetId target;
-    PathBuf         destination;
+    lito::package::PackageTargetId target;
+    PathBuf                        destination;
 };
 
 struct InstallExternalAssetRecipe {
@@ -54,20 +54,20 @@ struct InstallInventoryRecipe {
 };
 
 struct InstallRecipe {
-    String                          owner;
-    String                          version;
-    PathBuf                         root;
-    Vec<InstallArtifactRecipe>      artifacts;
-    Vec<InstallExternalAssetRecipe> external_assets;
-    Vec<InstallFileRecipe>          files;
-    Vec<InstallTemplateRecipe>      templates;
-    Vec<InstallInventoryRecipe>     inventories;
-    ResolvedPackageSource           source;
-    Vec<InstallRuntimeDependency>   runtime_dependencies;
+    String                              owner;
+    String                              version;
+    PathBuf                             root;
+    Vec<InstallArtifactRecipe>          artifacts;
+    Vec<InstallExternalAssetRecipe>     external_assets;
+    Vec<InstallFileRecipe>              files;
+    Vec<InstallTemplateRecipe>          templates;
+    Vec<InstallInventoryRecipe>         inventories;
+    lito::source::ResolvedPackageSource source;
+    Vec<InstallRuntimeDependency>       runtime_dependencies;
 };
 
 struct InstallBuildRequirements {
-    Vec<PackageTargetId> targets;
+    Vec<lito::package::PackageTargetId> targets;
 };
 
 struct InstallScriptContext {

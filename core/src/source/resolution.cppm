@@ -6,7 +6,7 @@ import :source.config;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::source
 {
 
 struct SourceResolutionOptions {
@@ -37,4 +37,4 @@ struct SourceResolutionOptions {
     }
 };
 
-} // namespace lito
+} // namespace lito::source

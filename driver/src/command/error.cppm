@@ -22,7 +22,7 @@ export namespace lito
 class CommandError {
     RSTD_ENUM(CommandError,
               (Project, (ProjectError source;)),
-              (Package, (PackageError source;)),
+              (Package, (lito::package::PackageError source;)),
               (Build, (BuildError source;)),
               (System, (SystemError source;)),
               (Toolchain, (ToolchainError source;)),
@@ -47,8 +47,8 @@ struct Impl<convert::From<lito::ProjectError>, lito::CommandError> {
 };
 
 template<>
-struct Impl<convert::From<lito::PackageError>, lito::CommandError> {
-    static auto from(lito::PackageError error) -> lito::CommandError {
+struct Impl<convert::From<lito::package::PackageError>, lito::CommandError> {
+    static auto from(lito::package::PackageError error) -> lito::CommandError {
         return lito::CommandError::Package(rstd::move(error));
     }
 };

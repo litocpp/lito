@@ -12,8 +12,9 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 using IndexMap = rstd::collections::BTreeMap<String, usize>;
+using namespace lito;
 
-export namespace lito
+export namespace lito::package
 {
 
 struct RuntimePackageEdge {
@@ -27,10 +28,9 @@ struct RuntimePackageClosure {
     Vec<RuntimePackageEdge> edges;
 };
 
-} // namespace lito
+} // namespace lito::package
 
-namespace lito
-{
+using namespace lito::package;
 
 template<typename T>
 auto runtime_failure(String message) -> PackageResult<T> {
@@ -106,9 +106,7 @@ private:
     Vec<String>                 active_;
 };
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::package
 {
 
 auto resolve_runtime_package_closure(const ResolvedPackageGraph& graph,
@@ -118,4 +116,4 @@ auto resolve_runtime_package_closure(const ResolvedPackageGraph& graph,
     return RuntimeClosureResolver(graph, target).resolve(direct_packages);
 }
 
-} // namespace lito
+} // namespace lito::package

@@ -12,12 +12,12 @@ using namespace rstd::prelude;
 
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::package
 {
 
 class PackageSelectionError {
     RSTD_ENUM(PackageSelectionError,
-              (Workspace, (WorkspaceError source;)),
+              (Workspace, (lito::workspace::WorkspaceError source;)),
               (Package, (PackageError source;)),
               (System, (SystemError source;)),
               (Message, (String message;)))
@@ -26,34 +26,36 @@ class PackageSelectionError {
 template<typename T>
 using PackageSelectionResult = Result<T, PackageSelectionError>;
 
-} // namespace lito
+} // namespace lito::package
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::WorkspaceError>, lito::PackageSelectionError> {
-    static auto from(lito::WorkspaceError error) -> lito::PackageSelectionError {
-        return lito::PackageSelectionError::Workspace(rstd::move(error));
+struct Impl<convert::From<lito::workspace::WorkspaceError>, lito::package::PackageSelectionError> {
+    static auto from(lito::workspace::WorkspaceError error)
+        -> lito::package::PackageSelectionError {
+        return lito::package::PackageSelectionError::Workspace(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::PackageError>, lito::PackageSelectionError> {
-    static auto from(lito::PackageError error) -> lito::PackageSelectionError {
-        return lito::PackageSelectionError::Package(rstd::move(error));
+struct Impl<convert::From<lito::package::PackageError>, lito::package::PackageSelectionError> {
+    static auto from(lito::package::PackageError error) -> lito::package::PackageSelectionError {
+        return lito::package::PackageSelectionError::Package(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::system::SystemError>, lito::PackageSelectionError> {
-    static auto from(lito::system::SystemError error) -> lito::PackageSelectionError {
-        return lito::PackageSelectionError::System(rstd::move(error));
+struct Impl<convert::From<lito::system::SystemError>, lito::package::PackageSelectionError> {
+    static auto from(lito::system::SystemError error) -> lito::package::PackageSelectionError {
+        return lito::package::PackageSelectionError::System(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::PackageSelectionError> : ImplBase<lito::PackageSelectionError> {
+struct Impl<fmt::Display, lito::package::PackageSelectionError>
+    : ImplBase<lito::package::PackageSelectionError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Workspace()) {
@@ -73,14 +75,16 @@ struct Impl<fmt::Display, lito::PackageSelectionError> : ImplBase<lito::PackageS
 };
 
 template<>
-struct Impl<fmt::Debug, lito::PackageSelectionError> : ImplBase<lito::PackageSelectionError> {
+struct Impl<fmt::Debug, lito::package::PackageSelectionError>
+    : ImplBase<lito::package::PackageSelectionError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::PackageSelectionError> : ImplBase<lito::PackageSelectionError> {
+struct Impl<error::Error, lito::package::PackageSelectionError>
+    : ImplBase<lito::package::PackageSelectionError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Workspace()) {

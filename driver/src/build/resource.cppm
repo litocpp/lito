@@ -93,8 +93,8 @@ auto resource_identity(ref<rstd::path::Path> root, const Vec<PathBuf>& files)
     return Ok(rstd::crypto::sha256_hex(rstd::move(state).finalize()));
 }
 
-auto selected_resource_target(const Vec<PackageTargetId>& selected,
-                              const PackageTargetId&      target) noexcept -> bool {
+auto selected_resource_target(const Vec<lito::package::PackageTargetId>& selected,
+                              const lito::package::PackageTargetId&      target) noexcept -> bool {
     for (const auto& candidate : selected) {
         if (candidate == target) return true;
     }
@@ -128,10 +128,10 @@ auto runtime_resource_directory_identity(ref<rstd::path::Path> root) -> BuildScr
     return resource_identity(root, files);
 }
 
-auto resolve_runtime_resources(const cpp::PackageMetadata&   metadata,
-                               const BuildLayout&            layout,
-                               const Vec<PackageTargetId>&   selected,
-                               const Option<BuildEventSink>& observer)
+auto resolve_runtime_resources(const cpp::PackageMetadata&                metadata,
+                               const BuildLayout&                         layout,
+                               const Vec<lito::package::PackageTargetId>& selected,
+                               const Option<BuildEventSink>&              observer)
     -> BuildScriptResult<Vec<BuiltRuntimeResource>> {
     auto result = Vec<BuiltRuntimeResource>::make();
     for (const auto& target : metadata.targets) {

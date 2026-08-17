@@ -26,9 +26,7 @@ using Map          = rstd::json::Map;
 using Array        = rstd::json::Array;
 using StringSet    = rstd::collections::BTreeMap<String, empty>;
 using KeyPredicate = bool (*)(ref<str>);
-
-namespace lito
-{
+using namespace lito::lock;
 
 template<typename T>
 auto lock_failure(String message) -> LockResult<T> {
@@ -66,16 +64,17 @@ auto string_json(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto reference_json(const GitReference& value) -> Json {
+auto reference_json(const lito::source::GitReference& value) -> Json {
     auto reference = Map::make();
-    reference.insert(String::make("kind"_str), string_json(git_reference_kind_name(value.kind)));
+    reference.insert(String::make("kind"_str),
+                     string_json(lito::source::git_reference_kind_name(value.kind)));
     reference.insert(String::make("value"_str), string_json(value.value.as_str()));
     return Json::Object(rstd::move(reference));
 }
 
-auto package_source_json(const ResolvedPackageSource& source) -> LockResult<Json> {
+auto package_source_json(const lito::source::ResolvedPackageSource& source) -> LockResult<Json> {
     auto item = Map::make();
-    if (source.kind == PackageSourceKind::Path) {
+    if (source.kind == lito::source::PackageSourceKind::Path) {
         auto path = rstd_try(path_string(source.path.as_path()));
         item.insert(String::make("kind"_str), string_json("path"_str));
         item.insert(String::make("path"_str), string_json(path.as_str()));
@@ -88,7 +87,8 @@ auto package_source_json(const ResolvedPackageSource& source) -> LockResult<Json
     return Ok(Json::Object(rstd::move(item)));
 }
 
-auto external_source_json(const ResolvedExternalSource& source) -> LockResult<Json> {
+auto external_source_json(const lito::dependency::ResolvedExternalSource& source)
+    -> LockResult<Json> {
     auto item = Map::make();
     if (source.is_Path()) {
         auto path = rstd_try(path_string(source.as_Path().path.as_path()));
@@ -111,7 +111,8 @@ auto external_source_json(const ResolvedExternalSource& source) -> LockResult<Js
     return Ok(Json::Object(rstd::move(item)));
 }
 
-auto build_tool_metadata_json(const ResolvedBuildToolSourceMetadata& metadata) -> LockResult<Json> {
+auto build_tool_metadata_json(const lito::dependency::ResolvedBuildToolSourceMetadata& metadata)
+    -> LockResult<Json> {
     auto executable = rstd_try(path_string(metadata.executable.as_path()));
     auto item       = Map::make();
     item.insert(String::make("executable"_str), string_json(executable.as_str()));
@@ -123,7 +124,7 @@ auto build_tool_metadata_json(const ResolvedBuildToolSourceMetadata& metadata) -
     return Ok(Json::Object(rstd::move(item)));
 }
 
-auto external_order_key(const ResolvedExternalSourceRecord& external) -> String {
+auto external_order_key(const lito::dependency::ResolvedExternalSourceRecord& external) -> String {
     auto architectures = Vec<String>::with_capacity(external.architectures.len());
     for (const auto& architecture : external.architectures) {
         architectures.push(architecture.name.clone());
@@ -140,7 +141,7 @@ auto external_order_key(const ResolvedExternalSourceRecord& external) -> String 
     return key;
 }
 
-auto graph_json(const ResolvedPackageGraph& graph) -> LockResult<Json> {
+auto graph_json(const lito::package::ResolvedPackageGraph& graph) -> LockResult<Json> {
     auto package_indices = Vec<usize>::with_capacity(graph.packages.len());
     for (usize index {}; index < graph.packages.len(); ++index) package_indices.push(usize(index));
     rstd::slice_::sort_unstable_by(
@@ -395,7 +396,7 @@ auto validate_source(const Json& value, ref<str> context, bool external_source)
         if (! valid_fetch_url(url)) {
             return lock_failure<empty>(rstd::format("{}.url must not be empty", context));
         }
-        if (! git_commit_is_valid(commit)) {
+        if (! lito::source::git_commit_is_valid(commit)) {
             return lock_failure<empty>(
                 rstd::format("{}.commit must be a full hexadecimal object id", context));
         }
@@ -452,7 +453,7 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
             rstd_try(required_member(package, "dependencies"_str, "lock package"_str));
         auto runtime_dependencies =
             rstd_try(required_member(package, "runtime-dependencies"_str, "lock package"_str));
-        if (! valid_package_name(name)) {
+        if (! lito::manifest::valid_package_name(name)) {
             return lock_failure<empty>(rstd::format("lock package name '{}' is invalid", name));
         }
         if (names.contains_key(name)) {
@@ -479,7 +480,8 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
         auto dependency_names = StringSet::make();
         for (const auto& dependency : **dependency_array) {
             auto dependency_name = dependency.as_str();
-            if (dependency_name.is_none() || ! valid_package_name(*dependency_name)) {
+            if (dependency_name.is_none() ||
+                ! lito::manifest::valid_package_name(*dependency_name)) {
                 return lock_failure<empty>("lock dependency name must be a valid package name"_str);
             }
             if (dependency_names.contains_key(*dependency_name)) {
@@ -495,7 +497,8 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
         auto runtime_dependency_names = StringSet::make();
         for (const auto& dependency : **runtime_dependency_array) {
             auto dependency_name = dependency.as_str();
-            if (dependency_name.is_none() || ! valid_package_name(*dependency_name)) {
+            if (dependency_name.is_none() ||
+                ! lito::manifest::valid_package_name(*dependency_name)) {
                 return lock_failure<empty>(
                     "lock runtime dependency name must be a valid package name"_str);
             }
@@ -651,14 +654,14 @@ auto load_existing(ref<rstd::path::Path> path) -> LockResult<Option<Json>> {
     return Ok(Some(rstd::move(document)));
 }
 
-auto parse_reference(const Json& value) -> GitReference {
+auto parse_reference(const Json& value) -> lito::source::GitReference {
     auto kind   = *(**value.get("kind"_str)).as_str();
-    auto parsed = GitReferenceKind::DefaultBranch;
-    if (kind == "branch"_str) parsed = GitReferenceKind::Branch;
-    if (kind == "tag"_str) parsed = GitReferenceKind::Tag;
-    if (kind == "rev"_str) parsed = GitReferenceKind::Rev;
-    if (kind == "commit"_str) parsed = GitReferenceKind::Commit;
-    return GitReference {
+    auto parsed = lito::source::GitReferenceKind::DefaultBranch;
+    if (kind == "branch"_str) parsed = lito::source::GitReferenceKind::Branch;
+    if (kind == "tag"_str) parsed = lito::source::GitReferenceKind::Tag;
+    if (kind == "rev"_str) parsed = lito::source::GitReferenceKind::Rev;
+    if (kind == "commit"_str) parsed = lito::source::GitReferenceKind::Commit;
+    return lito::source::GitReference {
         .kind  = parsed,
         .value = String::make(*(**value.get("value"_str)).as_str()),
     };
@@ -752,12 +755,13 @@ auto parse_locked_project(const Json& document) -> LockedProject {
     return result;
 }
 
-auto append_git_pin(SourceResolutionOptions& options,
-                    ref<str>                 url,
-                    const GitReference&      reference,
-                    ref<str>                 commit) -> LockResult<empty> {
+auto append_git_pin(lito::source::SourceResolutionOptions& options,
+                    ref<str>                               url,
+                    const lito::source::GitReference&      reference,
+                    ref<str>                               commit) -> LockResult<empty> {
     for (const auto& existing : options.git_sources) {
-        if (existing.git.as_str() != url || ! git_references_equal(existing.reference, reference)) {
+        if (existing.git.as_str() != url ||
+            ! lito::source::git_references_equal(existing.reference, reference)) {
             continue;
         }
         if (existing.commit.as_str() != commit) {
@@ -770,10 +774,10 @@ auto append_git_pin(SourceResolutionOptions& options,
         }
         return Ok(empty {});
     }
-    options.git_sources.push(GitSourcePin {
+    options.git_sources.push(lito::source::GitSourcePin {
         .git = String::make(url),
         .reference =
-            GitReference {
+            lito::source::GitReference {
                 .kind  = reference.kind,
                 .value = reference.value.clone(),
             },
@@ -782,8 +786,8 @@ auto append_git_pin(SourceResolutionOptions& options,
     return Ok(empty {});
 }
 
-auto append_project_pins(SourceResolutionOptions& options, const LockedProject& project)
-    -> LockResult<empty> {
+auto append_project_pins(lito::source::SourceResolutionOptions& options,
+                         const LockedProject&                   project) -> LockResult<empty> {
     for (const auto& package : project.packages) {
         if (! package.source.is_Git()) continue;
         rstd_try(append_git_pin(options,
@@ -814,12 +818,7 @@ auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> LockR
     return Ok(empty {});
 }
 
-} // namespace lito
-
-namespace lito
-{
-
-auto load_locked_project(ref<rstd::path::Path> root, const LockConfig& config)
+auto lito::lock::load_locked_project(ref<rstd::path::Path> root, const LockConfig& config)
     -> LockResult<LockedProject> {
     auto destination = lock_path(root, config);
     auto loaded      = rstd_try(load_existing(destination.as_path()));
@@ -830,11 +829,11 @@ auto load_locked_project(ref<rstd::path::Path> root, const LockConfig& config)
     return Ok(parse_locked_project(*loaded));
 }
 
-auto load_lock_session(ref<rstd::path::Path> root,
-                       const LockConfig&     config,
-                       bool                  locked,
-                       GitResolutionMode     git) -> LockResult<LockSession> {
-    if (locked && git == GitResolutionMode::Refresh) {
+auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
+                                   const LockConfig&               config,
+                                   bool                            locked,
+                                   lito::source::GitResolutionMode git) -> LockResult<LockSession> {
+    if (locked && git == lito::source::GitResolutionMode::Refresh) {
         return lock_failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
     auto destination = lock_path(root, config);
@@ -849,11 +848,11 @@ auto load_lock_session(ref<rstd::path::Path> root,
         auto session         = LockSession {};
         session.root_        = PathBuf::from(root);
         session.destination_ = rstd::move(destination);
-        session.options_     = SourceResolutionOptions { .locked = locked, .git = git };
+        session.options_ = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
         return Ok(rstd::move(session));
     }
 
-    auto options = SourceResolutionOptions { .locked = locked, .git = git };
+    auto options = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
     auto project = Some(parse_locked_project(*existing));
     rstd_try(append_project_pins(options, *project));
     auto session         = LockSession {};
@@ -866,12 +865,14 @@ auto load_lock_session(ref<rstd::path::Path> root,
     return Ok(rstd::move(session));
 }
 
-auto load_lock_session(ref<rstd::path::Path> root, bool locked, GitResolutionMode git)
-    -> LockResult<LockSession> {
+auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
+                                   bool                            locked,
+                                   lito::source::GitResolutionMode git) -> LockResult<LockSession> {
     return load_lock_session(root, LockConfig {}, locked, git);
 }
 
-auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockResult<LockStatus> {
+auto lito::lock::sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
+    -> LockResult<LockStatus> {
     auto desired_result = graph_json(graph);
     if (desired_result.is_err()) return Err(rstd::move(desired_result).unwrap_err());
     auto desired = rstd::move(desired_result).unwrap();
@@ -894,5 +895,3 @@ auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockRe
     if (written.is_err()) return Err(rstd::move(written).unwrap_err());
     return Ok(LockStatus::Updated);
 }
-
-} // namespace lito

@@ -95,10 +95,12 @@ auto cpp_link_requirements_identity(const CppLinkRequirements& requirements) -> 
 }
 
 struct ResolvedExternalTargetUsage {
-    String               name;
-    DependencyVisibility visibility { DependencyVisibility::Private };
-    CppArgumentLayer     compile_arguments;
-    String               identity;
+    String                                 name;
+    lito::dependency::DependencyVisibility visibility {
+        lito::dependency::DependencyVisibility::Private
+    };
+    CppArgumentLayer compile_arguments;
+    String           identity;
 
     auto clone() const -> ResolvedExternalTargetUsage {
         return ResolvedExternalTargetUsage {
@@ -135,15 +137,15 @@ struct ResolvedExternalDependency {
 };
 
 struct UsageRequirements {
-    Vec<PathBuf>                     public_include_directories;
-    Vec<PathBuf>                     private_include_directories;
-    Vec<String>                      public_definitions;
-    Vec<String>                      private_definitions;
-    CppArgumentLayer                 arguments;
-    CppArgumentLayer                 interface_arguments;
-    CppLinkRequirements              link_requirements;
-    Vec<String>                      linker_options;
-    Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
+    Vec<PathBuf>                                       public_include_directories;
+    Vec<PathBuf>                                       private_include_directories;
+    Vec<String>                                        public_definitions;
+    Vec<String>                                        private_definitions;
+    CppArgumentLayer                                   arguments;
+    CppArgumentLayer                                   interface_arguments;
+    CppLinkRequirements                                link_requirements;
+    Vec<String>                                        linker_options;
+    Vec<lito::dependency::IncludeDirectoryRequirement> private_include_directory_requirements;
 };
 
 } // namespace lito::cpp

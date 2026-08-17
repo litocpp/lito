@@ -17,7 +17,7 @@ export namespace lito
 
 class HostBuildToolError {
     RSTD_ENUM(HostBuildToolError,
-              (Source, (SourceError source;)),
+              (Source, (lito::source::SourceError source;)),
               (System, (SystemError source;)),
               (DuplicateAlias, (String alias;)),
               (UnsupportedHost, (String alias; String os; String architecture;)),
@@ -34,8 +34,8 @@ export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::SourceError>, lito::HostBuildToolError> {
-    static auto from(lito::SourceError error) -> lito::HostBuildToolError {
+struct Impl<convert::From<lito::source::SourceError>, lito::HostBuildToolError> {
+    static auto from(lito::source::SourceError error) -> lito::HostBuildToolError {
         return lito::HostBuildToolError::Source(rstd::move(error));
     }
 };

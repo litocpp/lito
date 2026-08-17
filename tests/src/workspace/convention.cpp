@@ -15,7 +15,7 @@ using namespace rstd::literals;
 using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
-auto associated_workspace_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto associated_workspace_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([workspace]
 name = "fixture-associated-workspace"
@@ -81,7 +81,7 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto benchmark_only_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto benchmark_only_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str,
           "[package]\nname = \"fixture-conventional-benchmark-only\"\nversion = \"0.1.0\"\n"_str },
@@ -90,7 +90,7 @@ auto benchmark_only_tree() -> lito::SourceTreeResult<lito::SourceTree> {
     return source_tree(files);
 }
 
-auto associated_package_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto associated_package_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([package]
 name = "fixture-conventional-library"
@@ -133,7 +133,7 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto associated_test_workspace_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto associated_test_workspace_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([workspace]
 name = "fixture-conventional-workspace"
@@ -182,7 +182,7 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto dependency_boundary_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto dependency_boundary_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "root/lito.toml"_str, R"([package]
 name = "fixture-conventional-boundary-root"
@@ -223,14 +223,14 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritan
     ASSERT_TRUE(tree.is_ok());
     auto project = materialize("associated-workspace"_str, *tree);
     ASSERT_TRUE(project.is_ok());
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
 
     auto associated = false;
     for (const auto& project_root : graph->roots) {
         if (project_root.name.as_str() != "fixture-associated-workspace-test"_str) continue;
         associated = true;
-        EXPECT_EQ(project_root.role, lito::ProjectRootRole::AssociatedTest);
+        EXPECT_EQ(project_root.role, lito::package::ProjectRootRole::AssociatedTest);
         EXPECT_EQ(project_root.source_identity.as_str(), "path+tests"_str);
     }
     EXPECT_TRUE(associated);
@@ -238,7 +238,7 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritan
     for (const auto& package : graph->packages) {
         if (package.manifest.name.as_str() != "fixture-associated-workspace-test"_str) continue;
         EXPECT_TRUE(package.manifest.workspace_dependencies.is_empty());
-        EXPECT_EQ(package.manifest.version.source, lito::PackageVersionSource::Workspace);
+        EXPECT_EQ(package.manifest.version.source, lito::manifest::PackageVersionSource::Workspace);
         ASSERT_TRUE(package.manifest.version.value.is_some());
         EXPECT_EQ(package.manifest.version.value->as_str(), "0.1.0"_str);
         EXPECT_EQ(package.dependencies.len(), usize(1));
@@ -251,7 +251,7 @@ TEST_F(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies)
     auto project = materialize("associated-workspace"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph     = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
 
     auto library_found = false;
@@ -279,38 +279,39 @@ TEST_F(WorkspaceConvention, WorkspaceBenchmarkTargetsUseDevelopmentDependencies)
     }
     EXPECT_TRUE(library_found);
 
-    auto production =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Production);
+    auto production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Production);
     ASSERT_TRUE(production.is_ok());
     EXPECT_TRUE(
         contains_name(production->selected_root_names, "fixture-associated-workspace-library"_str));
     EXPECT_FALSE(contains_name(production->selected_package_names,
                                "fixture-associated-workspace-bench-helper"_str));
 
-    auto tests = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
+    auto tests = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     EXPECT_TRUE(contains_name(tests->selected_root_names, "fixture-associated-workspace-test"_str));
     EXPECT_FALSE(contains_name(tests->selected_package_names,
                                "fixture-associated-workspace-bench-helper"_str));
 
-    auto benchmark =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Benchmark);
+    auto benchmark = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Benchmark);
     ASSERT_TRUE(benchmark.is_ok());
     EXPECT_TRUE(
         contains_name(benchmark->selected_root_names, "fixture-associated-workspace-library"_str));
     EXPECT_TRUE(contains_name(benchmark->selected_package_names,
                               "fixture-associated-workspace-bench-helper"_str));
 
-    auto standalone = lito::resolve_package_graph(
+    auto standalone = lito::package::resolve_package_graph(
         directory.join(PathBuf::from("benches"_str).as_path()).as_path());
     ASSERT_TRUE(standalone.is_ok());
     ASSERT_EQ(standalone->roots.len(), usize(1));
     EXPECT_EQ(standalone->roots[usize {}].name.as_str(),
               "fixture-associated-workspace-benchmark"_str);
-    EXPECT_EQ(standalone->roots[usize {}].role, lito::ProjectRootRole::PrimaryPackage);
+    EXPECT_EQ(standalone->roots[usize {}].role, lito::package::ProjectRootRole::PrimaryPackage);
 }
 
 TEST_F(WorkspaceConvention, PackageOnlyManifestDiscoversConventionalBenchmark) {
@@ -319,22 +320,22 @@ TEST_F(WorkspaceConvention, PackageOnlyManifestDiscoversConventionalBenchmark) {
     auto project = materialize("benchmark-only"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto package   = lito::load_package_manifest(directory.as_path());
+    auto package   = lito::manifest::load_package_manifest(directory.as_path());
     ASSERT_TRUE(package.is_ok());
     ASSERT_EQ(package->targets.len(), usize(1));
     ASSERT_TRUE(package->targets[usize {}].is_Benchmark());
     EXPECT_EQ(package->targets[usize {}].as_Benchmark().name.as_str(), "only"_str);
 
-    auto benchmark =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Benchmark);
+    auto benchmark = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Benchmark);
     ASSERT_TRUE(benchmark.is_ok());
     ASSERT_EQ(benchmark->selected_targets.len(), usize(1));
     EXPECT_EQ(benchmark->selected_targets[usize {}].name.as_str(), "only"_str);
 
-    auto production =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Production);
+    auto production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Production);
     EXPECT_TRUE(production.is_err());
 }
 
@@ -344,24 +345,25 @@ TEST_F(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
     auto project = materialize("associated-package"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph     = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(2));
     auto primary = project_root_role(*graph, "fixture-conventional-library"_str);
     auto test    = project_root_role(*graph, "fixture-conventional-test"_str);
     ASSERT_TRUE(primary.is_some());
     ASSERT_TRUE(test.is_some());
-    EXPECT_EQ(*primary, lito::ProjectRootRole::PrimaryPackage);
-    EXPECT_EQ(*test, lito::ProjectRootRole::AssociatedTest);
+    EXPECT_EQ(*primary, lito::package::ProjectRootRole::PrimaryPackage);
+    EXPECT_EQ(*test, lito::package::ProjectRootRole::AssociatedTest);
     for (const auto& package : graph->packages) {
         if (package.manifest.name.as_str() != "fixture-conventional-test"_str) continue;
-        EXPECT_EQ(package.manifest.version.source, lito::PackageVersionSource::Unspecified);
+        EXPECT_EQ(package.manifest.version.source,
+                  lito::manifest::PackageVersionSource::Unspecified);
         EXPECT_TRUE(package.manifest.version.value.is_none());
     }
 
-    auto production =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Production);
+    auto production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Production);
     ASSERT_TRUE(production.is_ok());
     ASSERT_EQ(production->selected_root_names.len(), usize(1));
     EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
@@ -369,9 +371,9 @@ TEST_F(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
     EXPECT_FALSE(
         contains_name(production->selected_package_names, "fixture-conventional-bench-helper"_str));
 
-    auto benchmarks =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Benchmark);
+    auto benchmarks = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Benchmark);
     ASSERT_TRUE(benchmarks.is_ok());
     EXPECT_TRUE(contains_name(benchmarks->selected_root_names, "fixture-conventional-library"_str));
     EXPECT_TRUE(
@@ -388,37 +390,38 @@ TEST_F(WorkspaceConvention, SinglePackageDiscoversAssociatedTestPackage) {
     }
     EXPECT_EQ(multi_source_count, usize(2));
 
-    auto tests = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
+    auto tests = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     ASSERT_EQ(tests->selected_root_names.len(), usize(1));
     EXPECT_EQ(tests->selected_root_names[usize {}].as_str(), "fixture-conventional-test"_str);
     EXPECT_TRUE(contains_name(tests->selected_package_names, "fixture-conventional-library"_str));
 
-    auto selected = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-conventional-test"_str),
         },
-        lito::PackageSelectionPurpose::Test);
+        lito::package::PackageSelectionPurpose::Test);
     ASSERT_TRUE(selected.is_ok());
     ASSERT_EQ(selected->selected_root_names.len(), usize(1));
 
-    auto selected_primary = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto selected_primary = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-conventional-library"_str),
         },
-        lito::PackageSelectionPurpose::Production);
+        lito::package::PackageSelectionPurpose::Production);
     ASSERT_TRUE(selected_primary.is_ok());
     ASSERT_EQ(selected_primary->selected_root_names.len(), usize(1));
 
-    auto test_as_production = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto test_as_production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-conventional-test"_str),
         },
-        lito::PackageSelectionPurpose::Production);
+        lito::package::PackageSelectionPurpose::Production);
     EXPECT_TRUE(test_as_production.is_err());
 }
 
@@ -428,7 +431,7 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
     auto project = materialize("associated-test-workspace"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph     = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(3));
     auto library = project_root_role(*graph, "fixture-conventional-workspace-library"_str);
@@ -437,20 +440,21 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestWorkspace) {
     ASSERT_TRUE(library.is_some());
     ASSERT_TRUE(runtime.is_some());
     ASSERT_TRUE(compile.is_some());
-    EXPECT_EQ(*library, lito::ProjectRootRole::WorkspaceMember);
-    EXPECT_EQ(*runtime, lito::ProjectRootRole::AssociatedTest);
-    EXPECT_EQ(*compile, lito::ProjectRootRole::AssociatedTest);
+    EXPECT_EQ(*library, lito::package::ProjectRootRole::WorkspaceMember);
+    EXPECT_EQ(*runtime, lito::package::ProjectRootRole::AssociatedTest);
+    EXPECT_EQ(*compile, lito::package::ProjectRootRole::AssociatedTest);
 
-    auto production =
-        lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                        lito::PackageSelectionPurpose::Production);
+    auto production = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Production);
     ASSERT_TRUE(production.is_ok());
     ASSERT_EQ(production->selected_root_names.len(), usize(1));
     EXPECT_EQ(production->selected_root_names[usize {}].as_str(),
               "fixture-conventional-workspace-library"_str);
 
-    auto tests = lito::resolve_package_selection(
-        lito::PackageSelection { .root = directory.clone() }, lito::PackageSelectionPurpose::Test);
+    auto tests = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Test);
     ASSERT_TRUE(tests.is_ok());
     EXPECT_EQ(tests->selected_root_names.len(), usize(2));
     EXPECT_TRUE(
@@ -467,7 +471,7 @@ TEST_F(WorkspaceConvention, DependencyTestsAreNotAssociatedWithTheRootProject) {
     auto project = materialize("dependency-boundary"_str, *tree);
     ASSERT_TRUE(project.is_ok());
     auto root  = project->root.join(PathBuf::from("root"_str).as_path());
-    auto graph = lito::resolve_package_graph(root.as_path());
+    auto graph = lito::package::resolve_package_graph(root.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->roots.len(), usize(1));
     EXPECT_EQ(graph->roots[usize {}].name.as_str(), "fixture-conventional-boundary-root"_str);

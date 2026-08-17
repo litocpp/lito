@@ -60,8 +60,9 @@ auto selected_package(const BuildSummary& summary, ref<str> name)
     return None();
 }
 
-auto selected_library_target(const BuildSummary& summary, const PackageTargetId& target) -> bool {
-    if (target.kind != PackageTargetKind::Library) return false;
+auto selected_library_target(const BuildSummary&                   summary,
+                             const lito::package::PackageTargetId& target) -> bool {
+    if (target.kind != lito::package::PackageTargetKind::Library) return false;
     for (const auto& selected : summary.selected_targets) {
         if (selected == target) return true;
     }
@@ -192,7 +193,7 @@ auto request_identity(const DocumentationBuildUnit&       unit,
                       const ResolvedDocTool&              tool) -> String {
     auto value = rstd::format("lito-doc-extract-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                               package.source_identity.as_str(),
-                              package_target_id_text(unit.target).as_str(),
+                              lito::package::package_target_id_text(unit.target).as_str(),
                               unit.source_identity.as_str(),
                               unit.invocation.identity.as_str(),
                               tool.build_identity.as_str(),
@@ -523,7 +524,7 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
         plans.push(DocUnitPlan {
             .unit       = index,
             .request_id = rstd::move(request_id),
-            .target     = package_target_id_text(unit.target),
+            .target     = lito::package::package_target_id_text(unit.target),
             .request    = rstd::move(request_path),
             .response   = rstd::move(response_path),
         });

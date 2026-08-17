@@ -17,7 +17,7 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::source
 {
 
 auto path_source_identity(ref<rstd::path::Path> path) -> String {
@@ -58,10 +58,9 @@ struct ExternalSourceFetchOutcome {
     Vec<ResolvedPackageSource> sources;
 };
 
-} // namespace lito
+} // namespace lito::source
 
-namespace lito
-{
+using namespace lito::source;
 
 auto process_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> SourceResult<empty> {
     auto text = path.to_str();
@@ -536,9 +535,7 @@ struct MaterializedArchiveTask {
     AcquiredSource source;
 };
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::source
 {
 
 auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
@@ -638,4 +635,4 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     return Ok(rstd::move(result));
 }
 
-} // namespace lito
+} // namespace lito::source

@@ -18,10 +18,10 @@ export namespace lito
 {
 
 struct BenchEvent {
-    const PackageTargetId& target;
-    ref<rstd::path::Path>  executable;
-    ref<rstd::path::Path>  working_directory;
-    slice<String>          arguments;
+    const lito::package::PackageTargetId& target;
+    ref<rstd::path::Path>                 executable;
+    ref<rstd::path::Path>                 working_directory;
+    slice<String>                         arguments;
 };
 
 struct BenchObserver {
@@ -51,7 +51,7 @@ struct BenchSummary {
 };
 
 auto bench(BenchRequest request) -> CommandResult<BenchSummary> {
-    request.build.purpose = PackageSelectionPurpose::Benchmark;
+    request.build.purpose = lito::package::PackageSelectionPurpose::Benchmark;
     auto environment      = ResolvedProcessEnvironment::resolve(request.build.environment);
     if (environment.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));

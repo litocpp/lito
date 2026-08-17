@@ -114,13 +114,13 @@ auto merge_cpp_public_requirements(CppPublicRequirements input, const CppPublicR
 auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
     -> CppOptionResult<CppCompileOptions>;
 
-auto make_cpp_options(ref<str>        language_standard,
-                      StandardLibrary standard_library,
-                      bool            exceptions,
-                      bool            rtti,
-                      CppOptimization optimization_value,
-                      CppDebugInfo    debug_info,
-                      CppOptionLayer  layer = {}) -> CppOptionResult<CppCompileOptions> {
+auto make_cpp_options(ref<str>                        language_standard,
+                      lito::config::StandardLibrary   standard_library,
+                      bool                            exceptions,
+                      bool                            rtti,
+                      lito::manifest::CppOptimization optimization_value,
+                      lito::manifest::CppDebugInfo    debug_info,
+                      CppOptionLayer layer = {}) -> CppOptionResult<CppCompileOptions> {
     auto result = CppCompileOptions {
         .language =
             CppLanguageOptions {

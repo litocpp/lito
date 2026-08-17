@@ -11,9 +11,7 @@ import :manifest.primitives;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto build_profile_key(ref<str> key) -> bool {
     return key == "inherits"_str || key == "opt-level"_str || key == "debug"_str ||
@@ -174,5 +172,3 @@ auto parse_project_profile(Option<ref<Toml>> value)
     rstd_try(validate_build_profiles(profile));
     return Ok(Some<ProjectProfile>(rstd::move(profile)));
 }
-
-} // namespace lito

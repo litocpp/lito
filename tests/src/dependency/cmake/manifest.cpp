@@ -18,7 +18,7 @@ using PathBuf = rstd::path::PathBuf;
 class CMakeManifest : public ProjectFixture {
 protected:
     auto manifest_project(ref<str> name, ref<str> contents)
-        -> lito::SourceTreeResult<lito::SourceMaterialization> {
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
         const ProjectFile files[] = {
             { .path = "lito.toml"_str, .contents = contents },
         };
@@ -53,7 +53,7 @@ targets = [
     };
     auto project = materialize("valid"_str, files);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->dependencies.is_empty());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(2));
@@ -82,7 +82,7 @@ targets = [
     EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
               "lib/cmake/LitoFixture"_str);
 
-    auto graph = lito::resolve_package_graph(project->root.as_path());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     auto external = lito::prepare_external_dependency_sources(*graph, {});
@@ -120,24 +120,24 @@ targets = [{ name = "LitoBuildTree::fixture", visibility = "private" }]
     auto project = materialize("build-tree-manifest"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto loaded    = lito::load_package_manifest(directory.as_path());
+    auto loaded    = lito::manifest::load_package_manifest(directory.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& declared = loaded->cmake_external_dependencies[usize {}];
-    EXPECT_EQ(declared.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_EQ(declared.integration, lito::dependency::CMakeIntegration::BuildTree);
     EXPECT_FALSE(declared.add_subdirectory);
     ASSERT_TRUE(declared.source.is_Path());
     ASSERT_TRUE(declared.adapter.is_some());
     EXPECT_EQ(declared.adapter->as_path().to_str().unwrap(), "adapter.cmake"_str);
 
-    auto graph = lito::resolve_package_graph(directory.as_path());
+    auto graph = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     auto external = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
     ASSERT_EQ(external->dependencies.len(), usize(1));
     const auto& resolved = external->dependencies[usize {}].requirement;
     EXPECT_TRUE(resolved.source.is_Directory());
-    EXPECT_EQ(resolved.integration, lito::CMakeIntegration::BuildTree);
+    EXPECT_EQ(resolved.integration, lito::dependency::CMakeIntegration::BuildTree);
     EXPECT_FALSE(resolved.add_subdirectory);
     ASSERT_TRUE(resolved.adapter.is_some());
     EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
@@ -163,7 +163,7 @@ targets = [{ name = "FixtureShader::shader", visibility = "private" }]
     auto project = materialize("package-owned"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto graph     = lito::resolve_package_graph(directory.as_path());
+    auto graph     = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     auto source_count = graph->sources.len();
 
@@ -278,7 +278,7 @@ targets = [{ name = "LitoFixture::fixture)", visibility = "private" }]
                                      manifest.dependency);
         auto project  = manifest_project(manifest.name, contents.as_str());
         ASSERT_TRUE(project.is_ok());
-        auto loaded = lito::load_manifest_document(project->root.as_path());
+        auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
@@ -303,7 +303,7 @@ archive = "https://example.com/fixture-linuxarm64.tar.gz"
 sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 )"_str);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& source = loaded->cmake_external_dependencies[usize {}].source;
@@ -358,20 +358,20 @@ archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", 
                          manifest.source);
         auto project = manifest_project(manifest.name, contents.as_str());
         ASSERT_TRUE(project.is_ok());
-        auto loaded = lito::load_manifest_document(project->root.as_path());
+        auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
     }
 }
 
 TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
-    auto variants = Vec<lito::CMakeArchiveVariant>::make();
-    variants.push(lito::CMakeArchiveVariant {
+    auto variants = Vec<lito::dependency::CMakeArchiveVariant>::make();
+    variants.push(lito::dependency::CMakeArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
         .url          = String::make("https://example.com/arm64.tar.gz"_str),
         .sha256 =
             String::make("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str),
     });
-    variants.push(lito::CMakeArchiveVariant {
+    variants.push(lito::dependency::CMakeArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
         .url          = String::make("https://example.com/x64.tar.gz"_str),
         .sha256 =
@@ -381,7 +381,7 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
         .alias   = String::make("fixture"_str),
         .package = String::make("Fixture"_str),
         .source  = lito::PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants)),
-        .integration = lito::CMakeIntegration::BuildTree,
+        .integration = lito::dependency::CMakeIntegration::BuildTree,
     };
 
     auto native = lito::resolve_cmake_requirement_for_platform(requirement, native_platform());
@@ -458,7 +458,7 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     auto project = materialize("architecture-workspace"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto document  = lito::load_manifest_document(directory.as_path());
+    auto document  = lito::manifest::load_manifest_document(directory.as_path());
     ASSERT_TRUE(document.is_ok());
     ASSERT_TRUE(document->workspace.is_some());
     ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
@@ -466,7 +466,7 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     ASSERT_TRUE(declared.source.is_ArchitectureArchives());
     ASSERT_EQ(declared.source.as_ArchitectureArchives().variants.len(), usize(2));
 
-    auto graph = lito::resolve_package_graph(directory.as_path());
+    auto graph = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
     ASSERT_EQ(graph->packages.len(), usize(1));
     ASSERT_EQ(graph->packages[usize {}].manifest.cmake_external_dependencies.len(), usize(1));
@@ -529,7 +529,7 @@ find-package = "qjs"
 targets = [{ name = "qjs", visibility = "private" }]
 )"_str);
     ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::load_package_manifest(project->root.as_path());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& requirement = loaded->cmake_external_dependencies[usize {}];

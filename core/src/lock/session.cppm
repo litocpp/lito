@@ -13,7 +13,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using Json    = rstd::json::Value;
 
-export namespace lito
+export namespace lito::lock
 {
 
 enum class LockStatus
@@ -23,40 +23,43 @@ enum class LockStatus
 };
 
 class LockSession {
-    bool                    locked_ { false };
-    PathBuf                 root_;
-    PathBuf                 destination_;
-    Option<Json>            existing_;
-    Option<LockedProject>   project_;
-    SourceResolutionOptions options_;
+    bool                                  locked_ { false };
+    PathBuf                               root_;
+    PathBuf                               destination_;
+    Option<Json>                          existing_;
+    Option<LockedProject>                 project_;
+    lito::source::SourceResolutionOptions options_;
 
 public:
     LockSession() = default;
 
-    auto take_resolution_options() -> SourceResolutionOptions { return rstd::move(options_); }
+    auto take_resolution_options() -> lito::source::SourceResolutionOptions {
+        return rstd::move(options_);
+    }
 
-    friend auto load_lock_session(ref<rstd::path::Path> root,
-                                  const LockConfig&     config,
-                                  bool                  locked,
-                                  GitResolutionMode     git) -> LockResult<LockSession>;
-    friend auto sync_lock(const ResolvedPackageGraph& graph, LockSession session)
+    friend auto load_lock_session(ref<rstd::path::Path>           root,
+                                  const LockConfig&               config,
+                                  bool                            locked,
+                                  lito::source::GitResolutionMode git) -> LockResult<LockSession>;
+    friend auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
         -> LockResult<LockStatus>;
 };
 
 auto load_locked_project(ref<rstd::path::Path> root, const LockConfig& config = {})
     -> LockResult<LockedProject>;
 
-auto load_lock_session(ref<rstd::path::Path> root,
-                       const LockConfig&     config,
-                       bool                  locked,
-                       GitResolutionMode     git = GitResolutionMode::ReuseLocked)
-    -> LockResult<LockSession>;
+auto load_lock_session(ref<rstd::path::Path>           root,
+                       const LockConfig&               config,
+                       bool                            locked,
+                       lito::source::GitResolutionMode git =
+                           lito::source::GitResolutionMode::ReuseLocked) -> LockResult<LockSession>;
 
-auto load_lock_session(ref<rstd::path::Path> root,
-                       bool                  locked,
-                       GitResolutionMode     git = GitResolutionMode::ReuseLocked)
-    -> LockResult<LockSession>;
+auto load_lock_session(ref<rstd::path::Path>           root,
+                       bool                            locked,
+                       lito::source::GitResolutionMode git =
+                           lito::source::GitResolutionMode::ReuseLocked) -> LockResult<LockSession>;
 
-auto sync_lock(const ResolvedPackageGraph& graph, LockSession session) -> LockResult<LockStatus>;
+auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
+    -> LockResult<LockStatus>;
 
-} // namespace lito
+} // namespace lito::lock

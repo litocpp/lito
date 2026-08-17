@@ -19,16 +19,16 @@ enum class InstallAction
 };
 
 struct InstallBinary {
-    PackageTargetId target;
-    PathBuf         source;
-    PathBuf         destination;
-    InstallAction   action { InstallAction::Created };
+    lito::package::PackageTargetId target;
+    PathBuf                        source;
+    PathBuf                        destination;
+    InstallAction                  action { InstallAction::Created };
 };
 
 class InstallEntryOrigin {
     RSTD_ENUM(InstallEntryOrigin,
               (PackageFile, (String package; PathBuf path;)),
-              (BuildArtifact, (PackageTargetId target;)),
+              (BuildArtifact, (lito::package::PackageTargetId target;)),
               (ExternalAsset, (String dependency; String set; PathBuf path;)),
               (Template, (PathBuf input;)),
               (Inventory))

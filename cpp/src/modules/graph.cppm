@@ -44,7 +44,7 @@ auto contains_unit(const Vec<UnitId>& values, UnitId value) -> bool {
 auto directly_visible(const PackagePlan& package, TargetId importer, TargetId provider) -> bool {
     if (importer == provider) return true;
     for (const auto& dependency : package.package->targets[importer].dependencies) {
-        if (dependency.visibility != DependencyVisibility::LinkOnly &&
+        if (dependency.visibility != lito::dependency::DependencyVisibility::LinkOnly &&
             dependency.target == package.package->targets[provider].id) {
             return true;
         }
@@ -52,7 +52,8 @@ auto directly_visible(const PackagePlan& package, TargetId importer, TargetId pr
     return false;
 }
 
-auto target_index(const PackagePlan& package, const PackageTargetId& identity) -> Option<TargetId> {
+auto target_index(const PackagePlan& package, const lito::package::PackageTargetId& identity)
+    -> Option<TargetId> {
     for (auto target = TargetId {}; target < package.package->targets.len(); ++target) {
         if (package.package->targets[target].id == identity) return Some(target);
     }
@@ -64,7 +65,7 @@ auto publicly_reexported(const PackagePlan&      package,
                          TargetId                importer,
                          UnitId                  provider) -> bool {
     for (const auto& dependency : package.package->targets[importer].dependencies) {
-        if (dependency.visibility == DependencyVisibility::LinkOnly) continue;
+        if (dependency.visibility == lito::dependency::DependencyVisibility::LinkOnly) continue;
         auto dependency_target = target_index(package, dependency.target);
         if (dependency_target.is_none()) continue;
         if (contains_unit(public_target_units[*dependency_target], provider)) return true;

@@ -14,9 +14,8 @@ import :manifest;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
-
-namespace lito
-{
+using namespace lito;
+using namespace lito::workspace;
 
 template<typename T>
 auto workspace_failure(String message) -> WorkspaceResult<T> {
@@ -27,14 +26,12 @@ auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept
     return left.starts_with(right) && right.starts_with(left);
 }
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::workspace
 {
 
-auto workspace_member_directory(const WorkspaceManifest& workspace,
-                                ref<rstd::path::Path>    declared,
-                                ref<str>                 context) -> WorkspaceResult<PathBuf> {
+auto workspace_member_directory(const lito::manifest::WorkspaceManifest& workspace,
+                                ref<rstd::path::Path>                    declared,
+                                ref<str> context) -> WorkspaceResult<PathBuf> {
     auto requested = workspace.root.join(declared);
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
@@ -50,9 +47,10 @@ auto workspace_member_directory(const WorkspaceManifest& workspace,
     return Ok(rstd::move(directory));
 }
 
-auto resolve_workspace_member_version(PackageManifest& manifest, const WorkspaceManifest& workspace)
+auto resolve_workspace_member_version(lito::manifest::PackageManifest&         manifest,
+                                      const lito::manifest::WorkspaceManifest& workspace)
     -> WorkspaceResult<empty> {
-    if (manifest.version.source != PackageVersionSource::Workspace) {
+    if (manifest.version.source != lito::manifest::PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
     if (workspace.package.version.is_none()) {
@@ -65,42 +63,45 @@ auto resolve_workspace_member_version(PackageManifest& manifest, const Workspace
     return Ok(empty {});
 }
 
-auto clone_package_source(const PackageSourceRequirement& source) -> PackageSourceRequirement {
+auto clone_package_source(const lito::source::PackageSourceRequirement& source)
+    -> lito::source::PackageSourceRequirement {
     if (source.is_Path()) {
-        return PackageSourceRequirement::Path(source.as_Path().path.clone());
+        return lito::source::PackageSourceRequirement::Path(source.as_Path().path.clone());
     }
-    return PackageSourceRequirement::Git(source.as_Git().url.clone(),
-                                         GitReference {
-                                             .kind  = source.as_Git().reference.kind,
-                                             .value = source.as_Git().reference.value.clone(),
-                                         });
+    return lito::source::PackageSourceRequirement::Git(
+        source.as_Git().url.clone(),
+        lito::source::GitReference {
+            .kind  = source.as_Git().reference.kind,
+            .value = source.as_Git().reference.value.clone(),
+        });
 }
 
-auto clone_pkg_config_requirement(const PkgConfigDependencyRequirement& requirement)
-    -> PkgConfigDependencyRequirement {
-    auto version = Option<PkgConfigVersionRequirement> {};
+auto clone_pkg_config_requirement(
+    const lito::dependency::PkgConfigDependencyRequirement& requirement)
+    -> lito::dependency::PkgConfigDependencyRequirement {
+    auto version = Option<lito::dependency::PkgConfigVersionRequirement> {};
     if (requirement.version.is_some()) {
-        version = Some(PkgConfigVersionRequirement {
+        version = Some(lito::dependency::PkgConfigVersionRequirement {
             .comparison = requirement.version->comparison,
             .value      = requirement.version->value.clone(),
         });
     }
-    return PkgConfigDependencyRequirement {
+    return lito::dependency::PkgConfigDependencyRequirement {
         .module  = requirement.module.clone(),
         .version = rstd::move(version),
         .mode    = requirement.mode,
     };
 }
 
-auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
-                                           const WorkspaceManifest& workspace)
+auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&         manifest,
+                                           const lito::manifest::WorkspaceManifest& workspace)
     -> WorkspaceResult<empty> {
     const auto resolve_package_dependencies =
-        [&](const Vec<WorkspaceDependencyReference>& references,
-            Vec<DeclaredDependency>&                 dependencies,
-            ref<str>                                 kind) -> WorkspaceResult<empty> {
+        [&](const Vec<lito::manifest::WorkspaceDependencyReference>& references,
+            Vec<lito::manifest::DeclaredDependency>&                 dependencies,
+            ref<str> kind) -> WorkspaceResult<empty> {
         for (const auto& reference : references) {
-            const WorkspaceDependencyDefinition* definition = nullptr;
+            const lito::manifest::WorkspaceDependencyDefinition* definition = nullptr;
             for (const auto& candidate : workspace.dependencies) {
                 if (candidate.name == reference.name) {
                     definition = rstd::addressof(candidate);
@@ -115,7 +116,7 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
                                  kind,
                                  reference.name.as_str()));
             }
-            dependencies.push(DeclaredDependency {
+            dependencies.push(lito::manifest::DeclaredDependency {
                 .name             = reference.name.clone(),
                 .source           = clone_package_source(definition->source),
                 .visibility       = reference.visibility,
@@ -132,7 +133,7 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
     manifest.workspace_dev_dependencies.clear();
 
     for (const auto& reference : manifest.workspace_runtime_dependencies) {
-        const WorkspaceDependencyDefinition* definition = nullptr;
+        const lito::manifest::WorkspaceDependencyDefinition* definition = nullptr;
         for (const auto& candidate : workspace.dependencies) {
             if (candidate.name == reference.name) {
                 definition = rstd::addressof(candidate);
@@ -146,7 +147,7 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
                              manifest.name.as_str(),
                              reference.name.as_str()));
         }
-        manifest.runtime_dependencies.push(DeclaredRuntimeDependency {
+        manifest.runtime_dependencies.push(lito::manifest::DeclaredRuntimeDependency {
             .name             = reference.name.clone(),
             .source           = clone_package_source(definition->source),
             .declaration_root = Some(workspace.root.clone()),
@@ -155,7 +156,7 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
     manifest.workspace_runtime_dependencies.clear();
 
     for (const auto& reference : manifest.workspace_pkg_config_external_dependencies) {
-        const WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;
+        const lito::manifest::WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;
         for (const auto& candidate : workspace.pkg_config_external_dependencies) {
             if (candidate.alias == reference.alias) {
                 definition = rstd::addressof(candidate);
@@ -169,16 +170,17 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
                 manifest.name.as_str(),
                 reference.alias.as_str()));
         }
-        manifest.pkg_config_external_dependencies.push(PkgConfigExternalDependency {
-            .alias       = reference.alias.clone(),
-            .requirement = clone_pkg_config_requirement(definition->requirement),
-            .visibility  = reference.visibility,
-        });
+        manifest.pkg_config_external_dependencies.push(
+            lito::dependency::PkgConfigExternalDependency {
+                .alias       = reference.alias.clone(),
+                .requirement = clone_pkg_config_requirement(definition->requirement),
+                .visibility  = reference.visibility,
+            });
     }
     manifest.workspace_pkg_config_external_dependencies.clear();
 
     for (const auto& reference : manifest.workspace_cmake_external_dependencies) {
-        const WorkspaceCMakeExternalDependencyDefinition* definition = nullptr;
+        const lito::manifest::WorkspaceCMakeExternalDependencyDefinition* definition = nullptr;
         for (const auto& candidate : workspace.cmake_external_dependencies) {
             if (candidate.alias == reference.alias) {
                 definition = rstd::addressof(candidate);
@@ -198,19 +200,20 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
         if (definition->config_directory.is_some()) {
             config_directory = Some(definition->config_directory->clone());
         }
-        auto cache = Vec<CMakeCacheEntry>::with_capacity(definition->cache.len());
+        auto cache = Vec<lito::dependency::CMakeCacheEntry>::with_capacity(definition->cache.len());
         for (const auto& entry : definition->cache) {
-            cache.push(
-                CMakeCacheEntry { .name = entry.name.clone(), .value = entry.value.clone() });
+            cache.push(lito::dependency::CMakeCacheEntry { .name  = entry.name.clone(),
+                                                           .value = entry.value.clone() });
         }
-        auto targets = Vec<CMakeTargetRequirement>::with_capacity(reference.targets.len());
+        auto targets =
+            Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(reference.targets.len());
         for (const auto& target : reference.targets) {
-            targets.push(CMakeTargetRequirement {
+            targets.push(lito::dependency::CMakeTargetRequirement {
                 .name       = target.name.clone(),
                 .visibility = target.visibility,
             });
         }
-        manifest.cmake_external_dependencies.push(CMakeDependencyRequirement {
+        manifest.cmake_external_dependencies.push(lito::dependency::CMakeDependencyRequirement {
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
             .source           = definition->source.clone(),
@@ -228,32 +231,35 @@ auto resolve_workspace_member_dependencies(PackageManifest&         manifest,
     return Ok(empty {});
 }
 
-auto resolve_workspace_member(PackageManifest& manifest, const WorkspaceManifest& workspace)
+auto resolve_workspace_member(lito::manifest::PackageManifest&         manifest,
+                              const lito::manifest::WorkspaceManifest& workspace)
     -> WorkspaceResult<empty> {
     rstd_try(resolve_workspace_member_version(manifest, workspace));
     return resolve_workspace_member_dependencies(manifest, workspace);
 }
 
-auto resolve_containing_workspace_version(PackageManifest& manifest) -> WorkspaceResult<empty> {
-    if (manifest.version.source != PackageVersionSource::Workspace) {
+auto resolve_containing_workspace_version(lito::manifest::PackageManifest& manifest)
+    -> WorkspaceResult<empty> {
+    if (manifest.version.source != lito::manifest::PackageVersionSource::Workspace) {
         return Ok(empty {});
     }
 
     auto directory = manifest.root.clone();
     while (directory.pop()) {
-        auto located = try_locate_manifest(directory.as_path());
+        auto located = lito::manifest::try_locate_manifest(directory.as_path());
         if (located.is_err()) {
-            return Err(
-                WorkspaceError::Manifest(ManifestError::Locate(rstd::move(located).unwrap_err())));
+            return Err(WorkspaceError::Manifest(
+                lito::manifest::ManifestError::Locate(rstd::move(located).unwrap_err())));
         }
         if (located->is_none()) continue;
 
-        auto document = load_manifest_document(directory.as_path());
+        auto document = lito::manifest::load_manifest_document(directory.as_path());
         if (document.is_err()) {
             return Err(rstd::into<WorkspaceError>(rstd::move(document).unwrap_err()));
         }
         auto loaded = rstd::move(document).unwrap();
-        if (loaded.kind != ManifestKind::Workspace || loaded.workspace.is_none()) continue;
+        if (loaded.kind != lito::manifest::ManifestKind::Workspace || loaded.workspace.is_none())
+            continue;
         auto workspace = rstd::move(loaded.workspace).unwrap();
         for (const auto& declared : workspace.members) {
             auto member =
@@ -271,4 +277,4 @@ auto resolve_containing_workspace_version(PackageManifest& manifest) -> Workspac
                      manifest.root.as_path()));
 }
 
-} // namespace lito
+} // namespace lito::workspace

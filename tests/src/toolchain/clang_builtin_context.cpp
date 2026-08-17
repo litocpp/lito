@@ -13,15 +13,17 @@ using namespace lito;
 namespace
 {
 
-auto context_with(Vec<String>           options,
-                  lito::CppOptimization optimization = lito::CppOptimization::Default,
-                  lito::CppDebugInfo debug_info = lito::CppDebugInfo::None) -> cpp::CompileContext {
+auto context_with(
+    Vec<String>                     options,
+    lito::manifest::CppOptimization optimization = lito::manifest::CppOptimization::Default,
+    lito::manifest::CppDebugInfo    debug_info   = lito::manifest::CppDebugInfo::None)
+    -> cpp::CompileContext {
     auto parser = make_clang_cpp_argument_parser();
     if (parser.is_err()) return cpp::CompileContext {};
     auto arguments = parser->parse(options, "clang-builtin-context-test"_str);
     if (arguments.is_err()) return cpp::CompileContext {};
     auto normalized = cpp::make_cpp_options("c++20"_str,
-                                            StandardLibrary::Libcxx,
+                                            lito::config::StandardLibrary::Libcxx,
                                             false,
                                             false,
                                             optimization,
@@ -37,11 +39,11 @@ auto context_with(Vec<String>           options,
 
 auto context_with_standard(ref<str> standard) -> cpp::CompileContext {
     auto normalized = cpp::make_cpp_options(standard,
-                                            StandardLibrary::Libcxx,
+                                            lito::config::StandardLibrary::Libcxx,
                                             false,
                                             false,
-                                            lito::CppOptimization::Default,
-                                            lito::CppDebugInfo::None);
+                                            lito::manifest::CppOptimization::Default,
+                                            lito::manifest::CppDebugInfo::None);
     if (normalized.is_err()) return cpp::CompileContext {};
     return cpp::CompileContext {
         .cpp = rstd::move(normalized).unwrap(),
@@ -66,17 +68,18 @@ auto same_command(const Vec<String>& left, const Vec<String>& right) -> bool {
 } // namespace
 
 auto run_clang_builtin_context_test() -> int {
-    auto created = ClangToolchain::create(ToolchainSpec {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
     });
     if (created.is_err()) return 1;
     auto toolchain = rstd::move(created).unwrap();
 
-    auto debug     = toolchain.builtin_context(context_with(
-        options("-Wall"_str, "-fPIC"_str), lito::CppOptimization::None, lito::CppDebugInfo::Full));
+    auto debug     = toolchain.builtin_context(context_with(options("-Wall"_str, "-fPIC"_str),
+                                                            lito::manifest::CppOptimization::None,
+                                                            lito::manifest::CppDebugInfo::Full));
     auto reordered = toolchain.builtin_context(
-        context_with(options("-fPIC"_str, "-Wall"_str), lito::CppOptimization::None));
+        context_with(options("-fPIC"_str, "-Wall"_str), lito::manifest::CppOptimization::None));
     if (debug.is_err() || reordered.is_err()) return 2;
     if (debug->key.as_str() != reordered->key.as_str() ||
         ! same_command(debug->query_command, reordered->query_command)) {
@@ -84,7 +87,7 @@ auto run_clang_builtin_context_test() -> int {
     }
 
     auto optimized = toolchain.builtin_context(
-        context_with(options("-fPIC"_str), lito::CppOptimization::Level3));
+        context_with(options("-fPIC"_str), lito::manifest::CppOptimization::Level3));
     if (optimized.is_err()) return 4;
     if (optimized->key.as_str() == debug->key.as_str()) return 5;
 
@@ -104,9 +107,10 @@ auto run_clang_builtin_context_test() -> int {
     if (target_feature.is_err() || target_feature_direct.is_err()) return 8;
     if (target_feature->key.as_str() != target_feature_direct->key.as_str()) return 9;
 
-    auto llvm_debug = toolchain.builtin_context(context_with(options("-mllvm=lito-ignored"_str),
-                                                             lito::CppOptimization::Default,
-                                                             lito::CppDebugInfo::Full));
+    auto llvm_debug =
+        toolchain.builtin_context(context_with(options("-mllvm=lito-ignored"_str),
+                                               lito::manifest::CppOptimization::Default,
+                                               lito::manifest::CppDebugInfo::Full));
     auto llvm_debug_direct = toolchain.builtin_context(context_with(options()));
     if (llvm_debug.is_err() || llvm_debug_direct.is_err()) return 10;
     if (llvm_debug->key.as_str() != llvm_debug_direct->key.as_str() ||

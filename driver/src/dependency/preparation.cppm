@@ -17,20 +17,20 @@ class PreparedCMakeDependencySource {
               (Installed),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
               (Archive, (String url; String sha256;)),
-              (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
+              (ArchitectureArchives, (Vec<lito::dependency::CMakeArchiveVariant> variants;)))
 };
 
 struct PreparedCMakeDependencyRequirement {
-    String                        alias;
-    String                        package;
-    PreparedCMakeDependencySource source;
-    CMakeIntegration              integration { CMakeIntegration::Install };
-    bool                          add_subdirectory { true };
-    Option<PathBuf>               adapter;
-    String                        adapter_identity;
-    Option<PathBuf>               config_directory;
-    Vec<CMakeCacheEntry>          cache;
-    Vec<CMakeTargetRequirement>   targets;
+    String                             alias;
+    String                             package;
+    PreparedCMakeDependencySource      source;
+    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
+    bool                               add_subdirectory { true };
+    Option<PathBuf>                    adapter;
+    String                             adapter_identity;
+    Option<PathBuf>                    config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>        cache;
+    Vec<lito::dependency::CMakeTargetRequirement> targets;
 };
 
 struct PreparedExternalDependency {

@@ -23,11 +23,11 @@ TEST_F(InstallSelection, InstallPurposeSelectsWorkspaceBinaries) {
     auto selection_project = materialize("install-selection"_str, *selection_tree);
     ASSERT_TRUE(selection_project.is_ok());
     auto directory = selection_project->root.clone();
-    auto package   = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto package   = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root = directory.join(PathBuf::from("multi-target"_str).as_path()),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(package.is_ok());
     ASSERT_EQ(package->selected_root_names.len(), usize(3));
     EXPECT_TRUE(contains_name(package->selected_root_names, "fixture-multi-consumer"_str));
@@ -53,9 +53,9 @@ sources = ["main.cpp"]
     };
     auto profile_project = materialize("workspace-profile"_str, profile_files);
     ASSERT_TRUE(profile_project.is_ok());
-    auto workspace = lito::resolve_package_selection(
-        lito::PackageSelection { .root = profile_project->root.clone() },
-        lito::PackageSelectionPurpose::Install);
+    auto workspace = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = profile_project->root.clone() },
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(workspace.is_ok());
     ASSERT_EQ(workspace->selected_root_names.len(), usize(1));
     EXPECT_EQ(workspace->selected_root_names[usize {}].as_str(),
@@ -91,64 +91,65 @@ sources = ["src/main.cpp"]
     auto configure_project = materialize("configure-workspace"_str, workspace_files);
     ASSERT_TRUE(configure_project.is_ok());
     auto member_root = configure_project->root.join(PathBuf::from("app"_str).as_path());
-    auto member =
-        lito::resolve_package_selection(lito::PackageSelection { .root = member_root.clone() },
-                                        lito::PackageSelectionPurpose::Install);
+    auto member      = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = member_root.clone() },
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(member.is_ok());
     ASSERT_EQ(member->selected_root_names.len(), usize(2));
     EXPECT_TRUE(contains_name(member->selected_root_names, "fixture-configure-workspace-app"_str));
     EXPECT_TRUE(
         contains_name(member->selected_root_names, "fixture-configure-workspace-other"_str));
 
-    auto selected_member = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto selected_member = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = member_root.clone(),
             .packages = strings("fixture-configure-workspace-app"_str),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(selected_member.is_ok());
     ASSERT_EQ(selected_member->selected_root_names.len(), usize(1));
     EXPECT_EQ(selected_member->selected_root_names[usize {}].as_str(),
               "fixture-configure-workspace-app"_str);
 
-    auto selected = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-multi-target"_str),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(selected.is_ok());
     ASSERT_EQ(selected->selected_root_names.len(), usize(1));
     ASSERT_EQ(selected->selected_targets.len(), usize(2));
     for (const auto& target : selected->selected_targets) {
         EXPECT_EQ(target.package.as_str(), "fixture-multi-target"_str);
-        EXPECT_EQ(target.kind, lito::PackageTargetKind::Binary);
+        EXPECT_EQ(target.kind, lito::package::PackageTargetKind::Binary);
     }
 
-    auto consumer = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto consumer = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-multi-consumer"_str),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(consumer.is_ok());
     ASSERT_EQ(consumer->selected_targets.len(), usize(1));
     EXPECT_EQ(consumer->selected_targets[usize {}].package.as_str(), "fixture-multi-consumer"_str);
-    EXPECT_EQ(consumer->selected_targets[usize {}].kind, lito::PackageTargetKind::Binary);
+    EXPECT_EQ(consumer->selected_targets[usize {}].kind, lito::package::PackageTargetKind::Binary);
 
-    auto library = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto library = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-test-lib"_str),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(library.is_err());
     auto library_error = rstd::move(library).unwrap_err();
     ASSERT_TRUE(library_error.is_Message());
     EXPECT_TRUE(library_error.as_Message().message.as_str().contains("no install target"_str));
 
-    auto all = lito::resolve_package_selection(lito::PackageSelection { .root = directory.clone() },
-                                               lito::PackageSelectionPurpose::Install);
+    auto all = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = directory.clone() },
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(all.is_ok());
     ASSERT_EQ(all->selected_root_names.len(), usize(3));
 }
@@ -174,13 +175,13 @@ path = "../install-only"
     auto explicit_project = materialize("runtime-explicit-projects"_str, explicit_files);
     ASSERT_TRUE(explicit_project.is_ok());
     auto explicit_directory = explicit_project->root.join(PathBuf::from("explicit"_str).as_path());
-    auto explicit_manifest  = lito::load_package_manifest(explicit_directory.as_path());
+    auto explicit_manifest  = lito::manifest::load_package_manifest(explicit_directory.as_path());
     ASSERT_TRUE(explicit_manifest.is_ok());
     ASSERT_EQ(explicit_manifest->runtime_dependencies.len(), usize(2));
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].name.as_str(), "git-helper"_str);
     ASSERT_TRUE(explicit_manifest->runtime_dependencies[usize {}].source.is_Git());
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize {}].source.as_Git().reference.kind,
-              lito::GitReferenceKind::Commit);
+              lito::source::GitReferenceKind::Commit);
     EXPECT_EQ(explicit_manifest->runtime_dependencies[usize(1)].name.as_str(), "path-helper"_str);
     EXPECT_TRUE(explicit_manifest->runtime_dependencies[usize(1)].source.is_Path());
 
@@ -232,23 +233,23 @@ sources = ["main.cpp"]
     auto runtime_project = materialize("runtime-dependencies"_str, runtime_files);
     ASSERT_TRUE(runtime_project.is_ok());
     auto directory = runtime_project->root.clone();
-    auto build     = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto build     = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = directory.clone(),
             .packages = strings("fixture-runtime-app"_str),
         },
-        lito::PackageSelectionPurpose::Production);
+        lito::package::PackageSelectionPurpose::Production);
     ASSERT_TRUE(build.is_ok());
     ASSERT_EQ(build->graph.packages.len(), usize(3));
     ASSERT_EQ(build->selected_package_names.len(), usize(1));
     EXPECT_EQ(build->selected_package_names[usize {}].as_str(), "fixture-runtime-app"_str);
 
-    auto install = lito::resolve_package_selection(
-        lito::PackageSelection {
+    auto install = lito::package::resolve_package_selection(
+        lito::package::PackageSelection {
             .root     = rstd::move(directory),
             .packages = strings("fixture-runtime-app"_str),
         },
-        lito::PackageSelectionPurpose::Install);
+        lito::package::PackageSelectionPurpose::Install);
     ASSERT_TRUE(install.is_ok());
     ASSERT_EQ(install->install_package_names.len(), usize(3));
     EXPECT_EQ(install->install_package_names[usize {}].as_str(), "leaf"_str);

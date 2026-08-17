@@ -20,8 +20,7 @@ using namespace lito::system;
 using namespace rstd::literals;
 using IndexMap = rstd::collections::BTreeMap<String, usize>;
 
-namespace lito
-{
+using namespace lito::source;
 
 auto path_components(ref<rstd::path::Path> path) -> SourceResult<Vec<String>> {
     auto result     = Vec<String>::make();
@@ -108,9 +107,7 @@ struct ManagedSourceEntry {
     ResolvedPackageSource source;
 };
 
-} // namespace lito
-
-export namespace lito
+export namespace lito::source
 {
 
 class SourceManager {
@@ -1211,4 +1208,4 @@ public:
     }
 };
 
-} // namespace lito
+} // namespace lito::source

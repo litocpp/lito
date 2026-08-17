@@ -28,21 +28,23 @@ struct BuildExecutionPolicy {
 };
 
 struct BuildRequest {
-    PackageSelection         selection;
-    Vec<String>              targets;
-    Vec<PackageTargetId>     exact_targets;
-    PathBuf                  output;
-    ProcessEnvironmentSpec   environment;
-    cpp::BuildConfiguration  configuration;
-    LockConfig               lock;
-    Option<BuildProfileName> profile;
-    PackageSourceConfig      sources;
-    PkgConfigProviderConfig  pkg_config;
-    CMakeProviderConfig      cmake;
-    PackageSelectionPurpose  purpose { PackageSelectionPurpose::Production };
-    bool                     locked { false };
-    BuildExecutionPolicy     execution;
-    Option<BuildEventSink>   observer;
+    lito::package::PackageSelection           selection;
+    Vec<String>                               targets;
+    Vec<lito::package::PackageTargetId>       exact_targets;
+    PathBuf                                   output;
+    ProcessEnvironmentSpec                    environment;
+    cpp::BuildConfiguration                   configuration;
+    lito::lock::LockConfig                    lock;
+    Option<lito::manifest::BuildProfileName>  profile;
+    lito::source::PackageSourceConfig         sources;
+    lito::dependency::PkgConfigProviderConfig pkg_config;
+    lito::dependency::CMakeProviderConfig     cmake;
+    lito::package::PackageSelectionPurpose    purpose {
+        lito::package::PackageSelectionPurpose::Production
+    };
+    bool                   locked { false };
+    BuildExecutionPolicy   execution;
+    Option<BuildEventSink> observer;
 };
 
 } // namespace lito

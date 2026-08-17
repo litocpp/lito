@@ -79,19 +79,19 @@ class BuildLayout {
             PathBuf::from(directory).join(PathBuf::from(rstd::move(relative).unwrap()).as_path()));
     }
 
-    auto source_path(ref<rstd::path::Path>  root,
-                     const PackageTargetId& target,
-                     ref<rstd::path::Path>  relative_source,
-                     ref<str>               suffix) const -> BuildLayoutResult<PathBuf> {
+    auto source_path(ref<rstd::path::Path>                 root,
+                     const lito::package::PackageTargetId& target,
+                     ref<rstd::path::Path>                 relative_source,
+                     ref<str> suffix) const -> BuildLayoutResult<PathBuf> {
         auto directory = target_directory(root, target);
         return relative_source_path(directory.as_path(), relative_source, suffix);
     }
 
-    auto target_directory(ref<rstd::path::Path> root, const PackageTargetId& target) const
-        -> PathBuf {
+    auto target_directory(ref<rstd::path::Path>                 root,
+                          const lito::package::PackageTargetId& target) const -> PathBuf {
         auto package_directory = join(root, target.package.as_str());
         auto kind_directory =
-            join(package_directory.as_path(), package_target_kind_name(target.kind));
+            join(package_directory.as_path(), lito::package::package_target_kind_name(target.kind));
         return join(kind_directory.as_path(), target.name.as_str());
     }
 
@@ -226,7 +226,8 @@ public:
         return join(output_.as_path(), "lito-host-tools"_str);
     }
 
-    auto runtime_resource_receipt(const PackageTargetId& target, ref<str> name) const -> PathBuf {
+    auto runtime_resource_receipt(const lito::package::PackageTargetId& target, ref<str> name) const
+        -> PathBuf {
         auto root      = join(output_.as_path(), "lito-resources"_str);
         auto directory = target_directory(root.as_path(), target);
         auto filename  = String::make(name);
@@ -234,8 +235,8 @@ public:
         return directory.join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
-    auto object(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> BuildLayoutResult<PathBuf> {
+    auto object(const lito::package::PackageTargetId& target,
+                ref<rstd::path::Path> relative_source) const -> BuildLayoutResult<PathBuf> {
         return source_path(
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
@@ -251,25 +252,25 @@ public:
         return directory.join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
-    auto cache_target_directory(const PackageTargetId& target) const -> PathBuf {
+    auto cache_target_directory(const lito::package::PackageTargetId& target) const -> PathBuf {
         auto targets = join(compile_cache_directory().as_path(), "targets"_str);
         return target_directory(targets.as_path(), target);
     }
 
-    auto cache_scan(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> BuildLayoutResult<PathBuf> {
+    auto cache_scan(const lito::package::PackageTargetId& target,
+                    ref<rstd::path::Path> relative_source) const -> BuildLayoutResult<PathBuf> {
         auto scan_cache = scan_cache_directory();
         return source_path(scan_cache.as_path(), target, relative_source, ".json"_str);
     }
 
-    auto cache_unit(const PackageTargetId& target, ref<rstd::path::Path> relative_source) const
-        -> BuildLayoutResult<PathBuf> {
+    auto cache_unit(const lito::package::PackageTargetId& target,
+                    ref<rstd::path::Path> relative_source) const -> BuildLayoutResult<PathBuf> {
         auto directory = cache_target_directory(target);
         return relative_source_path(directory.as_path(), relative_source, ".json"_str);
     }
 
-    auto cache_compile_test(const PackageTargetId& target,
-                            ref<rstd::path::Path>  relative_source) const
+    auto cache_compile_test(const lito::package::PackageTargetId& target,
+                            ref<rstd::path::Path>                 relative_source) const
         -> BuildLayoutResult<PathBuf> {
         auto directory = cache_target_directory(target);
         return relative_source_path(directory.as_path(), relative_source, ".test.json"_str);
@@ -292,25 +293,29 @@ public:
             .join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
-    auto archive(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+    auto archive(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
         auto directory =
             join(join(output_.as_path(), "lib"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto executable(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+    auto executable(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
         auto directory =
             join(join(output_.as_path(), "bin"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto test(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+    auto test(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
         auto directory =
             join(join(output_.as_path(), "test"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
-    auto benchmark(const PackageTargetId& target, ref<str> artifact_name) const -> PathBuf {
+    auto benchmark(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
         auto directory =
             join(join(output_.as_path(), "bench"_str).as_path(), target.package.as_str());
         return directory.join(PathBuf::from(artifact_name).as_path());

@@ -35,11 +35,11 @@ TEST_F(SourceSeed, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
         "  ]\n"
         "}\n"_str;
     ASSERT_TRUE(rstd::fs::write_atomic(catalog.as_path(), contents.as_bytes()).is_ok());
-    auto identity = lito::git_fetch_identity("https://example.invalid/source.git"_str,
-                                             "0123456789abcdef0123456789abcdef01234567"_str);
-    auto roots    = Vec<PathBuf>::make();
+    auto identity = lito::source::git_fetch_identity(
+        "https://example.invalid/source.git"_str, "0123456789abcdef0123456789abcdef01234567"_str);
+    auto roots = Vec<PathBuf>::make();
     roots.push(directory.clone());
-    auto located = lito::locate_fetch_seed(roots, identity);
+    auto located = lito::source::locate_fetch_seed(roots, identity);
     ASSERT_TRUE(located.is_ok());
     ASSERT_TRUE(located->is_some());
     EXPECT_EQ((**located).as_path(), payload.as_path());
@@ -48,7 +48,7 @@ TEST_F(SourceSeed, FetchSeedCatalogOwnsSafeReadOnlyLookup) {
                   "https://example.invalid/source.git\\n0123456789abcdef0123456789abcdef01234567\","
                   "\"kind\":\"git\",\"path\":\"../source\"}]}"_str;
     ASSERT_TRUE(rstd::fs::write_atomic(catalog.as_path(), unsafe.as_bytes()).is_ok());
-    EXPECT_TRUE(lito::load_fetch_seed_catalog(directory.as_path()).is_err());
+    EXPECT_TRUE(lito::source::load_fetch_seed_catalog(directory.as_path()).is_err());
 }
 
 TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch) {
@@ -83,10 +83,10 @@ TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
     auto resolver = lito::system::ToolResolver(*environment);
-    auto pins     = Vec<lito::GitSourcePin>::make();
-    pins.push(lito::GitSourcePin {
+    auto pins     = Vec<lito::source::GitSourcePin>::make();
+    pins.push(lito::source::GitSourcePin {
         .git       = String::make("https://example.invalid/seed-only.git"_str),
-        .reference = lito::GitReference {},
+        .reference = lito::source::GitReference {},
         .commit    = commit->clone(),
     });
     auto seeds = Vec<PathBuf>::make();
@@ -94,55 +94,58 @@ TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch
     auto events = FetchEventCapture {
         .expected_url = "https://example.invalid/seed-only.git"_str,
     };
-    auto manager  = lito::SourceManager(directory.as_path(),
-                                        lito::SourceResolutionOptions {
-                                            .locked      = true,
-                                            .git_sources = rstd::move(pins),
-                                            .sources =
-                                                lito::PackageSourceConfig {
-                                                    .fetch_seeds = rstd::move(seeds),
-                                                    .network     = lito::NetworkPolicy::Offline,
-                                                },
-                                        },
-                                        resolver,
-                                        *environment,
-                                        lito::SourceEventSink {
-                                            .context = rstd::addressof(events),
-                                            .notify  = capture_source_fetch,
-                                        });
-    auto acquired = manager.acquire_external(
-        lito::PackageSourceRequirement::Git(
-            String::make("https://example.invalid/seed-only.git"_str), lito::GitReference {}),
-        directory.as_path());
+    auto manager =
+        lito::source::SourceManager(directory.as_path(),
+                                    lito::source::SourceResolutionOptions {
+                                        .locked      = true,
+                                        .git_sources = rstd::move(pins),
+                                        .sources =
+                                            lito::source::PackageSourceConfig {
+                                                .fetch_seeds = rstd::move(seeds),
+                                                .network     = lito::source::NetworkPolicy::Offline,
+                                            },
+                                    },
+                                    resolver,
+                                    *environment,
+                                    lito::source::SourceEventSink {
+                                        .context = rstd::addressof(events),
+                                        .notify  = capture_source_fetch,
+                                    });
+    auto acquired =
+        manager.acquire_external(lito::source::PackageSourceRequirement::Git(
+                                     String::make("https://example.invalid/seed-only.git"_str),
+                                     lito::source::GitReference {}),
+                                 directory.as_path());
     ASSERT_TRUE(acquired.is_ok());
     EXPECT_EQ(acquired->root.as_path(), checkout.as_path());
-    EXPECT_EQ(
-        acquired->identity.as_str(),
-        lito::git_source_identity("https://example.invalid/seed-only.git"_str, commit->as_str())
-            .as_str());
+    EXPECT_EQ(acquired->identity.as_str(),
+              lito::source::git_source_identity("https://example.invalid/seed-only.git"_str,
+                                                commit->as_str())
+                  .as_str());
     EXPECT_EQ(events.count, usize {});
 
     auto direct_seeds = Vec<PathBuf>::make();
     direct_seeds.push(directory.clone());
-    auto direct_manager = lito::SourceManager(directory.as_path(),
-                                              lito::SourceResolutionOptions {
-                                                  .sources =
-                                                      lito::PackageSourceConfig {
-                                                          .fetch_seeds = rstd::move(direct_seeds),
-                                                          .network = lito::NetworkPolicy::Offline,
-                                                      },
-                                              },
-                                              resolver,
-                                              *environment,
-                                              lito::SourceEventSink {
-                                                  .context = rstd::addressof(events),
-                                                  .notify  = capture_source_fetch,
-                                              });
-    auto direct         = direct_manager.acquire_external(
-        lito::PackageSourceRequirement::Git(
+    auto direct_manager =
+        lito::source::SourceManager(directory.as_path(),
+                                    lito::source::SourceResolutionOptions {
+                                        .sources =
+                                            lito::source::PackageSourceConfig {
+                                                .fetch_seeds = rstd::move(direct_seeds),
+                                                .network     = lito::source::NetworkPolicy::Offline,
+                                            },
+                                    },
+                                    resolver,
+                                    *environment,
+                                    lito::source::SourceEventSink {
+                                        .context = rstd::addressof(events),
+                                        .notify  = capture_source_fetch,
+                                    });
+    auto direct = direct_manager.acquire_external(
+        lito::source::PackageSourceRequirement::Git(
             String::make("https://example.invalid/seed-only.git"_str),
-            lito::GitReference {
-                .kind  = lito::GitReferenceKind::Commit,
+            lito::source::GitReference {
+                .kind  = lito::source::GitReferenceKind::Commit,
                 .value = commit->clone(),
             }),
         directory.as_path());

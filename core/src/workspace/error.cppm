@@ -9,12 +9,12 @@ import :manifest.error;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::workspace
 {
 
 class WorkspaceError {
     RSTD_ENUM(WorkspaceError,
-              (Manifest, (ManifestError source;)),
+              (Manifest, (lito::manifest::ManifestError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Message, (String message;)))
 };
@@ -22,20 +22,21 @@ class WorkspaceError {
 template<typename T>
 using WorkspaceResult = Result<T, WorkspaceError>;
 
-} // namespace lito
+} // namespace lito::workspace
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::ManifestError>, lito::WorkspaceError> {
-    static auto from(lito::ManifestError error) -> lito::WorkspaceError {
-        return lito::WorkspaceError::Manifest(rstd::move(error));
+struct Impl<convert::From<lito::manifest::ManifestError>, lito::workspace::WorkspaceError> {
+    static auto from(lito::manifest::ManifestError error) -> lito::workspace::WorkspaceError {
+        return lito::workspace::WorkspaceError::Manifest(rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::WorkspaceError> : ImplBase<lito::WorkspaceError> {
+struct Impl<fmt::Display, lito::workspace::WorkspaceError>
+    : ImplBase<lito::workspace::WorkspaceError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Manifest()) {
@@ -52,14 +53,16 @@ struct Impl<fmt::Display, lito::WorkspaceError> : ImplBase<lito::WorkspaceError>
 };
 
 template<>
-struct Impl<fmt::Debug, lito::WorkspaceError> : ImplBase<lito::WorkspaceError> {
+struct Impl<fmt::Debug, lito::workspace::WorkspaceError>
+    : ImplBase<lito::workspace::WorkspaceError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::WorkspaceError> : ImplBase<lito::WorkspaceError> {
+struct Impl<error::Error, lito::workspace::WorkspaceError>
+    : ImplBase<lito::workspace::WorkspaceError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Manifest()) {

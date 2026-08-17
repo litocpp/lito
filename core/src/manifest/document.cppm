@@ -7,7 +7,7 @@ import :manifest.workspace;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 enum class ManifestKind
@@ -30,4 +30,4 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory)
 auto load_package_manifest(ref<rstd::path::Path> requested_directory)
     -> ManifestResult<PackageManifest>;
 
-} // namespace lito
+} // namespace lito::manifest

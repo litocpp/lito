@@ -83,11 +83,11 @@ TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
         parser->parse(strings("-include"_str, "forced.hpp"_str), "compiler.arguments"_str);
     ASSERT_TRUE(arguments.is_ok());
     auto options = cpp::make_cpp_options("c++20"_str,
-                                         StandardLibrary::Libcxx,
+                                         lito::config::StandardLibrary::Libcxx,
                                          false,
                                          false,
-                                         lito::CppOptimization::None,
-                                         lito::CppDebugInfo::None,
+                                         lito::manifest::CppOptimization::None,
+                                         lito::manifest::CppDebugInfo::None,
                                          cpp::CppOptionLayer {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });
@@ -105,11 +105,11 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
         parser->parse(strings("-pthread"_str, "-pthread"_str), "compiler.arguments"_str);
     ASSERT_TRUE(arguments.is_ok());
     auto options = cpp::make_cpp_options("c++20"_str,
-                                         StandardLibrary::Libcxx,
+                                         lito::config::StandardLibrary::Libcxx,
                                          false,
                                          false,
-                                         lito::CppOptimization::None,
-                                         lito::CppDebugInfo::None,
+                                         lito::manifest::CppOptimization::None,
+                                         lito::manifest::CppDebugInfo::None,
                                          cpp::CppOptionLayer {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });

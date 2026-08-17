@@ -164,9 +164,9 @@ public:
                                          "install artifact destination"_str));
                 recipe.artifacts.push(InstallArtifactRecipe {
                     .target =
-                        PackageTargetId {
+                        lito::package::PackageTargetId {
                             .package = package_.name.clone(),
-                            .kind    = PackageTargetKind::Binary,
+                            .kind    = lito::package::PackageTargetKind::Binary,
                             .name    = rstd::move(name),
                         },
                     .destination = rstd::move(destination),

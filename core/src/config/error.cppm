@@ -8,7 +8,7 @@ import rstd.toml;
 
 using namespace rstd::prelude;
 
-export namespace lito
+export namespace lito::config
 {
 
 class ConfigError {
@@ -25,13 +25,13 @@ class ConfigError {
 template<typename T>
 using ConfigResult = Result<T, ConfigError>;
 
-} // namespace lito
+} // namespace lito::config
 
 export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::ConfigError> : ImplBase<lito::ConfigError> {
+struct Impl<fmt::Display, lito::config::ConfigError> : ImplBase<lito::config::ConfigError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
@@ -63,14 +63,14 @@ struct Impl<fmt::Display, lito::ConfigError> : ImplBase<lito::ConfigError> {
 };
 
 template<>
-struct Impl<fmt::Debug, lito::ConfigError> : ImplBase<lito::ConfigError> {
+struct Impl<fmt::Debug, lito::config::ConfigError> : ImplBase<lito::config::ConfigError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::ConfigError> : ImplBase<lito::ConfigError> {
+struct Impl<error::Error, lito::config::ConfigError> : ImplBase<lito::config::ConfigError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Input()) return Some(dyn<error::Error>::from_ref(error.as_Input().source));

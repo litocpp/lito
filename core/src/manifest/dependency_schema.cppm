@@ -24,56 +24,54 @@ using namespace lito::system;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto parse_visibility(ref<str> value, ref<str> context)
-    -> ManifestSchemaResult<DependencyVisibility> {
-    if (value == "public"_str) return Ok(DependencyVisibility::Public);
-    if (value == "private"_str) return Ok(DependencyVisibility::Private);
-    if (value == "link"_str) return Ok(DependencyVisibility::LinkOnly);
-    return manifest_schema_failure<DependencyVisibility>(
+    -> ManifestSchemaResult<lito::dependency::DependencyVisibility> {
+    if (value == "public"_str) return Ok(lito::dependency::DependencyVisibility::Public);
+    if (value == "private"_str) return Ok(lito::dependency::DependencyVisibility::Private);
+    if (value == "link"_str) return Ok(lito::dependency::DependencyVisibility::LinkOnly);
+    return manifest_schema_failure<lito::dependency::DependencyVisibility>(
         rstd::format("{} must be public, private, or link", context));
 }
 
 auto parse_pkg_config_version(ref<str> value, ref<str> context)
-    -> ManifestSchemaResult<PkgConfigVersionRequirement> {
+    -> ManifestSchemaResult<lito::dependency::PkgConfigVersionRequirement> {
     auto text       = value.trim_ascii();
-    auto comparison = PkgConfigVersionOperator::Equal;
+    auto comparison = lito::dependency::PkgConfigVersionOperator::Equal;
     auto prefix     = usize {};
     if (text.starts_with(">="_str)) {
-        comparison = PkgConfigVersionOperator::GreaterEqual;
+        comparison = lito::dependency::PkgConfigVersionOperator::GreaterEqual;
         prefix     = usize(2);
     } else if (text.starts_with("<="_str)) {
-        comparison = PkgConfigVersionOperator::LessEqual;
+        comparison = lito::dependency::PkgConfigVersionOperator::LessEqual;
         prefix     = usize(2);
     } else if (text.starts_with("="_str)) {
-        comparison = PkgConfigVersionOperator::Equal;
+        comparison = lito::dependency::PkgConfigVersionOperator::Equal;
         prefix     = usize(1);
     } else if (text.starts_with(">"_str)) {
-        comparison = PkgConfigVersionOperator::Greater;
+        comparison = lito::dependency::PkgConfigVersionOperator::Greater;
         prefix     = usize(1);
     } else if (text.starts_with("<"_str)) {
-        comparison = PkgConfigVersionOperator::Less;
+        comparison = lito::dependency::PkgConfigVersionOperator::Less;
         prefix     = usize(1);
     } else {
-        return manifest_schema_failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
             rstd::format("{} must begin with one of '=', '<', '>', '<=', or '>='", context));
     }
     auto version = text.get(prefix, text.len());
     if (version.is_none()) {
-        return manifest_schema_failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
             rstd::format("{} must contain a version value", context));
     }
     auto normalized = version->trim_ascii();
     if (normalized.is_empty() || normalized.contains(" "_str) || normalized.contains("\t"_str) ||
         normalized.contains("<"_str) || normalized.contains(">"_str) ||
         normalized.contains("="_str)) {
-        return manifest_schema_failure<PkgConfigVersionRequirement>(
+        return manifest_schema_failure<lito::dependency::PkgConfigVersionRequirement>(
             rstd::format("{} contains an invalid version value", context));
     }
-    return Ok(PkgConfigVersionRequirement {
+    return Ok(lito::dependency::PkgConfigVersionRequirement {
         .comparison = comparison,
         .value      = String::make(normalized),
     });
@@ -128,15 +126,15 @@ auto cmake_cache_key_is_valid(ref<str> value) -> bool {
 }
 
 auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
-    -> ManifestSchemaResult<Vec<CMakeCacheEntry>> {
-    auto result = Vec<CMakeCacheEntry>::make();
+    -> ManifestSchemaResult<Vec<lito::dependency::CMakeCacheEntry>> {
+    auto result = Vec<lito::dependency::CMakeCacheEntry>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = table_value(**value, context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         if (! cmake_cache_key_is_valid((**key).as_str())) {
-            return manifest_schema_failure<Vec<CMakeCacheEntry>>(rstd::format(
+            return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(rstd::format(
                 "{} key '{}' must contain only ASCII letters, digits, or '_'", context, **key));
         }
         auto item       = (**table).get((**key).as_str());
@@ -151,9 +149,9 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
         else if (integer.is_some())
             cache_text = rstd::format("{}", *integer);
         else
-            return manifest_schema_failure<Vec<CMakeCacheEntry>>(rstd::format(
+            return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(rstd::format(
                 "{} value '{}' must be a string, boolean, or integer", context, **key));
-        result.push(CMakeCacheEntry {
+        result.push(lito::dependency::CMakeCacheEntry {
             .name  = (**key).clone(),
             .value = rstd::move(cache_text),
         });
@@ -162,7 +160,7 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
 }
 
 auto parse_git_reference(const Toml& specification, ref<str> context)
-    -> ManifestSchemaResult<GitReference> {
+    -> ManifestSchemaResult<lito::source::GitReference> {
     auto branch = optional_string(specification, "branch"_str, context);
     auto tag    = optional_string(specification, "tag"_str, context);
     auto rev    = optional_string(specification, "rev"_str, context);
@@ -181,31 +179,31 @@ auto parse_git_reference(const Toml& specification, ref<str> context)
     if (rev_value.is_some()) ++count;
     if (commit_value.is_some()) ++count;
     if (count > usize(1)) {
-        return manifest_schema_failure<GitReference>(rstd::format(
+        return manifest_schema_failure<lito::source::GitReference>(rstd::format(
             "{} may contain only one of 'branch', 'tag', 'rev', or 'commit'", context));
     }
-    auto reference = GitReference {};
+    auto reference = lito::source::GitReference {};
     if (branch_value.is_some()) {
-        reference.kind  = GitReferenceKind::Branch;
+        reference.kind  = lito::source::GitReferenceKind::Branch;
         reference.value = rstd::move(branch_value).unwrap();
     } else if (tag_value.is_some()) {
-        reference.kind  = GitReferenceKind::Tag;
+        reference.kind  = lito::source::GitReferenceKind::Tag;
         reference.value = rstd::move(tag_value).unwrap();
     } else if (rev_value.is_some()) {
-        reference.kind  = GitReferenceKind::Rev;
+        reference.kind  = lito::source::GitReferenceKind::Rev;
         reference.value = rstd::move(rev_value).unwrap();
     } else if (commit_value.is_some()) {
-        reference.kind  = GitReferenceKind::Commit;
+        reference.kind  = lito::source::GitReferenceKind::Commit;
         reference.value = rstd::move(commit_value).unwrap();
     }
-    if (reference.kind != GitReferenceKind::DefaultBranch &&
+    if (reference.kind != lito::source::GitReferenceKind::DefaultBranch &&
         (reference.value.is_empty() || reference.value.as_str().starts_with("-"_str))) {
-        return manifest_schema_failure<GitReference>(
+        return manifest_schema_failure<lito::source::GitReference>(
             rstd::format("{} Git selector is invalid", context));
     }
-    if (reference.kind == GitReferenceKind::Commit &&
-        ! git_commit_is_valid(reference.value.as_str())) {
-        return manifest_schema_failure<GitReference>(
+    if (reference.kind == lito::source::GitReferenceKind::Commit &&
+        ! lito::source::git_commit_is_valid(reference.value.as_str())) {
+        return manifest_schema_failure<lito::source::GitReference>(
             rstd::format("{} Git commit must be a full hexadecimal object id", context));
     }
     return Ok(rstd::move(reference));
@@ -228,16 +226,16 @@ auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaRes
 }
 
 auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
-    -> ManifestSchemaResult<Option<Vec<CMakeArchiveVariant>>> {
-    if (value.is_none()) return Ok(Option<Vec<CMakeArchiveVariant>> {});
+    -> ManifestSchemaResult<Option<Vec<lito::dependency::CMakeArchiveVariant>>> {
+    if (value.is_none()) return Ok(Option<Vec<lito::dependency::CMakeArchiveVariant>> {});
     auto variant_context = rstd::format("{}.archives", context);
     auto table           = table_value(**value, variant_context.as_str());
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     if ((**table).is_empty()) {
-        return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
+        return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
             rstd::format("{}.archives must not be empty", context));
     }
-    auto variants = Vec<CMakeArchiveVariant>::with_capacity((**table).len());
+    auto variants = Vec<lito::dependency::CMakeArchiveVariant>::with_capacity((**table).len());
     auto keys     = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& name          = **key;
@@ -252,32 +250,33 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
         if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
         rstd_try(validate_archive_url(archive->as_str(), entry_context.as_str()));
         if (! sha256_is_valid(sha256->as_str())) {
-            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(rstd::format(
-                "{}.sha256 must be a full hexadecimal SHA-256 digest", entry_context.as_str()));
+            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
+                rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest",
+                             entry_context.as_str()));
         }
         auto architecture = canonical_architecture(name.as_str());
         if (architecture.is_err()) {
-            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
         }
         if (architecture->as_str() != name.as_str()) {
-            return manifest_schema_failure<Option<Vec<CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is not canonical; use '{}'",
                              context,
                              name.as_str(),
                              architecture->as_str()));
         }
-        variants.push(CMakeArchiveVariant {
+        variants.push(lito::dependency::CMakeArchiveVariant {
             .architecture = rstd::move(architecture).unwrap(),
             .url          = rstd::move(archive).unwrap(),
             .sha256       = rstd::move(sha256).unwrap(),
         });
     }
-    rstd::slice_::sort_unstable_by(
-        variants.as_mut_slice().as_mut_ref(),
-        [](const CMakeArchiveVariant& left, const CMakeArchiveVariant& right) {
-            return left.architecture.name < right.architecture.name;
-        });
+    rstd::slice_::sort_unstable_by(variants.as_mut_slice().as_mut_ref(),
+                                   [](const lito::dependency::CMakeArchiveVariant& left,
+                                      const lito::dependency::CMakeArchiveVariant& right) {
+                                       return left.architecture.name < right.architecture.name;
+                                   });
     return Ok(Some(rstd::move(variants)));
 }
 
@@ -293,7 +292,7 @@ auto workspace_reference_enabled(const Toml& specification, ref<str> context)
 }
 
 auto parse_package_dependency_source(const Toml& specification, ref<str> context)
-    -> ManifestSchemaResult<PackageSourceRequirement> {
+    -> ManifestSchemaResult<lito::source::PackageSourceRequirement> {
     auto path = optional_string(specification, "path"_str, context);
     auto git  = optional_string(specification, "git"_str, context);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -301,23 +300,24 @@ auto parse_package_dependency_source(const Toml& specification, ref<str> context
     auto path_value = rstd::move(path).unwrap();
     auto git_value  = rstd::move(git).unwrap();
     if (path_value.is_some() == git_value.is_some()) {
-        return manifest_schema_failure<PackageSourceRequirement>(
+        return manifest_schema_failure<lito::source::PackageSourceRequirement>(
             rstd::format("{} must contain exactly one of 'path' or 'git'", context));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
-    if (git_value.is_none() && reference->kind != GitReferenceKind::DefaultBranch) {
-        return manifest_schema_failure<PackageSourceRequirement>(
+    if (git_value.is_none() && reference->kind != lito::source::GitReferenceKind::DefaultBranch) {
+        return manifest_schema_failure<lito::source::PackageSourceRequirement>(
             rstd::format("{} Git selector requires 'git'", context));
     }
     if (path_value.is_some()) {
         auto parsed = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-        return Ok(PackageSourceRequirement::Path(rstd::move(parsed).unwrap()));
+        return Ok(lito::source::PackageSourceRequirement::Path(rstd::move(parsed).unwrap()));
     }
     auto url = rstd::move(git_value).unwrap();
     rstd_try(validate_git_url(url.as_str(), context));
-    return Ok(PackageSourceRequirement::Git(rstd::move(url), rstd::move(reference).unwrap()));
+    return Ok(lito::source::PackageSourceRequirement::Git(rstd::move(url),
+                                                          rstd::move(reference).unwrap()));
 }
 
 struct ParsedDependencies {
@@ -356,7 +356,7 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
                                     development ? workspace_dev_dependency_reference_key
                                                 : workspace_dependency_reference_key));
         }
-        auto parsed_visibility = DependencyVisibility::Private;
+        auto parsed_visibility = lito::dependency::DependencyVisibility::Private;
         if (! development) {
             auto visibility = required_string(**specification, "visibility"_str, context.as_str());
             if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
@@ -462,23 +462,23 @@ auto parse_workspace_dependencies(Option<ref<Toml>> value)
 }
 
 struct ParsedExternalDependencies {
-    Vec<PkgConfigExternalDependency>                   pkg_config;
+    Vec<lito::dependency::PkgConfigExternalDependency> pkg_config;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config;
-    Vec<CMakeDependencyRequirement>                    cmake;
+    Vec<lito::dependency::CMakeDependencyRequirement>  cmake;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake;
 };
 
 auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
-    -> ManifestSchemaResult<PkgConfigDependencyRequirement> {
+    -> ManifestSchemaResult<lito::dependency::PkgConfigDependencyRequirement> {
     auto module  = required_string(specification, "module"_str, context);
     auto version = optional_string(specification, "version"_str, context);
     if (module.is_err()) return Err(rstd::move(module).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     if (module->is_empty() || module->as_str().starts_with("-"_str)) {
-        return manifest_schema_failure<PkgConfigDependencyRequirement>(
+        return manifest_schema_failure<lito::dependency::PkgConfigDependencyRequirement>(
             rstd::format("{}.module must be non-empty and must not start with '-'", context));
     }
-    auto version_requirement = Option<PkgConfigVersionRequirement> {};
+    auto version_requirement = Option<lito::dependency::PkgConfigVersionRequirement> {};
     if (version->is_some()) {
         auto parsed = parse_pkg_config_version(version->as_ref()->as_str(),
                                                "external pkg-config version"_str);
@@ -490,20 +490,21 @@ auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
     if (static_value.is_some()) {
         auto parsed = (**static_value).as_bool();
         if (parsed.is_none()) {
-            return manifest_schema_failure<PkgConfigDependencyRequirement>(
+            return manifest_schema_failure<lito::dependency::PkgConfigDependencyRequirement>(
                 rstd::format("{}.static must be a boolean", context));
         }
         static_mode = *parsed;
     }
-    return Ok(PkgConfigDependencyRequirement {
+    return Ok(lito::dependency::PkgConfigDependencyRequirement {
         .module  = rstd::move(module).unwrap(),
         .version = rstd::move(version_requirement),
-        .mode    = static_mode ? PkgConfigQueryMode::Static : PkgConfigQueryMode::Shared,
+        .mode    = static_mode ? lito::dependency::PkgConfigQueryMode::Static
+                               : lito::dependency::PkgConfigQueryMode::Shared,
     });
 }
 
 struct ParsedPkgConfigExternalDependencies {
-    Vec<PkgConfigExternalDependency>                   explicit_dependencies;
+    Vec<lito::dependency::PkgConfigExternalDependency> explicit_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_dependencies;
 };
 
@@ -545,7 +546,7 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
         }
         auto requirement = parse_pkg_config_requirement(**specification, context.as_str());
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
-        result.explicit_dependencies.push(PkgConfigExternalDependency {
+        result.explicit_dependencies.push(lito::dependency::PkgConfigExternalDependency {
             .alias       = alias.clone(),
             .requirement = rstd::move(requirement).unwrap(),
             .visibility  = rstd::move(parsed_visibility).unwrap(),
@@ -584,18 +585,18 @@ auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
 }
 
 auto parse_cmake_targets(const Toml& specification, ref<str> context)
-    -> ManifestSchemaResult<Vec<CMakeTargetRequirement>> {
+    -> ManifestSchemaResult<Vec<lito::dependency::CMakeTargetRequirement>> {
     auto value = member(specification, "targets"_str);
     if (value.is_none()) {
-        return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
+        return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
             rstd::format("{} is missing 'targets'", context));
     }
     auto array = (**value).as_array();
     if (array.is_none() || (**array).is_empty()) {
-        return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
+        return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
             rstd::format("{}.targets must be a non-empty array", context));
     }
-    auto result = Vec<CMakeTargetRequirement>::with_capacity((**array).len());
+    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity((**array).len());
     auto names  = rstd::collections::BTreeMap<String, empty>::make();
     for (const auto& item : **array) {
         auto target = table_value(item, rstd::format("{}.targets item", context).as_str());
@@ -606,18 +607,18 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
         if (name.is_err()) return Err(rstd::move(name).unwrap_err());
         if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
         if (! cmake_target_is_valid(name->as_str())) {
-            return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
+            return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
                 rstd::format("CMake target '{}' is invalid", name->as_str()));
         }
         if (names.contains_key(name->as_str())) {
-            return manifest_schema_failure<Vec<CMakeTargetRequirement>>(
+            return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
                 rstd::format("{} repeats CMake target '{}'", context, name->as_str()));
         }
         names.insert(name->clone(), empty {});
         auto parsed_visibility =
             parse_visibility(visibility->as_str(), "CMake target visibility"_str);
         if (parsed_visibility.is_err()) return Err(rstd::move(parsed_visibility).unwrap_err());
-        result.push(CMakeTargetRequirement {
+        result.push(lito::dependency::CMakeTargetRequirement {
             .name       = rstd::move(name).unwrap(),
             .visibility = rstd::move(parsed_visibility).unwrap(),
         });
@@ -664,7 +665,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
-    if (git_value.is_none() && reference->kind != GitReferenceKind::DefaultBranch) {
+    if (git_value.is_none() && reference->kind != lito::source::GitReferenceKind::DefaultBranch) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} Git selector requires 'git'", context));
     }
@@ -676,21 +677,22 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} cache and config-directory require a source", context));
     }
-    auto integration_kind  = CMakeIntegration::Install;
+    auto integration_kind  = lito::dependency::CMakeIntegration::Install;
     auto integration_value = rstd::move(integration).unwrap();
     if (integration_value.is_some()) {
         if (integration_value->as_str() == "build-tree"_str) {
-            integration_kind = CMakeIntegration::BuildTree;
+            integration_kind = lito::dependency::CMakeIntegration::BuildTree;
         } else if (integration_value->as_str() != "install"_str) {
             return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.integration must be 'install' or 'build-tree'", context));
         }
     }
-    if (integration_kind == CMakeIntegration::BuildTree && ! sourced) {
+    if (integration_kind == lito::dependency::CMakeIntegration::BuildTree && ! sourced) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} build-tree integration requires a source", context));
     }
-    if (integration_kind == CMakeIntegration::BuildTree && config_directory->is_some()) {
+    if (integration_kind == lito::dependency::CMakeIntegration::BuildTree &&
+        config_directory->is_some()) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} build-tree integration cannot use config-directory", context));
     }
@@ -701,14 +703,15 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
             return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.add-subdirectory must be a boolean", context));
         }
-        if (integration_kind != CMakeIntegration::BuildTree) {
+        if (integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
             return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.add-subdirectory requires build-tree integration", context));
         }
         add_subdirectory = *parsed;
     }
     auto adapter_value = rstd::move(adapter).unwrap();
-    if (adapter_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
+    if (adapter_value.is_some() &&
+        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.adapter requires build-tree integration", context));
     }
@@ -721,24 +724,27 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive and .sha256 must be specified together", context));
     }
-    if (archive_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
+    if (archive_value.is_some() &&
+        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive requires build-tree integration", context));
     }
-    if (archives_value.is_some() && integration_kind != CMakeIntegration::BuildTree) {
+    if (archives_value.is_some() &&
+        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archives requires build-tree integration", context));
     }
-    auto source = CMakeDependencySource::Installed();
+    auto source = lito::dependency::CMakeDependencySource::Installed();
     if (path_value.is_some()) {
         auto parsed =
             relative_path(rstd::move(path_value).unwrap(), "CMake external dependency path"_str);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-        source = CMakeDependencySource::Path(rstd::move(parsed).unwrap());
+        source = lito::dependency::CMakeDependencySource::Path(rstd::move(parsed).unwrap());
     } else if (git_value.is_some()) {
         auto url = rstd::move(git_value).unwrap();
         rstd_try(validate_git_url(url.as_str(), context));
-        source = CMakeDependencySource::Git(rstd::move(url), rstd::move(reference).unwrap());
+        source = lito::dependency::CMakeDependencySource::Git(rstd::move(url),
+                                                              rstd::move(reference).unwrap());
     } else if (archive_value.is_some()) {
         auto url = rstd::move(archive_value).unwrap();
         rstd_try(validate_archive_url(url.as_str(), context));
@@ -746,9 +752,11 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
             return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
                 rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
         }
-        source = CMakeDependencySource::Archive(rstd::move(url), rstd::move(hash_value).unwrap());
+        source = lito::dependency::CMakeDependencySource::Archive(rstd::move(url),
+                                                                  rstd::move(hash_value).unwrap());
     } else if (archives_value.is_some()) {
-        source = CMakeDependencySource::ArchitectureArchives(rstd::move(archives_value).unwrap());
+        source = lito::dependency::CMakeDependencySource::ArchitectureArchives(
+            rstd::move(archives_value).unwrap());
     }
     auto adapter_path = Option<PathBuf> {};
     if (adapter_value.is_some()) {
@@ -777,8 +785,8 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
 }
 
 struct ParsedCMakeExternalDependencies {
-    Vec<CMakeDependencyRequirement>                explicit_dependencies;
-    Vec<WorkspaceCMakeExternalDependencyReference> workspace_dependencies;
+    Vec<lito::dependency::CMakeDependencyRequirement> explicit_dependencies;
+    Vec<WorkspaceCMakeExternalDependencyReference>    workspace_dependencies;
 };
 
 auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
@@ -816,7 +824,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
             **specification, alias.clone(), context.as_str());
         if (definition.is_err()) return Err(rstd::move(definition).unwrap_err());
         auto value = rstd::move(definition).unwrap();
-        result.explicit_dependencies.push(CMakeDependencyRequirement {
+        result.explicit_dependencies.push(lito::dependency::CMakeDependencyRequirement {
             .alias            = rstd::move(value.alias),
             .package          = rstd::move(value.package),
             .source           = rstd::move(value.source),
@@ -900,5 +908,3 @@ auto parse_workspace_external_dependencies(Option<ref<Toml>> value)
     result.cmake      = rstd::move(cmake).unwrap();
     return Ok(rstd::move(result));
 }
-
-} // namespace lito

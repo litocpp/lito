@@ -6,7 +6,7 @@ import :dependency.visibility;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 enum class PkgConfigVersionOperator
@@ -60,4 +60,4 @@ struct PkgConfigProviderConfig {
     }
 };
 
-} // namespace lito
+} // namespace lito::dependency

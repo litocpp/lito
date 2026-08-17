@@ -16,7 +16,7 @@ using namespace rstd::literals;
 using Json      = rstd::json::Value;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class FetchSeedKind
@@ -47,10 +47,9 @@ struct FetchSeedCatalog {
     }
 };
 
-} // namespace lito
+} // namespace lito::source
 
-namespace lito
-{
+using namespace lito::source;
 
 auto seed_root_key(ref<str> key) -> bool {
     return key == "sources"_str || key == "version"_str;
@@ -102,7 +101,10 @@ auto identity_kind(ref<str> identity) -> Option<FetchSeedKind> {
     return None();
 }
 
-export auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSeedCatalog> {
+export namespace lito::source
+{
+
+auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSeedCatalog> {
     auto catalog_path = PathBuf::from(root).join(PathBuf::from("catalog.json"_str).as_path());
     auto contents     = rstd::fs::read_to_string(catalog_path.as_path());
     if (contents.is_err()) {
@@ -210,7 +212,7 @@ export auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<
     });
 }
 
-export auto locate_fetch_seed(const Vec<PathBuf>& roots, const FetchIdentity& identity)
+auto locate_fetch_seed(const Vec<PathBuf>& roots, const FetchIdentity& identity)
     -> SourceResult<Option<PathBuf>> {
     for (const auto& root : roots) {
         auto catalog = load_fetch_seed_catalog(root.as_path());
@@ -244,4 +246,4 @@ export auto locate_fetch_seed(const Vec<PathBuf>& roots, const FetchIdentity& id
     return Ok(None());
 }
 
-} // namespace lito
+} // namespace lito::source

@@ -47,11 +47,11 @@ auto executable_digest(ref<rstd::path::Path> path) -> HostBuildToolResult<String
     return Ok(rstd::crypto::sha256_hex(data->as_slice()));
 }
 
-auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement& owned,
-                                const BuildToolArchiveManifest&         archive,
-                                const HostInfo&                         host,
-                                ref<str>                                source_identity,
-                                ref<str>                                digest) -> String {
+auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         owned,
+                                const lito::manifest::BuildToolArchiveManifest& archive,
+                                const HostInfo&                                 host,
+                                ref<str>                                        source_identity,
+                                ref<str>                                        digest) -> String {
     return rstd::crypto::sha256_hex(
         rstd::format("host-build-tool-v2\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
                      owned.package.as_str(),
@@ -67,12 +67,12 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement& owned,
             .as_str());
 }
 
-auto host_tool_receipt_matches(ref<rstd::path::Path>                   receipt,
-                               const cpp::PackageBuildToolRequirement& owned,
-                               const BuildToolArchiveManifest&         archive,
-                               const HostInfo&                         host,
-                               ref<str>                                source_identity,
-                               ref<str>                                executable_digest,
+auto host_tool_receipt_matches(ref<rstd::path::Path>                           receipt,
+                               const cpp::PackageBuildToolRequirement&         owned,
+                               const lito::manifest::BuildToolArchiveManifest& archive,
+                               const HostInfo&                                 host,
+                               ref<str>                                        source_identity,
+                               ref<str>                                        executable_digest,
                                ref<str> receipt_identity) -> HostBuildToolResult<bool> {
     auto contents = rstd::fs::read_to_string(receipt);
     if (contents.is_err()) {
@@ -106,12 +106,12 @@ auto host_tool_receipt_matches(ref<rstd::path::Path>                   receipt,
               matches("receipt_identity"_str, receipt_identity));
 }
 
-auto write_host_tool_receipt(ref<rstd::path::Path>                   receipt,
-                             const cpp::PackageBuildToolRequirement& owned,
-                             const BuildToolArchiveManifest&         archive,
-                             const HostInfo&                         host,
-                             ref<str>                                source_identity,
-                             ref<str>                                executable_digest,
+auto write_host_tool_receipt(ref<rstd::path::Path>                           receipt,
+                             const cpp::PackageBuildToolRequirement&         owned,
+                             const lito::manifest::BuildToolArchiveManifest& archive,
+                             const HostInfo&                                 host,
+                             ref<str>                                        source_identity,
+                             ref<str>                                        executable_digest,
                              ref<str> receipt_identity) -> HostBuildToolResult<empty> {
     auto document = rstd::json::Map::make();
     document.insert(String::make("format"_str),
@@ -160,11 +160,13 @@ void emit_host_tool(BuildEventSink        observer,
 export namespace lito
 {
 
-auto select_host_build_tool_archive(const BuildToolRequirement& requirement, const HostInfo& host)
-    -> HostBuildToolResult<ref<BuildToolArchiveManifest>> {
+auto select_host_build_tool_archive(const lito::manifest::BuildToolRequirement& requirement,
+                                    const HostInfo&                             host)
+    -> HostBuildToolResult<ref<lito::manifest::BuildToolArchiveManifest>> {
     for (const auto& archive : requirement.archives) {
         if (archive.host.os == host.os.as_str() && archive.host.architecture == host.architecture) {
-            return Ok(ref<BuildToolArchiveManifest>::from_raw_parts(rstd::addressof(archive)));
+            return Ok(ref<lito::manifest::BuildToolArchiveManifest>::from_raw_parts(
+                rstd::addressof(archive)));
         }
     }
     return Err(HostBuildToolError::UnsupportedHost(
@@ -210,20 +212,20 @@ private:
     Vec<Box<ResolvedHostBuildTool>> tools_;
 };
 
-auto resolve_host_build_tools(const cpp::PackageMetadata&       metadata,
-                              const Vec<String>&                packages,
-                              const HostInfo&                   host,
-                              const BuildLayout&                layout,
-                              const CMakeProviderConfig&        cmake,
-                              ToolResolver&                     resolver,
-                              const ResolvedProcessEnvironment& environment,
-                              const PackageSourceConfig&        sources,
-                              usize                             jobs,
-                              BuildEventSink                    observer = {})
+auto resolve_host_build_tools(const cpp::PackageMetadata&                  metadata,
+                              const Vec<String>&                           packages,
+                              const HostInfo&                              host,
+                              const BuildLayout&                           layout,
+                              const lito::dependency::CMakeProviderConfig& cmake,
+                              ToolResolver&                                resolver,
+                              const ResolvedProcessEnvironment&            environment,
+                              const lito::source::PackageSourceConfig&     sources,
+                              usize                                        jobs,
+                              BuildEventSink                               observer = {})
     -> HostBuildToolResult<ResolvedHostBuildTools> {
     auto requirements = Vec<ref<cpp::PackageBuildToolRequirement>>::make();
-    auto selected     = Vec<ref<BuildToolArchiveManifest>>::make();
-    auto archives     = Vec<ArchiveSourceFetchRequest>::make();
+    auto selected     = Vec<ref<lito::manifest::BuildToolArchiveManifest>>::make();
+    auto archives     = Vec<lito::source::ArchiveSourceFetchRequest>::make();
     for (const auto& owned : metadata.build_tools) {
         if (! requested_package(packages, owned.package.as_str())) continue;
         for (const auto& existing : requirements) {
@@ -234,7 +236,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&       metadata,
         auto archive = rstd_try(select_host_build_tool_archive(owned.requirement, host));
         requirements.push(
             ref<cpp::PackageBuildToolRequirement>::from_raw_parts(rstd::addressof(owned)));
-        archives.push(ArchiveSourceFetchRequest {
+        archives.push(lito::source::ArchiveSourceFetchRequest {
             .url    = archive->url.clone(),
             .sha256 = archive->sha256.clone(),
         });
@@ -245,13 +247,14 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&       metadata,
     auto cmake_tool =
         rstd_try(resolver.resolve(cmake.executable.as_path(), "CMake archive extractor"_str));
     auto materialization_root = layout.source_materialization_root();
-    auto acquired             = rstd_try(acquire_archive_frontier(rstd::move(archives),
-                                                                  jobs,
-                                                                  materialization_root.as_path(),
-                                                                  cmake_tool.executable.as_path(),
-                                                                  environment,
-                                                                  sources,
-                                                                  SourceEventSink {}));
+    auto acquired =
+        rstd_try(lito::source::acquire_archive_frontier(rstd::move(archives),
+                                                        jobs,
+                                                        materialization_root.as_path(),
+                                                        cmake_tool.executable.as_path(),
+                                                        environment,
+                                                        sources,
+                                                        lito::source::SourceEventSink {}));
     for (usize index {}; index < requirements.len(); ++index) {
         const auto& owned       = *requirements[index];
         const auto& requirement = owned.requirement;

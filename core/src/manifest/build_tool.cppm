@@ -7,7 +7,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 struct BuildToolArchiveManifest {
@@ -23,4 +23,4 @@ struct BuildToolRequirement {
     Vec<BuildToolArchiveManifest> archives;
 };
 
-} // namespace lito
+} // namespace lito::manifest

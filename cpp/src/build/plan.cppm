@@ -21,15 +21,15 @@ class PlannedLinkInput {
 };
 
 struct SourceDiscoveryPlan {
-    usize                      profile {};
-    Vec<PackageTargetId>       target_identities;
-    Vec<TargetId>              target_order;
-    Vec<CompileContext>        contexts;
-    Vec<Vec<TargetId>>         public_targets;
-    Vec<Vec<TargetId>>         visible_targets;
-    Vec<Vec<PlannedLinkInput>> link_inputs;
-    Vec<CppLinkRequirements>   link_requirements;
-    Vec<Vec<String>>           linker_options;
+    usize                               profile {};
+    Vec<lito::package::PackageTargetId> target_identities;
+    Vec<TargetId>                       target_order;
+    Vec<CompileContext>                 contexts;
+    Vec<Vec<TargetId>>                  public_targets;
+    Vec<Vec<TargetId>>                  visible_targets;
+    Vec<Vec<PlannedLinkInput>>          link_inputs;
+    Vec<CppLinkRequirements>            link_requirements;
+    Vec<Vec<String>>                    linker_options;
 };
 
 struct SourceTargetSelection {

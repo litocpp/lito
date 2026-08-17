@@ -143,7 +143,7 @@ TEST_F(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     auto materialized = materialize("environment-build"_str, *tree);
     ASSERT_TRUE(materialized.is_ok());
     auto project = materialized->root.join(PathBuf::from("append-path"_str).as_path());
-    auto config  = lito::load_project_config(project.as_path());
+    auto config  = lito::config::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());
     auto output  = source_root("environment-append-path"_str);
     auto request = build_request(
@@ -161,7 +161,7 @@ TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     auto materialized = materialize("environment-test"_str, *tree);
     ASSERT_TRUE(materialized.is_ok());
     auto project = materialized->root.join(PathBuf::from("test-path"_str).as_path());
-    auto config  = lito::load_project_config(project.as_path());
+    auto config  = lito::config::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());
     auto output  = source_root("environment-test-path"_str);
     auto request = build_request(

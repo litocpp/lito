@@ -66,18 +66,18 @@ auto explicit_platform(ref<str> target_triple) -> lito::system::BuildPlatform {
 
 auto default_profile(const lito::cpp::CppArgumentParser& parser) -> lito::cpp::ProfileSpec {
     auto profile = lito::cpp::make_profile_spec(
-        configuration(), lito::ProjectProfile {}, build_profile("debug"_str), parser);
+        configuration(), lito::manifest::ProjectProfile {}, build_profile("debug"_str), parser);
     return rstd::move(profile).unwrap();
 }
 
-auto fixture_cmake() -> lito::CMakeProviderConfig {
-    return lito::CMakeProviderConfig {
+auto fixture_cmake() -> lito::dependency::CMakeProviderConfig {
+    return lito::dependency::CMakeProviderConfig {
         .executable = rstd::path::PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
     };
 }
 
-auto cmake_package_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto cmake_package_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
 project(LitoFixture VERSION 1.2.3 LANGUAGES CXX)
@@ -135,7 +135,7 @@ endif()
     return source_tree(files);
 }
 
-auto cmake_build_tree_project_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto cmake_build_tree_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
 project(LitoBuildTree VERSION 4.5.6 LANGUAGES CXX)
@@ -166,17 +166,18 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
                             ref<rstd::path::Path>                                work_root,
                             usize                                                jobs   = usize(1),
                             Vec<lito::ExternalAssetSet>*                         assets = nullptr)
-    -> lito::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
+    -> lito::dependency::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     if (environment.is_err()) {
-        return Err(rstd::into<lito::DependencyError>(rstd::move(environment).unwrap_err()));
+        return Err(
+            rstd::into<lito::dependency::DependencyError>(rstd::move(environment).unwrap_err()));
     }
     auto resolver = lito::system::ToolResolver(*environment);
     auto provider = fixture_cmake();
     auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
     if (tool.is_err()) {
-        return Err(rstd::into<lito::DependencyError>(rstd::move(tool).unwrap_err()));
+        return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tool).unwrap_err()));
     }
     provider.executable = rstd::move(tool).unwrap().executable;
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
@@ -189,7 +190,7 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
         if (requirement->adapter.is_some() && requirement->adapter_identity.is_empty()) {
             auto contents = rstd::fs::read_to_string(requirement->adapter->as_path());
             if (contents.is_err()) {
-                return Err(lito::DependencyError::Message(
+                return Err(lito::dependency::DependencyError::Message(
                     rstd::format("cannot read CMake adapter '{}': {}",
                                  requirement->adapter->as_path(),
                                  rstd::move(contents).unwrap_err())));
@@ -217,17 +218,18 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
     }
     return Ok(rstd::move(result));
 }
-auto versioned_fixture(ref<str>                       alias,
-                       lito::PkgConfigVersionOperator comparison,
-                       ref<str>                       version,
-                       lito::PkgConfigQueryMode       mode = lito::PkgConfigQueryMode::Shared)
-    -> lito::PkgConfigExternalDependency {
-    return lito::PkgConfigExternalDependency {
+auto versioned_fixture(
+    ref<str>                                   alias,
+    lito::dependency::PkgConfigVersionOperator comparison,
+    ref<str>                                   version,
+    lito::dependency::PkgConfigQueryMode       mode = lito::dependency::PkgConfigQueryMode::Shared)
+    -> lito::dependency::PkgConfigExternalDependency {
+    return lito::dependency::PkgConfigExternalDependency {
         .alias = String::make(alias),
         .requirement =
-            lito::PkgConfigDependencyRequirement {
+            lito::dependency::PkgConfigDependencyRequirement {
                 .module  = String::make("lito-fixture"_str),
-                .version = Some(lito::PkgConfigVersionRequirement {
+                .version = Some(lito::dependency::PkgConfigVersionRequirement {
                     .comparison = comparison,
                     .value      = String::make(version),
                 }),
@@ -236,13 +238,13 @@ auto versioned_fixture(ref<str>                       alias,
     };
 }
 
-auto external_usage_metadata(lito::DependencyVisibility          visibility,
-                             const lito::cpp::CppArgumentParser& parser)
-    -> lito::PackageResult<lito::cpp::PackageMetadata> {
+auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
+                             const lito::cpp::CppArgumentParser&    parser)
+    -> lito::package::PackageResult<lito::cpp::PackageMetadata> {
     auto raw       = strings("-DLITO_EXTERNAL_USAGE=1"_str);
     auto arguments = parser.parse(raw, "pkg-config test fixture"_str);
     if (arguments.is_err()) {
-        return Err(lito::PackageError::Message(
+        return Err(lito::package::PackageError::Message(
             rstd::format("pkg-config test fixture compiler arguments are invalid: {}",
                          rstd::move(arguments).unwrap_err())));
     }
@@ -270,19 +272,19 @@ auto external_usage_metadata(lito::DependencyVisibility          visibility,
     auto dependencies = Vec<lito::cpp::DependencySpec>::make();
     dependencies.push(lito::cpp::DependencySpec {
         .target =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("external-usage"_str),
-                .kind    = lito::PackageTargetKind::Library,
+                .kind    = lito::package::PackageTargetKind::Library,
                 .name    = String::make("library"_str),
             },
-        .visibility = lito::DependencyVisibility::Private,
+        .visibility = lito::dependency::DependencyVisibility::Private,
     });
     auto targets = Vec<lito::cpp::ResolvedTarget>::make();
     targets.push(lito::cpp::ResolvedTarget {
         .id =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("external-usage"_str),
-                .kind    = lito::PackageTargetKind::Library,
+                .kind    = lito::package::PackageTargetKind::Library,
                 .name    = String::make("library"_str),
             },
         .artifact_kind         = lito::cpp::ArtifactKind::StaticLibrary,
@@ -291,16 +293,16 @@ auto external_usage_metadata(lito::DependencyVisibility          visibility,
     });
     targets.push(lito::cpp::ResolvedTarget {
         .id =
-            lito::PackageTargetId {
+            lito::package::PackageTargetId {
                 .package = String::make("external-usage"_str),
-                .kind    = lito::PackageTargetKind::Binary,
+                .kind    = lito::package::PackageTargetKind::Binary,
                 .name    = String::make("app"_str),
             },
         .artifact_kind = lito::cpp::ArtifactKind::Executable,
         .artifact_name = String::make("app"_str),
         .dependencies  = rstd::move(dependencies),
     });
-    auto default_targets = Vec<lito::PackageTargetId>::make();
+    auto default_targets = Vec<lito::package::PackageTargetId>::make();
     default_targets.push(targets[usize(1)].id.clone());
     auto profiles = Vec<lito::cpp::ProfileSpec>::make();
     profiles.push(default_profile(parser));

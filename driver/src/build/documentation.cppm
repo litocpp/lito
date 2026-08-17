@@ -25,7 +25,7 @@ struct DocumentationBmiDependency {
 };
 
 struct DocumentationBuildUnit {
-    PackageTargetId                 target;
+    lito::package::PackageTargetId  target;
     PathBuf                         package_root;
     PathBuf                         source;
     PathBuf                         relative_source;

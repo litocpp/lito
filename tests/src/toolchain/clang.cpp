@@ -13,7 +13,7 @@ using namespace lito;
 using namespace lito_test;
 
 TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
-    auto created = ClangToolchain::create(ToolchainSpec {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
     });
@@ -22,7 +22,8 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(toolchain.capabilities().reduced_bmi);
     EXPECT_TRUE(toolchain.capabilities().one_phase_bmi);
     EXPECT_TRUE(toolchain.capabilities().exact_module_mapping);
-    auto cpp     = cpp_options("c++20"_str, lito::CppOptimization::None, lito::CppDebugInfo::None);
+    auto cpp = cpp_options(
+        "c++20"_str, lito::manifest::CppOptimization::None, lito::manifest::CppDebugInfo::None);
     auto context = cpp::CompileContext {
         .id  = String::make("context"_str),
         .cpp = rstd::move(cpp),
@@ -65,16 +66,16 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
 }
 
 TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
-    EXPECT_EQ(
-        toolchain::clang_options::standard_library_linker_option(StandardLibrary::Libcxx, false),
-        "-nostdlib++"_str);
-    EXPECT_EQ(
-        toolchain::clang_options::standard_library_linker_option(StandardLibrary::Libstdcxx, true),
-        "-stdlib=libstdc++"_str);
+    EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
+                  lito::config::StandardLibrary::Libcxx, false),
+              "-nostdlib++"_str);
+    EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
+                  lito::config::StandardLibrary::Libstdcxx, true),
+              "-stdlib=libstdc++"_str);
 }
 
 TEST(ClangToolchain, RejectsNonLldLinkers) {
-    auto created = ClangToolchain::create(ToolchainSpec {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),
         .ld  = PathBuf::from("ld"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
@@ -86,7 +87,7 @@ TEST(ClangToolchain, RejectsNonLldLinkers) {
 }
 
 TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
-    auto created = ClangToolchain::create(ToolchainSpec {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
     });

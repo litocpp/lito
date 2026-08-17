@@ -8,7 +8,7 @@ import rstd;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class SourceEntryKind
@@ -108,16 +108,15 @@ struct SourceMaterialization {
 auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> destination)
     -> SourceTreeResult<SourceMaterialization>;
 
-} // namespace lito
+} // namespace lito::source
 
-namespace lito
-{
+using namespace lito::source;
 
 auto invalid_source_path(ref<str> path, ref<str> reason) -> SourceTreeResult<SourcePath> {
     return Err(SourceTreeError::InvalidPath(String::make(path), String::make(reason)));
 }
 
-auto SourcePath::parse(ref<str> value) -> SourceTreeResult<SourcePath> {
+auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourcePath> {
     if (value.is_empty()) return invalid_source_path(value, "path must not be empty"_str);
     if (value.starts_with("/"_str) || value.ends_with("/"_str)) {
         return invalid_source_path(value, "path must be relative without trailing separators"_str);
@@ -156,21 +155,21 @@ auto entry_kind_name(SourceEntryKind kind) -> ref<str> {
     return kind == SourceEntryKind::Directory ? "directory"_str : "file"_str;
 }
 
-auto SourceTree::find(ref<str> path) noexcept -> Option<usize> {
+auto lito::source::SourceTree::find(ref<str> path) noexcept -> Option<usize> {
     for (auto index = usize {}; index < entries_.len(); ++index) {
         if (entries_[index].path().as_str() == path) return Some(index);
     }
     return None();
 }
 
-auto SourceTree::find(ref<str> path) const noexcept -> Option<usize> {
+auto lito::source::SourceTree::find(ref<str> path) const noexcept -> Option<usize> {
     for (auto index = usize {}; index < entries_.len(); ++index) {
         if (entries_[index].path().as_str() == path) return Some(index);
     }
     return None();
 }
 
-auto SourceTree::add_entry(SourceTreeEntry entry) -> SourceTreeResult<empty> {
+auto lito::source::SourceTree::add_entry(SourceTreeEntry entry) -> SourceTreeResult<empty> {
     for (const auto& existing : entries_) {
         if (existing.path().as_str() == entry.path().as_str()) {
             return source_tree_conflict(
@@ -198,7 +197,7 @@ auto SourceTree::add_entry(SourceTreeEntry entry) -> SourceTreeResult<empty> {
     return Ok(empty {});
 }
 
-auto SourceTree::add_directory(ref<str> path) -> SourceTreeResult<empty> {
+auto lito::source::SourceTree::add_directory(ref<str> path) -> SourceTreeResult<empty> {
     auto parsed = SourcePath::parse(path);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     return add_entry(SourceTreeEntry(rstd::move(parsed).unwrap(),
@@ -207,7 +206,7 @@ auto SourceTree::add_directory(ref<str> path) -> SourceTreeResult<empty> {
                                      SourceFileMode::Regular));
 }
 
-auto SourceTree::add_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)
+auto lito::source::SourceTree::add_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     auto parsed = SourcePath::parse(path);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -215,12 +214,12 @@ auto SourceTree::add_bytes(ref<str> path, slice<u8> contents, SourceFileMode mod
         rstd::move(parsed).unwrap(), SourceEntryKind::File, Vec<u8>::from(contents), mode));
 }
 
-auto SourceTree::add_text(ref<str> path, ref<str> contents, SourceFileMode mode)
+auto lito::source::SourceTree::add_text(ref<str> path, ref<str> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     return add_bytes(path, contents.as_bytes(), mode);
 }
 
-auto SourceTree::replace_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)
+auto lito::source::SourceTree::replace_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     auto parsed = SourcePath::parse(path);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
@@ -236,12 +235,12 @@ auto SourceTree::replace_bytes(ref<str> path, slice<u8> contents, SourceFileMode
     return Ok(empty {});
 }
 
-auto SourceTree::replace_text(ref<str> path, ref<str> contents, SourceFileMode mode)
+auto lito::source::SourceTree::replace_text(ref<str> path, ref<str> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     return replace_bytes(path, contents.as_bytes(), mode);
 }
 
-auto SourceTree::remove(ref<str> path) -> SourceTreeResult<empty> {
+auto lito::source::SourceTree::remove(ref<str> path) -> SourceTreeResult<empty> {
     auto parsed = SourcePath::parse(path);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
     auto index = find(path);
@@ -261,7 +260,7 @@ auto SourceTree::remove(ref<str> path) -> SourceTreeResult<empty> {
     return Ok(empty {});
 }
 
-auto SourceTree::extend(const SourceTree& other) -> SourceTreeResult<empty> {
+auto lito::source::SourceTree::extend(const SourceTree& other) -> SourceTreeResult<empty> {
     auto combined = clone();
     for (const auto& entry : other.entries_) {
         auto added = combined.add_entry(entry.clone());
@@ -271,7 +270,7 @@ auto SourceTree::extend(const SourceTree& other) -> SourceTreeResult<empty> {
     return Ok(empty {});
 }
 
-auto SourceTree::clone() const -> SourceTree {
+auto lito::source::SourceTree::clone() const -> SourceTree {
     auto entries = Vec<SourceTreeEntry>::with_capacity(entries_.len());
     for (const auto& entry : entries_) entries.push(entry.clone());
     return SourceTree(rstd::move(entries));
@@ -293,7 +292,8 @@ auto cleanup_materialization(ref<rstd::path::Path> destination) noexcept -> void
     }
 }
 
-auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> destination)
+auto lito::source::materialize_source_tree(const SourceTree&     tree,
+                                           ref<rstd::path::Path> destination)
     -> SourceTreeResult<SourceMaterialization> {
     auto exists = rstd::fs::exists(destination);
     if (exists.is_err()) {
@@ -360,13 +360,11 @@ auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> desti
     });
 }
 
-} // namespace lito
-
 export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::SourceTreeError> : ImplBase<lito::SourceTreeError> {
+struct Impl<fmt::Display, lito::source::SourceTreeError> : ImplBase<lito::source::SourceTreeError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_InvalidPath()) {
@@ -391,14 +389,14 @@ struct Impl<fmt::Display, lito::SourceTreeError> : ImplBase<lito::SourceTreeErro
 };
 
 template<>
-struct Impl<fmt::Debug, lito::SourceTreeError> : ImplBase<lito::SourceTreeError> {
+struct Impl<fmt::Debug, lito::source::SourceTreeError> : ImplBase<lito::source::SourceTreeError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::SourceTreeError> : ImplBase<lito::SourceTreeError> {
+struct Impl<error::Error, lito::source::SourceTreeError> : ImplBase<lito::source::SourceTreeError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));

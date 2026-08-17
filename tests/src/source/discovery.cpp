@@ -46,18 +46,18 @@ sources = {}
                                      item.name,
                                      item.name,
                                      item.source);
-        auto tree     = lito::SourceTree::make();
+        auto tree     = lito::source::SourceTree::make();
         ASSERT_TRUE(tree.add_text("lito.toml"_str, manifest.as_str()).is_ok());
         if (! item.extra_path.is_empty()) {
             ASSERT_TRUE(tree.add_text(item.extra_path, item.extra_contents).is_ok());
         }
         auto project = materialize(item.name, tree);
         ASSERT_TRUE(project.is_ok());
-        auto loaded = lito::load_package_manifest(project->root.as_path());
+        auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
         ASSERT_TRUE(loaded.is_ok());
         ASSERT_EQ(loaded->targets.len(), usize(1));
         auto target = lito::cpp::ResolvedTarget {
-            .source      = rstd::move(lito::package_target_source(loaded->targets[usize {}])),
+            .source = rstd::move(lito::manifest::package_target_source(loaded->targets[usize {}])),
             .source_root = rstd::move(loaded->source_root),
         };
         auto discovered = lito::discover_explicit_sources(target);

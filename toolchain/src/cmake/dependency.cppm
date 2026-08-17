@@ -19,16 +19,16 @@ class ResolvedCMakeDependencySource {
 };
 
 struct ResolvedCMakeDependencyRequirement {
-    String                        alias;
-    String                        package;
-    ResolvedCMakeDependencySource source;
-    CMakeIntegration              integration { CMakeIntegration::Install };
-    bool                          add_subdirectory { true };
-    Option<PathBuf>               adapter;
-    String                        adapter_identity;
-    Option<PathBuf>               config_directory;
-    Vec<CMakeCacheEntry>          cache;
-    Vec<CMakeTargetRequirement>   targets;
+    String                             alias;
+    String                             package;
+    ResolvedCMakeDependencySource      source;
+    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
+    bool                               add_subdirectory { true };
+    Option<PathBuf>                    adapter;
+    String                             adapter_identity;
+    Option<PathBuf>                    config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>        cache;
+    Vec<lito::dependency::CMakeTargetRequirement> targets;
 };
 
 struct ExternalAssetEntry {

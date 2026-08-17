@@ -19,9 +19,7 @@ using namespace lito::system;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
-
-namespace lito
-{
+using namespace lito::config;
 
 template<typename T>
 auto config_failure(String message) -> ConfigResult<T> {
@@ -217,8 +215,8 @@ auto configured_directories(const Toml&           table,
 }
 
 auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_root)
-    -> ConfigResult<PkgConfigProviderConfig> {
-    auto result = PkgConfigProviderConfig {
+    -> ConfigResult<lito::dependency::PkgConfigProviderConfig> {
+    auto result = lito::dependency::PkgConfigProviderConfig {
         .executable = PathBuf::from("pkg-config"_str),
     };
     auto value = config_member(document, "pkg-config"_str);
@@ -237,14 +235,14 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
     if (sysroot.is_some()) {
         auto text = (**sysroot).as_str();
         if (text.is_none() || text->is_empty()) {
-            return config_failure<PkgConfigProviderConfig>(
+            return config_failure<lito::dependency::PkgConfigProviderConfig>(
                 "config.pkg-config.sysroot must be a non-empty string"_str);
         }
         auto path = PathBuf::from(*text);
         if (path.as_path().is_relative()) path = PathBuf::from(project_root).join(path.as_path());
         auto canonical = rstd::fs::canonicalize(path.as_path());
         if (canonical.is_err()) {
-            return config_io_failure<PkgConfigProviderConfig>(
+            return config_io_failure<lito::dependency::PkgConfigProviderConfig>(
                 "resolve config.pkg-config.sysroot"_str,
                 path.as_path(),
                 rstd::move(canonical).unwrap_err());
@@ -273,8 +271,8 @@ auto configured_environment(const Toml& document, ref<rstd::path::Path> project_
 }
 
 auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
-    -> ConfigResult<CMakeProviderConfig> {
-    auto result = CMakeProviderConfig {
+    -> ConfigResult<lito::dependency::CMakeProviderConfig> {
+    auto result = lito::dependency::CMakeProviderConfig {
         .executable = PathBuf::from("cmake"_str),
         .generator  = String::make("Ninja"_str),
     };
@@ -290,7 +288,7 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
     if (generator.is_some()) {
         auto text = (**generator).as_str();
         if (text.is_none() || text->is_empty()) {
-            return config_failure<CMakeProviderConfig>(
+            return config_failure<lito::dependency::CMakeProviderConfig>(
                 "config.cmake.generator must be a non-empty string"_str);
         }
         result.generator = String::make(*text);
@@ -311,14 +309,14 @@ auto default_toolchain() -> ToolchainSpec {
     };
 }
 
-auto default_lock_config(ref<rstd::path::Path> project_root) -> LockConfig {
-    return LockConfig {
+auto default_lock_config(ref<rstd::path::Path> project_root) -> lito::lock::LockConfig {
+    return lito::lock::LockConfig {
         .path = PathBuf::from(project_root).join(PathBuf::from("lito.lock"_str).as_path()),
     };
 }
 
 auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
-    -> ConfigResult<LockConfig> {
+    -> ConfigResult<lito::lock::LockConfig> {
     auto value = config_member(document, "lock"_str);
     if (value.is_none()) return Ok(default_lock_config(project_root));
     auto table = config_table(**value, "config.lock"_str);
@@ -327,11 +325,12 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
     auto path_value = config_member(**value, "path"_str);
     if (path_value.is_none()) {
-        return config_failure<LockConfig>("config.lock is missing 'path'"_str);
+        return config_failure<lito::lock::LockConfig>("config.lock is missing 'path'"_str);
     }
     auto text = (**path_value).as_str();
     if (text.is_none() || text->is_empty()) {
-        return config_failure<LockConfig>("config.lock.path must be a non-empty string"_str);
+        return config_failure<lito::lock::LockConfig>(
+            "config.lock.path must be a non-empty string"_str);
     }
     auto requested = PathBuf::from(*text);
     if (requested.as_path().is_relative()) {
@@ -340,33 +339,33 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
     auto parent = requested.as_path().parent();
     auto name   = requested.as_path().file_name();
     if (parent.is_none() || name.is_none()) {
-        return config_failure<LockConfig>(
+        return config_failure<lito::lock::LockConfig>(
             rstd::format("config.lock.path '{}' must name a file", requested.as_path()));
     }
     auto canonical_parent = rstd::fs::canonicalize(*parent);
     if (canonical_parent.is_err()) {
-        return config_io_failure<LockConfig>("resolve config.lock.path parent"_str,
-                                             *parent,
-                                             rstd::move(canonical_parent).unwrap_err());
+        return config_io_failure<lito::lock::LockConfig>("resolve config.lock.path parent"_str,
+                                                         *parent,
+                                                         rstd::move(canonical_parent).unwrap_err());
     }
     auto path   = canonical_parent->join(PathBuf::from(*name).as_path());
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
-        return config_io_failure<LockConfig>(
+        return config_io_failure<lito::lock::LockConfig>(
             "inspect config.lock.path"_str, path.as_path(), rstd::move(exists).unwrap_err());
     }
     if (*exists) {
         auto metadata = rstd::fs::metadata(path.as_path());
         if (metadata.is_err()) {
-            return config_io_failure<LockConfig>(
+            return config_io_failure<lito::lock::LockConfig>(
                 "inspect config.lock.path"_str, path.as_path(), rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_file()) {
-            return config_failure<LockConfig>(
+            return config_failure<lito::lock::LockConfig>(
                 rstd::format("config.lock.path '{}' is not a file", path.as_path()));
         }
     }
-    return Ok(LockConfig { .path = rstd::move(path) });
+    return Ok(lito::lock::LockConfig { .path = rstd::move(path) });
 }
 
 auto configured_install(const Toml& document, ref<rstd::path::Path> project_root)
@@ -426,11 +425,11 @@ auto configured_doc(const Toml& document, ref<rstd::path::Path> project_root)
 }
 
 auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root)
-    -> ConfigResult<PackageSourceConfig> {
-    auto patches     = Vec<GitSourcePatch>::make();
+    -> ConfigResult<lito::source::PackageSourceConfig> {
+    auto patches     = Vec<lito::source::GitSourcePatch>::make();
     auto patch_value = config_member(document, "patch"_str);
     if (patch_value.is_none()) {
-        return Ok(PackageSourceConfig { .patches = rstd::move(patches) });
+        return Ok(lito::source::PackageSourceConfig { .patches = rstd::move(patches) });
     }
 
     auto patch_table = config_table(**patch_value, "config.patch"_str);
@@ -439,15 +438,15 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& url = **key;
         if (url.is_empty()) {
-            return config_failure<PackageSourceConfig>(
+            return config_failure<lito::source::PackageSourceConfig>(
                 "config.patch Git URL must not be empty"_str);
         }
         if (url.as_str().starts_with("-"_str)) {
-            return config_failure<PackageSourceConfig>(
+            return config_failure<lito::source::PackageSourceConfig>(
                 rstd::format("config.patch Git URL '{}' must not start with '-'", url.as_str()));
         }
         if (url.as_str().contains("#"_str)) {
-            return config_failure<PackageSourceConfig>(rstd::format(
+            return config_failure<lito::source::PackageSourceConfig>(rstd::format(
                 "config.patch Git URL '{}' must not contain a URL fragment", url.as_str()));
         }
 
@@ -459,16 +458,16 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         auto value = config_member(**specification, "path"_str);
         if (value.is_none()) {
-            return config_failure<PackageSourceConfig>(
+            return config_failure<lito::source::PackageSourceConfig>(
                 rstd::format("{} is missing 'path'", context.as_str()));
         }
         auto text = (**value).as_str();
         if (text.is_none()) {
-            return config_failure<PackageSourceConfig>(
+            return config_failure<lito::source::PackageSourceConfig>(
                 rstd::format("{}.path must be a string", context.as_str()));
         }
         if (text->is_empty()) {
-            return config_failure<PackageSourceConfig>(
+            return config_failure<lito::source::PackageSourceConfig>(
                 rstd::format("{}.path must not be empty", context.as_str()));
         }
 
@@ -478,7 +477,7 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
         }
         auto canonical = rstd::fs::canonicalize(requested.as_path());
         if (canonical.is_err()) {
-            return config_io_failure<PackageSourceConfig>(
+            return config_io_failure<lito::source::PackageSourceConfig>(
                 rstd::format("resolve {}.path", context.as_str()).as_str(),
                 requested.as_path(),
                 rstd::move(canonical).unwrap_err());
@@ -486,27 +485,22 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
         auto resolved = rstd::move(canonical).unwrap();
         auto metadata = rstd::fs::metadata(resolved.as_path());
         if (metadata.is_err()) {
-            return config_io_failure<PackageSourceConfig>(
+            return config_io_failure<lito::source::PackageSourceConfig>(
                 rstd::format("inspect {}.path", context.as_str()).as_str(),
                 resolved.as_path(),
                 rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_dir()) {
-            return config_failure<PackageSourceConfig>(rstd::format(
+            return config_failure<lito::source::PackageSourceConfig>(rstd::format(
                 "{}.path '{}' is not a directory", context.as_str(), resolved.as_path()));
         }
-        patches.push(GitSourcePatch {
+        patches.push(lito::source::GitSourcePatch {
             .git  = url.clone(),
             .path = rstd::move(resolved),
         });
     }
-    return Ok(PackageSourceConfig { .patches = rstd::move(patches) });
+    return Ok(lito::source::PackageSourceConfig { .patches = rstd::move(patches) });
 }
-
-} // namespace lito
-
-namespace lito
-{
 
 auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<ProjectConfig> {
     auto root_table = config_table(document, "config root"_str);
@@ -572,5 +566,3 @@ auto decode_project_config(PathBuf root, const Toml& document) -> ConfigResult<P
         .doc              = rstd::move(doc).unwrap(),
     });
 }
-
-} // namespace lito

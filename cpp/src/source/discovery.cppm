@@ -31,8 +31,8 @@ struct ResolvedSourceSet {
 };
 
 struct ResolvedTargetSources {
-    PackageTargetId   target;
-    ResolvedSourceSet sources;
+    lito::package::PackageTargetId target;
+    ResolvedSourceSet              sources;
 };
 
 class SourceDiscoveryError {

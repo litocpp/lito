@@ -41,7 +41,7 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     }
     auto tool_resolver = ToolResolver(*environment);
     auto resolved      = resolve_project_selection(request.selection,
-                                                   PackageSelectionPurpose::All,
+                                                   lito::package::PackageSelectionPurpose::All,
                                                    request.sources,
                                                    request.lock,
                                                    false,

@@ -5,7 +5,7 @@ import rstd;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class NetworkPolicy
@@ -42,4 +42,4 @@ struct PackageSourceConfig {
     }
 };
 
-} // namespace lito
+} // namespace lito::source

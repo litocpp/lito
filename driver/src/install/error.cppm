@@ -17,7 +17,7 @@ export namespace lito
 
 class InstallSourceError {
     RSTD_ENUM(InstallSourceError,
-              (Workspace, (WorkspaceError source;)),
+              (Workspace, (lito::workspace::WorkspaceError source;)),
               (Message, (String message;)))
 };
 
@@ -52,7 +52,7 @@ using InstallStoreResult = Result<T, InstallStoreError>;
 class InstallError {
     RSTD_ENUM(InstallError,
               (Source, (InstallSourceError source;)),
-              (Selection, (WorkspaceError source;)),
+              (Selection, (lito::workspace::WorkspaceError source;)),
               (Script, (InstallScriptError source;)),
               (Build, (BuildError source;)),
               (Materialize, (InstallMaterializeError source;)),
@@ -69,8 +69,8 @@ export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::WorkspaceError>, lito::InstallSourceError> {
-    static auto from(lito::WorkspaceError error) -> lito::InstallSourceError {
+struct Impl<convert::From<lito::workspace::WorkspaceError>, lito::InstallSourceError> {
+    static auto from(lito::workspace::WorkspaceError error) -> lito::InstallSourceError {
         return lito::InstallSourceError::Workspace(rstd::move(error));
     }
 };

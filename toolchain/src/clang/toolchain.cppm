@@ -24,7 +24,8 @@ export namespace lito
 
 class ClangToolchain {
 public:
-    static auto create(const ToolchainSpec& specification) -> ToolchainResult<ClangToolchain> {
+    static auto create(const lito::config::ToolchainSpec& specification)
+        -> ToolchainResult<ClangToolchain> {
         auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
         if (environment.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(environment).unwrap_err()));
@@ -33,9 +34,9 @@ public:
         return create(specification, resolver, *environment);
     }
 
-    static auto create(const ToolchainSpec&              specification,
-                       ToolResolver&                     resolver,
-                       const ResolvedProcessEnvironment& environment)
+    static auto create(const lito::config::ToolchainSpec& specification,
+                       ToolResolver&                      resolver,
+                       const ResolvedProcessEnvironment&  environment)
         -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
@@ -253,15 +254,15 @@ public:
                              queried->standard_error.as_str()));
         }
 
-        auto library_name = options.abi.standard_library == StandardLibrary::Libcxx
+        auto library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                 ? "libc++.so"_str
                                 : "libstdc++.so"_str;
         if (target.family == TargetFamily::Windows) {
-            library_name = options.abi.standard_library == StandardLibrary::Libcxx
+            library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                ? "libc++.a"_str
                                : "libstdc++.a"_str;
         } else if (target.os.as_str() == "macos"_str) {
-            library_name = options.abi.standard_library == StandardLibrary::Libcxx
+            library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                ? "libc++.dylib"_str
                                : "libstdc++.dylib"_str;
         }
@@ -310,8 +311,9 @@ public:
         } else if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
             thread_backend = String::make("win32"_str);
         }
-        auto family = options.abi.standard_library == StandardLibrary::Libcxx ? "libc++"_str
-                                                                              : "libstdc++"_str;
+        auto family = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
+                          ? "libc++"_str
+                          : "libstdc++"_str;
         auto headers_identity =
             rstd::format("clang-stdlib-headers-v2\nfamily={}\ntarget={}\nmacros-sha256={}",
                          family,
@@ -595,10 +597,10 @@ public:
     auto link_executable(ref<rstd::path::Path>           output_path,
                          const Vec<PathBuf>&             objects,
                          const Vec<ResolvedLinkInput>&   inputs,
-                         StandardLibrary                 standard_library,
+                         lito::config::StandardLibrary   standard_library,
                          const TargetInfo&               target,
                          bool                            link_stdlib,
-                         lito::CppLto                    lto,
+                         lito::manifest::CppLto          lto,
                          const cpp::CppLinkRequirements& link_requirements,
                          const Vec<String>&              linker_options,
                          ref<rstd::path::Path>           working_directory) const
@@ -712,19 +714,20 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto strip_artifact(ref<rstd::path::Path> output_path,
-                        ref<rstd::path::Path> stripper,
-                        StripMode             mode,
-                        ref<rstd::path::Path> working_directory) const
+    auto strip_artifact(ref<rstd::path::Path>     output_path,
+                        ref<rstd::path::Path>     stripper,
+                        lito::manifest::StripMode mode,
+                        ref<rstd::path::Path>     working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
-        if (mode == StripMode::None) return Ok(rstd::time::Duration {});
+        if (mode == lito::manifest::StripMode::None) return Ok(rstd::time::Duration {});
         auto staged = staging_path(output_path);
         if (staged.is_err()) return Err(rstd::move(staged).unwrap_err());
         rstd_try(clear_staged_output(staged->as_path()));
         auto command = Vec<String>::make();
         rstd_try(toolchain::command::push_path(command, stripper));
         toolchain::command::push_option(
-            command, mode == StripMode::DebugInfo ? "--strip-debug"_str : "--strip-all"_str);
+            command,
+            mode == lito::manifest::StripMode::DebugInfo ? "--strip-debug"_str : "--strip-all"_str);
         toolchain::command::push_option(command, "-o"_str);
         rstd_try(toolchain::command::push_path(command, staged->as_path()));
         rstd_try(toolchain::command::push_path(command, output_path));

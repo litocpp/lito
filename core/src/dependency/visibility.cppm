@@ -1,6 +1,6 @@
 export module lito.core:dependency.visibility;
 
-export namespace lito
+export namespace lito::dependency
 {
 
 enum class DependencyVisibility
@@ -10,4 +10,4 @@ enum class DependencyVisibility
     LinkOnly,
 };
 
-} // namespace lito
+} // namespace lito::dependency

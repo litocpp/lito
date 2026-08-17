@@ -10,7 +10,7 @@ using namespace rstd::prelude;
 using ErrorBox = Box<dyn<rstd::error::Error>>;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::manifest
 {
 
 enum class CppOptimization
@@ -122,13 +122,14 @@ struct ProjectProfile {
     }
 };
 
-} // namespace lito
+} // namespace lito::manifest
 
 export namespace rstd
 {
 
 template<>
-struct Impl<fmt::Display, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+struct Impl<fmt::Display, lito::manifest::BuildProfileError>
+    : ImplBase<lito::manifest::BuildProfileError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Options()) {
@@ -140,14 +141,16 @@ struct Impl<fmt::Display, lito::BuildProfileError> : ImplBase<lito::BuildProfile
 };
 
 template<>
-struct Impl<fmt::Debug, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+struct Impl<fmt::Debug, lito::manifest::BuildProfileError>
+    : ImplBase<lito::manifest::BuildProfileError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::BuildProfileError> : ImplBase<lito::BuildProfileError> {
+struct Impl<error::Error, lito::manifest::BuildProfileError>
+    : ImplBase<lito::manifest::BuildProfileError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (! error.is_Options()) return None();
@@ -157,7 +160,7 @@ struct Impl<error::Error, lito::BuildProfileError> : ImplBase<lito::BuildProfile
 
 } // namespace rstd
 
-export namespace lito
+export namespace lito::manifest
 {
 
 auto valid_build_profile_name(ref<str> value) noexcept -> bool {
@@ -172,10 +175,9 @@ auto valid_build_profile_name(ref<str> value) noexcept -> bool {
     return true;
 }
 
-} // namespace lito
+} // namespace lito::manifest
 
-namespace lito
-{
+using namespace lito::manifest;
 
 template<typename T>
 auto build_profile_failure(String message) -> BuildProfileResult<T> {
@@ -277,21 +279,19 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
     return Ok(apply_definition(rstd::move(inherited), **declared));
 }
 
-} // namespace lito
-
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::TryFrom<ref<str>>, lito::BuildProfileName> {
-    using Error = lito::BuildProfileError;
+struct Impl<convert::TryFrom<ref<str>>, lito::manifest::BuildProfileName> {
+    using Error = lito::manifest::BuildProfileError;
 
-    static auto try_from(ref<str> name) -> Result<lito::BuildProfileName, Error> {
-        if (! lito::valid_build_profile_name(name)) {
-            return Err(lito::BuildProfileError::Message(rstd::format(
+    static auto try_from(ref<str> name) -> Result<lito::manifest::BuildProfileName, Error> {
+        if (! lito::manifest::valid_build_profile_name(name)) {
+            return Err(lito::manifest::BuildProfileError::Message(rstd::format(
                 "invalid profile '{}'; expected ASCII letters, digits, '-' or '_'", name)));
         }
-        return Ok(lito::BuildProfileName {
+        return Ok(lito::manifest::BuildProfileName {
             .value = String::make(name),
         });
     }
@@ -299,7 +299,7 @@ struct Impl<convert::TryFrom<ref<str>>, lito::BuildProfileName> {
 
 } // namespace rstd
 
-export namespace lito
+export namespace lito::manifest
 {
 
 auto parse_build_profile(ref<str> name) -> BuildProfileResult<BuildProfileName> {
@@ -344,4 +344,4 @@ auto resolve_build_profile(const ProjectProfile& project, const BuildProfileName
     return resolve_profile(project, name.as_str(), Vec<String>::make());
 }
 
-} // namespace lito
+} // namespace lito::manifest

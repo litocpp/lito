@@ -9,7 +9,7 @@ import :source.git;
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito
+export namespace lito::source
 {
 
 enum class PackageSourceKind
@@ -46,4 +46,4 @@ struct ResolvedPackageSource {
     }
 };
 
-} // namespace lito
+} // namespace lito::source

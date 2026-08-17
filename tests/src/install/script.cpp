@@ -26,7 +26,7 @@ TEST_F(InstallScript, InstallOnlyManifestOwnsItsConventionalScript) {
     auto project = materialize("install-only-manifest"_str, files);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto loaded    = lito::load_package_manifest(directory.as_path());
+    auto loaded    = lito::manifest::load_package_manifest(directory.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_TRUE(loaded->install_script.is_some());
     EXPECT_EQ(loaded->install_script->as_path(),
@@ -40,7 +40,7 @@ TEST_F(InstallScript, InstallOnlyManifestOwnsItsConventionalScript) {
     };
     auto missing_project = materialize("install-only-missing-version"_str, missing_files);
     ASSERT_TRUE(missing_project.is_ok());
-    auto missing = lito::load_package_manifest(missing_project->root.as_path());
+    auto missing = lito::manifest::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_err());
     EXPECT_TRUE(error_chain_text(missing.unwrap_err()).as_str().contains("version"_str));
 }
@@ -86,7 +86,7 @@ lito.install({
     auto project = materialize("install-script-recipe"_str, recipe_files);
     ASSERT_TRUE(project.is_ok());
     auto directory = project->root.clone();
-    auto manifest  = lito::load_package_manifest(directory.as_path());
+    auto manifest  = lito::manifest::load_package_manifest(directory.as_path());
     ASSERT_TRUE(manifest.is_ok());
     ASSERT_TRUE(manifest->install_script.is_some());
     auto recipe = lito::execute_install_script(install_script_input(*manifest),
@@ -148,7 +148,7 @@ lito.install({
         };
         auto invalid_project = materialize(binding_error.name, invalid_files);
         ASSERT_TRUE(invalid_project.is_ok());
-        auto invalid = lito::load_package_manifest(invalid_project->root.as_path());
+        auto invalid = lito::manifest::load_package_manifest(invalid_project->root.as_path());
         ASSERT_TRUE(invalid.is_ok());
         auto executed =
             lito::execute_install_script(install_script_input(*invalid),
@@ -168,7 +168,7 @@ lito.install({
     };
     auto missing_project = materialize("install-script-missing"_str, missing_files);
     ASSERT_TRUE(missing_project.is_ok());
-    auto missing = lito::load_package_manifest(missing_project->root.as_path());
+    auto missing = lito::manifest::load_package_manifest(missing_project->root.as_path());
     ASSERT_TRUE(missing.is_ok());
     auto unregistered =
         lito::execute_install_script(install_script_input(*missing),

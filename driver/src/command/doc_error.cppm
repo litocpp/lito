@@ -19,7 +19,7 @@ export namespace lito
 
 class DocError {
     RSTD_ENUM(DocError,
-              (Source, (SourceError source;)),
+              (Source, (lito::source::SourceError source;)),
               (Build, (BuildError source;)),
               (System, (SystemError source;)),
               (Toolchain, (ToolchainError source;)),
@@ -51,8 +51,8 @@ export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::SourceError>, lito::DocError> {
-    static auto from(lito::SourceError error) -> lito::DocError {
+struct Impl<convert::From<lito::source::SourceError>, lito::DocError> {
+    static auto from(lito::source::SourceError error) -> lito::DocError {
         return lito::DocError::Source(rstd::move(error));
     }
 };

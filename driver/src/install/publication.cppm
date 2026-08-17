@@ -21,11 +21,11 @@ namespace lito
 {
 
 struct InstallPublicationLink {
-    PackageTargetId target;
-    PathBuf         logical_destination;
-    PathBuf         physical_destination;
-    PathBuf         relative_target;
-    InstallAction   action { InstallAction::Created };
+    lito::package::PackageTargetId target;
+    PathBuf                        logical_destination;
+    PathBuf                        physical_destination;
+    PathBuf                        relative_target;
+    InstallAction                  action { InstallAction::Created };
 };
 
 struct InstallPublicationPackage {
@@ -63,8 +63,9 @@ auto origin_text(const InstallEntryOrigin& origin) -> String {
                             origin.as_PackageFile().path.as_path());
     }
     if (origin.is_BuildArtifact()) {
-        return rstd::format("build-artifact:{}",
-                            package_target_id_text(origin.as_BuildArtifact().target));
+        return rstd::format(
+            "build-artifact:{}",
+            lito::package::package_target_id_text(origin.as_BuildArtifact().target));
     }
     if (origin.is_ExternalAsset()) {
         return rstd::format("external-asset:{}:{}:{}",
@@ -129,8 +130,8 @@ auto plan_install_publication(InstallDestination        destination,
     };
 
     for (auto& package : packages) {
-        if (! valid_package_name(package.name.as_str()) || package.version.is_empty() ||
-            package.profile.is_empty() || package.target.is_empty()) {
+        if (! lito::manifest::valid_package_name(package.name.as_str()) ||
+            package.version.is_empty() || package.profile.is_empty() || package.target.is_empty()) {
             return publication_failure<InstallPublicationPlan>(
                 "install package identity is invalid"_str);
         }
@@ -240,7 +241,8 @@ auto plan_install_publication(InstallDestination        destination,
                 .kind                 = InstallOwnedEntryKind::SoftLink,
                 .origin               = rstd::format(
                     "public-link:{}",
-                    package_target_id_text(entry.origin.as_BuildArtifact().target).as_str()),
+                    lito::package::package_target_id_text(entry.origin.as_BuildArtifact().target)
+                        .as_str()),
                 .link_target = Some(relative_target->clone()),
             });
             links.push(InstallPublicationLink {

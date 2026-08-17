@@ -26,18 +26,11 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
+using namespace lito::manifest;
 
-namespace lito
-{
-
-auto valid_package_name(ref<str> value) -> bool {
+auto lito::manifest::valid_package_name(ref<str> value) -> bool {
     return package_name_is_valid(value);
 }
-
-} // namespace lito
-
-namespace lito
-{
 
 auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     -> ManifestSchemaResult<ManifestDocument> {
@@ -134,12 +127,12 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
     }
     auto library = rstd_try(parse_library_target(member(document, "lib"_str)));
-    auto bins    = rstd_try(
-        parse_runnable_targets(member(document, "bin"_str), PackageTargetKind::Binary, "bin"_str));
-    auto tests = rstd_try(
-        parse_runnable_targets(member(document, "test"_str), PackageTargetKind::Test, "test"_str));
+    auto bins    = rstd_try(parse_runnable_targets(
+        member(document, "bin"_str), lito::package::PackageTargetKind::Binary, "bin"_str));
+    auto tests   = rstd_try(parse_runnable_targets(
+        member(document, "test"_str), lito::package::PackageTargetKind::Test, "test"_str));
     auto benches = rstd_try(parse_runnable_targets(
-        member(document, "bench"_str), PackageTargetKind::Benchmark, "bench"_str));
+        member(document, "bench"_str), lito::package::PackageTargetKind::Benchmark, "bench"_str));
 
     auto compile_tests      = Vec<CompileTestCase>::make();
     auto compile_test_value = member(document, "compile-test"_str);
@@ -259,12 +252,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     });
 }
 
-} // namespace lito
-
-namespace lito
-{
-
-auto load_manifest_document(ref<rstd::path::Path> requested_directory)
+auto lito::manifest::load_manifest_document(ref<rstd::path::Path> requested_directory)
     -> ManifestResult<ManifestDocument> {
     auto located = locate_manifest(requested_directory);
     if (located.is_err()) return Err(rstd::into<ManifestError>(rstd::move(located).unwrap_err()));
@@ -296,7 +284,7 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory)
     return Ok(rstd::move(assembled).unwrap());
 }
 
-auto load_package_manifest(ref<rstd::path::Path> requested_directory)
+auto lito::manifest::load_package_manifest(ref<rstd::path::Path> requested_directory)
     -> ManifestResult<PackageManifest> {
     auto loaded = load_manifest_document(requested_directory);
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
@@ -307,5 +295,3 @@ auto load_package_manifest(ref<rstd::path::Path> requested_directory)
     }
     return Ok(rstd::move(document.package).unwrap());
 }
-
-} // namespace lito

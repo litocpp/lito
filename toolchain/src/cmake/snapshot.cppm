@@ -37,7 +37,7 @@ auto snapshot_json(const CMakeTargetUsageSnapshot& snapshot) -> Json {
 }
 
 auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& snapshot)
-    -> DependencyResult<empty> {
+    -> lito::dependency::DependencyResult<empty> {
     auto targets = JsonArray::with_capacity(snapshot.targets.len());
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
@@ -77,7 +77,7 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
 }
 
 auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
-    -> DependencyResult<Vec<String>> {
+    -> lito::dependency::DependencyResult<Vec<String>> {
     auto array = required_json_array(value, key, context);
     if (array.is_err()) return Err(rstd::move(array).unwrap_err());
     auto result = Vec<String>::with_capacity((**array).len());
@@ -93,7 +93,7 @@ auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
 }
 
 auto parse_usage_target(const Json& value, ref<str> context)
-    -> DependencyResult<CMakeTargetUsageSnapshot> {
+    -> lito::dependency::DependencyResult<CMakeTargetUsageSnapshot> {
     auto compile = parse_snapshot_strings(value, "compile"_str, context);
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
     auto link = parse_snapshot_strings(value, "link"_str, context);
@@ -105,7 +105,7 @@ auto parse_usage_target(const Json& value, ref<str> context)
 }
 
 auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> query_build)
-    -> DependencyResult<Vec<String>> {
+    -> lito::dependency::DependencyResult<Vec<String>> {
     auto result = Vec<String>::with_capacity(tokens.len());
     auto root   = PathBuf::from(query_build);
     for (const auto& token : tokens) {
@@ -140,7 +140,7 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
 
 auto read_usage_snapshot(const CMakeWorkArea&                      area,
                          const ResolvedCMakeDependencyRequirement& requirement)
-    -> DependencyResult<Option<CMakeUsageSnapshot>> {
+    -> lito::dependency::DependencyResult<Option<CMakeUsageSnapshot>> {
     auto path   = usage_snapshot_path(area);
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
@@ -211,12 +211,13 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
     }));
 }
 
-auto target_snapshot_identity(const CMakeProviderConfig&                provider,
-                              const ResolvedCMakeDependencyRequirement& requirement,
-                              ref<str>                                  target,
-                              ref<str>                                  version,
-                              const CMakeTargetUsageSnapshot&           snapshot,
-                              ref<str> effective_target) -> DependencyResult<String> {
+auto target_snapshot_identity(const lito::dependency::CMakeProviderConfig& provider,
+                              const ResolvedCMakeDependencyRequirement&    requirement,
+                              ref<str>                                     target,
+                              ref<str>                                     version,
+                              const CMakeTargetUsageSnapshot&              snapshot,
+                              ref<str>                                     effective_target)
+    -> lito::dependency::DependencyResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-dependency-v1\n"_str);
@@ -233,11 +234,11 @@ auto target_snapshot_identity(const CMakeProviderConfig&                provider
     return Ok(rstd::move(result));
 }
 
-auto dependency_identity(const CMakeProviderConfig&                provider,
-                         const ResolvedCMakeDependencyRequirement& requirement,
-                         ref<str>                                  version,
-                         const CMakeUsageSnapshot&                 snapshots,
-                         ref<str> effective_target) -> DependencyResult<String> {
+auto dependency_identity(const lito::dependency::CMakeProviderConfig& provider,
+                         const ResolvedCMakeDependencyRequirement&    requirement,
+                         ref<str>                                     version,
+                         const CMakeUsageSnapshot&                    snapshots,
+                         ref<str> effective_target) -> lito::dependency::DependencyResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-declaration-v1\n"_str);

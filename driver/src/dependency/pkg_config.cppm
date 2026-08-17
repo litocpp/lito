@@ -20,13 +20,13 @@ export namespace lito
 {
 
 auto resolve_pkg_config_dependencies(
-    const Vec<PkgConfigExternalDependency>& pkg_config_declarations,
-    const PkgConfigProviderConfig&          pkg_config,
-    const BuildPlatform&                    platform,
-    const cpp::CppArgumentParser&           parser,
-    ToolResolver&                           tool_resolver,
-    const ResolvedProcessEnvironment&       process_environment)
-    -> DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
+    const Vec<lito::dependency::PkgConfigExternalDependency>& pkg_config_declarations,
+    const lito::dependency::PkgConfigProviderConfig&          pkg_config,
+    const BuildPlatform&                                      platform,
+    const cpp::CppArgumentParser&                             parser,
+    ToolResolver&                                             tool_resolver,
+    const ResolvedProcessEnvironment&                         process_environment)
+    -> lito::dependency::DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
     auto result              = Vec<cpp::ResolvedExternalDependency>::make();
     auto environment         = CommandEnvironment {};
     auto provider_id         = String::make();
@@ -34,16 +34,17 @@ auto resolve_pkg_config_dependencies(
     if (! pkg_config_declarations.is_empty()) {
         if (platform.effective_target.triple != platform.compiler_default.triple.as_str() &&
             ! pkg_config.target_configured) {
-            return dependency_failure<Vec<cpp::ResolvedExternalDependency>>(rstd::format(
-                "target '{}' requires explicit pkg-config executable, library-path, or "
-                "sysroot configuration",
-                platform.effective_target.triple.as_str()));
+            return lito::dependency::dependency_failure<Vec<cpp::ResolvedExternalDependency>>(
+                rstd::format(
+                    "target '{}' requires explicit pkg-config executable, library-path, or "
+                    "sysroot configuration",
+                    platform.effective_target.triple.as_str()));
         }
         auto resolved =
             tool_resolver.resolve(pkg_config.executable.as_path(), "pkg-config executable"_str);
         if (resolved.is_err()) {
             const auto& declaration = pkg_config_declarations[usize {}];
-            return Err(DependencyError::Operation(
+            return Err(lito::dependency::DependencyError::Operation(
                 rstd::format("pkg-config dependency '{}' module '{}' provider '{}' resolution",
                              declaration.alias.as_str(),
                              declaration.requirement.module.as_str(),
@@ -72,8 +73,9 @@ auto resolve_pkg_config_dependencies(
         const auto& requirement = declaration.requirement;
         auto        key         = provider_id.clone();
         key.push_str(module_spec(requirement).as_str());
-        key.push_str(requirement.mode == PkgConfigQueryMode::Static ? "\nstatic"_str
-                                                                    : "\nshared"_str);
+        key.push_str(requirement.mode == lito::dependency::PkgConfigQueryMode::Static
+                         ? "\nstatic"_str
+                         : "\nshared"_str);
         auto cached   = snapshots.get(key.as_str());
         auto snapshot = PkgConfigSnapshot {};
         if (cached.is_some()) {
@@ -88,7 +90,7 @@ auto resolve_pkg_config_dependencies(
             if (version.is_err()) return Err(rstd::move(version).unwrap_err());
             auto normalized_version = String::make(version->as_str().trim_ascii());
             if (normalized_version.is_empty()) {
-                return dependency_failure<Vec<cpp::ResolvedExternalDependency>>(
+                return lito::dependency::dependency_failure<Vec<cpp::ResolvedExternalDependency>>(
                     rstd::format("pkg-config dependency '{}' module '{}' returned an empty version",
                                  declaration.alias.as_str(),
                                  requirement.module.as_str()));
@@ -116,7 +118,7 @@ auto resolve_pkg_config_dependencies(
                                         requirement.module.as_str());
             auto compile = parser.parse(*compile_tokens, source.as_str());
             if (compile.is_err()) {
-                return Err(DependencyError::Configuration(
+                return Err(lito::dependency::DependencyError::Configuration(
                     source.clone(), erase_error(rstd::move(compile).unwrap_err())));
             }
             auto identity = snapshot_identity(provider_id.as_str(),
@@ -159,31 +161,34 @@ auto resolve_pkg_config_dependencies(
     return Ok(rstd::move(result));
 }
 
-auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& declarations,
-                                   const PkgConfigProviderConfig&          pkg_config,
-                                   const CMakeProviderConfig&,
-                                   const cpp::BuildConfiguration&,
-                                   const cpp::ProfileSpec&,
-                                   const BuildPlatform&              platform,
-                                   const cpp::CppArgumentParser&     parser,
-                                   ToolResolver&                     tool_resolver,
-                                   const ResolvedProcessEnvironment& process_environment)
-    -> DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
+auto resolve_external_dependencies(
+    const Vec<lito::dependency::PkgConfigExternalDependency>& declarations,
+    const lito::dependency::PkgConfigProviderConfig&          pkg_config,
+    const lito::dependency::CMakeProviderConfig&,
+    const cpp::BuildConfiguration&,
+    const cpp::ProfileSpec&,
+    const BuildPlatform&              platform,
+    const cpp::CppArgumentParser&     parser,
+    ToolResolver&                     tool_resolver,
+    const ResolvedProcessEnvironment& process_environment)
+    -> lito::dependency::DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
     return resolve_pkg_config_dependencies(
         declarations, pkg_config, platform, parser, tool_resolver, process_environment);
 }
 
-auto resolve_external_dependencies(const Vec<PkgConfigExternalDependency>& declarations,
-                                   const PkgConfigProviderConfig&          pkg_config,
-                                   const CMakeProviderConfig&              cmake_config,
-                                   const cpp::BuildConfiguration&          configuration,
-                                   const cpp::ProfileSpec&                 profile,
-                                   const BuildPlatform&                    platform,
-                                   const cpp::CppArgumentParser&           parser)
-    -> DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
+auto resolve_external_dependencies(
+    const Vec<lito::dependency::PkgConfigExternalDependency>& declarations,
+    const lito::dependency::PkgConfigProviderConfig&          pkg_config,
+    const lito::dependency::CMakeProviderConfig&              cmake_config,
+    const cpp::BuildConfiguration&                            configuration,
+    const cpp::ProfileSpec&                                   profile,
+    const BuildPlatform&                                      platform,
+    const cpp::CppArgumentParser&                             parser)
+    -> lito::dependency::DependencyResult<Vec<cpp::ResolvedExternalDependency>> {
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     if (environment.is_err()) {
-        return Err(rstd::into<DependencyError>(rstd::move(environment).unwrap_err()));
+        return Err(
+            rstd::into<lito::dependency::DependencyError>(rstd::move(environment).unwrap_err()));
     }
     auto resolver = ToolResolver(*environment);
     return resolve_external_dependencies(declarations,

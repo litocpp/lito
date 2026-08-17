@@ -101,7 +101,8 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
     }
     auto tool_resolver = ToolResolver(*environment);
-    auto profile       = request.profile.is_some() ? request.profile->clone() : BuildProfileName {};
+    auto profile =
+        request.profile.is_some() ? request.profile->clone() : lito::manifest::BuildProfileName {};
     auto requested_output = PathBuf::make();
     auto jobs             = usize(1);
     auto available        = rstd::thread::available_parallelism();
@@ -117,7 +118,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
                                           tool_resolver,
                                           *environment,
                                           request.locked,
-                                          PackageSelectionPurpose::All,
+                                          lito::package::PackageSelectionPurpose::All,
                                           jobs,
                                           request.observer);
     if (prepared.is_err()) {
@@ -144,7 +145,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         return scan_failure<ScanReport>(
             rstd::format("source '{}' has no build-relative path in target '{}'",
                          source.as_path(),
-                         package_target_id_text(target.id).as_str()));
+                         lito::package::package_target_id_text(target.id).as_str()));
     }
     auto primary_output = project.layout.object(target.id, *relative_source);
     if (primary_output.is_err()) {
@@ -161,7 +162,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     }
 
     return Ok(ScanReport {
-        .target         = package_target_id_text(target.id),
+        .target         = lito::package::package_target_id_text(target.id),
         .profile        = metadata.profiles[discovery.profile].name.clone(),
         .primary_output = rstd::move(primary_output).unwrap(),
         .result         = rstd::move(facts).unwrap().result,

@@ -33,7 +33,8 @@ struct InstallPackageIdentity {
 class InstallSourceProvenance {
     RSTD_ENUM(InstallSourceProvenance,
               (Local, (PathBuf root; String identity;)),
-              (Git, (String url; GitReference reference; String commit; String identity;)))
+              (Git,
+               (String url; lito::source::GitReference reference; String commit; String identity;)))
 
 public:
     auto clone() const -> InstallSourceProvenance {

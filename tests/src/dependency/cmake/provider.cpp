@@ -31,21 +31,21 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
     auto target       = pkg_config_target();
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
-    auto targets      = Vec<lito::CMakeTargetRequirement>::make();
-    targets.push(lito::CMakeTargetRequirement {
+    auto targets      = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
         .name       = String::make("LitoFixture::fixture"_str),
-        .visibility = lito::DependencyVisibility::Private,
+        .visibility = lito::dependency::DependencyVisibility::Private,
     });
-    targets.push(lito::CMakeTargetRequirement {
+    targets.push(lito::dependency::CMakeTargetRequirement {
         .name       = String::make("LitoFixture::headers"_str),
-        .visibility = lito::DependencyVisibility::Public,
+        .visibility = lito::dependency::DependencyVisibility::Public,
     });
-    targets.push(lito::CMakeTargetRequirement {
+    targets.push(lito::dependency::CMakeTargetRequirement {
         .name       = String::make("LitoFixture::order"_str),
-        .visibility = lito::DependencyVisibility::LinkOnly,
+        .visibility = lito::dependency::DependencyVisibility::LinkOnly,
     });
-    auto cache = Vec<lito::CMakeCacheEntry>::make();
-    cache.push(lito::CMakeCacheEntry {
+    auto cache = Vec<lito::dependency::CMakeCacheEntry>::make();
+    cache.push(lito::dependency::CMakeCacheEntry {
         .name  = String::make("LITO_FIXTURE_CONFIGURE_COUNT"_str),
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
@@ -97,9 +97,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     }
     EXPECT_TRUE(has_archive);
     EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
-    EXPECT_EQ(dependency.targets[usize(1)].visibility, lito::DependencyVisibility::Public);
+    EXPECT_EQ(dependency.targets[usize(1)].visibility,
+              lito::dependency::DependencyVisibility::Public);
     EXPECT_EQ(dependency.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
-    EXPECT_EQ(dependency.targets[usize(2)].visibility, lito::DependencyVisibility::LinkOnly);
+    EXPECT_EQ(dependency.targets[usize(2)].visibility,
+              lito::dependency::DependencyVisibility::LinkOnly);
 
     ASSERT_EQ(cold_assets.len(), usize(1));
     EXPECT_EQ(cold_assets[usize {}].alias.as_str(), "fixture"_str);
@@ -145,7 +147,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(second_count.is_ok());
     EXPECT_EQ(second_count->as_str(), "configure\n"_str);
 
-    declarations[usize {}].cache.push(lito::CMakeCacheEntry {
+    declarations[usize {}].cache.push(lito::dependency::CMakeCacheEntry {
         .name  = String::make("LITO_FIXTURE_VARIANT"_str),
         .value = String::make("ON"_str),
     });
@@ -160,7 +162,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
 
     auto disabled_profile = lito::cpp::make_profile_spec(configuration(),
-                                                         lito::ProjectProfile {
+                                                         lito::manifest::ProjectProfile {
                                                              .exceptions = false,
                                                              .rtti       = false,
                                                          },
@@ -185,10 +187,10 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
     ASSERT_TRUE(tree.is_ok());
     auto project = materialize("cmake-build-tree"_str, *tree);
     ASSERT_TRUE(project.is_ok());
-    auto targets = Vec<lito::CMakeTargetRequirement>::make();
-    targets.push(lito::CMakeTargetRequirement {
+    auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
         .name       = String::make("LitoBuildTree::fixture"_str),
-        .visibility = lito::DependencyVisibility::Private,
+        .visibility = lito::dependency::DependencyVisibility::Private,
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
@@ -196,7 +198,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsBuildTreeTargetUsage) {
         .package = String::make("LitoBuildTree"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
             project->root.clone(), String::make("lito-test-cmake-build-tree-v1"_str), false),
-        .integration      = lito::CMakeIntegration::BuildTree,
+        .integration      = lito::dependency::CMakeIntegration::BuildTree,
         .add_subdirectory = false,
         .adapter          = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets          = rstd::move(targets),

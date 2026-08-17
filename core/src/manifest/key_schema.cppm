@@ -13,9 +13,7 @@ import :manifest.primitives;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using Toml = rstd::toml::Value;
-
-namespace lito
-{
+using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
@@ -207,5 +205,3 @@ auto parse_package_version(const Toml& package, bool optional)
         .source = PackageVersionSource::Workspace,
     });
 }
-
-} // namespace lito

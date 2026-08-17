@@ -117,34 +117,36 @@ auto probe_doc_tool(ref<rstd::path::Path>             executable,
     return parse_capabilities(rstd::move(executed->standard_output), executable, compiler);
 }
 
-auto tool_source_requirement(const DocConfig& config) -> PackageSourceRequirement {
+auto tool_source_requirement(const lito::config::DocConfig& config)
+    -> lito::source::PackageSourceRequirement {
     if (config.litodoc_path.is_some()) {
-        return PackageSourceRequirement::Path(config.litodoc_path->clone());
+        return lito::source::PackageSourceRequirement::Path(config.litodoc_path->clone());
     }
-    return PackageSourceRequirement::Git(
+    return lito::source::PackageSourceRequirement::Git(
         String::make(LITODOC_REPOSITORY),
-        GitReference { .kind = GitReferenceKind::Commit, .value = String::make(LITODOC_COMMIT) });
+        lito::source::GitReference { .kind  = lito::source::GitReferenceKind::Commit,
+                                     .value = String::make(LITODOC_COMMIT) });
 }
 
 auto acquire_doc_tool_source(const BuildRequest&               request,
-                             const DocConfig&                  config,
+                             const lito::config::DocConfig&    config,
                              ToolResolver&                     resolver,
                              const ResolvedProcessEnvironment& environment)
-    -> DocResult<AcquiredSource> {
-    auto options = SourceResolutionOptions {
+    -> DocResult<lito::source::AcquiredSource> {
+    auto options = lito::source::SourceResolutionOptions {
         .locked = false,
-        .git    = GitResolutionMode::ReuseLocked,
+        .git    = lito::source::GitResolutionMode::ReuseLocked,
         .sources =
-            PackageSourceConfig {
+            lito::source::PackageSourceConfig {
                 .fetch_seeds = as<Clone>(request.sources.fetch_seeds).clone(),
                 .network     = request.sources.network,
             },
     };
-    auto manager  = SourceManager(request.selection.root.as_path(),
-                                  rstd::move(options),
-                                  resolver,
-                                  environment,
-                                  source_observer(request.observer));
+    auto manager  = lito::source::SourceManager(request.selection.root.as_path(),
+                                                rstd::move(options),
+                                                resolver,
+                                                environment,
+                                                source_observer(request.observer));
     auto source   = tool_source_requirement(config);
     auto acquired = manager.acquire_external(source, request.selection.root.as_path());
     if (acquired.is_err()) return Err(rstd::into<DocError>(rstd::move(acquired).unwrap_err()));
@@ -434,7 +436,7 @@ struct ResolvedDocTool {
 };
 
 auto resolve_doc_tool(const BuildRequest&               request,
-                      const DocConfig&                  config,
+                      const lito::config::DocConfig&    config,
                       const BuildSummary&               project,
                       const ResolvedProcessEnvironment& environment,
                       const Option<DocEventSink>&       observer) -> DocResult<ResolvedDocTool> {
@@ -448,7 +450,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
                                      sdk->identity.as_str(),
                                      project.compiler.target.as_str(),
                                      config.litodoc_path.is_some() ? "path"_str : "git"_str,
-                                     LOCK_FORMAT_VERSION);
+                                     lito::lock::LOCK_FORMAT_VERSION);
     auto key          = rstd::crypto::sha256_hex(key_material.as_str());
     auto tool_root    = create_doc_tool_root(key.as_str());
     if (tool_root.is_err()) return Err(rstd::move(tool_root).unwrap_err());
@@ -483,9 +485,9 @@ auto resolve_doc_tool(const BuildRequest&               request,
     emit_doc(observer, DocEventKind::ToolBuild, source->identity.as_str(), source->root.as_path());
     auto tool_request           = BuildRequest {};
     tool_request.selection.root = source->root.clone();
-    tool_request.exact_targets.push(PackageTargetId {
+    tool_request.exact_targets.push(lito::package::PackageTargetId {
         .package = String::make("litodoc"_str),
-        .kind    = PackageTargetKind::Binary,
+        .kind    = lito::package::PackageTargetKind::Binary,
         .name    = String::make("litodoc"_str),
     });
     tool_request.output        = tool_root->join(PathBuf::from("build"_str).as_path());
@@ -499,8 +501,9 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.pkg_config          = request.pkg_config.clone();
     tool_request.cmake               = request.cmake.clone();
     append_unique_path(tool_request.cmake.search_paths, sdk->cmake_search_path.as_path());
-    tool_request.profile        = Some(BuildProfileName { .value = String::make("release"_str) });
-    tool_request.execution.scan = request.execution.scan;
+    tool_request.profile =
+        Some(lito::manifest::BuildProfileName { .value = String::make("release"_str) });
+    tool_request.execution.scan    = request.execution.scan;
     tool_request.execution.compile = request.execution.compile;
     tool_request.observer          = request.observer;
     auto built                     = build_with_environment(tool_request, environment);
@@ -509,14 +512,14 @@ auto resolve_doc_tool(const BuildRequest&               request,
     auto default_frontend = Option<ref<BuiltRuntimeResource>> {};
     for (const auto& artifact : built->artifacts) {
         if (artifact.kind == cpp::ArtifactKind::Executable &&
-            artifact.target.kind == PackageTargetKind::Binary &&
+            artifact.target.kind == lito::package::PackageTargetKind::Binary &&
             artifact.target.package.as_str() == "litodoc"_str &&
             artifact.target.name.as_str() == "litodoc"_str) {
             executable = Some(artifact.path.clone());
         }
     }
     for (const auto& resource : built->runtime_resources) {
-        if (resource.target.kind == PackageTargetKind::Binary &&
+        if (resource.target.kind == lito::package::PackageTargetKind::Binary &&
             resource.target.package.as_str() == "litodoc"_str &&
             resource.target.name.as_str() == "litodoc"_str &&
             resource.name.as_str() == "default-frontend"_str) {

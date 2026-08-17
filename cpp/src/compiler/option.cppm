@@ -187,11 +187,11 @@ struct CppThreadingOptions {
 };
 
 struct ResolvedStandardLibrary : DefaultInClass<ResolvedStandardLibrary, Clone> {
-    StandardLibrary family { StandardLibrary::Libstdcxx };
-    String          headers_identity;
-    String          binary_identity;
-    String          thread_backend;
-    String          identity;
+    lito::config::StandardLibrary family { lito::config::StandardLibrary::Libstdcxx };
+    String                        headers_identity;
+    String                        binary_identity;
+    String                        thread_backend;
+    String                        identity;
 
     auto clone() const -> ResolvedStandardLibrary {
         return ResolvedStandardLibrary {
@@ -205,7 +205,7 @@ struct ResolvedStandardLibrary : DefaultInClass<ResolvedStandardLibrary, Clone> 
 };
 
 struct CppAbiOptions {
-    StandardLibrary                 standard_library { StandardLibrary::Libstdcxx };
+    lito::config::StandardLibrary   standard_library { lito::config::StandardLibrary::Libstdcxx };
     Option<ResolvedStandardLibrary> resolved_standard_library;
     Vec<CppFamilyOption>            modes;
 };
@@ -222,12 +222,12 @@ struct CppPreprocessorOptions {
 };
 
 struct CppCodegenOptions {
-    CppOptimization      optimization { CppOptimization::Default };
-    CppDebugInfo         debug_info { CppDebugInfo::None };
-    CppLto               lto { CppLto::Off };
-    bool                 position_independent_code { true };
-    Vec<CppFamilyOption> modes;
-    Vec<String>          instrumentation;
+    lito::manifest::CppOptimization optimization { lito::manifest::CppOptimization::Default };
+    lito::manifest::CppDebugInfo    debug_info { lito::manifest::CppDebugInfo::None };
+    lito::manifest::CppLto          lto { lito::manifest::CppLto::Off };
+    bool                            position_independent_code { true };
+    Vec<CppFamilyOption>            modes;
+    Vec<String>                     instrumentation;
 };
 
 struct CppDiagnosticOptions {
@@ -462,38 +462,38 @@ auto canonical_cpp_standard(ref<str> standard) noexcept -> ref<str> {
     return standard;
 }
 
-auto cpp_optimization_option(CppOptimization value) noexcept -> ref<str> {
+auto cpp_optimization_option(lito::manifest::CppOptimization value) noexcept -> ref<str> {
     switch (value) {
-    case CppOptimization::Default: return ""_str;
-    case CppOptimization::None: return "-O0"_str;
-    case CppOptimization::Level1: return "-O1"_str;
-    case CppOptimization::Level2: return "-O2"_str;
-    case CppOptimization::Level3: return "-O3"_str;
-    case CppOptimization::Level4: return "-O4"_str;
-    case CppOptimization::Debug: return "-Og"_str;
-    case CppOptimization::Size: return "-Os"_str;
-    case CppOptimization::SizeMin: return "-Oz"_str;
-    case CppOptimization::Fast: return "-Ofast"_str;
+    case lito::manifest::CppOptimization::Default: return ""_str;
+    case lito::manifest::CppOptimization::None: return "-O0"_str;
+    case lito::manifest::CppOptimization::Level1: return "-O1"_str;
+    case lito::manifest::CppOptimization::Level2: return "-O2"_str;
+    case lito::manifest::CppOptimization::Level3: return "-O3"_str;
+    case lito::manifest::CppOptimization::Level4: return "-O4"_str;
+    case lito::manifest::CppOptimization::Debug: return "-Og"_str;
+    case lito::manifest::CppOptimization::Size: return "-Os"_str;
+    case lito::manifest::CppOptimization::SizeMin: return "-Oz"_str;
+    case lito::manifest::CppOptimization::Fast: return "-Ofast"_str;
     }
     return ""_str;
 }
 
-auto cpp_debug_option(CppDebugInfo value) noexcept -> ref<str> {
+auto cpp_debug_option(lito::manifest::CppDebugInfo value) noexcept -> ref<str> {
     switch (value) {
-    case CppDebugInfo::None: return "-g0"_str;
-    case CppDebugInfo::LineDirectivesOnly: return "-gline-directives-only"_str;
-    case CppDebugInfo::LineTablesOnly: return "-gline-tables-only"_str;
-    case CppDebugInfo::Limited: return "-g1"_str;
-    case CppDebugInfo::Full: return "-g2"_str;
+    case lito::manifest::CppDebugInfo::None: return "-g0"_str;
+    case lito::manifest::CppDebugInfo::LineDirectivesOnly: return "-gline-directives-only"_str;
+    case lito::manifest::CppDebugInfo::LineTablesOnly: return "-gline-tables-only"_str;
+    case lito::manifest::CppDebugInfo::Limited: return "-g1"_str;
+    case lito::manifest::CppDebugInfo::Full: return "-g2"_str;
     }
     return "-g0"_str;
 }
 
-auto cpp_lto_option(CppLto value) noexcept -> ref<str> {
+auto cpp_lto_option(lito::manifest::CppLto value) noexcept -> ref<str> {
     switch (value) {
-    case CppLto::Off: return "-fno-lto"_str;
-    case CppLto::Thin: return "-flto=thin"_str;
-    case CppLto::Fat: return "-flto=full"_str;
+    case lito::manifest::CppLto::Off: return "-fno-lto"_str;
+    case lito::manifest::CppLto::Thin: return "-flto=thin"_str;
+    case lito::manifest::CppLto::Fat: return "-flto=full"_str;
     }
     return "-fno-lto"_str;
 }

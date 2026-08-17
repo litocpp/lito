@@ -10,9 +10,9 @@ export namespace lito::cpp
 {
 
 struct BuildConfiguration {
-    ToolchainSpec            toolchain;
-    StandardLibrary          standard_library { StandardLibrary::Libstdcxx };
-    BmiMode                  bmi_mode { BmiMode::Reduced };
+    lito::config::ToolchainSpec   toolchain;
+    lito::config::StandardLibrary standard_library { lito::config::StandardLibrary::Libstdcxx };
+    BmiMode                       bmi_mode { BmiMode::Reduced };
     BmiSourceEmbeddingPolicy bmi_source_embedding { BmiSourceEmbeddingPolicy::ExternalSources };
     String                   language_standard;
     Vec<String>              options;

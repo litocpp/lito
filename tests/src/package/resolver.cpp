@@ -17,9 +17,10 @@ using PathBuf = rstd::path::PathBuf;
 
 class PackageResolver : public ProjectFixture {};
 
-using GraphFactory = lito::SourceTreeResult<lito::SourceTree> (*)();
+using GraphFactory = lito::source::SourceTreeResult<lito::source::SourceTree> (*)();
 
-auto workspace_convention_test_invalid_kind_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_convention_test_invalid_kind_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-conventional-invalid-kind-root"
@@ -44,7 +45,8 @@ sources = ["lib.cppm"]
     return source_tree(files);
 }
 
-auto workspace_convention_test_invalid_name_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_convention_test_invalid_name_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-conventional-name"
@@ -68,7 +70,8 @@ sources = ["main.cpp"]
     return source_tree(files);
 }
 
-auto workspace_convention_test_invalid_overlap_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_convention_test_invalid_overlap_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "library/lito.toml"_str, R"graph([package]
 name = "fixture-conventional-overlap-library"
@@ -107,7 +110,8 @@ sources = ["main.cpp"]
     return source_tree(files);
 }
 
-auto workspace_convention_test_invalid_profile_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_convention_test_invalid_profile_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-conventional-invalid-profile-root"
@@ -134,7 +138,8 @@ exceptions = false
     return source_tree(files);
 }
 
-auto workspace_convention_test_invalid_version_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_convention_test_invalid_version_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-conventional-invalid-version-root"
@@ -159,7 +164,7 @@ sources = ["main.cpp"]
 }
 
 auto workspace_convention_test_invalid_workspace_kind_tree()
-    -> lito::SourceTreeResult<lito::SourceTree> {
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-conventional-invalid-workspace-root"
@@ -191,7 +196,7 @@ version = "0.1.0"
     return source_tree(files);
 }
 
-auto package_resolver_cycle_a_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto package_resolver_cycle_a_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "a/lito.toml"_str, R"graph([package]
 name = "fixture-cycle-a"
@@ -225,7 +230,7 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto package_resolver_missing_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto package_resolver_missing_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-resolver-missing"
@@ -245,7 +250,8 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto package_resolver_name_mismatch_root_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto package_resolver_name_mismatch_root_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "actual/lito.toml"_str, R"graph([package]
 name = "fixture-actual"
@@ -275,7 +281,8 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto package_resolver_runtime_cycle_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto package_resolver_runtime_cycle_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "a/lito.toml"_str, R"graph([package]
 name = "runtime-cycle-a"
@@ -322,7 +329,8 @@ path = "b"
     return source_tree(files);
 }
 
-auto package_resolver_same_name_root_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto package_resolver_same_name_root_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "one/lito.toml"_str, R"graph([package]
 name = "fixture-same-dependency"
@@ -394,7 +402,8 @@ visibility = "private"
     return source_tree(files);
 }
 
-auto workspace_default_not_member_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_default_not_member_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-default-not-member"
@@ -425,7 +434,7 @@ sources = ["source.cppm"]
     return source_tree(files);
 }
 
-auto workspace_duplicate_name_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_duplicate_name_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-duplicate-name"
@@ -458,7 +467,7 @@ sources = ["source.cppm"]
     return source_tree(files);
 }
 
-auto workspace_duplicate_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_duplicate_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-duplicate-member"
@@ -478,7 +487,8 @@ sources = ["source.cppm"]
     return source_tree(files);
 }
 
-auto workspace_inherited_dependency_missing_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_inherited_dependency_missing_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/lito.toml"_str, R"graph([package]
 name = "fixture-workspace-inherited-missing-app"
@@ -506,7 +516,8 @@ version = "0.1.0"
     return source_tree(files);
 }
 
-auto workspace_inherited_dependency_outside_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_inherited_dependency_outside_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([package]
 name = "fixture-workspace-inherited-outside"
@@ -528,7 +539,7 @@ visibility = "private"
 }
 
 auto workspace_inherited_runtime_dependency_missing_tree()
-    -> lito::SourceTreeResult<lito::SourceTree> {
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/install.lua"_str, R"graph(lito.install({
     files = {
@@ -556,7 +567,8 @@ version = "0.1.0"
     return source_tree(files);
 }
 
-auto workspace_inherited_version_missing_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_inherited_version_missing_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-inherited-version-missing"
@@ -576,7 +588,7 @@ sources = ["source.cppm"]
     return source_tree(files);
 }
 
-auto workspace_member_profile_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_member_profile_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "app/lito.toml"_str, R"graph([package]
 name = "fixture-workspace-member-profile-app"
@@ -605,7 +617,7 @@ version = "0.1.0"
     return source_tree(files);
 }
 
-auto workspace_missing_member_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_missing_member_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-missing-member"
@@ -615,7 +627,7 @@ members = ["missing"]
     return source_tree(files);
 }
 
-auto workspace_nested_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_nested_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-nested-workspace"
@@ -629,7 +641,7 @@ members = ["child"]
     return source_tree(files);
 }
 
-auto workspace_outside_tree() -> lito::SourceTreeResult<lito::SourceTree> {
+auto workspace_outside_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"graph([workspace]
 name = "fixture-outside-workspace"
@@ -703,7 +715,7 @@ TEST_F(PackageResolver, InvalidDependencyGraphsAreRejectedByResolverOwner) {
         if (! item.request.is_empty()) {
             requested = requested.join(PathBuf::from(item.request).as_path());
         }
-        auto resolved = lito::resolve_package_graph(requested.as_path());
+        auto resolved = lito::package::resolve_package_graph(requested.as_path());
         EXPECT_TRUE(resolved.is_err());
     }
 }
@@ -736,13 +748,13 @@ sources = ["main.cpp"]
     };
     auto workspace_project = materialize("project-name-workspace"_str, workspace_files);
     ASSERT_TRUE(workspace_project.is_ok());
-    auto workspace = lito::resolve_package_graph(workspace_project->root.as_path());
+    auto workspace = lito::package::resolve_package_graph(workspace_project->root.as_path());
     ASSERT_TRUE(workspace.is_ok());
     EXPECT_TRUE(workspace->root_is_workspace);
     EXPECT_EQ(workspace->name.as_str(), "demo-workspace"_str);
 
     auto member           = workspace_project->root.join(PathBuf::from("app-one"_str).as_path());
-    auto workspace_member = lito::resolve_package_graph(member.as_path());
+    auto workspace_member = lito::package::resolve_package_graph(member.as_path());
     ASSERT_TRUE(workspace_member.is_ok());
     EXPECT_TRUE(workspace_member->root_is_workspace);
     EXPECT_EQ(workspace_member->name.as_str(), "demo-workspace"_str);
@@ -764,7 +776,7 @@ sources = ["main.cpp"]
     };
     auto package_project = materialize("project-name-package"_str, package_files);
     ASSERT_TRUE(package_project.is_ok());
-    auto package = lito::resolve_package_graph(package_project->root.as_path());
+    auto package = lito::package::resolve_package_graph(package_project->root.as_path());
     ASSERT_TRUE(package.is_ok());
     EXPECT_FALSE(package->root_is_workspace);
     EXPECT_EQ(package->name.as_str(), "demo-app"_str);

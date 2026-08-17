@@ -13,7 +13,7 @@ using namespace lito::system;
 namespace lito
 {
 
-auto update_dependencies(const UpdateRequest& request) -> CommandResult<LockStatus> {
+auto update_dependencies(const UpdateRequest& request) -> CommandResult<lito::lock::LockStatus> {
     auto updated = update_project_dependencies(request.root.as_path(),
                                                request.environment,
                                                request.lock,
