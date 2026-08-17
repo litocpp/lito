@@ -11,6 +11,7 @@ import :manifest;
 import :package.identity;
 import :package.resolver;
 import :package.runtime;
+import :package.features;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -36,6 +37,7 @@ enum class PackageSelectionPurpose
 struct PackageSelection {
     PathBuf     root;
     Vec<String> packages;
+    FeatureSelection features;
 };
 
 struct ResolvedPackageSelection {
@@ -354,6 +356,12 @@ auto resolve_package_selection_with_environment(
     auto selected_packages = selected_closure(graph, closure_roots, selected_targets, target);
     if (selected_packages.is_err()) {
         return Err(rstd::move(selected_packages).unwrap_err());
+    }
+    auto resolved_features = resolve_features(
+        graph, selected_roots, *selected_packages, selected_targets, selection.features);
+    if (resolved_features.is_err()) {
+        return Err(rstd::into<PackageSelectionError>(
+            rstd::move(resolved_features).unwrap_err()));
     }
     return Ok(ResolvedPackageSelection {
         .graph                  = rstd::move(graph),

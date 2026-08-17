@@ -344,6 +344,7 @@ extern "C++" int main() {
         request.build.pkg_config         = rstd::move(project.pkg_config);
         request.build.cmake              = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
+        request.build.selection.features = rstd::move(options.features);
         request.build.locked             = options.locked || options.frozen;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         request.build.execution.scan.jobs    = options.jobs;
@@ -480,6 +481,7 @@ extern "C++" int main() {
         request.pkg_config         = rstd::move(project.pkg_config);
         request.cmake              = rstd::move(project.cmake);
         request.selection.packages = rstd::move(options.packages);
+        request.selection.features = rstd::move(options.features);
         request.targets            = rstd::move(options.targets);
         request.source             = rstd::move(options.source);
         request.locked             = options.locked || options.frozen;
@@ -528,6 +530,7 @@ extern "C++" int main() {
         request.build.cmake          = rstd::move(project.cmake);
         request.build.purpose        = lito::package::PackageSelectionPurpose::Documentation;
         request.build.selection.packages = rstd::move(options.packages);
+        request.build.selection.features = rstd::move(options.features);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
@@ -599,6 +602,7 @@ extern "C++" int main() {
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
+        request.build.selection.features = rstd::move(options.features);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
         request.arguments                = rstd::move(options.arguments);
@@ -723,6 +727,7 @@ extern "C++" int main() {
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.selection.packages = rstd::move(options.packages);
+        request.build.selection.features = rstd::move(options.features);
         request.build.targets            = rstd::move(options.targets);
         request.build.locked             = options.locked || options.frozen;
         request.arguments                = rstd::move(options.arguments);
@@ -820,6 +825,7 @@ extern "C++" int main() {
     request.pkg_config         = rstd::move(project.pkg_config);
     request.cmake              = rstd::move(project.cmake);
     request.selection.packages = rstd::move(options.packages);
+    request.selection.features = rstd::move(options.features);
     request.targets            = rstd::move(options.targets);
     request.locked             = options.locked || options.frozen;
     if (options.profile.is_some()) request.profile = Some(options.profile->clone());

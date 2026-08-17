@@ -217,6 +217,33 @@ module = "fixture.legacy"
 archive = "fixture-legacy"
 sources = ["lib.cppm"]
 )lito"_str },
+    { "manifest-feature-invalid-name"_str, R"lito([package]
+name = "fixture-feature-invalid-name"
+version = "0.1.0"
+
+[features."1invalid"]
+default = false
+)lito"_str },
+    { "manifest-feature-macro-collision"_str, R"lito([package]
+name = "fixture-feature-macro-collision"
+version = "0.1.0"
+
+[features.first]
+macro = "FIXTURE_FEATURE"
+
+[features.second]
+macro = "FIXTURE_FEATURE"
+)lito"_str },
+    { "manifest-when-invalid-expression"_str, R"lito([package]
+name = "fixture-when-invalid-expression"
+version = "0.1.0"
+
+[[when]]
+condition = "target.os =="
+
+[when.usage]
+private-definitions = ["FIXTURE_CONDITION"]
+)lito"_str },
     { "manifest-package-name-dot"_str, R"lito([package]
 name = "fixture.package.dot"
 version = "0.1.0"
@@ -552,26 +579,47 @@ archive = "fixture.convention.markers"
     EXPECT_EQ(lito::manifest::package_target_source(module->targets[usize {}]).discovery,
               lito::manifest::SourceDiscoveryMode::Module);
 
-    auto group_project = manifest("source-groups"_str, R"toml([package]
-name = "fixture-compile-lib"
+}
+
+TEST_F(Manifest, ParsesConditionalUsageFeaturesAndDependencyRequests) {
+    auto project = manifest("conditional-features"_str, R"toml([package]
+name = "fixture-conditional-features"
 version = "0.1.0"
 
 [lib]
-name = "fixture-compile-lib"
-module = "fixture.compile.lib"
-archive = "fixture_compile_lib"
+name = "fixture-conditional-features"
+module = "fixture.conditional.features"
+archive = "fixture_conditional_features"
 sources = ["src/lib.cppm"]
-source-groups = [
-  { sources = ["src/unix.cpp"], target = { family = "unix", not-os = "windows" } },
-  { sources = ["src/windows.cpp"], target = { family = "windows" } },
-]
+
+[features.ffi]
+default = true
+macro = "FIXTURE_FEATURE_FFI"
+
+[[when]]
+condition = 'target.os == "linux" && feature.ffi'
+
+[when.usage]
+private-definitions = ["FIXTURE_LINUX"]
+
+[dependencies.fixture-dependency]
+path = "dependency"
+visibility = "private"
+features = ["api"]
+default-features = false
 )toml"_str);
-    ASSERT_TRUE(group_project.is_ok());
-    auto groups = lito::manifest::load_package_manifest(group_project->root.as_path());
-    ASSERT_TRUE(groups.is_ok());
-    ASSERT_EQ(groups->targets.len(), usize(1));
-    EXPECT_EQ(lito::manifest::package_target_source(groups->targets[usize {}]).discovery,
-              lito::manifest::SourceDiscoveryMode::Explicit);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->conditions.len(), usize(1));
+    ASSERT_EQ(loaded->features.len(), usize(1));
+    EXPECT_TRUE(loaded->features[usize {}].default_enabled);
+    ASSERT_TRUE(loaded->features[usize {}].macro.is_some());
+    EXPECT_EQ(*loaded->features[usize {}].macro, "FIXTURE_FEATURE_FFI"_str);
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    EXPECT_FALSE(loaded->dependencies[usize {}].default_features);
+    ASSERT_EQ(loaded->dependencies[usize {}].features.len(), usize(1));
+    EXPECT_EQ(loaded->dependencies[usize {}].features[usize {}], "api"_str);
 }
 
 TEST_F(Manifest, UsageSeparatesLocalOptionsFromTypedLinkRequirements) {

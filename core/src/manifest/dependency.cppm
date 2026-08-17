@@ -18,6 +18,8 @@ struct DeclaredDependency {
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
+    Vec<String>     features;
+    bool            default_features { true };
     Option<PathBuf> declaration_root;
 };
 
@@ -26,6 +28,8 @@ struct WorkspaceDependencyReference {
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
+    Vec<String> features;
+    bool        default_features { true };
 };
 
 struct DeclaredRuntimeDependency {

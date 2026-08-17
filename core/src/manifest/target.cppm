@@ -21,22 +21,15 @@ enum class SourceDiscoveryMode
     Module,
 };
 
-struct ConditionalSourceGroup {
-    TargetPredicate predicate;
-    Vec<PathBuf>    sources;
-};
-
 struct TestAttachmentManifest {
-    String                      package;
-    Vec<PathBuf>                sources;
-    Vec<ConditionalSourceGroup> conditional_source_groups;
+    String       package;
+    Vec<PathBuf> sources;
 };
 
 struct TargetSourceManifest {
     Option<String>              module;
     SourceDiscoveryMode         discovery { SourceDiscoveryMode::Explicit };
     Vec<PathBuf>                declared_sources;
-    Vec<ConditionalSourceGroup> conditional_source_groups;
 };
 
 enum class RuntimeResourceRoot

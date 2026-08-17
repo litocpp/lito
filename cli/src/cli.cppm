@@ -28,6 +28,7 @@ struct BuildOptions {
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
     Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
 };
 
 struct ScanOptions {
@@ -40,6 +41,7 @@ struct ScanOptions {
     bool                                     offline {};
     bool                                     frozen {};
     Vec<PathBuf>                             fetch_seeds;
+    lito::package::FeatureSelection          features;
 };
 
 struct DocOptions {
@@ -58,6 +60,7 @@ struct DocOptions {
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
     Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
 };
 
 struct InstallOptions {
@@ -74,6 +77,7 @@ struct InstallOptions {
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
     Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
 };
 
 struct TestOptions {
@@ -91,6 +95,7 @@ struct TestOptions {
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
     Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
 };
 
 struct BenchOptions {
@@ -108,6 +113,7 @@ struct BenchOptions {
     Option<PathBuf>                          timing_file;
     bool                                     no_timing {};
     Option<usize>                            jobs;
+    lito::package::FeatureSelection          features;
 };
 
 struct FormatOptions {
@@ -219,6 +225,8 @@ class CliDecodeError {
 struct PackageProfileArgs {
     ArgKey<String>                           package;
     ArgKey<lito::manifest::BuildProfileName> profile;
+    ArgKey<String>                           features;
+    ArgKey<bool>                             no_default_features;
 };
 
 struct SourceAcquisitionArgs {
@@ -427,6 +435,20 @@ auto profile_arg() -> Arg<lito::manifest::BuildProfileName> {
         .help("Select the build profile"_str);
 }
 
+auto features_arg() -> Arg<String> {
+    return Arg<String>::value("features"_str, string_parser())
+        .long_name("features"_str)
+        .value_name("FEATURES"_str)
+        .help("Enable comma-separated package features"_str)
+        .append();
+}
+
+auto no_default_features_arg() -> Arg<bool> {
+    return Arg<bool>::flag("no-default-features"_str)
+        .long_name("no-default-features"_str)
+        .help("Disable default package features"_str);
+}
+
 auto target_arg() -> Arg<String> {
     return Arg<String>::value("target"_str, string_parser())
         .long_name("target"_str)
@@ -542,6 +564,8 @@ auto add_package_profile_args(Command& command) -> PackageProfileArgs {
     return PackageProfileArgs {
         .package = command.add_arg(package_arg()),
         .profile = command.add_arg(profile_arg()),
+        .features = command.add_arg(features_arg()),
+        .no_default_features = command.add_arg(no_default_features_arg()),
     };
 }
 
@@ -1000,13 +1024,45 @@ auto required_string(const Matches& matches, const ArgKey<String>& key, ref<str>
 struct PackageProfileValues {
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
+    lito::package::FeatureSelection          features;
 };
+
+auto decode_features(const Matches& matches, const PackageProfileArgs& args)
+    -> Result<lito::package::FeatureSelection, CliDecodeError> {
+    auto declared = rstd_try(string_values(matches, args.features));
+    auto enabled = Vec<String>::make();
+    for (const auto& value : declared) {
+        auto begin = usize {};
+        for (usize cursor {}; cursor <= value.len(); ++cursor) {
+            if (cursor != value.len() && value.as_str().as_bytes()[cursor] != u8(',')) continue;
+            auto item = value.as_str().get(begin, cursor);
+            if (item.is_none() || item->is_empty()) {
+                return Err(CliDecodeError::InvalidUsage(
+                    String::make("--features contains an empty feature name"_str)));
+            }
+            auto duplicate = false;
+            for (const auto& existing : enabled) {
+                if (existing.as_str() == *item) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (! duplicate) enabled.push(String::make(*item));
+            begin = cursor + usize(1);
+        }
+    }
+    return Ok(lito::package::FeatureSelection {
+        .enabled = rstd::move(enabled),
+        .default_features = ! rstd_try(flag_value(matches, args.no_default_features)),
+    });
+}
 
 auto decode_package_profile(const Matches& matches, const PackageProfileArgs& args)
     -> Result<PackageProfileValues, CliDecodeError> {
     return Ok(PackageProfileValues {
         .packages = rstd_try(string_values(matches, args.package)),
         .profile  = rstd_try(optional_profile(matches, args.profile)),
+        .features = rstd_try(decode_features(matches, args)),
     });
 }
 
@@ -1061,6 +1117,7 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
         .timing_file = rstd::move(execution.timing_file),
         .no_timing   = execution.no_timing,
         .jobs        = rstd::move(execution.jobs),
+        .features    = rstd::move(package.features),
     });
 }
 
@@ -1087,6 +1144,7 @@ auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOption
         .timing_file = rstd::move(execution.timing_file),
         .no_timing   = execution.no_timing,
         .jobs        = rstd::move(execution.jobs),
+        .features    = rstd::move(package.features),
     });
 }
 
@@ -1109,6 +1167,7 @@ auto TestSchema::decode(const Matches& matches) const -> Result<TestOptions, Cli
         .timing_file = rstd::move(execution.timing_file),
         .no_timing   = execution.no_timing,
         .jobs        = rstd::move(execution.jobs),
+        .features    = rstd::move(package.features),
     });
 }
 
@@ -1131,6 +1190,7 @@ auto BenchSchema::decode(const Matches& matches) const -> Result<BenchOptions, C
         .timing_file = rstd::move(execution.timing_file),
         .no_timing   = execution.no_timing,
         .jobs        = rstd::move(execution.jobs),
+        .features    = rstd::move(package.features),
     });
 }
 
@@ -1149,6 +1209,7 @@ auto ScanSchema::decode(const Matches& matches) const -> Result<ScanOptions, Cli
         .offline     = source_values.offline,
         .frozen      = source_values.frozen,
         .fetch_seeds = rstd::move(source_values.fetch_seeds),
+        .features    = rstd::move(package.features),
     });
 }
 
@@ -1172,6 +1233,7 @@ auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDe
         .timing_file = rstd::move(execution.timing_file),
         .no_timing   = execution.no_timing,
         .jobs        = rstd::move(execution.jobs),
+        .features    = rstd::move(package.features),
     });
 }
 

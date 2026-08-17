@@ -478,6 +478,8 @@ public:
                 dependencies.push(ResolvedDependency {
                     .name       = rstd::move(dependency_name).unwrap(),
                     .visibility = dependency.visibility,
+                    .features = dependency.features.clone(),
+                    .default_features = dependency.default_features,
                 });
             }
             rstd::slice_::sort_unstable_by(
@@ -521,6 +523,7 @@ public:
             .dependencies         = rstd::move(dependencies),
             .dev_dependencies     = rstd::move(dev_dependencies),
             .runtime_dependencies = rstd::move(runtime_dependencies),
+            .features             = {},
         });
         return Ok(String::make(expected_name));
     }

@@ -6,6 +6,7 @@ import :manifest.profile;
 import :manifest.target;
 import :manifest.dependency;
 import :manifest.build_tool;
+import :manifest.conditional;
 import :dependency.usage;
 import :dependency.cmake;
 import :dependency.pkg_config;
@@ -55,6 +56,8 @@ struct PackageManifest {
     TargetPredicate                                    target;
     Vec<CompileTestCase>                               compile_tests;
     lito::dependency::DeclaredUsageRequirements        usage;
+    Vec<ConditionalConfiguration>                      conditions;
+    Vec<FeatureDeclaration>                            features;
     Vec<DeclaredDependency>                            dependencies;
     Vec<DeclaredDependency>                            dev_dependencies;
     Vec<DeclaredRuntimeDependency>                     runtime_dependencies;

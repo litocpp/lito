@@ -22,6 +22,7 @@ struct ResolvedSource {
     PathBuf                            relative_path;
     PathBuf                            canonical_path;
     SourceOrigin                       origin { SourceOrigin::Explicit };
+    bool                               module_companion { false };
     Option<String>                     expected_module;
     Option<frontend::FrontendAnalysis> frontend_analysis;
 };

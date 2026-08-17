@@ -161,7 +161,7 @@ struct DiscoveryCandidate {
     cpp::TargetId       target {};
     String              key;
     cpp::ResolvedSource source;
-    bool                expand_imports { true };
+    bool                discover_companion { true };
 };
 
 auto source_key(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String> {
@@ -175,7 +175,7 @@ auto source_key(ref<rstd::path::Path> path) -> cpp::SourceDiscoveryResult<String
 
 auto enqueue_candidate(cpp::TargetId            target,
                        cpp::ResolvedSource      source,
-                       bool                     expand_imports,
+                       bool                     discover_companion,
                        StringMap&               path_names,
                        StringMap&               name_paths,
                        StringSet&               queued,
@@ -210,7 +210,7 @@ auto enqueue_candidate(cpp::TargetId            target,
         .target         = target,
         .key            = rstd::move(path),
         .source         = rstd::move(source),
-        .expand_imports = expand_imports,
+        .discover_companion = discover_companion,
     });
     return Ok(empty {});
 }
@@ -369,12 +369,6 @@ discover_explicit_sources_impl(ref<rstd::path::Path>                       sourc
         auto appended = append(declared);
         if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
     }
-    for (const auto& group : source_manifest.conditional_source_groups) {
-        for (const auto& declared : group.sources) {
-            auto appended = append(declared);
-            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-        }
-    }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
                                        return left.key < right.key;
@@ -431,24 +425,12 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
             auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
-        for (const auto& group : source.conditional_source_groups) {
-            for (const auto& declared : group.sources) {
-                auto appended = append(declared);
-                if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-            }
-        }
         auto attachments = lito::manifest::package_target_attachments(target);
         if (attachments.is_none()) continue;
         for (const auto& attachment : **attachments) {
             for (const auto& declared : attachment.sources) {
                 auto appended = append(declared);
                 if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-            }
-            for (const auto& group : attachment.conditional_source_groups) {
-                for (const auto& declared : group.sources) {
-                    auto appended = append(declared);
-                    if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-                }
             }
         }
     }
@@ -707,29 +689,38 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                 }
             }
 
-            if (candidate.expand_imports) {
-                for (const auto& imported : frontend_result.imports) {
-                    auto owner = convention_import_owner(package,
-                                                         plan,
-                                                         candidate.target,
-                                                         imported.logical_name.as_str(),
-                                                         analysis_service);
-                    if (owner.is_err()) {
-                        return Err(rstd::move(owner).unwrap_err());
-                    }
-                    if (owner->is_none()) continue;
-                    auto resolved_owner = rstd::move(owner).unwrap().unwrap();
-                    auto enqueued       = enqueue_candidate(resolved_owner.target,
-                                                            rstd::move(resolved_owner.source),
-                                                            true,
-                                                            path_names,
-                                                            name_paths,
-                                                            queued,
-                                                            next);
-                    if (enqueued.is_err()) {
-                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
-                    }
+            if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Module &&
+                candidate.source.origin == cpp::SourceOrigin::Convention &&
+                candidate.source.expected_module.is_none() &&
+                ! candidate.source.module_companion &&
+                frontend_result.provided.is_none() &&
+                frontend_result.implementation_module.is_none()) {
+                continue;
+            }
+
+            for (const auto& imported : frontend_result.imports) {
+                auto owner = convention_import_owner(package,
+                                                     plan,
+                                                     candidate.target,
+                                                     imported.logical_name.as_str(),
+                                                     analysis_service);
+                if (owner.is_err()) {
+                    return Err(rstd::move(owner).unwrap_err());
                 }
+                if (owner->is_none()) continue;
+                auto resolved_owner = rstd::move(owner).unwrap().unwrap();
+                auto enqueued       = enqueue_candidate(resolved_owner.target,
+                                                        rstd::move(resolved_owner.source),
+                                                        true,
+                                                        path_names,
+                                                        name_paths,
+                                                        queued,
+                                                        next);
+                if (enqueued.is_err()) {
+                    return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                }
+            }
+            if (candidate.discover_companion) {
                 auto companion = cpp::module_companion_source(target, candidate.source);
                 if (companion.is_err()) {
                     return Err(rstd::into<BuildError>(rstd::move(companion).unwrap_err()));

@@ -136,6 +136,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .name             = reference.name.clone(),
                 .source           = clone_package_source(definition->source),
                 .visibility       = reference.visibility,
+                .features         = reference.features.clone(),
+                .default_features = reference.default_features,
                 .declaration_root = Some(workspace.root.clone()),
             });
         }

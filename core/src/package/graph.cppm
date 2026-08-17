@@ -27,10 +27,19 @@ struct ResolvedDependency {
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
+    Vec<String> features;
+    bool        default_features { true };
 };
 
 struct ResolvedRuntimeDependency {
     String name;
+};
+
+struct ResolvedFeature {
+    String      name;
+    String      macro;
+    bool        enabled { false };
+    Vec<String> activation_sources;
 };
 
 struct ResolvedPackage {
@@ -41,6 +50,7 @@ struct ResolvedPackage {
     Vec<ResolvedDependency>             dependencies;
     Vec<ResolvedDependency>             dev_dependencies;
     Vec<ResolvedRuntimeDependency>      runtime_dependencies;
+    Vec<ResolvedFeature>               features;
 };
 
 struct ResolvedProjectRoot {

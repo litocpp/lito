@@ -286,11 +286,7 @@ version = { workspace = true }
 name = "fixture-compile-lib"
 module = "fixture.compile.lib"
 archive = "fixture_compile_lib"
-sources = ["src/lib.cppm"]
-source-groups = [
-  { sources = ["src/unix.cpp"], target = { family = "unix", not-os = "windows" } },
-  { sources = ["src/windows.cpp"], target = { family = "windows" } },
-]
+sources = ["src/lib.cppm", "src/unix.cpp", "src/windows.cpp"]
 )test"_str },
         { "compile-lib/src/lib.cppm"_str, R"test(export module fixture.compile.lib;
 
@@ -300,8 +296,9 @@ export constexpr auto fixture_compile_value() -> int { return 42; }
 
 static_assert(fixture_compile_value() == 42);
 )test"_str },
-        { "compile-lib/src/windows.cpp"_str,
-          R"test(#error windows-only source was selected for a Unix target
+        { "compile-lib/src/windows.cpp"_str, R"test(#if defined(_WIN32)
+#error Windows source guard must be inactive for this target
+#endif
 )test"_str },
     };
     return source_tree(files);

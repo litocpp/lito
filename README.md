@@ -32,8 +32,8 @@ name = "hello"
 sources = ["src/main.cpp"]
 ```
 
-Declaring `sources` or `source-groups` makes the target use those sources explicitly.   
-If neither is declared, Lito will discovery `src/lib.cppm` or `src/main.cppm`.
+Declaring `sources` makes the target use those sources explicitly.
+If it is not declared, Lito will discover `src/lib.cppm` or `src/main.cppm`.
 
 Then run:
 

@@ -22,12 +22,12 @@ auto manifest_package_key(ref<str> key) -> bool {
 
 auto library_key(ref<str> key) -> bool {
     return key == "name"_str || key == "archive"_str || key == "module"_str ||
-           key == "sources"_str || key == "source-groups"_str;
+           key == "sources"_str;
 }
 
 auto runnable_key(ref<str> key) -> bool {
     return key == "name"_str || key == "module"_str || key == "sources"_str ||
-           key == "source-groups"_str || key == "link-stdlib"_str;
+           key == "link-stdlib"_str;
 }
 
 auto binary_key(ref<str> key) -> bool {
@@ -58,12 +58,8 @@ auto target_predicate_key(ref<str> key) -> bool {
     return key == "family"_str || key == "os"_str || key == "not-family"_str || key == "not-os"_str;
 }
 
-auto source_group_key(ref<str> key) -> bool {
-    return key == "sources"_str || key == "target"_str;
-}
-
 auto test_attachment_key(ref<str> key) -> bool {
-    return key == "package"_str || key == "sources"_str || key == "source-groups"_str;
+    return key == "package"_str || key == "sources"_str;
 }
 
 auto compile_test_case_key(ref<str> key) -> bool {
@@ -79,6 +75,14 @@ auto usage_key(ref<str> key) -> bool {
            key == "system-libraries"_str;
 }
 
+auto when_key(ref<str> key) -> bool {
+    return key == "condition"_str || key == "usage"_str;
+}
+
+auto feature_key(ref<str> key) -> bool {
+    return key == "default"_str || key == "macro"_str;
+}
+
 auto include_directory_key(ref<str> key) -> bool {
     return key == "path"_str || key == "root"_str;
 }
@@ -86,7 +90,8 @@ auto include_directory_key(ref<str> key) -> bool {
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
-           key == "workspace"_str;
+           key == "workspace"_str || key == "features"_str ||
+           key == "default-features"_str;
 }
 
 auto dev_dependency_key(ref<str> key) -> bool {
@@ -99,11 +104,12 @@ auto workspace_dependency_key(ref<str> key) -> bool {
 }
 
 auto workspace_dependency_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str || key == "visibility"_str;
+    return key == "workspace"_str || key == "visibility"_str || key == "features"_str ||
+           key == "default-features"_str;
 }
 
 auto workspace_dev_dependency_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str;
+    return key == "workspace"_str || key == "features"_str || key == "default-features"_str;
 }
 
 auto runtime_dependency_key(ref<str> key) -> bool {

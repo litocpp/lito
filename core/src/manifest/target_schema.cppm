@@ -6,6 +6,8 @@ module lito.core:manifest.target_schema;
 import rstd;
 import rstd.toml;
 import :manifest.target;
+import :manifest.conditional;
+import :condition;
 import :manifest.error;
 import :package.identity;
 import :dependency.usage;
@@ -211,37 +213,6 @@ auto parse_target_predicate(Option<ref<Toml>> value, ref<str> context)
     });
 }
 
-auto parse_source_groups(Option<ref<Toml>> value, ref<str> context)
-    -> ManifestSchemaResult<Vec<ConditionalSourceGroup>> {
-    auto result = Vec<ConditionalSourceGroup>::make();
-    if (value.is_none()) return Ok(rstd::move(result));
-    auto groups = (**value).as_array();
-    if (groups.is_none()) {
-        return manifest_schema_failure<Vec<ConditionalSourceGroup>>(
-            rstd::format("{} must be an array", context));
-    }
-    for (usize index {}; index < (**groups).len(); ++index) {
-        const auto item_context = rstd::format("{}[{}]", context, index);
-        auto       table        = table_value((**groups)[index], item_context.as_str());
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_unknown(**table, item_context.as_str(), source_group_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto sources = declared_paths(member((**groups)[index], "sources"_str),
-                                      rstd::format("{}.sources", item_context.as_str()).as_str(),
-                                      true);
-        auto predicate =
-            parse_target_predicate(member((**groups)[index], "target"_str),
-                                   rstd::format("{}.target", item_context.as_str()).as_str());
-        if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
-        if (predicate.is_err()) return Err(rstd::move(predicate).unwrap_err());
-        result.push(ConditionalSourceGroup {
-            .predicate = rstd::move(predicate).unwrap(),
-            .sources   = rstd::move(sources).unwrap(),
-        });
-    }
-    return Ok(rstd::move(result));
-}
-
 auto path_repeated(const Vec<PathBuf>& paths, ref<rstd::path::Path> candidate) -> bool {
     for (const auto& path : paths) {
         if (path.as_path() == candidate) return true;
@@ -256,21 +227,6 @@ auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source
             rstd::format("{} repeats source '{}'", context, source.as_path()));
     }
     attachment.sources.push(rstd::move(source));
-    return Ok(empty {});
-}
-
-auto append_attachment_group(TestAttachmentManifest& attachment,
-                             ConditionalSourceGroup  group,
-                             ref<str>                context) -> ManifestSchemaResult<empty> {
-    for (usize index {}; index < group.sources.len(); ++index) {
-        for (usize prior {}; prior < index; ++prior) {
-            if (group.sources[prior].as_path() == group.sources[index].as_path()) {
-                return manifest_schema_failure<empty>(rstd::format(
-                    "{} repeats source '{}'", context, group.sources[index].as_path()));
-            }
-        }
-    }
-    attachment.conditional_source_groups.push(rstd::move(group));
     return Ok(empty {});
 }
 
@@ -293,19 +249,15 @@ auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
         auto sources = declared_paths(member((**entries)[index], "sources"_str),
                                       rstd::format("{}.sources", context.as_str()).as_str(),
                                       false);
-        auto groups =
-            parse_source_groups(member((**entries)[index], "source-groups"_str),
-                                rstd::format("{}.source-groups", context.as_str()).as_str());
         if (package.is_err()) return Err(rstd::move(package).unwrap_err());
         if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
-        if (groups.is_err()) return Err(rstd::move(groups).unwrap_err());
         if (! package_name_is_valid(package->as_str())) {
             return manifest_schema_failure<Vec<TestAttachmentManifest>>(
                 rstd::format("{}.package must name a valid package", context.as_str()));
         }
-        if (sources->is_empty() && groups->is_empty()) {
+        if (sources->is_empty()) {
             return manifest_schema_failure<Vec<TestAttachmentManifest>>(
-                rstd::format("{} must contain sources or source-groups", context.as_str()));
+                rstd::format("{} must contain sources", context.as_str()));
         }
 
         auto position = Option<usize> {};
@@ -325,11 +277,6 @@ auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
                 append_attachment_source(attachment, rstd::move(source), context.as_str());
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
-        for (auto& group : *groups) {
-            auto appended =
-                append_attachment_group(attachment, rstd::move(group), context.as_str());
-            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
-        }
     }
     if (result.is_empty()) {
         return manifest_schema_failure<Vec<TestAttachmentManifest>>(
@@ -346,15 +293,12 @@ auto parse_target_source(const Toml& value, ref<str> context, bool module_requir
             rstd::format("{}.module must be a valid module name", context));
     }
     auto source_value = member(value, "sources"_str);
-    auto group_value  = member(value, "source-groups"_str);
-    auto groups       = rstd_try(
-        parse_source_groups(group_value, rstd::format("{}.source-groups", context).as_str()));
     auto sources =
         rstd_try(declared_paths(source_value, rstd::format("{}.sources", context).as_str(), false));
-    const auto module_discovery = source_value.is_none() && group_value.is_none();
-    if (! module_discovery && sources.is_empty() && groups.is_empty()) {
+    const auto module_discovery = source_value.is_none();
+    if (! module_discovery && sources.is_empty()) {
         return manifest_schema_failure<TargetSourceManifest>(
-            rstd::format("{} must contain sources or source-groups", context));
+            rstd::format("{}.sources must not be empty", context));
     }
     if (module_required && module.is_none()) {
         return manifest_schema_failure<TargetSourceManifest>(
@@ -363,8 +307,7 @@ auto parse_target_source(const Toml& value, ref<str> context, bool module_requir
     return Ok(TargetSourceManifest {
         .module    = rstd::move(module),
         .discovery = module_discovery ? SourceDiscoveryMode::Module : SourceDiscoveryMode::Explicit,
-        .declared_sources          = rstd::move(sources),
-        .conditional_source_groups = rstd::move(groups),
+        .declared_sources = rstd::move(sources),
     });
 }
 
@@ -677,40 +620,47 @@ auto parse_compile_tests(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Co
     return Ok(rstd::move(result));
 }
 
-auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
+auto parse_usage(Option<ref<Toml>>     value,
+                 ref<rstd::path::Path> root,
+                 ref<str>              context = "manifest.usage"_str)
     -> ManifestSchemaResult<lito::dependency::DeclaredUsageRequirements> {
     if (value.is_none()) return Ok(lito::dependency::DeclaredUsageRequirements {});
-    auto table = table_value(**value, "manifest.usage"_str);
+    auto table = table_value(**value, context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_unknown(**table, "manifest.usage"_str, usage_key);
+    auto known = reject_unknown(**table, context, usage_key);
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
 
     auto public_includes =
         resolve_include_directories(member(**value, "public-include-directories"_str),
                                     root,
-                                    "usage.public-include-directories"_str,
+                                    rstd::format("{}.public-include-directories", context).as_str(),
                                     false);
     auto private_includes =
         resolve_include_directories(member(**value, "private-include-directories"_str),
                                     root,
-                                    "usage.private-include-directories"_str,
+                                    rstd::format("{}.private-include-directories", context).as_str(),
                                     true);
     auto public_definitions =
-        string_array(member(**value, "public-definitions"_str), "usage.public-definitions"_str);
+        string_array(member(**value, "public-definitions"_str),
+                     rstd::format("{}.public-definitions", context).as_str());
     auto private_definitions =
-        string_array(member(**value, "private-definitions"_str), "usage.private-definitions"_str);
-    auto options = string_array(member(**value, "options"_str), "usage.options"_str);
+        string_array(member(**value, "private-definitions"_str),
+                     rstd::format("{}.private-definitions", context).as_str());
+    auto options =
+        string_array(member(**value, "options"_str), rstd::format("{}.options", context).as_str());
     auto linker_options =
-        string_array(member(**value, "linker-options"_str), "usage.linker-options"_str);
+        string_array(member(**value, "linker-options"_str),
+                     rstd::format("{}.linker-options", context).as_str());
     auto system_libraries =
-        string_array(member(**value, "system-libraries"_str), "usage.system-libraries"_str);
+        string_array(member(**value, "system-libraries"_str),
+                     rstd::format("{}.system-libraries", context).as_str());
     auto threads          = false;
     auto declared_threads = member(**value, "threads"_str);
     if (declared_threads.is_some()) {
         auto parsed = (**declared_threads).as_bool();
         if (parsed.is_none()) {
             return manifest_schema_failure<lito::dependency::DeclaredUsageRequirements>(
-                "usage.threads must be a boolean"_str);
+                rstd::format("{}.threads must be a boolean", context));
         }
         threads = *parsed;
     }
@@ -739,4 +689,145 @@ auto parse_usage(Option<ref<Toml>> value, ref<rstd::path::Path> root)
         .system_libraries                       = rstd::move(system_library_values),
         .private_include_directory_requirements = rstd::move(private_include_values.deferred),
     });
+}
+
+auto parse_conditional_configurations(Option<ref<Toml>>     value,
+                                      ref<rstd::path::Path> root)
+    -> ManifestSchemaResult<Vec<ConditionalConfiguration>> {
+    auto result = Vec<ConditionalConfiguration>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none()) {
+        return manifest_schema_failure<Vec<ConditionalConfiguration>>("manifest.when must be an array"_str);
+    }
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto context = rstd::format("manifest.when[{}]", index);
+        const auto& entry = (**entries)[index];
+        auto table = table_value(entry, context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, context.as_str(), when_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto source = required_string(entry, "condition"_str, context.as_str());
+        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+        auto condition = lito::condition::parse(source->as_str());
+        if (condition.is_err()) {
+            return manifest_schema_failure<Vec<ConditionalConfiguration>>(
+                rstd::format("{}", rstd::move(condition).unwrap_err()));
+        }
+        auto usage_value = member(entry, "usage"_str);
+        if (usage_value.is_none()) {
+            return manifest_schema_failure<Vec<ConditionalConfiguration>>(
+                rstd::format("{} is missing 'usage'", context.as_str()));
+        }
+        auto usage = parse_usage(
+            usage_value, root, rstd::format("{}.usage", context.as_str()).as_str());
+        if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+        auto usage_table = table_value(**usage_value, rstd::format("{}.usage", context).as_str());
+        if (usage_table.is_err()) return Err(rstd::move(usage_table).unwrap_err());
+        result.push(ConditionalConfiguration {
+            .source = rstd::move(source).unwrap(),
+            .condition = rstd::move(condition).unwrap(),
+            .usage = ConditionalUsage {
+                .values = rstd::move(usage).unwrap(),
+                .declares_threads = member(**usage_value, "threads"_str).is_some(),
+            },
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto feature_name_is_valid(ref<str> value) -> bool {
+    if (value.is_empty()) return false;
+    const auto bytes = value.as_bytes();
+    const auto first = bytes[usize {}];
+    if (! ((first >= u8('a') && first <= u8('z')) ||
+           (first >= u8('A') && first <= u8('Z')) || first == u8('_'))) {
+        return false;
+    }
+    for (usize index { 1 }; index < bytes.len(); ++index) {
+        const auto byte = bytes[index];
+        if ((byte >= u8('a') && byte <= u8('z')) ||
+            (byte >= u8('A') && byte <= u8('Z')) ||
+            (byte >= u8('0') && byte <= u8('9')) || byte == u8('-') || byte == u8('_')) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+auto macro_name_is_valid(ref<str> value) -> bool {
+    if (value.is_empty()) return false;
+    const auto bytes = value.as_bytes();
+    const auto first = bytes[usize {}];
+    if (! ((first >= u8('a') && first <= u8('z')) ||
+           (first >= u8('A') && first <= u8('Z')) || first == u8('_'))) {
+        return false;
+    }
+    for (usize index { 1 }; index < bytes.len(); ++index) {
+        const auto byte = bytes[index];
+        if ((byte >= u8('a') && byte <= u8('z')) ||
+            (byte >= u8('A') && byte <= u8('Z')) ||
+            (byte >= u8('0') && byte <= u8('9')) || byte == u8('_')) {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+auto parse_features(Option<ref<Toml>> value, ref<str> package)
+    -> ManifestSchemaResult<Vec<FeatureDeclaration>> {
+    auto result = Vec<FeatureDeclaration>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto features = table_value(**value, "manifest.features"_str);
+    if (features.is_err()) return Err(rstd::move(features).unwrap_err());
+    auto macros = rstd::collections::BTreeMap<String, String>::make();
+    auto keys = (**features).keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name = **key;
+        const auto context = rstd::format("manifest.features.{}", name.as_str());
+        if (! feature_name_is_valid(name.as_str())) {
+            return manifest_schema_failure<Vec<FeatureDeclaration>>(
+                rstd::format("feature name '{}' is invalid", name.as_str()));
+        }
+        auto specification = (**features).get(name.as_str());
+        auto table = table_value(**specification, context.as_str());
+        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+        auto known = reject_unknown(**table, context.as_str(), feature_key);
+        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto default_enabled = false;
+        auto default_value = member(**specification, "default"_str);
+        if (default_value.is_some()) {
+            auto parsed = (**default_value).as_bool();
+            if (parsed.is_none()) {
+                return manifest_schema_failure<Vec<FeatureDeclaration>>(
+                    rstd::format("{}.default must be a boolean", context.as_str()));
+            }
+            default_enabled = *parsed;
+        }
+        auto declared_macro = optional_string(**specification, "macro"_str, context.as_str());
+        if (declared_macro.is_err()) return Err(rstd::move(declared_macro).unwrap_err());
+        auto macro = declared_macro->is_some()
+                         ? (**declared_macro).clone()
+                         : normalized_feature_macro(package, name.as_str());
+        if (! macro_name_is_valid(macro.as_str())) {
+            return manifest_schema_failure<Vec<FeatureDeclaration>>(
+                rstd::format("feature '{}' macro '{}' is not a C/C++ identifier",
+                             name.as_str(), macro.as_str()));
+        }
+        auto existing = macros.get(macro.as_str());
+        if (existing.is_some()) {
+            return manifest_schema_failure<Vec<FeatureDeclaration>>(
+                rstd::format("features '{}' and '{}' use the same macro '{}'",
+                             (**existing).as_str(), name.as_str(), macro.as_str()));
+        }
+        macros.insert(macro.clone(), name.clone());
+        result.push(FeatureDeclaration {
+            .name = name.clone(),
+            .default_enabled = default_enabled,
+            .macro = rstd::move(declared_macro).unwrap(),
+        });
+    }
+    return Ok(rstd::move(result));
 }

@@ -4,6 +4,7 @@ import rstd;
 
 export import lito.system;
 export import :config;
+export import :condition;
 export import :template_;
 export import :dependency;
 export import :lock;

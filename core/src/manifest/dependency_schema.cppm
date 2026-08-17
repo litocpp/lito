@@ -364,10 +364,27 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
             if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
             parsed_visibility = rstd::move(parsed).unwrap();
         }
+        auto requested_features = string_array(member(**specification, "features"_str),
+                                               rstd::format("{}.features", context).as_str());
+        if (requested_features.is_err()) {
+            return Err(rstd::move(requested_features).unwrap_err());
+        }
+        auto default_features = true;
+        auto default_value = member(**specification, "default-features"_str);
+        if (default_value.is_some()) {
+            auto parsed = (**default_value).as_bool();
+            if (parsed.is_none()) {
+                return manifest_schema_failure<ParsedDependencies>(
+                    rstd::format("{}.default-features must be a boolean", context.as_str()));
+            }
+            default_features = *parsed;
+        }
         if (*inherited) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
                 .name       = name.clone(),
                 .visibility = parsed_visibility,
+                .features = rstd::move(requested_features).unwrap(),
+                .default_features = default_features,
             });
             continue;
         }
@@ -377,6 +394,8 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
             .name       = name.clone(),
             .source     = rstd::move(source).unwrap(),
             .visibility = parsed_visibility,
+            .features = rstd::move(requested_features).unwrap(),
+            .default_features = default_features,
         });
     }
     return Ok(rstd::move(result));

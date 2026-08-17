@@ -109,3 +109,214 @@ TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
         EXPECT_EQ(unit.target.kind, lito::package::PackageTargetKind::Library);
     }
 }
+
+TEST_F(BuildCommand, FeatureChangesInvalidateDiscoveryAndCompileCaches) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-feature-build"
+version = "0.1.0"
+
+[lib]
+name = "fixture-feature-build"
+module = "fixture.feature"
+archive = "fixture_feature"
+
+[features.optional]
+default = false
+
+[[when]]
+condition = "feature.optional"
+
+[when.usage]
+private-definitions = ["FIXTURE_FEATURE_CONDITION=1"]
+)toml"_str },
+        { "src/lib.cppm"_str, R"cpp(export module fixture.feature;
+
+#if FIXTURE_FEATURE_BUILD_FEATURE_OPTIONAL
+export import :optional;
+#endif
+)cpp"_str },
+        { "src/optional.cppm"_str, R"cpp(module;
+
+#if FIXTURE_FEATURE_BUILD_FEATURE_OPTIONAL
+#ifndef FIXTURE_FEATURE_CONDITION
+#error feature condition did not contribute to the scan context
+#endif
+
+export module fixture.feature:optional;
+#endif
+)cpp"_str },
+    };
+    auto project = materialize("feature-build"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("feature-build"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-feature-build"_str));
+
+    auto disabled = lito::build(request);
+    ASSERT_TRUE(disabled.is_ok());
+    EXPECT_EQ(disabled->compiled, usize(1));
+
+    request.selection.features.enabled.push(String::make("optional"_str));
+    auto enabled = lito::build(request);
+    if (enabled.is_err()) {
+        auto message = error_chain_text(enabled.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(enabled->compiled, usize(2));
+    EXPECT_EQ(enabled->scanned, usize(2));
+
+    request.selection.features.enabled.clear();
+    auto disabled_again = lito::build(request);
+    if (disabled_again.is_err()) {
+        auto message = error_chain_text(disabled_again.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(disabled_again->compiled, usize(1));
+}
+
+TEST_F(BuildCommand, ConditionalConflictsReportBothSources) {
+    const ProjectFile definition_files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-condition-definition-conflict"
+version = "0.1.0"
+
+[lib]
+name = "fixture-condition-definition-conflict"
+module = "fixture.condition.definition_conflict"
+archive = "fixture_condition_definition_conflict"
+
+[[when]]
+condition = "true"
+
+[when.usage]
+private-definitions = ["FIXTURE_CONFLICT=1"]
+
+[[when]]
+condition = 'target.family == "unix"'
+
+[when.usage]
+private-definitions = ["FIXTURE_CONFLICT=2"]
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.condition.definition_conflict;\n"_str },
+    };
+    auto definition_project = materialize("condition-definition-conflict"_str, definition_files);
+    ASSERT_TRUE(definition_project.is_ok());
+    auto definition_request = project_build_request(
+        "condition-definition-conflict"_str,
+        definition_project->root.as_path(),
+        strings("fixture-condition-definition-conflict"_str));
+    auto definition_result = lito::build(definition_request);
+    ASSERT_TRUE(definition_result.is_err());
+    auto definition_error = error_chain_text(definition_result.unwrap_err());
+    EXPECT_TRUE(definition_error.as_str().contains("condition 'true'"_str));
+    EXPECT_TRUE(
+        definition_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
+
+    const ProjectFile scalar_files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-condition-scalar-conflict"
+version = "0.1.0"
+
+[lib]
+name = "fixture-condition-scalar-conflict"
+module = "fixture.condition.scalar_conflict"
+archive = "fixture_condition_scalar_conflict"
+
+[[when]]
+condition = "true"
+
+[when.usage]
+threads = true
+
+[[when]]
+condition = 'target.family == "unix"'
+
+[when.usage]
+threads = false
+)toml"_str },
+        { "src/lib.cppm"_str, "export module fixture.condition.scalar_conflict;\n"_str },
+    };
+    auto scalar_project = materialize("condition-scalar-conflict"_str, scalar_files);
+    ASSERT_TRUE(scalar_project.is_ok());
+    auto scalar_request =
+        project_build_request("condition-scalar-conflict"_str,
+                              scalar_project->root.as_path(),
+                              strings("fixture-condition-scalar-conflict"_str));
+    auto scalar_result = lito::build(scalar_request);
+    ASSERT_TRUE(scalar_result.is_err());
+    auto scalar_error = error_chain_text(scalar_result.unwrap_err());
+    EXPECT_TRUE(scalar_error.as_str().contains("condition 'true'"_str));
+    EXPECT_TRUE(scalar_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
+}
+
+TEST_F(BuildCommand, DependencyFeaturesPropagatePublicMacros) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-dependency-features"
+members = ["provider", "consumer"]
+
+[workspace.package]
+version = "0.1.0"
+)toml"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-feature-provider"
+version.workspace = true
+
+[lib]
+name = "fixture-feature-provider"
+module = "fixture.feature.provider"
+archive = "fixture_feature_provider"
+
+[features.api]
+default = false
+)toml"_str },
+        { "provider/src/lib.cppm"_str, "export module fixture.feature.provider;\n"_str },
+        { "provider/src/api.cppm"_str, R"cpp(export module fixture.feature.provider.api;
+
+export constexpr auto fixture_feature_value() -> int {
+    return FIXTURE_FEATURE_PROVIDER_FEATURE_API;
+}
+)cpp"_str },
+        { "consumer/lito.toml"_str, R"toml([package]
+name = "fixture-feature-consumer"
+version.workspace = true
+
+[[bin]]
+name = "fixture-feature-consumer"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-feature-provider]
+path = "../provider"
+visibility = "private"
+features = ["api"]
+default-features = false
+)toml"_str },
+        { "consumer/src/main.cpp"_str, R"cpp(import fixture.feature.provider.api;
+
+#if FIXTURE_FEATURE_PROVIDER_FEATURE_API != 1
+#error dependency feature macro did not propagate
+#endif
+
+auto main() -> int {
+    return fixture_feature_value() == 1 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("dependency-features"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request("dependency-features"_str,
+                                         project->root.as_path(),
+                                         strings("fixture-feature-consumer"_str));
+    auto result = lito::build(request);
+    if (result.is_err()) {
+        auto message = error_chain_text(result.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(1));
+}

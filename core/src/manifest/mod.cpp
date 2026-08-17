@@ -184,6 +184,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
 
     auto usage            = parse_usage(member(document, "usage"_str), source_root->as_path());
+    auto conditions       = parse_conditional_configurations(member(document, "when"_str),
+                                                             source_root->as_path());
+    auto features         = parse_features(member(document, "features"_str), name->as_str());
     auto dependencies     = parse_dependencies(member(document, "dependencies"_str));
     auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);
     auto runtime_dependencies =
@@ -192,6 +195,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto external    = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
+    if (conditions.is_err()) return Err(rstd::move(conditions).unwrap_err());
+    if (features.is_err()) return Err(rstd::move(features).unwrap_err());
     if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
     if (dev_dependencies.is_err()) return Err(rstd::move(dev_dependencies).unwrap_err());
     if (runtime_dependencies.is_err()) {
@@ -242,6 +247,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .target                 = rstd::move(target).unwrap(),
             .compile_tests          = rstd::move(compile_tests),
             .usage                  = rstd::move(parsed_usage),
+            .conditions             = rstd::move(conditions).unwrap(),
+            .features               = rstd::move(features).unwrap(),
             .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
             .dev_dependencies       = rstd::move(parsed_dev_dependencies.explicit_dependencies),
             .runtime_dependencies   = rstd::move(parsed_runtime_dependencies.explicit_dependencies),
