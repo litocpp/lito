@@ -12,7 +12,7 @@ using namespace rstd::literals;
 namespace lito
 {
 
-auto same_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
+auto same_test_path(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
     return left.starts_with(right) && right.starts_with(left);
 }
 
@@ -24,7 +24,7 @@ namespace lito
 auto compile_test_for_source(const cpp::TargetSpec& target, ref<rstd::path::Path> source)
     -> Option<const cpp::ResolvedCompileTestCase*> {
     for (const auto& test : target.compile_tests) {
-        if (same_path(test.source.as_path(), source)) return Some(rstd::addressof(test));
+        if (same_test_path(test.source.as_path(), source)) return Some(rstd::addressof(test));
     }
     return None();
 }

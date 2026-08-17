@@ -1,4 +1,5 @@
 /build/
+/CMakeUserPresets.json
 /tests/build/
 /.lito/
 /.tenon/

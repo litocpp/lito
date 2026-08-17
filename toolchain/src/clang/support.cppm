@@ -148,6 +148,7 @@ auto clang_warning_option(cpp::CppWarningOption option) noexcept -> ref<str> {
 
 auto append_typed_options(Vec<String>&                  command,
                           const cpp::CppCompileOptions& options,
+                          TargetFamily                  target_family,
                           bool                          semantic_only) -> void {
     if (options.target.target.is_some()) {
         command.push(rstd::format("--target={}", options.target.target->as_str()));
@@ -161,8 +162,10 @@ auto append_typed_options(Vec<String>&                  command,
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     auto lto = cpp::cpp_lto_option(options.codegen.lto);
     if (! semantic_only) toolchain::command::push_option(command, lto);
-    toolchain::command::push_option(
-        command, options.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
+    if (target_family != TargetFamily::Windows) {
+        toolchain::command::push_option(
+            command, options.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
+    }
     switch (options.language.sized_deallocation) {
     case cpp::CppSizedDeallocation::Auto: break;
     case cpp::CppSizedDeallocation::Enabled:

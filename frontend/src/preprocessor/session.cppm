@@ -1001,13 +1001,7 @@ private:
     auto define_macro(const Vec<Token>& line, bool send_event) -> Result<empty> {
         auto parsed = parse_macro_definition(line);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-        auto macro   = rstd::move(parsed).unwrap();
-        auto current = macros_.get(macro.name.as_str());
-        if (current.is_some() && ! same_macro(**current, macro)) {
-            return Err(failure(
-                rstd::format("incompatible redefinition of macro '{}'", macro.name.as_str()),
-                macro.location));
-        }
+        auto macro    = rstd::move(parsed).unwrap();
         auto previous = macros_.define(rstd::move(macro));
         (void)previous;
         if (send_event) {
@@ -1016,30 +1010,6 @@ private:
             if (event.is_err()) return event;
         }
         return Ok(empty {});
-    }
-
-    auto same_macro(const MacroDefinition& left, const MacroDefinition& right) const -> bool {
-        if (left.parameters.is_some() != right.parameters.is_some() ||
-            left.variadic != right.variadic ||
-            left.variadic_name.as_str() != right.variadic_name.as_str()) {
-            return false;
-        }
-        if (left.parameters.is_some()) {
-            if (left.parameters->len() != right.parameters->len()) return false;
-            for (auto index = usize {}; index < left.parameters->len(); ++index) {
-                if ((*left.parameters)[index].as_str() != (*right.parameters)[index].as_str()) {
-                    return false;
-                }
-            }
-        }
-        if (left.replacement.len() != right.replacement.len()) return false;
-        for (auto index = usize {}; index < left.replacement.len(); ++index) {
-            if (left.replacement[index].kind != right.replacement[index].kind ||
-                left.replacement[index].text.as_str() != right.replacement[index].text.as_str()) {
-                return false;
-            }
-        }
-        return true;
     }
 
     auto replace_defined(const Vec<Token>& line) -> Result<Vec<Token>> {

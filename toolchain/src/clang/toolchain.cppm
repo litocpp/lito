@@ -608,8 +608,13 @@ public:
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        pushed = toolchain::command::push_path_option(command, "-fuse-ld="_str, linker_.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        if (target.family == TargetFamily::Windows) {
+            toolchain::command::push_option(command, "-fuse-ld=lld"_str);
+        } else {
+            pushed =
+                toolchain::command::push_path_option(command, "-fuse-ld="_str, linker_.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        }
         toolchain::command::push_option(command,
                                         toolchain::clang_options::standard_library_linker_option(
                                             standard_library, link_stdlib));
@@ -661,6 +666,14 @@ public:
             pushed = toolchain::command::push_path(command, archive.path.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             toolchain::command::push_option(command, toolchain::clang_options::NO_WHOLE_ARCHIVE);
+        }
+        if (target.family == TargetFamily::Windows) {
+            auto runtime_name =
+                rstd::format("clang_rt.builtins-{}.lib", target.architecture.as_str());
+            auto runtime_directory = resource_dir_.join(PathBuf::from("lib/windows"_str).as_path());
+            auto runtime = runtime_directory.join(PathBuf::from(runtime_name.as_str()).as_path());
+            pushed       = toolchain::command::push_path(command, runtime.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         if (link_requirements.posix_threads) {
             toolchain::command::push_option(command, "-pthread"_str);
@@ -850,7 +863,7 @@ private:
             "{}{}", toolchain::clang_options::STANDARD, context.cpp.language.standard.as_str()));
         toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
-        append_typed_options(command, context.cpp, true);
+        append_typed_options(command, context.cpp, target_info_.family, true);
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
@@ -890,7 +903,7 @@ private:
             command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
         toolchain::command::push_option(command,
                                         toolchain::clang_options::bmi(context.bmi.representation));
-        append_typed_options(command, context.cpp, semantic_only);
+        append_typed_options(command, context.cpp, target_info_.family, semantic_only);
         for (const auto& macro : context.cpp.preprocessor.macros) {
             command.push(
                 rstd::format("{}{}",

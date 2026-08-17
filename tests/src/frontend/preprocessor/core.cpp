@@ -195,7 +195,12 @@ auto run_preprocessor_test() -> int {
                 "LITO_EMPTY_PASTE(LITO_JOINED,);\n"
                 "LITO_LATE\n"
                 "#define LITO_LATE 42\n"
-                "LITO_LATE\n"_str);
+                "LITO_LATE\n"
+                "#define __$lito_extension(value) value\n"
+                "__$lito_extension(17)\n"
+                "#define LITO_REDEFINED 19\n"
+                "#define LITO_REDEFINED 23\n"
+                "LITO_REDEFINED\n"_str);
     auto includes    = MemoryIncludes(sources);
     auto builtins    = TestBuiltins {};
     auto identifiers = lito::frontend::lexical::TokenKindMatcher { TokenKind::Identifier };
@@ -231,6 +236,8 @@ auto run_preprocessor_test() -> int {
         ! contains_token(result->tokens, "42"_str)) {
         return 12;
     }
+    if (! contains_token(result->tokens, "17"_str)) return 17;
+    if (! contains_token(result->tokens, "23"_str)) return 18;
     if (result->active_comments.len() != usize(1) ||
         result->active_comments[usize {}].kind != CommentKind::OuterDocumentation ||
         ! result->active_comments[usize {}].text.as_str().contains("active documentation"_str)) {

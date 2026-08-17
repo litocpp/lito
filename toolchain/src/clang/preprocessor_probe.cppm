@@ -130,7 +130,10 @@ auto parse_macro_seeds(const Vec<preprocessor::MacroSeed>& seeds, ref<str> sourc
 auto macro_name(ref<str> definition) -> Option<ref<str>> {
     auto bytes = definition.as_bytes();
     auto end   = usize {};
-    while (end < bytes.len() && bytes[end] != u8('=') && bytes[end] != u8('(')) ++end;
+    while (end < bytes.len() && bytes[end] != u8('=') && bytes[end] != u8('(') &&
+           bytes[end] != u8(' ') && bytes[end] != u8('\t')) {
+        ++end;
+    }
     if (end == usize {}) return None();
     return definition.get(usize {}, end);
 }

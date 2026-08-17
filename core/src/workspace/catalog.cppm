@@ -107,7 +107,8 @@ public:
         if (root_text.is_some()) {
             catalog.member_roots_.insert(String::make(*root_text), empty {});
         }
-        catalog.packages_.insert(manifest.name.clone(), rstd::move(manifest));
+        auto package_name = manifest.name.clone();
+        catalog.packages_.insert(rstd::move(package_name), rstd::move(manifest));
         return Ok(rstd::move(catalog));
     }
 
@@ -200,7 +201,8 @@ auto load_workspace_catalog(WorkspaceManifest workspace, Option<PackageManifest>
         if (member_key.is_err()) return Err(rstd::move(member_key).unwrap_err());
         catalog.member_roots_.insert(rstd::move(member_key).unwrap(), empty {});
         catalog.names_.push(manifest.name.clone());
-        catalog.packages_.insert(manifest.name.clone(), rstd::move(manifest));
+        auto package_name = manifest.name.clone();
+        catalog.packages_.insert(rstd::move(package_name), rstd::move(manifest));
     }
     auto defaults = StringSet::make();
     for (const auto& declared : workspace.default_members) {

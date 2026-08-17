@@ -11,6 +11,83 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 
+namespace lito
+{
+
+namespace
+{
+
+constexpr auto WINDOWS_DIRECT_COMMAND_LIMIT = usize(24000);
+
+auto command_length(const Vec<String>& arguments) -> usize {
+    auto length = usize {};
+    for (const auto& argument : arguments) length += argument.len() + usize(1);
+    return length;
+}
+
+auto response_file_path(ref<rstd::path::Path> staged_object) -> ToolchainResult<PathBuf> {
+    auto text = staged_object.to_str();
+    if (text.is_none()) {
+        return failure<PathBuf>(
+            rstd::format("staged object path '{}' is not valid UTF-8", staged_object));
+    }
+    return Ok(PathBuf::from(rstd::format("{}.rsp", *text)));
+}
+
+void append_response_argument(String& output, ref<str> argument) {
+    output.push_ascii(u8('"'));
+    for (auto value : argument) {
+        if (value == u8('\\')) {
+            output.push_str("\\\\"_str);
+        } else {
+            if (value == u8('"')) output.push_ascii(u8('\\'));
+            output.push_ascii(value);
+        }
+    }
+    output.push_str("\"\n"_str);
+}
+
+auto write_response_file(const CompileInvocation& invocation) -> ToolchainResult<Option<PathBuf>> {
+#if defined(_WIN32)
+    if (command_length(invocation.arguments) <= WINDOWS_DIRECT_COMMAND_LIMIT) return Ok(None());
+    if (invocation.arguments.is_empty()) {
+        return failure<Option<PathBuf>>("compile invocation has no executable"_str);
+    }
+    auto path_result = response_file_path(invocation.staged_object.as_path());
+    if (path_result.is_err()) return Err(rstd::move(path_result).unwrap_err());
+    auto path     = rstd::move(path_result).unwrap();
+    auto contents = String::make();
+    for (auto index = usize(1); index < invocation.arguments.len(); ++index)
+        append_response_argument(contents, invocation.arguments[index].as_str());
+    auto written = rstd::fs::write_atomic(path.as_path(), contents.as_str().as_bytes());
+    if (written.is_err()) {
+        return io_failure<Option<PathBuf>>(
+            "write compiler response file"_str, path.as_path(), rstd::move(written).unwrap_err());
+    }
+    return Ok(Some(rstd::move(path)));
+#else
+    (void)invocation;
+    return Ok(None());
+#endif
+}
+
+auto response_command(const CompileInvocation& invocation, ref<rstd::path::Path> response_file)
+    -> ToolchainResult<Vec<String>> {
+    auto text = response_file.to_str();
+    if (text.is_none()) {
+        return failure<Vec<String>>(
+            rstd::format("compiler response file '{}' is not valid UTF-8", response_file));
+    }
+    auto result = Vec<String>::with_capacity(usize(2));
+    result.push(invocation.arguments[usize {}].clone());
+    result.push(rstd::format("@{}", *text));
+    return Ok(rstd::move(result));
+}
+
+} // namespace
+
+} // namespace lito
+
 export namespace lito
 {
 
@@ -34,8 +111,19 @@ public:
             cleared = clear_staged_output(invocation.staged_bmi->as_path());
             if (cleared.is_err()) return Err(rstd::move(cleared).unwrap_err());
         }
-        auto output = run_command(
-            invocation.arguments, *environment_, Some(invocation.working_directory.as_path()));
+        auto response_file = write_response_file(invocation);
+        if (response_file.is_err()) return Err(rstd::move(response_file).unwrap_err());
+        auto response  = rstd::move(response_file).unwrap();
+        auto arguments = Option<Vec<String>> {};
+        if (response.is_some()) {
+            auto command = response_command(invocation, response->as_path());
+            if (command.is_err()) return Err(rstd::move(command).unwrap_err());
+            arguments = Some(rstd::move(command).unwrap());
+        }
+        const auto& command = arguments.is_some() ? *arguments : invocation.arguments;
+        auto        output =
+            run_command(command, *environment_, Some(invocation.working_directory.as_path()));
+        if (response.is_some()) (void)rstd::fs::remove_file(response->as_path());
         if (output.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
         }

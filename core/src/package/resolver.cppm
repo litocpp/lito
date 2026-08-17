@@ -244,7 +244,10 @@ class PackageGraphResolver {
         auto source =
             acquire_catalog_root(location.directory.as_path(), None(), rstd::addressof(primary));
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-        auto validated = validate_associated_catalog(primary, catalog(*source), role);
+        // Storing the associated catalog can grow `catalogs_` and invalidate `primary`.
+        // Resolve it again before validation instead of retaining a reference into the vector.
+        auto validated =
+            validate_associated_catalog(catalog(primary_source), catalog(*source), role);
         if (validated.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(validated).unwrap_err()));
         }

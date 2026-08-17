@@ -151,7 +151,7 @@ struct Token {
 
 auto is_identifier_start(u8 value) noexcept -> bool {
     return (value >= u8('a') && value <= u8('z')) || (value >= u8('A') && value <= u8('Z')) ||
-           value == u8('_') || value >= u8(0x80);
+           value == u8('_') || value == u8('$') || value >= u8(0x80);
 }
 
 auto is_identifier_continue(u8 value) noexcept -> bool {
