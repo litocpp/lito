@@ -18,6 +18,36 @@ using Map   = rstd::json::Map;
 using Array = rstd::json::Array;
 using namespace lito::lock;
 
+export namespace lito::lock
+{
+
+enum class LockExportFormat
+{
+    FlatpakSources,
+};
+
+constexpr auto lock_export_format_name(LockExportFormat format) noexcept -> ref<str> {
+    switch (format) {
+    case LockExportFormat::FlatpakSources: return "flatpak-sources"_str;
+    }
+    __builtin_unreachable();
+}
+
+auto parse_lock_export_format(ref<str> value) noexcept -> Option<LockExportFormat> {
+    if (value == lock_export_format_name(LockExportFormat::FlatpakSources)) {
+        return Some(LockExportFormat::FlatpakSources);
+    }
+    return None();
+}
+
+auto lock_export_format_names() -> Vec<String> {
+    auto values = Vec<String>::with_capacity(usize(1));
+    values.push(String::make(lock_export_format_name(LockExportFormat::FlatpakSources)));
+    return values;
+}
+
+} // namespace lito::lock
+
 template<typename T>
 auto flatpak_failure(String message) -> LockResult<T> {
     return Err(LockError::Schema(rstd::move(message)));

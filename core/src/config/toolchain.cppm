@@ -15,6 +15,27 @@ enum class StandardLibrary
     Libcxx,
 };
 
+constexpr auto standard_library_name(StandardLibrary value) noexcept -> ref<str> {
+    return value == StandardLibrary::Libcxx ? "libc++"_str : "libstdc++"_str;
+}
+
+auto parse_standard_library(ref<str> value) noexcept -> Option<StandardLibrary> {
+    if (value == standard_library_name(StandardLibrary::Libcxx)) {
+        return Some(StandardLibrary::Libcxx);
+    }
+    if (value == standard_library_name(StandardLibrary::Libstdcxx)) {
+        return Some(StandardLibrary::Libstdcxx);
+    }
+    return None();
+}
+
+auto standard_library_names() -> Vec<String> {
+    auto values = Vec<String>::with_capacity(usize(2));
+    values.push(String::make(standard_library_name(StandardLibrary::Libcxx)));
+    values.push(String::make(standard_library_name(StandardLibrary::Libstdcxx)));
+    return values;
+}
+
 struct ToolchainSpec {
     PathBuf cc { PathBuf::from("clang"_str) };
     PathBuf cxx;

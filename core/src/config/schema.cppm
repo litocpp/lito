@@ -141,8 +141,8 @@ auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<St
     if (text.is_none()) {
         return config_failure<StandardLibrary>("config.toolchain.stdlib must be a string"_str);
     }
-    if (*text == "libc++"_str) return Ok(StandardLibrary::Libcxx);
-    if (*text == "libstdc++"_str) return Ok(StandardLibrary::Libstdcxx);
+    auto parsed = parse_standard_library(*text);
+    if (parsed.is_some()) return Ok(*parsed);
     return config_failure<StandardLibrary>(
         "config.toolchain.stdlib must be 'libc++' or 'libstdc++'"_str);
 }

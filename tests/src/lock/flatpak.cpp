@@ -16,6 +16,12 @@ using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
 TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
+    auto format = lito::lock::parse_lock_export_format("flatpak-sources"_str);
+    ASSERT_TRUE(format.is_some());
+    EXPECT_EQ(*format, lito::lock::LockExportFormat::FlatpakSources);
+    EXPECT_EQ(lito::lock::lock_export_format_name(*format), "flatpak-sources"_str);
+    EXPECT_TRUE(lito::lock::parse_lock_export_format("unknown"_str).is_none());
+
     auto git_url  = "https://example.invalid/shared.git"_str;
     auto commit   = "0123456789abcdef0123456789abcdef01234567"_str;
     auto identity = lito::source::git_fetch_identity(git_url, commit);

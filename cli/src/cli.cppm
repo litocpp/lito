@@ -128,8 +128,8 @@ struct UpdateOptions {
 };
 
 struct LockExportOptions {
-    String  format;
-    PathBuf output;
+    lito::lock::LockExportFormat format { lito::lock::LockExportFormat::FlatpakSources };
+    PathBuf                      output;
 };
 
 struct ConfigGetOptions {
@@ -220,6 +220,35 @@ public:
         values.push(String::make(scan_output_format_name(ScanOutputFormat::Lito)));
         values.push(String::make(scan_output_format_name(ScanOutputFormat::P1689)));
         return values;
+    }
+};
+
+class StandardLibraryParser {
+public:
+    auto parse(ref<OsStr> value) const -> Result<String, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        return Ok(String::make(*text));
+    }
+
+    auto possible_values() const -> Vec<String> {
+        return lito::config::standard_library_names();
+    }
+};
+
+class LockExportFormatParser {
+public:
+    auto parse(ref<OsStr> value) const -> Result<lito::lock::LockExportFormat, ValueError> {
+        auto text = value.to_str();
+        if (text.is_none()) return Err(ValueError::InvalidUtf8());
+        auto format = lito::lock::parse_lock_export_format(*text);
+        if (format.is_some()) return Ok(*format);
+        return Err(ValueError::Message(rstd::format(
+            "unsupported lock export format '{}'", *text)));
+    }
+
+    auto possible_values() const -> Vec<String> {
+        return lito::lock::lock_export_format_names();
     }
 };
 
@@ -361,9 +390,9 @@ struct UpdateSchema {
 };
 
 struct LockExportSchema {
-    CommandKey     command;
-    ArgKey<String> format;
-    ArgKey<String> output;
+    CommandKey                           command;
+    ArgKey<lito::lock::LockExportFormat> format;
+    ArgKey<String>                       output;
 
     auto decode(const Matches& matches) const -> Result<LockExportOptions, CliDecodeError>;
 };
@@ -441,7 +470,7 @@ auto profile_arg() -> Arg<lito::manifest::BuildProfileName> {
     return Arg<lito::manifest::BuildProfileName>::value("profile"_str, BuildProfileParser {})
         .long_name("profile"_str)
         .value_name("PROFILE"_str)
-        .help("Select the build profile"_str);
+        .help("Select the build profile (built-ins: debug, release)"_str);
 }
 
 auto features_arg() -> Arg<String> {
@@ -539,7 +568,8 @@ auto add_toolchain_args(Command& command) -> ToolchainArgs {
             "toolchain-strip"_str, "toolchain.strip"_str, "Set the LLVM strip executable"_str)),
         .format = command.add_arg(toolchain_arg(
             "toolchain-format"_str, "toolchain.format"_str, "Set the ClangFormat executable"_str)),
-        .stdlib = command.add_arg(Arg<String>::value("toolchain-stdlib"_str, string_parser())
+        .stdlib = command.add_arg(Arg<String>::value("toolchain-stdlib"_str,
+                                                    StandardLibraryParser {})
                                       .long_name("toolchain.stdlib"_str)
                                       .value_name("STDLIB"_str)
                                       .help("Set the C++ standard library"_str)
@@ -817,11 +847,12 @@ auto make_lock_definition() -> CommandDefinition<LockSchema> {
     auto export_command = Command::make("export"_str);
     export_command.about("Export locked source inputs"_str);
     auto export_key = export_command.key();
-    auto format     = export_command.add_arg(Arg<String>::value("format"_str, string_parser())
-                                                 .long_name("format"_str)
-                                                 .value_name("FORMAT"_str)
-                                                 .help("Select the exported source format"_str)
-                                                 .required());
+    auto format = export_command.add_arg(
+        Arg<lito::lock::LockExportFormat>::value("format"_str, LockExportFormatParser {})
+            .long_name("format"_str)
+            .value_name("FORMAT"_str)
+            .help("Select the exported source format"_str)
+            .required());
     auto output     = export_command.add_arg(Arg<String>::value("output"_str, string_parser())
                                                  .long_name("output"_str)
                                                  .value_name("FILE"_str)
@@ -1263,10 +1294,13 @@ auto UpdateSchema::decode(const Matches& matches) const -> Result<UpdateOptions,
 
 auto LockExportSchema::decode(const Matches& matches) const
     -> Result<LockExportOptions, CliDecodeError> {
-    auto format_value = rstd_try(required_string(matches, format, "format"_str));
+    auto format_value = rstd_try(optional_value(matches, format));
+    if (format_value.is_none()) {
+        return Err(CliDecodeError::MissingValue(String::make("format"_str)));
+    }
     auto output_value = rstd_try(required_string(matches, output, "output"_str));
     return Ok(LockExportOptions {
-        .format = rstd::move(format_value),
+        .format = **format_value,
         .output = PathBuf::from(rstd::move(output_value)),
     });
 }

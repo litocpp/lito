@@ -291,23 +291,23 @@ extern "C++" int main() {
     if (invocation.command.is_Lock()) {
         auto command = rstd::move(invocation.command).as_Lock().command;
         auto options = rstd::move(command).as_Export().options;
-        if (options.format.as_str() != "flatpak-sources"_str) {
-            rstd::io::eprintln("lito: unsupported lock export format '{}'",
-                               options.format.as_str());
-            return 1;
+        switch (options.format) {
+        case lito::lock::LockExportFormat::FlatpakSources: {
+            auto result = lito::lock::export_flatpak_sources(
+                project.root.as_path(), project.lock, options.output.as_path());
+            if (result.is_err()) {
+                auto error = rstd::move(result).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            auto output = options.output.as_path().is_absolute()
+                              ? rstd::move(options.output)
+                              : project.root.join(options.output.as_path());
+            rstd::io::println("exported Flatpak sources to {}", output.as_path());
+            return 0;
         }
-        auto result = lito::lock::export_flatpak_sources(
-            project.root.as_path(), project.lock, options.output.as_path());
-        if (result.is_err()) {
-            auto error = rstd::move(result).unwrap_err();
-            report_error(error);
-            return 1;
         }
-        auto output = options.output.as_path().is_absolute()
-                          ? rstd::move(options.output)
-                          : project.root.join(options.output.as_path());
-        rstd::io::println("exported Flatpak sources to {}", output.as_path());
-        return 0;
+        __builtin_unreachable();
     }
 
     if (invocation.command.is_Install()) {

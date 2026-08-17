@@ -73,10 +73,6 @@ auto string_options_identity(ref<str> key, const Vec<String>& values) -> String 
     return result;
 }
 
-auto standard_library_name(lito::config::StandardLibrary value) -> ref<str> {
-    return value == lito::config::StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
-}
-
 auto push_identity(String& output, ref<str> key, ref<str> value) -> void {
     output.push_str(key);
     output.push_ascii('=');
@@ -226,8 +222,8 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
     };
 
     auto found = difference(CppAbiCompatibilityField::StandardLibrary,
-                            standard_library_name(provider.abi.standard_library),
-                            standard_library_name(consumer.abi.standard_library));
+                            lito::config::standard_library_name(provider.abi.standard_library),
+                            lito::config::standard_library_name(consumer.abi.standard_library));
     if (found.is_some()) return found;
     auto provider_headers = provider.abi.resolved_standard_library.is_some()
                                 ? provider.abi.resolved_standard_library->headers_identity.as_str()
