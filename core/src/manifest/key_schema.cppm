@@ -18,8 +18,7 @@ using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
-           key == "target"_str || key == "license"_str || key == "language"_str ||
-           key == "minimum-standard"_str;
+           key == "target"_str || key == "license"_str || key == "standard"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
@@ -200,49 +199,23 @@ auto package_license_key(ref<str> key) -> bool {
     return key == "workspace"_str;
 }
 
-auto parse_package_language(const Toml& package, bool has_compile_target)
-    -> ManifestSchemaResult<Option<PackageLanguageRequirement>> {
-    auto language_value = member(package, "language"_str);
-    auto standard_value = member(package, "minimum-standard"_str);
-    if (language_value.is_none() && standard_value.is_some()) {
-        return manifest_schema_failure<Option<PackageLanguageRequirement>>(
-            "package.minimum-standard requires package.language"_str);
+auto parse_package_standard(const Toml& package)
+    -> ManifestSchemaResult<Option<PackageStandardRequirement>> {
+    auto value = member(package, "standard"_str);
+    if (value.is_none()) return Ok(None());
+    auto text = rstd_try(string_value(**value, "package.standard"_str));
+    auto c    = parse_c_standard(text.as_str());
+    if (c.is_some()) return Ok(Some(PackageStandardRequirement::C(*c)));
+    auto cpp = parse_cpp_standard(text.as_str());
+    if (cpp.is_some()) return Ok(Some(PackageStandardRequirement::Cpp(*cpp)));
+    if (text.as_str().starts_with("c++"_str)) {
+        return manifest_schema_failure<Option<PackageStandardRequirement>>(rstd::format(
+            "package.standard '{}' is unsupported; C++20 is the minimum supported C++ standard",
+            text.as_str()));
     }
-    if (language_value.is_none()) {
-        if (! has_compile_target) return Ok(None());
-        return Ok(Some(PackageLanguageRequirement::cpp_language()));
-    }
-
-    auto language = rstd_try(string_value(**language_value, "package.language"_str));
-    if (language.as_str() != "c"_str && language.as_str() != "cpp"_str) {
-        return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
-            "package.language '{}' is unsupported; expected 'c' or 'cpp'", language.as_str()));
-    }
-    if (language.as_str() == "c"_str) {
-        auto standard = CStandard::C99;
-        if (standard_value.is_some()) {
-            auto text   = rstd_try(string_value(**standard_value, "package.minimum-standard"_str));
-            auto parsed = parse_c_standard(text.as_str());
-            if (parsed.is_none()) {
-                return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
-                    "package.minimum-standard '{}' is not a supported C standard", text.as_str()));
-            }
-            standard = *parsed;
-        }
-        return Ok(Some(PackageLanguageRequirement::c_language(standard)));
-    }
-
-    auto standard = CppStandard::Cpp20;
-    if (standard_value.is_some()) {
-        auto text   = rstd_try(string_value(**standard_value, "package.minimum-standard"_str));
-        auto parsed = parse_cpp_standard(text.as_str());
-        if (parsed.is_none()) {
-            return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
-                "package.minimum-standard '{}' is not a supported C++ standard", text.as_str()));
-        }
-        standard = *parsed;
-    }
-    return Ok(Some(PackageLanguageRequirement::cpp_language(standard)));
+    return manifest_schema_failure<Option<PackageStandardRequirement>>(rstd::format(
+        "package.standard '{}' is unsupported; expected a C standard or C++20 and later",
+        text.as_str()));
 }
 
 auto parse_package_version(const Toml& package, bool optional)

@@ -47,7 +47,7 @@ struct PackageManifest {
     String                                             name;
     PackageVersion                                     version;
     PackageLicense                                     license;
-    Option<PackageLanguageRequirement>                 language;
+    Option<PackageStandardRequirement>                 standard;
     PathBuf                                            root;
     PathBuf                                            source_root;
     PathBuf                                            manifest_path;

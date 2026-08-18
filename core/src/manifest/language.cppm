@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.core:manifest.language;
 
 import rstd;
@@ -29,24 +32,12 @@ enum class CppStandard
     Cpp26,
 };
 
-struct PackageLanguageRequirement {
-    PackageLanguage language { PackageLanguage::Cpp };
-    CStandard       c { CStandard::C99 };
-    CppStandard     cpp { CppStandard::Cpp20 };
+class PackageStandardRequirement : public DefaultInClass<PackageStandardRequirement, Clone> {
+    RSTD_ENUM(PackageStandardRequirement, (C, (CStandard minimum;)), (Cpp, (CppStandard minimum;)))
 
-    static auto c_language(CStandard standard = CStandard::C99) -> PackageLanguageRequirement {
-        return PackageLanguageRequirement {
-            .language = PackageLanguage::C,
-            .c        = standard,
-        };
-    }
-
-    static auto cpp_language(CppStandard standard = CppStandard::Cpp20)
-        -> PackageLanguageRequirement {
-        return PackageLanguageRequirement {
-            .language = PackageLanguage::Cpp,
-            .cpp      = standard,
-        };
+public:
+    auto clone() const -> PackageStandardRequirement {
+        return is_C() ? C(as_C().minimum) : Cpp(as_Cpp().minimum);
     }
 };
 
@@ -107,9 +98,15 @@ auto parse_cpp_standard(ref<str> value) noexcept -> Option<CppStandard> {
     return None();
 }
 
-auto requirement_standard_name(const PackageLanguageRequirement& requirement) noexcept -> ref<str> {
-    return requirement.language == PackageLanguage::C ? c_standard_name(requirement.c)
-                                                      : cpp_standard_name(requirement.cpp);
+constexpr auto package_standard_language(const PackageStandardRequirement& requirement) noexcept
+    -> PackageLanguage {
+    return requirement.is_C() ? PackageLanguage::C : PackageLanguage::Cpp;
+}
+
+constexpr auto requirement_standard_name(const PackageStandardRequirement& requirement) noexcept
+    -> ref<str> {
+    return requirement.is_C() ? c_standard_name(requirement.as_C().minimum)
+                              : cpp_standard_name(requirement.as_Cpp().minimum);
 }
 
 } // namespace lito::manifest

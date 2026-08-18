@@ -125,8 +125,7 @@ version = "0.1.0"
         { "c-lib/lito.toml"_str, R"toml([package]
 name = "fixture-c-lib"
 version.workspace = true
-language = "c"
-minimum-standard = "c17"
+standard = "c17"
 
 [lib]
 name = "fixture-c-lib"

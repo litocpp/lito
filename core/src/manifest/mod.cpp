@@ -134,12 +134,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         return manifest_schema_failure<ManifestDocument>(
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
     }
-    const auto has_declared_compile_target =
-        member(document, "lib"_str).is_some() || member(document, "bin"_str).is_some() ||
-        member(document, "test"_str).is_some() || member(document, "bench"_str).is_some() ||
-        member(document, "compile-test"_str).is_some();
-    auto language = rstd_try(parse_package_language(package_value, has_declared_compile_target));
-    auto target_language = language.is_some() ? language->language : PackageLanguage::Cpp;
+    auto standard = rstd_try(parse_package_standard(package_value));
+    auto target_language =
+        standard.is_some() ? package_standard_language(*standard) : PackageLanguage::Cpp;
     auto library = rstd_try(parse_library_target(member(document, "lib"_str), target_language));
     auto bins    = rstd_try(parse_runnable_targets(member(document, "bin"_str),
                                                    lito::package::PackageTargetKind::Binary,
@@ -179,10 +176,15 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
     if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
     for (auto& target : *conventional) targets.push(rstd::move(target));
-    if (language.is_none() && ! targets.is_empty()) {
-        language = Some(PackageLanguageRequirement::cpp_language());
+    const auto has_compile_contract = ! targets.is_empty() || ! compile_tests.is_empty();
+    if (standard.is_none() && has_compile_contract) {
+        standard = Some(PackageStandardRequirement::Cpp(CppStandard::Cpp20));
     }
-    if (language.is_some() && language->language == PackageLanguage::C &&
+    if (standard.is_some() && ! has_compile_contract) {
+        return manifest_schema_failure<ManifestDocument>(
+            "package.standard requires a compile target"_str);
+    }
+    if (standard.is_some() && package_standard_language(*standard) == PackageLanguage::C &&
         ! compile_tests.is_empty()) {
         return manifest_schema_failure<ManifestDocument>(
             "compile-test is currently only supported by C++ packages"_str);
@@ -361,7 +363,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .name                       = rstd::move(name).unwrap(),
             .version                    = rstd::move(version).unwrap(),
             .license                    = rstd::move(license).unwrap(),
-            .language                   = rstd::move(language),
+            .standard                   = rstd::move(standard),
             .root                       = root.clone(),
             .source_root                = rstd::move(source_root).unwrap(),
             .manifest_path              = rstd::move(path),

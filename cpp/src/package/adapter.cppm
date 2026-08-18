@@ -782,15 +782,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
         auto unresolved =
             rstd_try(external_usage.take(graph.packages[index].manifest.name.as_str()));
-        if (graph.packages[index].manifest.language.is_none()) {
+        if (graph.packages[index].manifest.standard.is_none()) {
             return adapter_failure<PackageMetadata>(
                 rstd::format("selected package '{}' has external usage but no language contract",
                              graph.packages[index].manifest.name.as_str()));
         }
-        external_by_package[index] =
-            rstd_try(resolve_external_usage(rstd::move(unresolved),
-                                            graph.packages[index].manifest.language->language,
-                                            argument_parser));
+        external_by_package[index] = rstd_try(resolve_external_usage(
+            rstd::move(unresolved),
+            lito::manifest::package_standard_language(*graph.packages[index].manifest.standard),
+            argument_parser));
     }
     if (! external_usage.all_consumed()) {
         return adapter_failure<PackageMetadata>(
@@ -823,14 +823,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
-        if (package.manifest.language.is_none()) {
+        if (package.manifest.standard.is_none()) {
             return adapter_failure<PackageMetadata>(
                 rstd::format("selected package '{}' has compile targets but no language contract",
                              package.manifest.name.as_str()));
         }
-        const auto package_language = package.manifest.language->language;
-        auto       has_link_action  = false;
-        auto       has_library      = false;
+        const auto package_language =
+            lito::manifest::package_standard_language(*package.manifest.standard);
+        auto has_link_action = false;
+        auto has_library     = false;
         for (const auto& target : package.manifest.targets) {
             auto kind = lito::manifest::package_target_kind(target);
             if (kind == lito::package::PackageTargetKind::Library) has_library = true;

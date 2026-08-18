@@ -216,8 +216,7 @@ TEST_F(ScanCache, EmbeddedResourcesInvalidateLookupAndContentCaches) {
         { "lito.toml"_str, R"toml([package]
 name = "fixture-embed-cache"
 version = "0.1.0"
-language = "cpp"
-minimum-standard = "c++20"
+standard = "c++20"
 
 [[bin]]
 link-stdlib = false

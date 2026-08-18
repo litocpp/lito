@@ -90,10 +90,7 @@
         }
       ]
     },
-    "packageLanguage": {
-      "enum": ["c", "cpp"]
-    },
-    "languageStandard": {
+    "packageStandard": {
       "enum": ["c99", "c11", "c17", "c23", "c++20", "c++23", "c++26"]
     },
     "packageLicense": {
@@ -204,11 +201,8 @@
         "target": {
           "$ref": "#/definitions/targetPredicate"
         },
-        "language": {
-          "$ref": "#/definitions/packageLanguage"
-        },
-        "minimum-standard": {
-          "$ref": "#/definitions/languageStandard"
+        "standard": {
+          "$ref": "#/definitions/packageStandard"
         }
       },
       "additionalProperties": false

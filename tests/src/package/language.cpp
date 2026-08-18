@@ -7,14 +7,14 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 
 auto language_package(ref<str>                                   name,
-                      lito::manifest::PackageLanguageRequirement language,
+                      lito::manifest::PackageStandardRequirement standard,
                       Vec<lito::package::ResolvedDependency>     dependencies = {})
     -> lito::package::ResolvedPackage {
     return lito::package::ResolvedPackage {
         .manifest =
             lito::manifest::PackageManifest {
                 .name     = String::make(name),
-                .language = Some(language),
+                .standard = Some(rstd::move(standard)),
             },
         .dependencies = rstd::move(dependencies),
     };
@@ -30,17 +30,15 @@ auto language_names(Values... values) -> Vec<String> {
 TEST(PackageLanguage, ResolvesIndependentEffectiveStandards) {
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(language_package(
-        "c99"_str,
-        lito::manifest::PackageLanguageRequirement::c_language(lito::manifest::CStandard::C99)));
+        "c99"_str, lito::manifest::PackageStandardRequirement::C(lito::manifest::CStandard::C99)));
     packages.push(language_package(
-        "c17"_str,
-        lito::manifest::PackageLanguageRequirement::c_language(lito::manifest::CStandard::C17)));
-    packages.push(language_package("cpp20"_str,
-                                   lito::manifest::PackageLanguageRequirement::cpp_language(
-                                       lito::manifest::CppStandard::Cpp20)));
-    packages.push(language_package("cpp23"_str,
-                                   lito::manifest::PackageLanguageRequirement::cpp_language(
-                                       lito::manifest::CppStandard::Cpp23)));
+        "c17"_str, lito::manifest::PackageStandardRequirement::C(lito::manifest::CStandard::C17)));
+    packages.push(language_package(
+        "cpp20"_str,
+        lito::manifest::PackageStandardRequirement::Cpp(lito::manifest::CppStandard::Cpp20)));
+    packages.push(language_package(
+        "cpp23"_str,
+        lito::manifest::PackageStandardRequirement::Cpp(lito::manifest::CppStandard::Cpp23)));
     auto graph    = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
     auto selected = language_names("c99"_str, "c17"_str, "cpp20"_str, "cpp23"_str);
 
@@ -62,11 +60,13 @@ TEST(PackageLanguage, RejectsCDependencyOnCppPackage) {
         .name = String::make("cpp-provider"_str),
     });
     auto packages = Vec<lito::package::ResolvedPackage>::make();
-    packages.push(language_package("c-consumer"_str,
-                                   lito::manifest::PackageLanguageRequirement::c_language(),
-                                   rstd::move(dependencies)));
-    packages.push(language_package("cpp-provider"_str,
-                                   lito::manifest::PackageLanguageRequirement::cpp_language()));
+    packages.push(language_package(
+        "c-consumer"_str,
+        lito::manifest::PackageStandardRequirement::C(lito::manifest::CStandard::C99),
+        rstd::move(dependencies)));
+    packages.push(language_package(
+        "cpp-provider"_str,
+        lito::manifest::PackageStandardRequirement::Cpp(lito::manifest::CppStandard::Cpp20)));
     auto graph    = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
     auto selected = language_names("c-consumer"_str, "cpp-provider"_str);
 

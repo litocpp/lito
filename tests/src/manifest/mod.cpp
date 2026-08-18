@@ -385,32 +385,49 @@ link-stdlib = false
 name = "fixture-source-root-descendant"
 sources = ["main.cpp"]
 )lito"_str },
-    { "manifest-minimum-standard-without-language"_str, R"lito([package]
-name = "fixture-minimum-standard-without-language"
+    { "manifest-legacy-minimum-standard"_str, R"lito([package]
+name = "fixture-legacy-minimum-standard"
 version = "0.1.0"
 minimum-standard = "c17"
 
 [lib]
-name = "fixture-minimum-standard-without-language"
-module = "fixture.minimum_standard_without_language"
-archive = "fixture-minimum-standard-without-language"
-sources = ["lib.cppm"]
+name = "fixture-legacy-minimum-standard"
+archive = "fixture-legacy-minimum-standard"
+sources = ["lib.c"]
 )lito"_str },
-    { "manifest-c-with-cpp-standard"_str, R"lito([package]
-name = "fixture-c-with-cpp-standard"
+    { "manifest-legacy-language"_str, R"lito([package]
+name = "fixture-legacy-language"
 version = "0.1.0"
 language = "c"
-minimum-standard = "c++20"
 
 [lib]
-name = "fixture-c-with-cpp-standard"
-archive = "fixture-c-with-cpp-standard"
+name = "fixture-legacy-language"
+archive = "fixture-legacy-language"
 sources = ["lib.c"]
+)lito"_str },
+    { "manifest-unsupported-cpp-standard"_str, R"lito([package]
+name = "fixture-unsupported-cpp-standard"
+version = "0.1.0"
+standard = "c++17"
+
+[lib]
+name = "fixture-unsupported-cpp-standard"
+module = "fixture.unsupported_cpp_standard"
+archive = "fixture-unsupported-cpp-standard"
+sources = ["lib.cppm"]
+)lito"_str },
+    { "manifest-standard-without-compile-target"_str, R"lito([package]
+name = "fixture-standard-without-compile-target"
+version = "0.1.0"
+standard = "c17"
+
+[runtime-dependencies.helper]
+path = "../install-only"
 )lito"_str },
     { "manifest-c-module"_str, R"lito([package]
 name = "fixture-c-module"
 version = "0.1.0"
-language = "c"
+standard = "c99"
 
 [lib]
 name = "fixture-c-module"
@@ -421,7 +438,7 @@ sources = ["lib.c"]
     { "manifest-c-implicit-source-discovery"_str, R"lito([package]
 name = "fixture-c-implicit-source-discovery"
 version = "0.1.0"
-language = "c"
+standard = "c99"
 
 [lib]
 name = "fixture-c-implicit-source-discovery"
@@ -655,12 +672,49 @@ archive = "fixture.convention.markers"
               lito::manifest::SourceDiscoveryMode::Module);
 }
 
-TEST_F(Manifest, PackageLanguageAndSourceGroupsAreTyped) {
+TEST_F(Manifest, PackageStandardDefaultsToCpp20AndAcceptsExplicitCpp) {
+    auto implicit_project = manifest("implicit-cpp20-standard"_str, R"toml([package]
+name = "fixture-implicit-cpp20-standard"
+version = "0.1.0"
+
+[lib]
+name = "fixture-implicit-cpp20-standard"
+module = "fixture.implicit_cpp20_standard"
+archive = "fixture-implicit-cpp20-standard"
+sources = ["src/lib.cppm"]
+)toml"_str);
+    ASSERT_TRUE(implicit_project.is_ok());
+    auto implicit = lito::manifest::load_package_manifest(implicit_project->root.as_path());
+    ASSERT_TRUE(implicit.is_ok());
+    ASSERT_TRUE(implicit->standard.is_some());
+    ASSERT_TRUE(implicit->standard->is_Cpp());
+    EXPECT_EQ(implicit->standard->as_Cpp().minimum, lito::manifest::CppStandard::Cpp20);
+
+    auto explicit_project = manifest("explicit-cpp23-standard"_str, R"toml([package]
+name = "fixture-explicit-cpp23-standard"
+version = "0.1.0"
+standard = "c++23"
+
+[lib]
+name = "fixture-explicit-cpp23-standard"
+module = "fixture.explicit_cpp23_standard"
+archive = "fixture-explicit-cpp23-standard"
+sources = ["src/lib.cppm"]
+)toml"_str);
+    ASSERT_TRUE(explicit_project.is_ok());
+    auto explicit_standard =
+        lito::manifest::load_package_manifest(explicit_project->root.as_path());
+    ASSERT_TRUE(explicit_standard.is_ok());
+    ASSERT_TRUE(explicit_standard->standard.is_some());
+    ASSERT_TRUE(explicit_standard->standard->is_Cpp());
+    EXPECT_EQ(explicit_standard->standard->as_Cpp().minimum, lito::manifest::CppStandard::Cpp23);
+}
+
+TEST_F(Manifest, PackageStandardAndSourceGroupsAreTyped) {
     auto project = manifest("language-source-groups"_str, R"toml([package]
 name = "fixture-language-source-groups"
 version = "0.1.0"
-language = "c"
-minimum-standard = "c17"
+standard = "c17"
 
 [external-sources.vendor]
 path = "vendor"
@@ -689,9 +743,9 @@ public-include-directories = [
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
-    ASSERT_TRUE(loaded->language.is_some());
-    EXPECT_EQ(loaded->language->language, lito::manifest::PackageLanguage::C);
-    EXPECT_EQ(loaded->language->c, lito::manifest::CStandard::C17);
+    ASSERT_TRUE(loaded->standard.is_some());
+    ASSERT_TRUE(loaded->standard->is_C());
+    EXPECT_EQ(loaded->standard->as_C().minimum, lito::manifest::CStandard::C17);
     ASSERT_EQ(loaded->external_sources.len(), usize(1));
     EXPECT_EQ(loaded->external_sources[usize {}].name.as_str(), "vendor"_str);
     ASSERT_EQ(loaded->source_groups.len(), usize(2));
