@@ -273,7 +273,9 @@ auto resolve_package_selection_with_environment(
         }
         for (const auto& root : graph.roots) {
             const auto& name = root.name;
-            if (! defaults.is_empty() && ! defaults.contains_key(name.as_str())) continue;
+            if (! defaults.is_empty() && root.role != ProjectRootRole::AssociatedTest &&
+                ! defaults.contains_key(name.as_str()))
+                continue;
             auto                                   supported = true;
             const lito::manifest::PackageManifest* manifest  = nullptr;
             if (target != nullptr) {

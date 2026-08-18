@@ -54,7 +54,7 @@ sources = ["main.cpp"]
         .root = project->root.clone(),
     });
     ASSERT_TRUE(updated.is_ok());
-    EXPECT_EQ(*updated, lito::lock::LockStatus::Unchanged);
+    EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
 }
 
 TEST_F(Update, DependencyUpdateWritesConfiguredLocalLock) {
