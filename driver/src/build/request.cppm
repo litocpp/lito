@@ -28,10 +28,35 @@ struct BuildExecutionPolicy {
     CompileExecutionPolicy compile;
 };
 
+struct InstallArtifactLinkPolicy {
+    lito::artifact::ElfRunpath runtime_search;
+    String                     identity;
+
+    auto clone() const -> InstallArtifactLinkPolicy {
+        return InstallArtifactLinkPolicy {
+            .runtime_search = runtime_search.clone(),
+            .identity       = identity.clone(),
+        };
+    }
+};
+
+struct RequestedArtifactLinkVariant {
+    lito::package::PackageTargetId target;
+    InstallArtifactLinkPolicy      policy;
+
+    auto clone() const -> RequestedArtifactLinkVariant {
+        return RequestedArtifactLinkVariant {
+            .target = target.clone(),
+            .policy = policy.clone(),
+        };
+    }
+};
+
 struct BuildRequest {
     lito::package::PackageSelection           selection;
     Vec<String>                               targets;
     Vec<lito::package::PackageTargetId>       exact_targets;
+    Vec<RequestedArtifactLinkVariant>         artifact_link_variants;
     PathBuf                                   output;
     ProcessEnvironmentSpec                    environment;
     cpp::BuildConfiguration                   configuration;

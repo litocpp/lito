@@ -53,6 +53,38 @@ auto inventory_base_path(String value) -> luato::Result<PathBuf> {
     return recipe_path(rstd::move(value), "inventory relative_to"_str);
 }
 
+auto strip_mode(String value, ref<str> path) -> luato::Result<lito::artifact::StripMode> {
+    if (value == "debuginfo"_str) return Ok(lito::artifact::StripMode::DebugInfo);
+    if (value == "symbols"_str) return Ok(lito::artifact::StripMode::Symbols);
+    return Err(luato::Error::binding(rstd::format("{} must be 'debuginfo' or 'symbols'", path)));
+}
+
+auto strip_files(const luato::Table& root) -> luato::Result<Vec<PathBuf>> {
+    auto array = root.required<luato::Array>("files"_str);
+    if (array.is_err()) return Err(rstd::move(array).unwrap_err_unchecked());
+    if (array->len() == usize {}) {
+        return Err(luato::Error::binding(rstd::format("{}.files must not be empty", root.path())));
+    }
+    auto result = Vec<PathBuf>::with_capacity(array->len());
+    for (usize index {}; index < array->len(); ++index) {
+        const auto& value = array->values()[index];
+        if (! value.is_String()) {
+            return Err(luato::Error::binding(
+                rstd::format("{}.files[{}] must be a string", root.path(), index + usize(1))));
+        }
+        auto path =
+            rstd_try(recipe_path(value.as_String().value.clone(), "external asset strip file"_str));
+        for (const auto& existing : result) {
+            if (existing.as_path() == path.as_path()) {
+                return Err(luato::Error::binding(rstd::format(
+                    "{}.files[{}] repeats '{}'", root.path(), index + usize(1), path.as_path())));
+            }
+        }
+        result.push(rstd::move(path));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto known_fields(luato::Table& table, std::initializer_list<ref<str>> names)
     -> luato::Result<empty> {
     auto known = Vec<String>::with_capacity(usize(names.size()));
@@ -150,7 +182,8 @@ public:
         }
         rstd_try(parse_array(
             table, "artifacts"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
-                rstd_try(known_fields(item, { "target"_str, "destination"_str }));
+                rstd_try(
+                    known_fields(item, { "target"_str, "destination"_str, "runtime_search"_str }));
                 auto target = rstd_try(item.required<luato::Table>("target"_str));
                 rstd_try(known_fields(target, { "kind"_str, "name"_str }));
                 auto kind = rstd_try(target.required<String>("kind"_str));
@@ -162,6 +195,37 @@ public:
                 auto destination =
                     rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
                                          "install artifact destination"_str));
+                auto runtime_search = Vec<InstallArtifactRecipe::RuntimeSearchReference>::make();
+                rstd_try(parse_array(
+                    item,
+                    "runtime_search"_str,
+                    [&](luato::Table reference, usize index) -> luato::Result<empty> {
+                        rstd_try(known_fields(reference, { "external_asset"_str }));
+                        auto external =
+                            rstd_try(reference.required<luato::Table>("external_asset"_str));
+                        rstd_try(known_fields(external, { "dependency"_str, "set"_str }));
+                        auto resolved = InstallArtifactRecipe::RuntimeSearchReference {
+                            .dependency = rstd_try(external.required<String>("dependency"_str)),
+                            .set        = rstd_try(external.required<String>("set"_str)),
+                        };
+                        for (const auto& prior : runtime_search) {
+                            if (prior.dependency == resolved.dependency.as_str() &&
+                                prior.set == resolved.set.as_str()) {
+                                return Err(luato::Error::binding(rstd::format(
+                                    "{}.runtime_search[{}] repeats external asset '{}:{}'",
+                                    item.path(),
+                                    index + usize(1),
+                                    resolved.dependency.as_str(),
+                                    resolved.set.as_str())));
+                            }
+                        }
+                        runtime_search.push(rstd::move(resolved));
+                        return Ok(empty {});
+                    }));
+                if (item.contains("runtime_search"_str) && runtime_search.is_empty()) {
+                    return Err(luato::Error::binding(
+                        rstd::format("{}.runtime_search must not be empty", item.path())));
+                }
                 recipe.artifacts.push(InstallArtifactRecipe {
                     .target =
                         lito::package::PackageTargetId {
@@ -169,19 +233,34 @@ public:
                             .kind    = lito::package::PackageTargetKind::Binary,
                             .name    = rstd::move(name),
                         },
-                    .destination = rstd::move(destination),
+                    .destination    = rstd::move(destination),
+                    .runtime_search = rstd::move(runtime_search),
                 });
                 return Ok(empty {});
             }));
         rstd_try(parse_array(
             table, "external_assets"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
-                rstd_try(known_fields(item, { "dependency"_str, "set"_str, "destination"_str }));
+                rstd_try(known_fields(
+                    item, { "dependency"_str, "set"_str, "destination"_str, "strip"_str }));
+                auto strip = Option<InstallStripRecipe> {};
+                if (item.contains("strip"_str)) {
+                    auto raw = rstd_try(item.required<luato::Table>("strip"_str));
+                    rstd_try(known_fields(raw, { "mode"_str, "files"_str }));
+                    auto mode_value = rstd_try(raw.required<String>("mode"_str));
+                    auto mode = rstd_try(strip_mode(rstd::move(mode_value),
+                                                    rstd::format("{}.mode", raw.path()).as_str()));
+                    strip     = Some(InstallStripRecipe {
+                        .mode  = mode,
+                        .files = rstd_try(strip_files(raw)),
+                    });
+                }
                 recipe.external_assets.push(InstallExternalAssetRecipe {
                     .dependency = rstd_try(item.required<String>("dependency"_str)),
                     .set        = rstd_try(item.required<String>("set"_str)),
                     .destination =
                         rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
                                              "external asset destination"_str)),
+                    .strip = rstd::move(strip),
                 });
                 return Ok(empty {});
             }));

@@ -309,6 +309,15 @@ public:
         return directory.join(PathBuf::from(artifact_name).as_path());
     }
 
+    auto install_executable(const lito::package::PackageTargetId& target,
+                            ref<str>                              artifact_name,
+                            ref<str> variant_identity) const -> PathBuf {
+        auto install_root = join(output_.as_path(), "install-artifacts"_str);
+        auto package      = join(install_root.as_path(), target.package.as_str());
+        auto variant = join(package.as_path(), rstd::crypto::sha256_hex(variant_identity).as_str());
+        return variant.join(PathBuf::from(artifact_name).as_path());
+    }
+
     auto test(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
         -> PathBuf {
         auto directory =

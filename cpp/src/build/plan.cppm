@@ -17,7 +17,7 @@ export namespace lito::cpp
 class PlannedLinkInput {
     RSTD_ENUM(PlannedLinkInput,
               (Target, (TargetId target;)),
-              (External, (LinkArgumentSequence arguments;)))
+              (External, (lito::link::ArgumentSequence arguments;)))
 };
 
 struct ResolvedNativeTargetPlan {
@@ -28,7 +28,7 @@ struct ResolvedNativeTargetPlan {
     Vec<Vec<TargetId>>                  public_targets;
     Vec<Vec<TargetId>>                  visible_targets;
     Vec<Vec<PlannedLinkInput>>          link_inputs;
-    Vec<CppLinkRequirements>            link_requirements;
+    Vec<lito::link::Requirements>       link_requirements;
     Vec<Vec<String>>                    linker_options;
 };
 
@@ -39,15 +39,15 @@ struct SourceTargetSelection {
 };
 
 struct PackagePlan {
-    const PackageSpec*         package {};
-    const ProfileSpec*         profile {};
-    Vec<TargetId>              target_order;
-    Vec<CompileContext>        contexts;
-    Vec<Vec<TargetId>>         public_targets;
-    Vec<Vec<TargetId>>         visible_targets;
-    Vec<Vec<PlannedLinkInput>> link_inputs;
-    Vec<CppLinkRequirements>   link_requirements;
-    Vec<Vec<String>>           linker_options;
+    const PackageSpec*            package {};
+    const ProfileSpec*            profile {};
+    Vec<TargetId>                 target_order;
+    Vec<CompileContext>           contexts;
+    Vec<Vec<TargetId>>            public_targets;
+    Vec<Vec<TargetId>>            visible_targets;
+    Vec<Vec<PlannedLinkInput>>    link_inputs;
+    Vec<lito::link::Requirements> link_requirements;
+    Vec<Vec<String>>              linker_options;
 };
 
 } // namespace lito::cpp

@@ -113,6 +113,68 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
     }
 }
 
+TEST_F(BuildCommand, InstallLinkVariantReusesObjectsAndHasAnIndependentReceipt) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-install-link"
+version = "1.0.0"
+
+[[bin]]
+name = "fixture-install-link"
+link-stdlib = false
+sources = ["main.cpp"]
+
+[usage]
+linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
+)toml"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+    };
+    auto project = materialize("install-link-variant"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("install-link-variant"_str);
+    auto target = lito::package::PackageTargetId {
+        .package = String::make("fixture-install-link"_str),
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = String::make("fixture-install-link"_str),
+    };
+
+    auto normal_request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-install-link"_str));
+    normal_request.exact_targets.push(target.clone());
+    auto normal = lito::build(rstd::move(normal_request));
+    ASSERT_TRUE(normal.is_ok());
+    ASSERT_EQ(normal->artifacts.len(), usize(1));
+    EXPECT_TRUE(normal->artifacts[usize {}].install_link.is_none());
+
+    auto origin = lito::artifact::make_origin_relative_runtime_path(PathBuf::from("."_str));
+    ASSERT_TRUE(origin.is_ok());
+    auto paths = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
+    paths.push(rstd::move(origin).unwrap());
+    auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
+    ASSERT_TRUE(runpath.is_ok());
+    auto install_request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-install-link"_str));
+    install_request.exact_targets.push(target.clone());
+    install_request.artifact_link_variants.push(lito::RequestedArtifactLinkVariant {
+        .target = target.clone(),
+        .policy =
+            lito::InstallArtifactLinkPolicy {
+                .runtime_search = rstd::move(runpath).unwrap(),
+                .identity       = String::make("fixture-install-link-v1"_str),
+            },
+    });
+    auto installed = lito::build(rstd::move(install_request));
+    ASSERT_TRUE(installed.is_ok());
+    ASSERT_EQ(installed->artifacts.len(), usize(1));
+    ASSERT_TRUE(installed->artifacts[usize {}].install_link.is_some());
+    EXPECT_EQ(installed->artifacts[usize {}].install_link->identity.as_str(),
+              "fixture-install-link-v1"_str);
+    EXPECT_NE(installed->artifacts[usize {}].path.as_path(),
+              normal->artifacts[usize {}].path.as_path());
+    EXPECT_EQ(installed->compiled, usize {});
+    EXPECT_TRUE(installed->reused > usize {});
+}
+
 TEST_F(BuildCommand, CArchiveFeedsCppExecutableWithoutEnteringModuleResolution) {
     const ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]

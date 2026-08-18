@@ -424,11 +424,16 @@ auto promoted_arguments(const LanguageArgumentLayer& arguments) -> LanguageArgum
     return LanguageArgumentLayer::Cpp(rstd::move(result));
 }
 
-auto usage_link_requirements(const lito::manifest::PackageManifest& package,
-                             const LanguageArgumentLayer&           arguments)
-    -> lito::package::PackageResult<CppLinkRequirements> {
+struct UsageLinkResolution {
+    lito::link::Requirements requirements;
+    Vec<String>              options;
+};
+
+auto resolve_usage_link(const lito::manifest::PackageManifest& package,
+                        const LanguageArgumentLayer&           arguments)
+    -> lito::package::PackageResult<UsageLinkResolution> {
     const auto& usage  = package.usage;
-    auto        result = CppLinkRequirements {};
+    auto        result = lito::link::Requirements {};
     if (usage.threads) {
         result.posix_threads = true;
         result.thread_sources.push(usage_source(package, "usage.threads"_str));
@@ -452,17 +457,30 @@ auto usage_link_requirements(const lito::manifest::PackageManifest& package,
     }
     for (const auto& library : usage.system_libraries) {
         if (! valid_system_library_name(library.as_str())) {
-            return adapter_failure<CppLinkRequirements>(
+            return adapter_failure<UsageLinkResolution>(
                 rstd::format("{} contains invalid logical library name '{}'",
                              usage_source(package, "usage.system-libraries"_str).as_str(),
                              library.as_str()));
         }
-        result.system_libraries.push(CppSystemLibraryRequirement {
+        result.system_libraries.push(lito::link::SystemLibraryRequirement {
             .name   = library.clone(),
             .source = usage_source(package, "usage.system-libraries"_str),
         });
     }
-    return Ok(rstd::move(result));
+    auto normalized = lito::link::normalize_arguments(lito::link::ArgumentSequence {
+        .tokens   = as<Clone>(usage.linker_options).clone(),
+        .source   = usage_source(package, "usage.linker-options"_str),
+        .identity = usage_source(package, "usage.linker-options"_str),
+    });
+    if (normalized.is_err()) {
+        return adapter_failure<UsageLinkResolution>(
+            rstd::format("{}", rstd::move(normalized).unwrap_err()));
+    }
+    lito::link::append_requirements(result, normalized->requirements);
+    return Ok(UsageLinkResolution {
+        .requirements = rstd::move(result),
+        .options      = rstd::move(normalized->arguments.tokens),
+    });
 }
 
 auto materialize_external_include_requirements(usize                            package_index,
@@ -534,7 +552,7 @@ auto materialize_external_include_requirements(usize                            
 auto clone_usage(const lito::dependency::DeclaredUsageRequirements& usage,
                  const LanguageArgumentLayer&                       arguments,
                  const LanguageArgumentLayer&                       interface_arguments,
-                 const CppLinkRequirements& link_requirements) -> UsageRequirements {
+                 const UsageLinkResolution&                         link) -> UsageRequirements {
     auto include_requirements = Vec<lito::dependency::IncludeDirectoryRequirement>::with_capacity(
         usage.private_include_directory_requirements.len());
     for (const auto& requirement : usage.private_include_directory_requirements) {
@@ -553,8 +571,8 @@ auto clone_usage(const lito::dependency::DeclaredUsageRequirements& usage,
         .private_definitions         = as<Clone>(usage.private_definitions).clone(),
         .arguments                   = as<Clone>(arguments).clone(),
         .interface_arguments         = as<Clone>(interface_arguments).clone(),
-        .link_requirements           = link_requirements.clone(),
-        .linker_options              = as<Clone>(usage.linker_options).clone(),
+        .link_requirements           = link.requirements.clone(),
+        .linker_options              = as<Clone>(link.options).clone(),
         .private_include_directory_requirements = rstd::move(include_requirements),
     };
 }
@@ -876,7 +894,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
         }
         auto interface_arguments = promoted_arguments(arguments);
-        auto link_requirements   = rstd_try(usage_link_requirements(package.manifest, arguments));
+        auto link                = rstd_try(resolve_usage_link(package.manifest, arguments));
         auto compile_metadata    = package_compile_metadata(package);
         auto compile_tests =
             Vec<ResolvedCompileTestCase>::with_capacity(package.manifest.compile_tests.len());
@@ -991,8 +1009,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .source_groups = rstd::move(source_groups),
                 .root          = package.manifest.root.clone(),
                 .source_root   = package.manifest.source_root.clone(),
-                .usage         = clone_usage(
-                    package.manifest.usage, arguments, interface_arguments, link_requirements),
+                .usage = clone_usage(package.manifest.usage, arguments, interface_arguments, link),
                 .attachments       = rstd::move(attachments),
                 .runtime_resources = rstd::move(runtime_resources),
                 .dependencies      = rstd::move(target_dependencies),
@@ -1035,8 +1052,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                     },
                 .root        = package.manifest.root.clone(),
                 .source_root = package.manifest.source_root.clone(),
-                .usage       = clone_usage(
-                    package.manifest.usage, arguments, interface_arguments, link_requirements),
+                .usage = clone_usage(package.manifest.usage, arguments, interface_arguments, link),
                 .compile_tests = rstd::move(compile_tests),
                 .dependencies  = rstd::move(compile_dependencies),
                 .external_dependencies =

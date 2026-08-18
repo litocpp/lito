@@ -95,12 +95,12 @@ auto provider_environment(const lito::dependency::PkgConfigProviderConfig& confi
 }
 
 struct PkgConfigSnapshot {
-    String                    module;
-    String                    version;
-    Vec<String>               compile_options;
-    String                    compile_source;
-    cpp::LinkArgumentSequence link_arguments;
-    String                    identity;
+    String                       module;
+    String                       version;
+    Vec<String>                  compile_options;
+    String                       compile_source;
+    lito::link::ArgumentSequence link_arguments;
+    String                       identity;
 
     auto clone() const -> PkgConfigSnapshot {
         return PkgConfigSnapshot {

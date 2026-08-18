@@ -264,4 +264,50 @@ sources = ["main.cpp"]
     EXPECT_FALSE((*packages)[usize(1)].direct);
     EXPECT_TRUE((*packages)[usize(2)].direct);
     ASSERT_EQ((*packages)[usize(2)].runtime_dependencies.len(), usize(2));
+
+    const lito::package::ResolvedPackage* app = nullptr;
+    for (const auto& candidate : install->graph.packages) {
+        if (candidate.manifest.name == "fixture-runtime-app"_str) {
+            app = rstd::addressof(candidate);
+        }
+    }
+    ASSERT_NE(app, nullptr);
+    auto recipes = Vec<lito::InstallRecipe>::make();
+    auto recipe  = lito::InstallRecipe {
+        .owner   = String::make("fixture-runtime-app"_str),
+        .version = String::make("1.0.0"_str),
+        .root    = app->manifest.root.clone(),
+        .source  = app->source.clone(),
+    };
+    auto runtime_search = Vec<lito::InstallArtifactRecipe::RuntimeSearchReference>::make();
+    runtime_search.push(lito::InstallArtifactRecipe::RuntimeSearchReference {
+        .dependency = String::make("cef"_str),
+        .set        = String::make("runtime"_str),
+    });
+    recipe.artifacts.push(lito::InstallArtifactRecipe {
+        .target =
+            lito::package::PackageTargetId {
+                .package = String::make("fixture-runtime-app"_str),
+                .kind    = lito::package::PackageTargetKind::Binary,
+                .name    = String::make("runtime-app"_str),
+            },
+        .destination    = PathBuf::from("bin/tools/runtime-app"_str),
+        .runtime_search = rstd::move(runtime_search),
+    });
+    recipe.external_assets.push(lito::InstallExternalAssetRecipe {
+        .dependency  = String::make("cef"_str),
+        .set         = String::make("runtime"_str),
+        .destination = PathBuf::from("lib/cef"_str),
+    });
+    recipes.push(rstd::move(recipe));
+    auto requirements =
+        lito::resolve_install_build_requirements(*install, recipes, pkg_config_target());
+    ASSERT_TRUE(requirements.is_ok());
+    ASSERT_EQ(requirements->artifact_link_variants.len(), usize(1));
+    ASSERT_EQ(requirements->artifact_link_variants[usize {}].policy.runtime_search.paths.len(),
+              usize(1));
+    EXPECT_EQ(requirements->artifact_link_variants[usize {}]
+                  .policy.runtime_search.paths[usize {}]
+                  .path.as_path(),
+              PathBuf::from("../../lib/cef"_str).as_path());
 }

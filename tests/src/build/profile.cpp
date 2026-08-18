@@ -289,7 +289,7 @@ TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     EXPECT_EQ(perf->family, lito::manifest::BuildProfileFamily::Release);
     EXPECT_EQ(perf->optimization, lito::manifest::Optimization::Level2);
     EXPECT_EQ(perf->debug_info, lito::manifest::DebugInfo::LineTablesOnly);
-    EXPECT_EQ(perf->strip, lito::manifest::StripMode::None);
+    EXPECT_EQ(perf->strip, lito::artifact::StripMode::None);
     EXPECT_EQ(perf->lto, lito::manifest::Lto::Off);
     EXPECT_TRUE(perf->ndebug);
 
@@ -298,7 +298,7 @@ TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     ASSERT_TRUE(aliases.is_ok());
     EXPECT_EQ(aliases->optimization, lito::manifest::Optimization::SizeMin);
     EXPECT_EQ(aliases->debug_info, lito::manifest::DebugInfo::Limited);
-    EXPECT_EQ(aliases->strip, lito::manifest::StripMode::Symbols);
+    EXPECT_EQ(aliases->strip, lito::artifact::StripMode::Symbols);
     EXPECT_EQ(aliases->lto, lito::manifest::Lto::Fat);
 }
 

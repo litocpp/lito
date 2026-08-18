@@ -11,6 +11,7 @@ using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito;
 using namespace lito_test;
+using PathBuf = rstd::path::PathBuf;
 
 TEST(CompilerArguments, PreservesTokenRangesAndDoesNotGuessUnknownArity) {
     auto parser = make_clang_cpp_argument_parser();
@@ -172,16 +173,47 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
     EXPECT_TRUE(compiler::uses_posix_threads(options->common));
     EXPECT_TRUE(options->language.modes.is_empty());
 
-    auto normalized = normalize_clang_link_arguments(cpp::LinkArgumentSequence {
+    auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens   = strings("-pthread"_str, "-ldl"_str, "-lm"_str),
         .source   = String::make("compiler arguments test"_str),
         .identity = String::make("link-v1"_str),
     });
-    EXPECT_TRUE(normalized.requirements.posix_threads);
-    ASSERT_EQ(normalized.requirements.system_libraries.len(), usize(1));
-    EXPECT_EQ(normalized.requirements.system_libraries[usize {}].name.as_str(), "dl"_str);
-    ASSERT_EQ(normalized.arguments.tokens.len(), usize(1));
-    EXPECT_EQ(normalized.arguments.tokens[usize {}].as_str(), "-lm"_str);
+    ASSERT_TRUE(normalized.is_ok());
+    EXPECT_TRUE(normalized->requirements.posix_threads);
+    ASSERT_EQ(normalized->requirements.system_libraries.len(), usize(1));
+    EXPECT_EQ(normalized->requirements.system_libraries[usize {}].name.as_str(), "dl"_str);
+    ASSERT_EQ(normalized->arguments.tokens.len(), usize(1));
+    EXPECT_EQ(normalized->arguments.tokens[usize {}].as_str(), "-lm"_str);
+}
+
+TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
+    auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
+        .tokens   = strings("-Wl,-rpath,$ORIGIN"_str,
+                            "-Wl,--rpath,/tmp/build-lib"_str,
+                            "-Wl,-rpath,$ORIGIN"_str,
+                            "-lm"_str),
+        .source   = String::make("runtime search test"_str),
+        .identity = String::make("runtime-search-v1"_str),
+    });
+    ASSERT_TRUE(normalized.is_ok());
+    ASSERT_EQ(normalized->requirements.runtime_search_paths.len(), usize(2));
+    EXPECT_EQ(normalized->requirements.runtime_search_paths[usize {}].path.as_str(), "$ORIGIN"_str);
+    EXPECT_EQ(normalized->requirements.runtime_search_paths[usize(1)].path.as_str(),
+              "/tmp/build-lib"_str);
+    ASSERT_EQ(normalized->arguments.tokens.len(), usize(1));
+    EXPECT_EQ(normalized->arguments.tokens[usize {}].as_str(), "-lm"_str);
+
+    auto legacy = normalize_clang_link_arguments(lito::link::ArgumentSequence {
+        .tokens   = strings("-Wl,--disable-new-dtags"_str),
+        .source   = String::make("legacy runtime search test"_str),
+        .identity = String::make("runtime-search-v1"_str),
+    });
+    ASSERT_TRUE(legacy.is_err());
+    EXPECT_TRUE(legacy.unwrap_err().is_LegacyRpath());
+
+    auto invalid =
+        lito::artifact::make_origin_relative_runtime_path(PathBuf::from("../lib:other"_str));
+    ASSERT_TRUE(invalid.is_err());
 }
 
 TEST(CompilerArguments, KeepsCVendorOptionsInTheCLanguageDomain) {

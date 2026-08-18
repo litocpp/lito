@@ -14,6 +14,7 @@ import :options;
 import :preprocessor_environment;
 import :support;
 import :compile_executor;
+import :strip;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -756,7 +757,7 @@ public:
                          const TargetInfo&               target,
                          bool                            link_stdlib,
                          lito::manifest::Lto             lto,
-                         const cpp::CppLinkRequirements& link_requirements,
+                         const lito::link::Requirements& link_requirements,
                          const Vec<String>&              linker_options,
                          ref<rstd::path::Path>           working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
@@ -782,6 +783,14 @@ public:
                                                                          link_stdlib));
         }
         toolchain::command::push_option(command, cpp::cpp_lto_option(lto));
+        if (! link_requirements.runtime_search_paths.is_empty()) {
+            toolchain::command::push_option(command, "-Wl,--enable-new-dtags"_str);
+            for (const auto& requirement : link_requirements.runtime_search_paths) {
+                auto option = String::make("-Wl,--rpath,"_str);
+                option.push_str(requirement.path.as_str());
+                command.push(rstd::move(option));
+            }
+        }
         for (const auto& option : linker_options) command.push(option.clone());
         for (const auto& object : objects) {
             pushed = toolchain::command::push_path(command, object.as_path());
@@ -878,36 +887,21 @@ public:
 
     auto strip_artifact(ref<rstd::path::Path>     output_path,
                         ref<rstd::path::Path>     stripper,
-                        lito::manifest::StripMode mode,
+                        lito::artifact::StripMode mode,
                         ref<rstd::path::Path>     working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
-        if (mode == lito::manifest::StripMode::None) return Ok(rstd::time::Duration {});
+        if (mode == lito::artifact::StripMode::None) return Ok(rstd::time::Duration {});
         auto staged = staging_path(output_path);
         if (staged.is_err()) return Err(rstd::move(staged).unwrap_err());
         rstd_try(clear_staged_output(staged->as_path()));
-        auto command = Vec<String>::make();
-        rstd_try(toolchain::command::push_path(command, stripper));
-        toolchain::command::push_option(
-            command,
-            mode == lito::manifest::StripMode::DebugInfo ? "--strip-debug"_str : "--strip-all"_str);
-        toolchain::command::push_option(command, "-o"_str);
-        rstd_try(toolchain::command::push_path(command, staged->as_path()));
-        rstd_try(toolchain::command::push_path(command, output_path));
-        auto output = run_command(command, environment_, Some(working_directory));
+        auto provider = LlvmStrip(PathBuf::from(stripper), environment_);
+        auto output   = provider.strip_to(output_path, staged->as_path(), mode, working_directory);
         if (output.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
-        }
-        auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != i32 {}) {
             static_cast<void>(rstd::fs::remove_file(staged->as_path()));
-            return failure<rstd::time::Duration>(
-                rstd::format("llvm-strip failed for '{}'\n{}\n{}",
-                             output_path,
-                             command_text(command).as_str(),
-                             command_output.standard_error.as_str()));
+            return Err(rstd::move(output).unwrap_err());
         }
         rstd_try(publish_output(staged->as_path(), output_path));
-        return Ok(command_output.elapsed);
+        return Ok(*output);
     }
 
 private:

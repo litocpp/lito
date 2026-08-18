@@ -4,6 +4,7 @@ import rstd;
 import rstd.test;
 import lito.driver;
 import lito.core;
+import lito.toolchain.common;
 import lito.test.support;
 
 using namespace rstd::prelude;
@@ -13,6 +14,27 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito_test;
 
 class InstallStore : public ProjectFixture {};
+
+struct FakeStripContext {
+    usize calls {};
+    bool  fail {};
+};
+
+auto fake_strip(void* raw_context, const lito::InstallStripRequest& request)
+    -> lito::ToolchainResult<rstd::time::Duration> {
+    auto& context = *static_cast<FakeStripContext*>(raw_context);
+    ++context.calls;
+    if (context.fail) {
+        return Err(lito::ToolchainError::Message(String::make("fake strip failure"_str)));
+    }
+    auto written = rstd::fs::write(request.staged, "stripped"_str.as_bytes());
+    if (written.is_err()) {
+        return Err(lito::ToolchainError::Io(String::make("write fake stripped entry"_str),
+                                            PathBuf::from(request.staged),
+                                            rstd::move(written).unwrap_err()));
+    }
+    return Ok(rstd::time::Duration {});
+}
 
 TEST_F(InstallStore, InstallStoreTracksOwnershipAndProtectsConflicts) {
     auto root_directory   = install_root("install-store"_str);
@@ -397,4 +419,157 @@ TEST_F(InstallStore, InstallStorePublishesNestedGenericEntries) {
     EXPECT_EQ(catalog->packages[usize {}].layout,
               lito::InstallManagedPackageLayout::IsolatedPrefix);
     EXPECT_EQ(catalog->packages[usize {}].entries.len(), usize(2));
+}
+
+TEST_F(InstallStore, InstallStoreStripsOnlyTransactionStagingCopies) {
+    auto root_directory   = install_root("install-store-strip"_str);
+    auto source_directory = source_root("install-store-strip-source"_str);
+    ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
+    auto source = source_directory.join(PathBuf::from("libcef.so"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(source.as_path(), "unstripped"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(
+        rstd::fs::set_permissions(source.as_path(), rstd::fs::Permissions::from_mode(u32(0755)))
+            .is_ok());
+
+    auto       context    = FakeStripContext {};
+    const auto install_to = [&](lito::InstallDestination destination) {
+        auto transforms = Vec<lito::InstallEntryTransform>::make();
+        transforms.push(lito::InstallEntryTransform::Strip(lito::artifact::StripMode::Symbols));
+        auto entries = Vec<lito::InstallEntry>::make();
+        entries.push(lito::InstallEntry {
+            .origin     = lito::InstallEntryOrigin::ExternalAsset(String::make("cef"_str),
+                                                                  String::make("runtime"_str),
+                                                                  PathBuf::from("libcef.so"_str)),
+            .payload    = lito::InstallEntryPayload::CopyFile(source.clone()),
+            .transforms = rstd::move(transforms),
+            .relative_destination = PathBuf::from("lib/cef/libcef.so"_str),
+        });
+        auto packages = Vec<lito::InstallPackageRecord>::make();
+        packages.push(lito::InstallPackageRecord {
+            .name       = String::make("fixture-strip"_str),
+            .version    = String::make("1.0.0"_str),
+            .profile    = String::make("release"_str),
+            .target     = String::make("x86_64-test-linux"_str),
+            .entries    = rstd::move(entries),
+            .provenance = local_provenance(source_directory.as_path()),
+        });
+        return lito::install_artifacts(lito::InstallStoreRequest {
+            .destination = rstd::move(destination),
+            .packages    = rstd::move(packages),
+            .strip       = Some(lito::InstallStripExecutor {
+                .context = rstd::addressof(context),
+                .apply   = fake_strip,
+            }),
+        });
+    };
+    const auto install = [&]() {
+        return install_to(managed_destination(root_directory.as_path()));
+    };
+
+    auto first = install();
+    ASSERT_TRUE(first.is_ok());
+    ASSERT_EQ(context.calls, usize(1));
+    ASSERT_EQ(first->entries.len(), usize(1));
+    EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(), "unstripped"_str);
+    EXPECT_EQ(
+        rstd::fs::read_to_string(first->entries[usize {}].destination.as_path()).unwrap().as_str(),
+        "stripped"_str);
+    EXPECT_EQ(rstd::fs::metadata(first->entries[usize {}].destination.as_path())
+                  .unwrap()
+                  .permissions()
+                  .mode(),
+              u32(0755));
+    auto catalog = lito::load_managed_install_catalog(*first->managed_layout);
+    ASSERT_TRUE(catalog.is_ok());
+    ASSERT_EQ(catalog->packages[usize {}].entries[usize {}].transforms.len(), usize(1));
+    EXPECT_EQ(catalog->packages[usize {}].entries[usize {}].transforms[usize {}],
+              lito::artifact::StripMode::Symbols);
+
+    auto second = install();
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(context.calls, usize(2));
+    EXPECT_EQ(second->entries[usize {}].action, lito::InstallAction::Unchanged);
+
+    context.fail = true;
+    auto failed  = install();
+    ASSERT_TRUE(failed.is_err());
+    EXPECT_EQ(
+        rstd::fs::read_to_string(first->entries[usize {}].destination.as_path()).unwrap().as_str(),
+        "stripped"_str);
+    EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(), "unstripped"_str);
+
+    context.fail     = false;
+    auto prefix_root = install_root("install-store-strip-prefix"_str);
+    auto prefix      = install_to(
+        lito::InstallDestination::Prefix(lito::InstallPrefix { .path = prefix_root.clone() }));
+    ASSERT_TRUE(prefix.is_ok());
+    ASSERT_EQ(prefix->entries.len(), usize(1));
+    EXPECT_EQ(
+        rstd::fs::read_to_string(prefix->entries[usize {}].destination.as_path()).unwrap().as_str(),
+        "stripped"_str);
+    EXPECT_EQ(rstd::fs::metadata(prefix->entries[usize {}].destination.as_path())
+                  .unwrap()
+                  .permissions()
+                  .mode(),
+              u32(0755));
+    EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(), "unstripped"_str);
+}
+
+TEST_F(InstallStore, ManagedCatalogRecordsInstallLinkProduction) {
+    auto root_directory   = install_root("install-store-link-production"_str);
+    auto source_directory = source_root("install-store-link-production-source"_str);
+    ASSERT_TRUE(rstd::fs::create_dir_all(source_directory.as_path()).is_ok());
+    auto source = source_directory.join(PathBuf::from("renderer"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(source.as_path(), "renderer"_str.as_bytes()).is_ok());
+
+    auto origin_path = lito::artifact::make_origin_relative_runtime_path(PathBuf::from("."_str));
+    ASSERT_TRUE(origin_path.is_ok());
+    auto runtime_paths = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
+    runtime_paths.push(rstd::move(origin_path).unwrap());
+    auto runpath = lito::artifact::make_elf_runpath(rstd::move(runtime_paths));
+    ASSERT_TRUE(runpath.is_ok());
+
+    auto target = lito::package::PackageTargetId {
+        .package = String::make("fixture-link-production"_str),
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = String::make("renderer"_str),
+    };
+    auto entries = Vec<lito::InstallEntry>::make();
+    entries.push(lito::InstallEntry {
+        .origin               = lito::InstallEntryOrigin::BuildArtifact(target.clone()),
+        .payload              = lito::InstallEntryPayload::CopyFile(source.clone()),
+        .link_production      = Some(lito::InstallLinkProduction {
+            .variant_identity = String::make("install-variant-v1"_str),
+            .link_identity    = String::make("link-identity-v1"_str),
+            .runtime_search   = rstd::move(runpath).unwrap(),
+        }),
+        .relative_destination = PathBuf::from("bin/renderer"_str),
+    });
+    auto packages = Vec<lito::InstallPackageRecord>::make();
+    packages.push(lito::InstallPackageRecord {
+        .name       = String::make("fixture-link-production"_str),
+        .version    = String::make("1.0.0"_str),
+        .profile    = String::make("release"_str),
+        .target     = String::make("x86_64-test-linux"_str),
+        .entries    = rstd::move(entries),
+        .provenance = local_provenance(source_directory.as_path()),
+    });
+    auto installed = lito::install_artifacts(lito::InstallStoreRequest {
+        .destination = managed_destination(root_directory.as_path()),
+        .packages    = rstd::move(packages),
+    });
+    ASSERT_TRUE(installed.is_ok());
+    ASSERT_TRUE(installed->managed_layout.is_some());
+    auto catalog = lito::load_managed_install_catalog(*installed->managed_layout);
+    ASSERT_TRUE(catalog.is_ok());
+    ASSERT_EQ(catalog->packages.len(), usize(1));
+    ASSERT_EQ(catalog->packages[usize {}].entries.len(), usize(1));
+    const auto& production = catalog->packages[usize {}].entries[usize {}].production;
+    EXPECT_EQ(production.kind, lito::InstallOwnedProductionKind::LitoLink);
+    EXPECT_EQ(production.variant_identity.as_str(), "install-variant-v1"_str);
+    EXPECT_EQ(production.link_identity.as_str(), "link-identity-v1"_str);
+    ASSERT_TRUE(production.runtime_search.is_some());
+    ASSERT_EQ(production.runtime_search->paths.len(), usize(1));
+    EXPECT_EQ(production.runtime_search->paths[usize {}].path.as_path(),
+              PathBuf::from("."_str).as_path());
 }

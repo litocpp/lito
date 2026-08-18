@@ -4,6 +4,7 @@ module;
 module lito.core:manifest.profile_schema;
 
 import rstd;
+import :artifact;
 import rstd.toml;
 import :manifest.profile;
 import :manifest.primitives;
@@ -65,7 +66,9 @@ auto parse_profile_debug(const Toml& value, ref<str> context) -> ManifestSchemaR
                      context));
 }
 
-auto parse_profile_strip(const Toml& value, ref<str> context) -> ManifestSchemaResult<StripMode> {
+auto parse_profile_strip(const Toml& value, ref<str> context)
+    -> ManifestSchemaResult<lito::artifact::StripMode> {
+    using lito::artifact::StripMode;
     auto boolean = value.as_bool();
     if (boolean.is_some()) return Ok(*boolean ? StripMode::Symbols : StripMode::None);
     auto text = value.as_str();

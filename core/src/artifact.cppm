@@ -1,0 +1,87 @@
+export module lito.core:artifact;
+
+import rstd;
+
+using namespace rstd::prelude;
+using rstd::path::PathBuf;
+using namespace rstd::literals;
+
+export namespace lito::artifact
+{
+
+enum class StripMode
+{
+    None,
+    DebugInfo,
+    Symbols,
+};
+
+struct OriginRelativeRuntimePath {
+    PathBuf path;
+
+    auto clone() const -> OriginRelativeRuntimePath {
+        return OriginRelativeRuntimePath { .path = path.clone() };
+    }
+
+    auto operator==(const OriginRelativeRuntimePath& other) const noexcept -> bool {
+        return path.as_path() == other.path.as_path();
+    }
+};
+
+struct ElfRunpath {
+    Vec<OriginRelativeRuntimePath> paths;
+
+    auto clone() const -> ElfRunpath {
+        auto result = Vec<OriginRelativeRuntimePath>::with_capacity(paths.len());
+        for (const auto& path : paths) result.push(path.clone());
+        return ElfRunpath { .paths = rstd::move(result) };
+    }
+};
+
+using OriginRelativeRuntimePathResult = Result<OriginRelativeRuntimePath, String>;
+using ElfRunpathResult                = Result<ElfRunpath, String>;
+
+auto make_origin_relative_runtime_path(PathBuf path) -> OriginRelativeRuntimePathResult {
+    if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) {
+        return Err(String::make("runtime search path must be a non-empty relative path"_str));
+    }
+    auto text = path.as_path().to_str();
+    if (text.is_none()) {
+        return Err(String::make("runtime search path must be valid UTF-8"_str));
+    }
+    if (text->contains(":"_str) || text->contains("$"_str)) {
+        return Err(
+            String::make("runtime search path may not contain ':' or loader substitutions"_str));
+    }
+    auto components = path.as_path().components();
+    for (auto component = components.next(); component.is_some(); component = components.next()) {
+        if (component->is_normal() || component->is_parent_dir()) continue;
+        if (component->is_cur_dir() && *text == "."_str && components.next().is_none()) continue;
+        return Err(String::make("runtime search path is not lexically normalized"_str));
+    }
+    return Ok(OriginRelativeRuntimePath { .path = rstd::move(path) });
+}
+
+auto make_elf_runpath(Vec<OriginRelativeRuntimePath> paths) -> ElfRunpathResult {
+    if (paths.is_empty()) return Err(String::make("ELF RUNPATH must not be empty"_str));
+    for (usize index {}; index < paths.len(); ++index) {
+        for (usize prior {}; prior < index; ++prior) {
+            if (paths[prior] == paths[index]) {
+                return Err(rstd::format("ELF RUNPATH repeats '{}'", paths[index].path.as_path()));
+            }
+        }
+    }
+    return Ok(ElfRunpath { .paths = rstd::move(paths) });
+}
+
+auto elf_runpath_identity(const ElfRunpath& runpath) -> String {
+    auto result = String::make("lito-elf-runpath-v1\n"_str);
+    for (const auto& path : runpath.paths) {
+        result.push_str("origin-relative="_str);
+        result.push_str(path.path.as_path().to_string_lossy().as_str());
+        result.push_ascii('\n');
+    }
+    return result;
+}
+
+} // namespace lito::artifact

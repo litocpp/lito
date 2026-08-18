@@ -139,24 +139,13 @@ auto append_language_arguments(LanguageArgumentLayer&       output,
     return Ok(empty {});
 }
 
-auto append_unique(CppLinkRequirements& output, const CppLinkRequirements& input) -> void {
-    if (input.posix_threads) {
-        output.posix_threads = true;
-        append_unique(output.thread_sources, input.thread_sources);
-    }
-    for (const auto& requirement : input.system_libraries) {
-        auto present = false;
-        for (const auto& existing : output.system_libraries) {
-            if (existing.name == requirement.name.as_str()) {
-                present = true;
-                break;
-            }
-        }
-        if (! present) output.system_libraries.push(requirement.clone());
-    }
+auto append_unique(lito::link::Requirements& output, const lito::link::Requirements& input)
+    -> void {
+    lito::link::append_requirements(output, input);
 }
 
-auto append_unique(CppLinkRequirements& output, const ResolvedExternalDependency& input) -> void {
+auto append_unique(lito::link::Requirements& output, const ResolvedExternalDependency& input)
+    -> void {
     append_unique(output, input.link_requirements);
     for (const auto& target : input.targets) {
         if (target.compile_arguments.is_C()) {
@@ -591,7 +580,7 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
     auto contexts          = Vec<CompileContext>::with_capacity(package.targets.len());
     auto visible_targets   = Vec<Vec<TargetId>>::with_capacity(package.targets.len());
     auto link_inputs       = Vec<Vec<PlannedLinkInput>>::with_capacity(package.targets.len());
-    auto link_requirements = Vec<CppLinkRequirements>::with_capacity(package.targets.len());
+    auto link_requirements = Vec<lito::link::Requirements>::with_capacity(package.targets.len());
     auto linker_options    = Vec<Vec<String>>::with_capacity(package.targets.len());
     for (auto id = TargetId {}; id < package.targets.len(); ++id) {
         public_usage.emplace_back(None());

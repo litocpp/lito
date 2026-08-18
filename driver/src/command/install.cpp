@@ -41,6 +41,36 @@ auto install_project_failure(ProjectResult<T> result) -> InstallResult<T> {
     return Err(InstallError::Build(BuildError::Project(rstd::move(result).unwrap_err())));
 }
 
+struct InstallStripContext {
+    const LlvmStrip*              provider {};
+    const Option<BuildEventSink>* observer {};
+};
+
+auto apply_install_strip(void* raw_context, const InstallStripRequest& request)
+    -> ToolchainResult<rstd::time::Duration> {
+    auto& context = *static_cast<InstallStripContext*>(raw_context);
+    auto  target  = String::make(request.package);
+    if (request.origin != nullptr && request.origin->is_ExternalAsset()) {
+        const auto& external = request.origin->as_ExternalAsset();
+        target.push_str("::"_str);
+        target.push_str(external.dependency.as_str());
+        target.push_ascii(':');
+        target.push_str(external.set.as_str());
+        target.push_ascii('/');
+        target.push_str(external.path.as_path().to_string_lossy().as_str());
+    }
+    if (context.observer != nullptr && context.observer->is_some()) {
+        const auto& observer = **context.observer;
+        if (observer.notify != nullptr) {
+            observer.notify(
+                observer.context,
+                BuildEvent { BuildEventKind::Strip, target.as_str(), request.destination });
+        }
+    }
+    return context.provider->strip_in_place(
+        request.staged, request.mode, request.working_directory);
+}
+
 } // namespace lito
 
 namespace lito
@@ -146,9 +176,14 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     }
     auto requirements = rstd_try(
         resolve_install_build_requirements(session.project.selection, recipes, effective_target));
-    request.build.exact_targets = rstd::move(requirements.targets);
-    auto profile_name           = request.build.profile->clone();
-    auto prepared               = rstd_try(
+    for (const auto& target : requirements.targets) {
+        request.build.exact_targets.push(target.clone());
+    }
+    for (const auto& variant : requirements.artifact_link_variants) {
+        request.build.artifact_link_variants.push(variant.clone());
+    }
+    auto profile_name = request.build.profile->clone();
+    auto prepared     = rstd_try(
         install_project_failure(prepare_resolved_build_project(rstd::move(session),
                                                                request.build.configuration,
                                                                profile_name,
@@ -163,11 +198,44 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                                request.build.observer)));
     auto summary =
         rstd_try(build_prepared_project(request.build, *environment, rstd::move(prepared)));
-    auto plan   = rstd_try(materialize_install_plan(
-        rstd::move(recipes), summary, summary.profile.as_str(), summary.target.as_str()));
+    auto plan        = rstd_try(materialize_install_plan(rstd::move(recipes),
+                                                         requirements,
+                                                         summary,
+                                                         summary.profile.as_str(),
+                                                         summary.target.as_str()));
+    auto needs_strip = false;
+    for (const auto& package : plan.packages) {
+        for (const auto& entry : package.entries) {
+            if (! entry.transforms.is_empty()) needs_strip = true;
+        }
+    }
+    auto strip_provider = Option<LlvmStrip> {};
+    if (needs_strip) {
+        auto resolved_strip = resolver.resolve(
+            request.build.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
+        if (resolved_strip.is_err()) {
+            return install_failure<InstallSummary>(
+                rstd::format("cannot resolve LLVM strip executable: {}",
+                             rstd::move(resolved_strip).unwrap_err()));
+        }
+        strip_provider =
+            Some(LlvmStrip(rstd::move(resolved_strip).unwrap().executable, *environment));
+    }
+    auto strip_context = InstallStripContext {
+        .provider = strip_provider.is_some() ? rstd::addressof(*strip_provider) : nullptr,
+        .observer = rstd::addressof(request.build.observer),
+    };
+    auto strip_executor = Option<InstallStripExecutor> {};
+    if (needs_strip) {
+        strip_executor = Some(InstallStripExecutor {
+            .context = rstd::addressof(strip_context),
+            .apply   = apply_install_strip,
+        });
+    }
     auto stored = rstd_try(install_artifacts(InstallStoreRequest {
         .destination = rstd::move(request.destination),
         .packages    = rstd::move(plan.packages),
+        .strip       = rstd::move(strip_executor),
         .force       = request.force,
     }));
     return Ok(InstallSummary {

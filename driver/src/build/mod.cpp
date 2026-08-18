@@ -228,6 +228,25 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     for (auto target : selected->selected_targets) {
         selected_targets.push(metadata.targets[target].id.clone());
     }
+    for (const auto& requested : request.artifact_link_variants) {
+        const cpp::ResolvedTarget* target = nullptr;
+        for (auto selected_target : selected->selected_targets) {
+            if (metadata.targets[selected_target].id == requested.target) {
+                target = rstd::addressof(metadata.targets[selected_target]);
+                break;
+            }
+        }
+        if (target == nullptr) {
+            return build_failure<BuildSummary>(
+                rstd::format("requested install link variant target '{}' is not selected",
+                             lito::package::package_target_id_text(requested.target).as_str()));
+        }
+        if (target->artifact_kind != cpp::ArtifactKind::Executable) {
+            return build_failure<BuildSummary>(
+                rstd::format("requested install link variant target '{}' is not an executable",
+                             lito::package::package_target_id_text(requested.target).as_str()));
+        }
+    }
     auto selected_packages = Vec<cpp::SelectedPackageMetadata>::make();
     for (const auto& package : metadata.selected_packages) {
         auto used = false;
@@ -277,7 +296,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
     auto stripper           = Option<PathBuf> {};
-    if (metadata.profiles[native_target_plan.profile].strip != lito::manifest::StripMode::None) {
+    if (metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None) {
         auto resolved_stripper = tool_resolver.resolve(
             request.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
         if (resolved_stripper.is_err()) {
@@ -479,10 +498,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         build_timing.record(BuildOperation::Archive, *archived);
         archive_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
-            .target       = target_spec.id.clone(),
-            .kind         = target_spec.artifact_kind,
-            .path         = rstd::move(archive_path),
-            .package_root = target_spec.root.clone(),
+            .target        = target_spec.id.clone(),
+            .kind          = target_spec.artifact_kind,
+            .path          = rstd::move(archive_path),
+            .package_root  = target_spec.root.clone(),
+            .link_identity = String::make(),
         });
     }
 
@@ -538,11 +558,32 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                 .mode = LinkArchiveMode::Normal,
             }));
         }
+        const RequestedArtifactLinkVariant* install_variant = nullptr;
+        for (const auto& requested : request.artifact_link_variants) {
+            if (requested.target != target_spec.id) continue;
+            if (install_variant != nullptr) {
+                return build_failure<BuildSummary>(
+                    rstd::format("target '{}' has more than one requested install link variant",
+                                 lito::package::package_target_id_text(target_spec.id).as_str()));
+            }
+            install_variant = rstd::addressof(requested);
+        }
+        auto link_requirements = package_plan.link_requirements[target].clone();
         auto executable_path =
             layout.executable(target_spec.id, target_spec.artifact_name.as_str());
-        if (target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable) {
+        if (install_variant != nullptr) {
+            lito::link::replace_runtime_search_paths(link_requirements,
+                                                     install_variant->policy.runtime_search,
+                                                     "install artifact policy"_str);
+            executable_path = layout.install_executable(target_spec.id,
+                                                        target_spec.artifact_name.as_str(),
+                                                        install_variant->policy.identity.as_str());
+        }
+        if (install_variant == nullptr &&
+            target_spec.artifact_kind == cpp::ArtifactKind::TestExecutable) {
             executable_path = layout.test(target_spec.id, target_spec.artifact_name.as_str());
-        } else if (target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
+        } else if (install_variant == nullptr &&
+                   target_spec.artifact_kind == cpp::ArtifactKind::BenchmarkExecutable) {
             executable_path = layout.benchmark(target_spec.id, target_spec.artifact_name.as_str());
         }
         auto target_identity = lito::package::package_target_id_text(target_spec.id);
@@ -555,14 +596,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                 project.platform.effective_target,
                                                 target_spec.link_stdlib,
                                                 package_plan.profile->cpp.common.codegen.lto,
-                                                package_plan.link_requirements[target],
+                                                link_requirements,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());
         if (linked.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
         }
         build_timing.record(BuildOperation::Link, *linked);
-        if (package_plan.profile->strip != lito::manifest::StripMode::None) {
+        if (package_plan.profile->strip != lito::artifact::StripMode::None) {
             if (stripper.is_none()) {
                 return build_failure<BuildSummary>("strip tool was not resolved"_str);
             }
@@ -579,11 +620,26 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             build_timing.record(BuildOperation::Strip, *stripped);
         }
+        auto link_identity = String::make("lito-built-artifact-link-v1\n"_str);
+        link_identity.push_str(target_identity.as_str());
+        link_identity.push_ascii('\n');
+        if (install_variant == nullptr) {
+            link_identity.push_str("variant=normal\n"_str);
+        } else {
+            link_identity.push_str("variant=install\nidentity="_str);
+            link_identity.push_str(install_variant->policy.identity.as_str());
+            link_identity.push_ascii('\n');
+        }
+        link_identity.push_str(lito::link::requirements_identity(link_requirements).as_str());
+        auto install_link = Option<InstallArtifactLinkPolicy> {};
+        if (install_variant != nullptr) install_link = Some(install_variant->policy.clone());
         artifacts.push(BuiltArtifact {
-            .target       = target_spec.id.clone(),
-            .kind         = target_spec.artifact_kind,
-            .path         = rstd::move(executable_path),
-            .package_root = target_spec.root.clone(),
+            .target        = target_spec.id.clone(),
+            .kind          = target_spec.artifact_kind,
+            .path          = rstd::move(executable_path),
+            .package_root  = target_spec.root.clone(),
+            .install_link  = rstd::move(install_link),
+            .link_identity = rstd::move(link_identity),
         });
     }
 

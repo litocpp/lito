@@ -24,7 +24,7 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-inline constexpr auto INSTALL_PACKAGE_INFO_SCHEMA = u64(1);
+inline constexpr auto INSTALL_PACKAGE_INFO_SCHEMA = u64(2);
 
 template<typename T>
 auto catalog_failure(String message) -> InstallStoreResult<T> {
@@ -97,6 +97,51 @@ auto relative_link_target_is_valid(ref<rstd::path::Path> path) -> bool {
     return true;
 }
 
+auto production_json(const InstallOwnedProduction& production) -> Json {
+    auto value = JsonMap::make();
+    if (production.kind == InstallOwnedProductionKind::Copy) {
+        value.insert(String::make("kind"_str), catalog_json_string("copy"_str));
+        return Json::Object(rstd::move(value));
+    }
+    if (production.kind == InstallOwnedProductionKind::Link) {
+        value.insert(String::make("kind"_str), catalog_json_string("link"_str));
+        return Json::Object(rstd::move(value));
+    }
+    value.insert(String::make("kind"_str), catalog_json_string("lito-link"_str));
+    value.insert(String::make("variant"_str), catalog_json_string("install"_str));
+    value.insert(String::make("variant-identity"_str),
+                 catalog_json_string(production.variant_identity.as_str()));
+    value.insert(String::make("link-identity"_str),
+                 catalog_json_string(production.link_identity.as_str()));
+    auto runtime_search = JsonArray::make();
+    if (production.runtime_search.is_some()) {
+        runtime_search.reserve(production.runtime_search->paths.len());
+        for (const auto& path : production.runtime_search->paths) {
+            auto item = JsonMap::make();
+            item.insert(String::make("anchor"_str), catalog_json_string("origin"_str));
+            item.insert(String::make("path"_str),
+                        Json::String(path.path.as_path().to_string_lossy()));
+            runtime_search.push(Json::Object(rstd::move(item)));
+        }
+    }
+    value.insert(String::make("runtime-search"_str), Json::Array(rstd::move(runtime_search)));
+    return Json::Object(rstd::move(value));
+}
+
+auto transforms_json(const Vec<lito::artifact::StripMode>& transforms) -> Json {
+    auto values = JsonArray::with_capacity(transforms.len());
+    for (auto mode : transforms) {
+        auto value = JsonMap::make();
+        value.insert(String::make("kind"_str), catalog_json_string("strip"_str));
+        value.insert(String::make("mode"_str),
+                     catalog_json_string(mode == lito::artifact::StripMode::DebugInfo
+                                             ? "debuginfo"_str
+                                             : "symbols"_str));
+        values.push(Json::Object(rstd::move(value)));
+    }
+    return Json::Array(rstd::move(values));
+}
+
 auto package_info_json(const InstallPackageInfo& info) -> InstallStoreResult<Json> {
     auto package = JsonMap::make();
     package.insert(String::make("id"_str), catalog_json_string(info.identity.id.as_str()));
@@ -118,6 +163,8 @@ auto package_info_json(const InstallPackageInfo& info) -> InstallStoreResult<Jso
                     catalog_json_string(
                         entry.kind == InstallOwnedEntryKind::File ? "file"_str : "soft-link"_str));
         item.insert(String::make("origin"_str), catalog_json_string(entry.origin.as_str()));
+        item.insert(String::make("production"_str), production_json(entry.production));
+        item.insert(String::make("transforms"_str), transforms_json(entry.transforms));
         if (entry.link_target.is_some()) {
             item.insert(String::make("link-target"_str),
                         Json::String(entry.link_target->as_path().to_string_lossy()));
@@ -212,10 +259,15 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
     }
     auto entries = Vec<InstallOwnedEntry>::with_capacity((**entries_array).len());
     for (const auto& item : **entries_array) {
-        rstd_try(known_fields(
-            item,
-            "installed entry"_str,
-            { "logical"_str, "physical"_str, "kind"_str, "origin"_str, "link-target"_str }));
+        rstd_try(known_fields(item,
+                              "installed entry"_str,
+                              { "logical"_str,
+                                "physical"_str,
+                                "kind"_str,
+                                "origin"_str,
+                                "link-target"_str,
+                                "production"_str,
+                                "transforms"_str }));
         auto logical =
             PathBuf::from(rstd_try(required_string(item, "logical"_str, "installed entry"_str)));
         auto physical =
@@ -243,12 +295,117 @@ auto parse_package_info(const Json& value, ref<rstd::path::Path> path)
             return catalog_failure<InstallPackageInfo>(
                 "regular installed entry may not contain link-target"_str);
         }
+        auto production_value =
+            rstd_try(required_member(item, "production"_str, "installed entry"_str));
+        rstd_try(known_fields(*production_value,
+                              "installed entry.production"_str,
+                              { "kind"_str,
+                                "variant"_str,
+                                "variant-identity"_str,
+                                "link-identity"_str,
+                                "runtime-search"_str }));
+        auto production_kind = rstd_try(
+            required_string(*production_value, "kind"_str, "installed entry.production"_str));
+        auto production = InstallOwnedProduction {};
+        if (production_kind == "link"_str) {
+            production.kind = InstallOwnedProductionKind::Link;
+            if ((**production_value->as_object()).len() != usize(1)) {
+                return catalog_failure<InstallPackageInfo>(
+                    "link production may only contain kind"_str);
+            }
+        } else if (production_kind == "lito-link"_str) {
+            production.kind = InstallOwnedProductionKind::LitoLink;
+            auto variant    = rstd_try(required_string(
+                *production_value, "variant"_str, "installed entry.production"_str));
+            if (variant != "install"_str) {
+                return catalog_failure<InstallPackageInfo>(
+                    "lito-link production variant must be 'install'"_str);
+            }
+            production.variant_identity = rstd_try(required_string(
+                *production_value, "variant-identity"_str, "installed entry.production"_str));
+            production.link_identity    = rstd_try(required_string(
+                *production_value, "link-identity"_str, "installed entry.production"_str));
+            auto runtime_value          = rstd_try(required_member(
+                *production_value, "runtime-search"_str, "installed entry.production"_str));
+            auto runtime_array          = runtime_value->as_array();
+            if (runtime_array.is_none() || (**runtime_array).is_empty()) {
+                return catalog_failure<InstallPackageInfo>(
+                    "lito-link production runtime-search must be a non-empty array"_str);
+            }
+            auto paths = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
+            for (const auto& runtime : **runtime_array) {
+                rstd_try(known_fields(runtime,
+                                      "installed entry.production.runtime-search"_str,
+                                      { "anchor"_str, "path"_str }));
+                auto anchor = rstd_try(required_string(
+                    runtime, "anchor"_str, "installed entry.production.runtime-search"_str));
+                if (anchor != "origin"_str) {
+                    return catalog_failure<InstallPackageInfo>(
+                        "runtime search anchor must be 'origin'"_str);
+                }
+                auto parsed_path = lito::artifact::make_origin_relative_runtime_path(
+                    PathBuf::from(rstd_try(required_string(
+                        runtime, "path"_str, "installed entry.production.runtime-search"_str))));
+                if (parsed_path.is_err()) {
+                    return catalog_failure<InstallPackageInfo>(
+                        rstd::format("installed runtime search path is invalid: {}",
+                                     rstd::move(parsed_path).unwrap_err()));
+                }
+                paths.push(rstd::move(parsed_path).unwrap());
+            }
+            auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
+            if (runpath.is_err()) {
+                return catalog_failure<InstallPackageInfo>(
+                    rstd::format("installed runtime search policy is invalid: {}",
+                                 rstd::move(runpath).unwrap_err()));
+            }
+            production.runtime_search = Some(rstd::move(runpath).unwrap());
+        } else if (production_kind == "copy"_str) {
+            if ((**production_value->as_object()).len() != usize(1)) {
+                return catalog_failure<InstallPackageInfo>(
+                    "copy production may only contain kind"_str);
+            }
+        } else {
+            return catalog_failure<InstallPackageInfo>(rstd::format(
+                "installed entry has unknown production '{}'", production_kind.as_str()));
+        }
+
+        auto transforms_value =
+            rstd_try(required_member(item, "transforms"_str, "installed entry"_str));
+        auto transforms_array = transforms_value->as_array();
+        if (transforms_array.is_none()) {
+            return catalog_failure<InstallPackageInfo>(
+                "installed entry.transforms must be an array"_str);
+        }
+        auto transforms = Vec<lito::artifact::StripMode>::make();
+        for (const auto& transform : **transforms_array) {
+            rstd_try(known_fields(
+                transform, "installed entry.transform"_str, { "kind"_str, "mode"_str }));
+            auto transform_kind =
+                rstd_try(required_string(transform, "kind"_str, "installed entry.transform"_str));
+            if (transform_kind != "strip"_str) {
+                return catalog_failure<InstallPackageInfo>(rstd::format(
+                    "installed entry has unknown transform '{}'", transform_kind.as_str()));
+            }
+            auto mode =
+                rstd_try(required_string(transform, "mode"_str, "installed entry.transform"_str));
+            if (mode == "debuginfo"_str) {
+                transforms.push(lito::artifact::StripMode::DebugInfo);
+            } else if (mode == "symbols"_str) {
+                transforms.push(lito::artifact::StripMode::Symbols);
+            } else {
+                return catalog_failure<InstallPackageInfo>(
+                    rstd::format("installed strip transform has unknown mode '{}'", mode.as_str()));
+            }
+        }
         entries.push(InstallOwnedEntry {
             .logical_destination  = rstd::move(logical),
             .physical_destination = rstd::move(physical),
             .kind                 = kind,
             .origin      = rstd_try(required_string(item, "origin"_str, "installed entry"_str)),
             .link_target = rstd::move(link),
+            .production  = rstd::move(production),
+            .transforms  = rstd::move(transforms),
         });
     }
 
@@ -315,6 +472,32 @@ auto validate_catalog(const InstallLayout& layout, const InstallCatalog& catalog
         }
         identities.insert(package.identity.id.clone(), package.identity.name.clone());
         for (const auto& entry : package.entries) {
+            if (entry.kind == InstallOwnedEntryKind::SoftLink &&
+                (entry.production.kind != InstallOwnedProductionKind::Link ||
+                 ! entry.transforms.is_empty())) {
+                return catalog_failure<empty>(
+                    rstd::format("installed symbolic link '{}' has invalid production metadata",
+                                 entry.physical_destination.as_path()));
+            }
+            if (entry.kind == InstallOwnedEntryKind::File &&
+                entry.production.kind == InstallOwnedProductionKind::Link) {
+                return catalog_failure<empty>(
+                    rstd::format("installed file '{}' has link production metadata",
+                                 entry.physical_destination.as_path()));
+            }
+            if (entry.production.kind == InstallOwnedProductionKind::LitoLink &&
+                entry.production.runtime_search.is_none()) {
+                return catalog_failure<empty>(
+                    rstd::format("installed file '{}' has incomplete Lito link metadata",
+                                 entry.physical_destination.as_path()));
+            }
+            for (auto transform : entry.transforms) {
+                if (transform == lito::artifact::StripMode::None) {
+                    return catalog_failure<empty>(
+                        rstd::format("installed file '{}' has an empty strip transform",
+                                     entry.physical_destination.as_path()));
+                }
+            }
             auto key   = entry.physical_destination.as_path().to_string_lossy();
             auto owner = destinations.get(key.as_str());
             if (owner.is_some()) {

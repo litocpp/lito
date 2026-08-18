@@ -309,7 +309,7 @@ auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnaps
         .version  = normalized_version.clone(),
         .targets  = rstd::move(targets),
         .link_arguments =
-            cpp::LinkArgumentSequence {
+            lito::link::ArgumentSequence {
                 .tokens   = rstd::move(link_arguments).unwrap(),
                 .source   = rstd::format("CMake dependency '{}' package '{}'",
                                          requirement.alias.as_str(),

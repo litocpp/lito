@@ -126,7 +126,7 @@ auto resolve_pkg_config_dependencies(
                 .compile_options = rstd::move(compile_tokens).unwrap(),
                 .compile_source  = source.clone(),
                 .link_arguments =
-                    cpp::LinkArgumentSequence {
+                    lito::link::ArgumentSequence {
                         .tokens   = rstd::move(link_tokens).unwrap(),
                         .source   = source.clone(),
                         .identity = identity.clone(),
@@ -144,13 +144,17 @@ auto resolve_pkg_config_dependencies(
             .identity        = snapshot.identity.clone(),
         });
         auto normalized = normalize_clang_link_arguments(snapshot.link_arguments.clone());
+        if (normalized.is_err()) {
+            return lito::dependency::dependency_failure<Vec<cpp::ExternalDependencyUsage>>(
+                rstd::format("{}", rstd::move(normalized).unwrap_err()));
+        }
         result.push(cpp::ExternalDependencyUsage {
             .alias             = declaration.alias.clone(),
             .provider          = String::make("pkg-config"_str),
             .version           = snapshot.version.clone(),
             .targets           = rstd::move(targets),
-            .link_arguments    = rstd::move(normalized.arguments),
-            .link_requirements = rstd::move(normalized.requirements),
+            .link_arguments    = rstd::move(normalized->arguments),
+            .link_requirements = rstd::move(normalized->requirements),
             .identity          = snapshot.identity.clone(),
         });
     }

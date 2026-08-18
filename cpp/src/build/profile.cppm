@@ -11,6 +11,7 @@ import :compiler.option;
 import :compiler.parser;
 import :compiler.policy;
 import :usage;
+import :link;
 import :c.compiler;
 
 using namespace rstd::prelude;
@@ -25,9 +26,9 @@ struct ProfileSpec {
     BmiRequest                         bmi;
     lito::c::CCompileOptions           c;
     CppCompileOptions                  cpp;
-    CppLinkRequirements                c_link_requirements;
-    CppLinkRequirements                cpp_link_requirements;
-    lito::manifest::StripMode          strip { lito::manifest::StripMode::None };
+    lito::link::Requirements           c_link_requirements;
+    lito::link::Requirements           cpp_link_requirements;
+    lito::artifact::StripMode          strip { lito::artifact::StripMode::None };
     Vec<String>                        linker_options;
 };
 
@@ -100,24 +101,6 @@ auto parse_build_arguments(const BuildConfiguration& configuration, const CppArg
     return Ok(rstd::move(result));
 }
 
-auto append_link_requirements(CppLinkRequirements& output, const CppLinkRequirements& input)
-    -> void {
-    if (input.posix_threads) {
-        output.posix_threads = true;
-        for (const auto& source : input.thread_sources) output.thread_sources.push(source.clone());
-    }
-    for (const auto& requirement : input.system_libraries) {
-        auto present = false;
-        for (const auto& existing : output.system_libraries) {
-            if (existing.name == requirement.name.as_str()) {
-                present = true;
-                break;
-            }
-        }
-        if (! present) output.system_libraries.push(requirement.clone());
-    }
-}
-
 auto make_profile_spec(const BuildConfiguration&               configuration,
                        const lito::manifest::ProjectProfile&   project_profile,
                        const lito::manifest::BuildProfileName& selected_profile,
@@ -125,7 +108,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     -> lito::manifest::BuildProfileResult<ProfileSpec> {
     auto selected =
         rstd_try(lito::manifest::resolve_build_profile(project_profile, selected_profile));
-    auto cpp_link_requirements = CppLinkRequirements {};
+    auto cpp_link_requirements = lito::link::Requirements {};
     for (const auto& occurrence : arguments.cpp.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
         RSTD_MATCH(occurrence.argument) {
@@ -182,7 +165,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             }
         }
     }
-    auto c_link_requirements = CppLinkRequirements {};
+    auto c_link_requirements = lito::link::Requirements {};
     for (const auto& occurrence : arguments.c.occurrences) {
         if (! occurrence.argument.is_Common()) continue;
         const auto& common = occurrence.argument.as_Common().argument;
@@ -194,14 +177,18 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     }
     auto linker_options = Vec<String>::make();
     for (const auto& input : arguments.linker) {
-        auto normalized = normalize_link_arguments(LinkArgumentSequence {
+        auto normalized = lito::link::normalize_arguments(lito::link::ArgumentSequence {
             .tokens   = input.arguments.clone(),
             .source   = input.source.clone(),
             .identity = input.source.clone(),
         });
-        append_link_requirements(c_link_requirements, normalized.requirements);
-        append_link_requirements(cpp_link_requirements, normalized.requirements);
-        for (auto& option : normalized.arguments.tokens) {
+        if (normalized.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(normalized).unwrap_err())));
+        }
+        lito::link::append_requirements(c_link_requirements, normalized->requirements);
+        lito::link::append_requirements(cpp_link_requirements, normalized->requirements);
+        for (auto& option : normalized->arguments.tokens) {
             if (option.as_str() == "-nostdlib++"_str ||
                 option.as_str().starts_with("-stdlib="_str)) {
                 return profile_failure(

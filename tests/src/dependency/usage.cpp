@@ -70,7 +70,7 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
     metadata->targets[usize {}].usage.link_requirements.thread_sources.push(
         String::make("static library usage"_str));
     metadata->targets[usize {}].usage.link_requirements.system_libraries.push(
-        lito::cpp::CppSystemLibraryRequirement {
+        lito::link::SystemLibraryRequirement {
             .name   = String::make("platform-api"_str),
             .source = String::make("static library usage"_str),
         });

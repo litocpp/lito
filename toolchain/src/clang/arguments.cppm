@@ -81,11 +81,11 @@ auto add_visibility(cpp::CppArgumentSchema&      schema,
 export namespace lito
 {
 
-using NormalizedClangLinkArguments = cpp::NormalizedLinkArguments;
+using NormalizedClangLinkArguments = lito::link::NormalizedArguments;
 
-auto normalize_clang_link_arguments(cpp::LinkArgumentSequence input)
-    -> NormalizedClangLinkArguments {
-    return cpp::normalize_link_arguments(rstd::move(input));
+auto normalize_clang_link_arguments(lito::link::ArgumentSequence input)
+    -> lito::link::ArgumentResult<NormalizedClangLinkArguments> {
+    return lito::link::normalize_arguments(rstd::move(input));
 }
 
 auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentParser> {

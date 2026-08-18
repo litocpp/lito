@@ -5,6 +5,7 @@ import lito.core;
 import :install.destination;
 import :install.entry;
 import :install.package;
+import lito.toolchain.common;
 
 using namespace rstd::prelude;
 
@@ -29,10 +30,25 @@ struct InstallPackageRecord {
     Vec<InstallRuntimeDependency> runtime_dependencies;
 };
 
+struct InstallStripRequest {
+    ref<str>                  package;
+    const InstallEntryOrigin* origin {};
+    lito::artifact::StripMode mode { lito::artifact::StripMode::None };
+    ref<rstd::path::Path>     staged;
+    ref<rstd::path::Path>     destination;
+    ref<rstd::path::Path>     working_directory;
+};
+
+struct InstallStripExecutor {
+    void* context {};
+    ToolchainResult<rstd::time::Duration> (*apply)(void*, const InstallStripRequest&) {};
+};
+
 struct InstallStoreRequest {
-    InstallDestination        destination;
-    Vec<InstallPackageRecord> packages;
-    bool                      force { false };
+    InstallDestination           destination;
+    Vec<InstallPackageRecord>    packages;
+    Option<InstallStripExecutor> strip;
+    bool                         force { false };
 };
 
 struct InstallStoreSummary {

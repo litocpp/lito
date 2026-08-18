@@ -3,6 +3,7 @@ export module lito.driver:install.recipe;
 import rstd;
 import lito.core;
 import :install.package;
+import :build.request;
 
 using namespace rstd::prelude;
 
@@ -29,12 +30,30 @@ struct PackageInstallInput {
 struct InstallArtifactRecipe {
     lito::package::PackageTargetId target;
     PathBuf                        destination;
+    struct RuntimeSearchReference {
+        String dependency;
+        String set;
+
+        auto clone() const -> RuntimeSearchReference {
+            return RuntimeSearchReference {
+                .dependency = dependency.clone(),
+                .set        = set.clone(),
+            };
+        }
+    };
+    Vec<RuntimeSearchReference> runtime_search;
+};
+
+struct InstallStripRecipe {
+    lito::artifact::StripMode mode { lito::artifact::StripMode::None };
+    Vec<PathBuf>              files;
 };
 
 struct InstallExternalAssetRecipe {
-    String  dependency;
-    String  set;
-    PathBuf destination;
+    String                     dependency;
+    String                     set;
+    PathBuf                    destination;
+    Option<InstallStripRecipe> strip;
 };
 
 struct InstallFileRecipe {
@@ -68,6 +87,7 @@ struct InstallRecipe {
 
 struct InstallBuildRequirements {
     Vec<lito::package::PackageTargetId> targets;
+    Vec<RequestedArtifactLinkVariant>   artifact_link_variants;
 };
 
 struct InstallScriptContext {

@@ -9,6 +9,7 @@ import lito.core;
 import :build.error;
 import :install.script_error;
 import :install.materialize_error;
+import lito.toolchain.common;
 
 using namespace rstd::prelude;
 
@@ -29,6 +30,7 @@ class InstallStoreCause {
               (Source, (InstallSourceError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
+              (Transform, (String package; String entry; String operation; ToolchainError source;)),
               (Message, (String message;)))
 };
 
@@ -128,6 +130,14 @@ struct Impl<fmt::Display, lito::InstallStoreCause> : ImplBase<lito::InstallStore
             return formatter.write_fmt(fmt::Arguments::make("cannot parse install metadata '{}'",
                                                             error.as_Json().path.as_path()));
         }
+        if (error.is_Transform()) {
+            const auto& value = error.as_Transform();
+            return formatter.write_fmt(
+                fmt::Arguments::make("cannot {} install entry '{}' for package '{}'",
+                                     value.operation,
+                                     value.entry,
+                                     value.package));
+        }
         return formatter.write_str(error.as_Message().message.as_str());
     }
 };
@@ -148,6 +158,9 @@ struct Impl<error::Error, lito::InstallStoreCause> : ImplBase<lito::InstallStore
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Transform()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Transform().source));
+        }
         return None();
     }
 };

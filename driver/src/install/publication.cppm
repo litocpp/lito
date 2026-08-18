@@ -110,6 +110,27 @@ auto request_destination_key(ref<rstd::path::Path> path) -> String {
     return path.to_string_lossy();
 }
 
+auto owned_production(const InstallEntry& entry) -> InstallOwnedProduction {
+    if (entry.link_production.is_none()) return InstallOwnedProduction {};
+    return InstallOwnedProduction {
+        .kind             = InstallOwnedProductionKind::LitoLink,
+        .variant_identity = entry.link_production->variant_identity.clone(),
+        .link_identity    = entry.link_production->link_identity.clone(),
+        .runtime_search   = Some(entry.link_production->runtime_search.clone()),
+    };
+}
+
+auto owned_transforms(const InstallEntry& entry) -> Vec<lito::artifact::StripMode> {
+    auto result = Vec<lito::artifact::StripMode>::make();
+    for (const auto& transform : entry.transforms) {
+        if (transform.is_Strip()) {
+            auto mode = transform.as_Strip().mode;
+            result.push(rstd::move(mode));
+        }
+    }
+    return result;
+}
+
 } // namespace lito
 
 namespace lito
@@ -198,6 +219,8 @@ auto plan_install_publication(InstallDestination        destination,
                 .physical_destination = physical.clone(),
                 .kind                 = InstallOwnedEntryKind::File,
                 .origin               = origin_text(entry.origin),
+                .production           = owned_production(entry),
+                .transforms           = owned_transforms(entry),
             });
             entry.destination =
                 PathBuf::from(publication.destination.path()).join(physical.as_path());
@@ -244,6 +267,10 @@ auto plan_install_publication(InstallDestination        destination,
                     lito::package::package_target_id_text(entry.origin.as_BuildArtifact().target)
                         .as_str()),
                 .link_target = Some(relative_target->clone()),
+                .production =
+                    InstallOwnedProduction {
+                        .kind = InstallOwnedProductionKind::Link,
+                    },
             });
             links.push(InstallPublicationLink {
                 .target               = entry.origin.as_BuildArtifact().target.clone(),

@@ -305,8 +305,12 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         if (usage.is_err()) return Err(contextualize(rstd::move(usage).unwrap_err()));
         auto dependency = rstd::move(usage).unwrap();
         auto normalized = normalize_clang_link_arguments(rstd::move(dependency.link_arguments));
-        dependency.link_arguments    = rstd::move(normalized.arguments);
-        dependency.link_requirements = rstd::move(normalized.requirements);
+        if (normalized.is_err()) {
+            return lito::dependency::dependency_failure<PreparedExternalCatalog>(
+                rstd::format("{}", rstd::move(normalized).unwrap_err()));
+        }
+        dependency.link_arguments    = rstd::move(normalized->arguments);
+        dependency.link_requirements = rstd::move(normalized->requirements);
         result.packages[binding.catalog].dependencies.push(rstd::move(dependency));
         auto snapshot = snapshots.get(*key_text);
         if (snapshot.is_none()) {

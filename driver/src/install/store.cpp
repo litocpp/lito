@@ -139,19 +139,40 @@ auto same_file(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
         left_metadata->permissions().mode() != right_metadata->permissions().mode()) {
         return Ok(false);
     }
-    auto left_contents  = rstd::fs::read(left);
-    auto right_contents = rstd::fs::read(right);
-    if (left_contents.is_err()) {
+    auto left_file = rstd::fs::File::open(left);
+    if (left_file.is_err()) {
         return store_io_failure<bool>(
-            "read staged entry"_str, left, rstd::move(left_contents).unwrap_err());
+            "open staged entry"_str, left, rstd::move(left_file).unwrap_err());
     }
-    if (right_contents.is_err()) {
+    auto right_file = rstd::fs::File::open(right);
+    if (right_file.is_err()) {
         return store_io_failure<bool>(
-            "read installed entry"_str, right, rstd::move(right_contents).unwrap_err());
+            "open installed entry"_str, right, rstd::move(right_file).unwrap_err());
     }
-    if (left_contents->len() != right_contents->len()) return Ok(false);
-    for (usize index {}; index < left_contents->len(); ++index) {
-        if ((*left_contents)[index].get() != (*right_contents)[index].get()) return Ok(false);
+    auto left_buffer  = array<u8, 65536> {};
+    auto right_buffer = array<u8, 65536> {};
+    auto offset       = u64 {};
+    while (offset < left_metadata->len()) {
+        auto remaining   = left_metadata->len() - offset;
+        auto count       = remaining < u64(left_buffer.len().to_primitive())
+                               ? usize(remaining.to_primitive())
+                               : left_buffer.len();
+        auto left_chunk  = mut_ref<u8[]>::from_raw_parts(left_buffer.as_mut_ptr(), count);
+        auto right_chunk = mut_ref<u8[]>::from_raw_parts(right_buffer.as_mut_ptr(), count);
+        auto left_read   = left_file->read_exact_at(left_chunk, offset);
+        if (left_read.is_err()) {
+            return store_io_failure<bool>(
+                "read staged entry"_str, left, rstd::move(left_read).unwrap_err());
+        }
+        auto right_read = right_file->read_exact_at(right_chunk, offset);
+        if (right_read.is_err()) {
+            return store_io_failure<bool>(
+                "read installed entry"_str, right, rstd::move(right_read).unwrap_err());
+        }
+        for (usize index {}; index < count; ++index) {
+            if (left_buffer[index].get() != right_buffer[index].get()) return Ok(false);
+        }
+        offset += u64(count.to_primitive());
     }
     return Ok(true);
 }
@@ -171,8 +192,66 @@ auto same_link(ref<rstd::path::Path> left, ref<rstd::path::Path> right)
     return Ok(left_target->as_path() == right_target->as_path());
 }
 
-auto stage_entry(const InstallEntry& entry, ref<rstd::path::Path> staged)
+auto install_entry_origin_text(const InstallEntryOrigin& origin) -> String {
+    if (origin.is_PackageFile()) {
+        return rstd::format("{}:{}",
+                            origin.as_PackageFile().package.as_str(),
+                            origin.as_PackageFile().path.as_path());
+    }
+    if (origin.is_BuildArtifact()) {
+        return lito::package::package_target_id_text(origin.as_BuildArtifact().target);
+    }
+    if (origin.is_ExternalAsset()) {
+        return rstd::format("{}:{}/{}",
+                            origin.as_ExternalAsset().dependency.as_str(),
+                            origin.as_ExternalAsset().set.as_str(),
+                            origin.as_ExternalAsset().path.as_path());
+    }
+    if (origin.is_Template()) {
+        return rstd::format("template:{}", origin.as_Template().input.as_path());
+    }
+    return String::make("inventory"_str);
+}
+
+auto apply_entry_transforms(const InstallEntry&                 entry,
+                            ref<str>                            package,
+                            ref<rstd::path::Path>               staged,
+                            ref<rstd::path::Path>               destination,
+                            ref<rstd::path::Path>               working_directory,
+                            const Option<InstallStripExecutor>& strip)
     -> InstallStoreResult<empty> {
+    for (const auto& transform : entry.transforms) {
+        if (! transform.is_Strip()) continue;
+        if (strip.is_none() || strip->apply == nullptr) {
+            return store_failure<empty>(
+                rstd::format("install entry '{}' requires LLVM strip but no executor was provided",
+                             install_entry_origin_text(entry.origin).as_str()));
+        }
+        auto applied = strip->apply(strip->context,
+                                    InstallStripRequest {
+                                        .package           = package,
+                                        .origin            = rstd::addressof(entry.origin),
+                                        .mode              = transform.as_Strip().mode,
+                                        .staged            = staged,
+                                        .destination       = destination,
+                                        .working_directory = working_directory,
+                                    });
+        if (applied.is_err()) {
+            return Err(InstallStoreError::Cause(
+                InstallStoreCause::Transform(String::make(package),
+                                             install_entry_origin_text(entry.origin),
+                                             String::make("strip"_str),
+                                             rstd::move(applied).unwrap_err())));
+        }
+    }
+    return Ok(empty {});
+}
+
+auto stage_entry(const InstallEntry&                 entry,
+                 ref<str>                            package,
+                 ref<rstd::path::Path>               staged,
+                 ref<rstd::path::Path>               destination,
+                 const Option<InstallStripExecutor>& strip) -> InstallStoreResult<empty> {
     auto parent = staged.parent();
     if (parent.is_none()) return store_failure<empty>("staged entry has no parent"_str);
     auto created = rstd::fs::create_dir_all(*parent);
@@ -192,6 +271,13 @@ auto stage_entry(const InstallEntry& entry, ref<rstd::path::Path> staged)
             return store_io_failure<empty>(
                 "stage install entry"_str, source.as_path(), rstd::move(copied).unwrap_err());
         }
+        auto working_directory = source.as_path().parent();
+        if (working_directory.is_none()) working_directory = staged.parent();
+        if (working_directory.is_none()) {
+            return store_failure<empty>("strip working directory is unavailable"_str);
+        }
+        rstd_try(
+            apply_entry_transforms(entry, package, staged, destination, *working_directory, strip));
         auto permissions = rstd::fs::set_permissions(staged, metadata->permissions());
         if (permissions.is_err()) {
             return store_io_failure<empty>("preserve install entry permissions"_str,
@@ -199,6 +285,11 @@ auto stage_entry(const InstallEntry& entry, ref<rstd::path::Path> staged)
                                            rstd::move(permissions).unwrap_err());
         }
         return Ok(empty {});
+    }
+    if (! entry.transforms.is_empty()) {
+        return store_failure<empty>(
+            rstd::format("generated install entry '{}' cannot declare file transforms",
+                         install_entry_origin_text(entry.origin).as_str()));
     }
     const auto& bytes   = entry.payload.as_Bytes();
     auto        written = rstd::fs::write(staged, bytes.contents.as_slice());
@@ -732,12 +823,13 @@ auto validate_managed_existing(const InstallCatalog&             catalog,
     return Ok(empty {});
 }
 
-auto prepare_managed_payload(const InstallLayout&    layout,
-                             const InstallCatalog&   catalog,
-                             InstallPublicationPlan& publication,
-                             ref<rstd::path::Path>   transaction,
-                             bool                    force,
-                             Vec<TransactionItem>&   items) -> InstallStoreResult<empty> {
+auto prepare_managed_payload(const InstallLayout&                layout,
+                             const InstallCatalog&               catalog,
+                             InstallPublicationPlan&             publication,
+                             ref<rstd::path::Path>               transaction,
+                             bool                                force,
+                             const Option<InstallStripExecutor>& strip,
+                             Vec<TransactionItem>& items) -> InstallStoreResult<empty> {
     for (auto& package : publication.packages) {
         for (usize index {}; index < package.record.entries.len(); ++index) {
             auto& entry    = package.record.entries[index];
@@ -750,7 +842,11 @@ auto prepare_managed_payload(const InstallLayout&    layout,
                 catalog, package.info.identity.id.as_str(), relative, existing, force));
             auto staged =
                 PathBuf::from(transaction).join(PathBuf::from("new"_str).as_path()).join(relative);
-            rstd_try(stage_entry(entry, staged.as_path()));
+            rstd_try(stage_entry(entry,
+                                 package.record.name.as_str(),
+                                 staged.as_path(),
+                                 destination.as_path(),
+                                 strip));
             auto unchanged = false;
             if (existing.is_some() && existing->is_file() && ! existing->is_symlink()) {
                 unchanged = rstd_try(same_file(staged.as_path(), destination.as_path()));
@@ -959,7 +1055,7 @@ auto managed_install(InstallStoreRequest request) -> InstallStoreResult<InstallS
 
     auto items    = Vec<TransactionItem>::make();
     auto prepared = prepare_managed_payload(
-        layout, current, publication, transaction.as_path(), request.force, items);
+        layout, current, publication, transaction.as_path(), request.force, request.strip, items);
     if (prepared.is_err()) {
         (void)rstd::fs::remove_dir_all(transaction.as_path());
         return Err(rstd::move(prepared).unwrap_err());
@@ -1038,7 +1134,11 @@ auto prefix_install(InstallStoreRequest request) -> InstallStoreResult<InstallSt
                     installed.as_path()));
             }
             auto staged = transaction.join(PathBuf::from("new"_str).as_path()).join(relative);
-            auto staged_result = stage_entry(entry, staged.as_path());
+            auto staged_result = stage_entry(entry,
+                                             package.record.name.as_str(),
+                                             staged.as_path(),
+                                             installed.as_path(),
+                                             request.strip);
             if (staged_result.is_err()) {
                 (void)rstd::fs::remove_dir_all(transaction.as_path());
                 return Err(rstd::move(staged_result).unwrap_err());

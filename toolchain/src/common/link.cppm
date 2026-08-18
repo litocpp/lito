@@ -26,7 +26,7 @@ struct LinkArchive {
 class ResolvedLinkInput {
     RSTD_ENUM(ResolvedLinkInput,
               (Archive, (LinkArchive archive;)),
-              (External, (cpp::LinkArgumentSequence arguments;)))
+              (External, (lito::link::ArgumentSequence arguments;)))
 };
 
 } // namespace lito

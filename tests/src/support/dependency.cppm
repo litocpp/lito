@@ -324,7 +324,7 @@ auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
         .version  = String::make("2.3.4"_str),
         .targets  = rstd::move(external_targets),
         .link_arguments =
-            lito::cpp::LinkArgumentSequence {
+            lito::link::ArgumentSequence {
                 .tokens   = strings("-llito_fixture"_str),
                 .source   = String::make("pkg-config fixture"_str),
                 .identity = String::make("fixture-link-v1"_str),

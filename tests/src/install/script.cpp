@@ -63,8 +63,15 @@ TEST_F(InstallScript, InstallScriptProducesAnOwnedRecipeOnce) {
     values = { NAME = lito.package_name, VERSION = lito.package_version },
 })
 lito.install({
-    artifacts = {{ target = { kind = "bin", name = "producer" }, destination = "bin/producer" }},
-    external_assets = {{ dependency = "runtime", set = "files", destination = "lib/runtime" }},
+    artifacts = {{
+        target = { kind = "bin", name = "producer" },
+        destination = "bin/producer",
+        runtime_search = {{ external_asset = { dependency = "runtime", set = "files" } }},
+    }},
+    external_assets = {{
+        dependency = "runtime", set = "files", destination = "lib/runtime",
+        strip = { mode = "symbols", files = { "runtime.so" } },
+    }},
     files = {{ source = "resource.txt", destination = "share/fixture/resource.txt" }},
     templates = {{
         input = "manifest.in",
@@ -101,7 +108,13 @@ lito.install({
     EXPECT_EQ(recipe->artifacts[usize {}].target.package.as_str(), "fixture-install-script"_str);
     EXPECT_EQ(recipe->artifacts[usize {}].destination.as_path(),
               PathBuf::from("bin/producer"_str).as_path());
+    ASSERT_EQ(recipe->artifacts[usize {}].runtime_search.len(), usize(1));
+    EXPECT_EQ(recipe->artifacts[usize {}].runtime_search[usize {}].dependency.as_str(),
+              "runtime"_str);
     ASSERT_EQ(recipe->external_assets.len(), usize(1));
+    ASSERT_TRUE(recipe->external_assets[usize {}].strip.is_some());
+    EXPECT_EQ(recipe->external_assets[usize {}].strip->mode, lito::artifact::StripMode::Symbols);
+    ASSERT_EQ(recipe->external_assets[usize {}].strip->files.len(), usize(1));
     ASSERT_EQ(recipe->files.len(), usize(1));
     ASSERT_EQ(recipe->templates.len(), usize(1));
     ASSERT_EQ(recipe->inventories.len(), usize(1));
@@ -137,6 +150,25 @@ lito.install({
         { "duplicate"_str, "lito.install({})\nlito.install({})\n"_str },
         { "unknown-field"_str, "lito.install({ unsupported = true })\n"_str },
         { "wrong-type"_str, "lito.install({ files = { \"invalid\" } })\n"_str },
+        { "empty-runtime-search"_str,
+          R"lua(lito.install({ artifacts = {{
+    target = { kind = "bin", name = "tool" },
+    destination = "bin/tool",
+    runtime_search = {},
+}} })
+)lua"_str },
+        { "invalid-strip-mode"_str,
+          R"lua(lito.install({ external_assets = {{
+    dependency = "runtime", set = "files", destination = "lib/runtime",
+    strip = { mode = "none", files = { "runtime.so" } },
+}} })
+)lua"_str },
+        { "unsafe-strip-path"_str,
+          R"lua(lito.install({ external_assets = {{
+    dependency = "runtime", set = "files", destination = "lib/runtime",
+    strip = { mode = "symbols", files = { "../runtime.so" } },
+}} })
+)lua"_str },
     };
     for (const auto& binding_error : binding_errors) {
         auto manifest_text =

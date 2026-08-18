@@ -3,6 +3,7 @@ export module lito.driver:build.artifact;
 import rstd;
 import lito.core;
 import lito.cpp;
+import :build.request;
 
 using namespace rstd::prelude;
 
@@ -10,10 +11,12 @@ export namespace lito
 {
 
 struct BuiltArtifact {
-    lito::package::PackageTargetId target;
-    cpp::ArtifactKind              kind { cpp::ArtifactKind::StaticLibrary };
-    PathBuf                        path;
-    PathBuf                        package_root;
+    lito::package::PackageTargetId    target;
+    cpp::ArtifactKind                 kind { cpp::ArtifactKind::StaticLibrary };
+    PathBuf                           path;
+    PathBuf                           package_root;
+    Option<InstallArtifactLinkPolicy> install_link;
+    String                            link_identity;
 };
 
 struct BuiltRuntimeResource {

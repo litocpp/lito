@@ -77,11 +77,28 @@ auto append_entry(Vec<InstallEntry>& entries, InstallEntry entry)
     return Ok(empty {});
 }
 
-auto artifact_for(const BuildSummary& summary, const lito::package::PackageTargetId& target)
+auto artifact_for(const BuildSummary&                   summary,
+                  const InstallBuildRequirements&       requirements,
+                  const lito::package::PackageTargetId& target)
     -> InstallMaterializeResult<const BuiltArtifact*> {
+    const RequestedArtifactLinkVariant* expected = nullptr;
+    for (const auto& variant : requirements.artifact_link_variants) {
+        if (variant.target != target) continue;
+        if (expected != nullptr) {
+            return materialize_failure<const BuiltArtifact*>(
+                rstd::format("install requirements repeat link variant for '{}'",
+                             lito::package::package_target_id_text(target)));
+        }
+        expected = rstd::addressof(variant);
+    }
     const BuiltArtifact* result = nullptr;
     for (const auto& artifact : summary.artifacts) {
         if (artifact.target != target) continue;
+        if (expected == nullptr && artifact.install_link.is_some()) continue;
+        if (expected != nullptr &&
+            (artifact.install_link.is_none() ||
+             artifact.install_link->identity != expected->policy.identity.as_str()))
+            continue;
         if (result != nullptr) {
             return materialize_failure<const BuiltArtifact*>(
                 rstd::format("build returned duplicate artifact for '{}'",
@@ -140,10 +157,11 @@ auto sort_entries(Vec<InstallEntry>& entries) -> void {
 export namespace lito
 {
 
-auto materialize_install_plan(Vec<InstallRecipe>  recipes,
-                              const BuildSummary& build,
-                              ref<str>            profile,
-                              ref<str>            target) -> InstallMaterializeResult<InstallPlan> {
+auto materialize_install_plan(Vec<InstallRecipe>              recipes,
+                              const InstallBuildRequirements& requirements,
+                              const BuildSummary&             build,
+                              ref<str>                        profile,
+                              ref<str> target) -> InstallMaterializeResult<InstallPlan> {
     auto plan = InstallPlan {};
     for (auto& recipe : recipes) {
         auto entries = Vec<InstallEntry>::make();
@@ -158,20 +176,45 @@ auto materialize_install_plan(Vec<InstallRecipe>  recipes,
                                   }));
         }
         for (const auto& artifact : recipe.artifacts) {
-            auto built = rstd_try(artifact_for(build, artifact.target));
+            auto built      = rstd_try(artifact_for(build, requirements, artifact.target));
+            auto production = Option<InstallLinkProduction> {};
+            if (built->install_link.is_some()) {
+                production = Some(InstallLinkProduction {
+                    .variant_identity = built->install_link->identity.clone(),
+                    .link_identity    = built->link_identity.clone(),
+                    .runtime_search   = built->install_link->runtime_search.clone(),
+                });
+            }
             rstd_try(append_entry(
                 entries,
                 InstallEntry {
-                    .origin  = InstallEntryOrigin::BuildArtifact(artifact.target.clone()),
-                    .payload = InstallEntryPayload::CopyFile(built->path.clone()),
+                    .origin          = InstallEntryOrigin::BuildArtifact(artifact.target.clone()),
+                    .payload         = InstallEntryPayload::CopyFile(built->path.clone()),
+                    .link_production = rstd::move(production),
                     .relative_destination = artifact.destination.clone(),
                 }));
         }
         for (const auto& requested : recipe.external_assets) {
-            auto set = rstd_try(asset_set_for(
+            auto set           = rstd_try(asset_set_for(
                 build.external_assets, requested.dependency.as_str(), requested.set.as_str()));
+            auto strip_matches = Vec<usize>::make();
+            if (requested.strip.is_some()) {
+                strip_matches.reserve(requested.strip->files.len());
+                for (usize index {}; index < requested.strip->files.len(); ++index) {
+                    strip_matches.push(usize {});
+                }
+            }
             for (const auto& asset : set->entries) {
                 auto destination = requested.destination.join(asset.logical_path.as_path());
+                auto transforms  = Vec<InstallEntryTransform>::make();
+                if (requested.strip.is_some()) {
+                    for (usize index {}; index < requested.strip->files.len(); ++index) {
+                        if (requested.strip->files[index].as_path() != asset.logical_path.as_path())
+                            continue;
+                        ++strip_matches[index];
+                        transforms.push(InstallEntryTransform::Strip(requested.strip->mode));
+                    }
+                }
                 rstd_try(append_entry(
                     entries,
                     InstallEntry {
@@ -179,8 +222,20 @@ auto materialize_install_plan(Vec<InstallRecipe>  recipes,
                                                                      requested.set.clone(),
                                                                      asset.logical_path.clone()),
                         .payload = InstallEntryPayload::CopyFile(asset.source.clone()),
+                        .transforms           = rstd::move(transforms),
                         .relative_destination = rstd::move(destination),
                     }));
+            }
+            if (requested.strip.is_some()) {
+                for (usize index {}; index < strip_matches.len(); ++index) {
+                    if (strip_matches[index] == usize(1)) continue;
+                    return materialize_failure<InstallPlan>(rstd::format(
+                        "external asset strip path '{}:{}:{}' matched {} catalog entries",
+                        requested.dependency.as_str(),
+                        requested.set.as_str(),
+                        requested.strip->files[index].as_path(),
+                        strip_matches[index]));
+                }
             }
         }
         for (const auto& configured : recipe.templates) {

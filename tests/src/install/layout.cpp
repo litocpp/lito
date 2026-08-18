@@ -14,6 +14,25 @@ using namespace lito_test;
 
 class InstallLayout : public ProjectFixture {};
 
+TEST_F(InstallLayout, RuntimeSearchRelationSurvivesPackagePublicationLayouts) {
+    auto direct =
+        lito::install_runtime_search_path(PathBuf::from("bin/weweb/renderer"_str).as_path(),
+                                          PathBuf::from("bin/weweb"_str).as_path());
+    ASSERT_TRUE(direct.is_ok());
+    EXPECT_EQ(direct->path.as_path(), PathBuf::from("."_str).as_path());
+
+    auto nested = lito::install_runtime_search_path(
+        PathBuf::from("bin/tools/renderer"_str).as_path(), PathBuf::from("lib/cef"_str).as_path());
+    ASSERT_TRUE(nested.is_ok());
+    EXPECT_EQ(nested->path.as_path(), PathBuf::from("../../lib/cef"_str).as_path());
+
+    auto isolated = lito::install_runtime_search_path(
+        PathBuf::from("packages/fixture/bin/tools/renderer"_str).as_path(),
+        PathBuf::from("packages/fixture/lib/cef"_str).as_path());
+    ASSERT_TRUE(isolated.is_ok());
+    EXPECT_EQ(isolated->path.as_path(), nested->path.as_path());
+}
+
 TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
     auto root_directory   = install_root("install-layout-migration"_str);
     auto source_directory = source_root("install-layout-migration-source"_str);

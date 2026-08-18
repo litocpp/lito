@@ -8,6 +8,7 @@ import lito.core;
 import :install.error;
 import :install.recipe;
 import :install.package;
+import :install.path;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -167,6 +168,73 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                 return selection_failure<InstallBuildRequirements>(
                     rstd::format("unknown install artifact target '{}'",
                                  lito::package::package_target_id_text(artifact.target)));
+            }
+            if (! artifact.runtime_search.is_empty()) {
+                if (artifact.target.kind != lito::package::PackageTargetKind::Binary) {
+                    return selection_failure<InstallBuildRequirements>(rstd::format(
+                        "install runtime search is only supported for binary target '{}'",
+                        lito::package::package_target_id_text(artifact.target)));
+                }
+                if (target.os != "linux"_str) {
+                    return selection_failure<InstallBuildRequirements>(rstd::format(
+                        "install runtime search for '{}' requires a Linux target, got '{}'",
+                        lito::package::package_target_id_text(artifact.target),
+                        target.triple.as_str()));
+                }
+                auto paths = Vec<lito::artifact::OriginRelativeRuntimePath>::make();
+                for (const auto& reference : artifact.runtime_search) {
+                    const InstallExternalAssetRecipe* matched = nullptr;
+                    for (const auto& candidate : recipe.external_assets) {
+                        if (candidate.dependency != reference.dependency.as_str() ||
+                            candidate.set != reference.set.as_str())
+                            continue;
+                        if (matched != nullptr) {
+                            return selection_failure<InstallBuildRequirements>(rstd::format(
+                                "install recipe '{}' has ambiguous external asset '{}:{}'",
+                                recipe.owner.as_str(),
+                                reference.dependency.as_str(),
+                                reference.set.as_str()));
+                        }
+                        matched = rstd::addressof(candidate);
+                    }
+                    if (matched == nullptr) {
+                        return selection_failure<InstallBuildRequirements>(
+                            rstd::format("install artifact '{}' runtime search references "
+                                         "undeclared external asset '{}:{}'",
+                                         lito::package::package_target_id_text(artifact.target),
+                                         reference.dependency.as_str(),
+                                         reference.set.as_str()));
+                    }
+                    auto validated = install_runtime_search_path(artifact.destination.as_path(),
+                                                                 matched->destination.as_path());
+                    if (validated.is_err()) {
+                        return selection_failure<InstallBuildRequirements>(
+                            rstd::format("install runtime search from '{}' to '{}' is invalid: {}",
+                                         artifact.destination.as_path(),
+                                         matched->destination.as_path(),
+                                         rstd::move(validated).unwrap_err()));
+                    }
+                    paths.push(rstd::move(validated).unwrap());
+                }
+                auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
+                if (runpath.is_err()) {
+                    return selection_failure<InstallBuildRequirements>(
+                        rstd::format("install runtime search for '{}' is invalid: {}",
+                                     lito::package::package_target_id_text(artifact.target),
+                                     rstd::move(runpath).unwrap_err()));
+                }
+                auto identity = String::make("lito-install-link-v1\n"_str);
+                identity.push_str(lito::package::package_target_id_text(artifact.target).as_str());
+                identity.push_ascii('\n');
+                identity.push_str(lito::artifact::elf_runpath_identity(*runpath).as_str());
+                requirements.artifact_link_variants.push(RequestedArtifactLinkVariant {
+                    .target = artifact.target.clone(),
+                    .policy =
+                        InstallArtifactLinkPolicy {
+                            .runtime_search = rstd::move(runpath).unwrap(),
+                            .identity       = rstd::move(identity),
+                        },
+                });
             }
             auto duplicate = false;
             for (const auto& selected : requirements.targets) {

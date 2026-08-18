@@ -27,6 +27,7 @@ target_sources(
          src/clang/preprocessor_query.cppm
          src/clang/sdk.cppm
          src/clang/support.cppm
+         src/clang/strip.cppm
          src/clang/toolchain.cppm
          src/common/command.cppm
          src/common/compiler.cppm

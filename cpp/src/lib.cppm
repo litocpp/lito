@@ -10,6 +10,7 @@ export import :lexical;
 export import :bmi;
 export import :build;
 export import :usage;
+export import :link;
 export import :source;
 export import :package;
 export import :modules;

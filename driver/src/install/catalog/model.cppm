@@ -21,12 +21,37 @@ enum class InstallOwnedEntryKind
     SoftLink,
 };
 
+enum class InstallOwnedProductionKind
+{
+    Copy,
+    Link,
+    LitoLink,
+};
+
+struct InstallOwnedProduction {
+    InstallOwnedProductionKind         kind { InstallOwnedProductionKind::Copy };
+    String                             variant_identity;
+    String                             link_identity;
+    Option<lito::artifact::ElfRunpath> runtime_search;
+
+    auto clone() const -> InstallOwnedProduction {
+        return InstallOwnedProduction {
+            .kind             = kind,
+            .variant_identity = variant_identity.clone(),
+            .link_identity    = link_identity.clone(),
+            .runtime_search   = runtime_search.is_some() ? Some(runtime_search->clone()) : None(),
+        };
+    }
+};
+
 struct InstallOwnedEntry {
-    PathBuf               logical_destination;
-    PathBuf               physical_destination;
-    InstallOwnedEntryKind kind { InstallOwnedEntryKind::File };
-    String                origin;
-    Option<PathBuf>       link_target;
+    PathBuf                        logical_destination;
+    PathBuf                        physical_destination;
+    InstallOwnedEntryKind          kind { InstallOwnedEntryKind::File };
+    String                         origin;
+    Option<PathBuf>                link_target;
+    InstallOwnedProduction         production;
+    Vec<lito::artifact::StripMode> transforms;
 
     auto clone() const -> InstallOwnedEntry {
         return InstallOwnedEntry {
@@ -35,6 +60,8 @@ struct InstallOwnedEntry {
             .kind                 = kind,
             .origin               = origin.clone(),
             .link_target          = link_target.is_some() ? Some(link_target->clone()) : None(),
+            .production           = production.clone(),
+            .transforms           = as<Clone>(transforms).clone(),
         };
     }
 };

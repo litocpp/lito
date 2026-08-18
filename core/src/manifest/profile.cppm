@@ -5,6 +5,7 @@ module;
 export module lito.core:manifest.profile;
 
 import rstd;
+import :artifact;
 
 using namespace rstd::prelude;
 using ErrorBox = Box<dyn<rstd::error::Error>>;
@@ -68,20 +69,13 @@ enum class BuildProfileFamily
     Release,
 };
 
-enum class StripMode
-{
-    None,
-    DebugInfo,
-    Symbols,
-};
-
 struct BuildProfileDefinition {
-    BuildProfileName         name;
-    Option<BuildProfileName> inherits;
-    Option<Optimization>     optimization;
-    Option<DebugInfo>        debug_info;
-    Option<StripMode>        strip;
-    Option<Lto>              lto;
+    BuildProfileName                  name;
+    Option<BuildProfileName>          inherits;
+    Option<Optimization>              optimization;
+    Option<DebugInfo>                 debug_info;
+    Option<lito::artifact::StripMode> strip;
+    Option<Lto>                       lto;
 
     auto clone() const -> BuildProfileDefinition {
         auto result = BuildProfileDefinition {
@@ -97,13 +91,13 @@ struct BuildProfileDefinition {
 };
 
 struct ResolvedBuildProfile {
-    BuildProfileName   name;
-    BuildProfileFamily family { BuildProfileFamily::Debug };
-    Optimization       optimization { Optimization::None };
-    DebugInfo          debug_info { DebugInfo::Full };
-    StripMode          strip { StripMode::None };
-    Lto                lto { Lto::Off };
-    bool               ndebug { false };
+    BuildProfileName          name;
+    BuildProfileFamily        family { BuildProfileFamily::Debug };
+    Optimization              optimization { Optimization::None };
+    DebugInfo                 debug_info { DebugInfo::Full };
+    lito::artifact::StripMode strip { lito::artifact::StripMode::None };
+    Lto                       lto { Lto::Off };
+    bool                      ndebug { false };
 };
 
 struct ProjectProfile {
@@ -238,7 +232,7 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                                  .family       = BuildProfileFamily::Debug,
                                  .optimization = Optimization::None,
                                  .debug_info   = DebugInfo::Full,
-                                 .strip        = StripMode::None,
+                                 .strip        = lito::artifact::StripMode::None,
                                  .lto          = Lto::Off,
                                  .ndebug       = false,
                              }
@@ -249,7 +243,7 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                                  .family       = BuildProfileFamily::Release,
                                  .optimization = Optimization::Level3,
                                  .debug_info   = DebugInfo::None,
-                                 .strip        = StripMode::None,
+                                 .strip        = lito::artifact::StripMode::None,
                                  .lto          = Lto::Off,
                                  .ndebug       = true,
                              };

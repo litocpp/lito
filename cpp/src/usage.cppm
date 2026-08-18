@@ -8,26 +8,13 @@ import rstd;
 import lito.core;
 import :compiler.option;
 import :c.compiler;
+import :link;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 
 export namespace lito::cpp
 {
-
-struct LinkArgumentSequence {
-    Vec<String> tokens;
-    String      source;
-    String      identity;
-
-    auto clone() const -> LinkArgumentSequence {
-        return LinkArgumentSequence {
-            .tokens   = as<Clone>(tokens).clone(),
-            .source   = source.clone(),
-            .identity = identity.clone(),
-        };
-    }
-};
 
 constexpr auto cpp_thread_requirement_semantics() -> CppRequirementSemantics {
     return CppRequirementSemantics {
@@ -65,74 +52,6 @@ auto merge_cpp_import_requirements(CppCompileOptions& left, CppCompileOptions& r
     left.common.threading  = model;
     right.common.threading = model;
     return changed;
-}
-
-struct CppSystemLibraryRequirement : DefaultInClass<CppSystemLibraryRequirement, Clone> {
-    String name;
-    String source;
-
-    auto clone() const -> CppSystemLibraryRequirement {
-        return CppSystemLibraryRequirement { .name = name.clone(), .source = source.clone() };
-    }
-};
-
-struct CppLinkRequirements {
-    bool                             posix_threads { false };
-    Vec<String>                      thread_sources;
-    Vec<CppSystemLibraryRequirement> system_libraries;
-
-    auto clone() const -> CppLinkRequirements {
-        return CppLinkRequirements {
-            .posix_threads    = posix_threads,
-            .thread_sources   = as<Clone>(thread_sources).clone(),
-            .system_libraries = as<Clone>(system_libraries).clone(),
-        };
-    }
-};
-
-auto cpp_link_requirements_identity(const CppLinkRequirements& requirements) -> String {
-    auto result = String::make("lito-cpp-link-requirements-v1\n"_str);
-    result.push_str(requirements.posix_threads ? "posix-threads=true\n"_str
-                                               : "posix-threads=false\n"_str);
-    for (const auto& requirement : requirements.system_libraries) {
-        result.push_str("system-library="_str);
-        result.push_str(requirement.name.as_str());
-        result.push_ascii('\n');
-    }
-    return result;
-}
-
-struct NormalizedLinkArguments {
-    LinkArgumentSequence arguments;
-    CppLinkRequirements  requirements;
-};
-
-auto normalize_link_arguments(LinkArgumentSequence input) -> NormalizedLinkArguments {
-    auto tokens       = Vec<String>::make();
-    auto requirements = CppLinkRequirements {};
-    for (auto index = usize {}; index < input.tokens.len(); ++index) {
-        auto token = input.tokens[index].as_str();
-        if (token == "-pthread"_str) {
-            requirements.posix_threads = true;
-            requirements.thread_sources.push(input.source.clone());
-            continue;
-        }
-        if (token == "-ldl"_str || (token == "-l"_str && index + usize(1) < input.tokens.len() &&
-                                    input.tokens[index + usize(1)].as_str() == "dl"_str)) {
-            requirements.system_libraries.push(CppSystemLibraryRequirement {
-                .name   = String::make("dl"_str),
-                .source = input.source.clone(),
-            });
-            if (token == "-l"_str) ++index;
-            continue;
-        }
-        tokens.push(input.tokens[index].clone());
-    }
-    input.tokens = rstd::move(tokens);
-    return NormalizedLinkArguments {
-        .arguments    = rstd::move(input),
-        .requirements = rstd::move(requirements),
-    };
 }
 
 class LanguageArgumentLayer : public DefaultInClass<LanguageArgumentLayer, Clone> {
@@ -176,13 +95,13 @@ struct ExternalTargetUsage {
 };
 
 struct ExternalDependencyUsage {
-    String                   alias;
-    String                   provider;
-    String                   version;
-    Vec<ExternalTargetUsage> targets;
-    LinkArgumentSequence     link_arguments;
-    CppLinkRequirements      link_requirements;
-    String                   identity;
+    String                       alias;
+    String                       provider;
+    String                       version;
+    Vec<ExternalTargetUsage>     targets;
+    lito::link::ArgumentSequence link_arguments;
+    lito::link::Requirements     link_requirements;
+    String                       identity;
 
     auto clone() const -> ExternalDependencyUsage {
         auto copied_targets = Vec<ExternalTargetUsage>::with_capacity(targets.len());
@@ -222,8 +141,8 @@ struct ResolvedExternalDependency {
     String                           provider;
     String                           version;
     Vec<ResolvedExternalTargetUsage> targets;
-    LinkArgumentSequence             link_arguments;
-    CppLinkRequirements              link_requirements;
+    lito::link::ArgumentSequence     link_arguments;
+    lito::link::Requirements         link_requirements;
     String                           identity;
 
     auto clone() const -> ResolvedExternalDependency {
@@ -254,7 +173,7 @@ struct UsageRequirements {
     Vec<String>                                        private_definitions;
     LanguageArgumentLayer                              arguments;
     LanguageArgumentLayer                              interface_arguments;
-    CppLinkRequirements                                link_requirements;
+    lito::link::Requirements                           link_requirements;
     Vec<String>                                        linker_options;
     Vec<lito::dependency::IncludeDirectoryRequirement> private_include_directory_requirements;
 };

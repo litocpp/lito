@@ -40,12 +40,24 @@ class InstallEntryPayload {
               (Bytes, (Vec<u8> contents; u32 permissions;)))
 };
 
+class InstallEntryTransform {
+    RSTD_ENUM(InstallEntryTransform, (Strip, (lito::artifact::StripMode mode;)))
+};
+
+struct InstallLinkProduction {
+    String                     variant_identity;
+    String                     link_identity;
+    lito::artifact::ElfRunpath runtime_search;
+};
+
 struct InstallEntry {
-    InstallEntryOrigin  origin;
-    InstallEntryPayload payload;
-    PathBuf             relative_destination;
-    PathBuf             destination;
-    InstallAction       action { InstallAction::Created };
+    InstallEntryOrigin            origin;
+    InstallEntryPayload           payload;
+    Vec<InstallEntryTransform>    transforms;
+    Option<InstallLinkProduction> link_production;
+    PathBuf                       relative_destination;
+    PathBuf                       destination;
+    InstallAction                 action { InstallAction::Created };
 };
 
 } // namespace lito
