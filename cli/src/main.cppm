@@ -345,14 +345,12 @@ extern "C++" int main() {
     auto loaded_config = lito::config::load_project_config(
         config_root,
         lito::config::ProjectConfigRequest {
-            .mode      = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
-                                              : lito::config::ConfigLoadMode::Enabled,
-            .overrides = rstd::move(invocation.config_overrides),
-            .toolchain = rstd::move(invocation.toolchain),
-            .toolchain_standard_library = rstd::move(invocation.toolchain_standard_library),
-            .environment_flags          = invocation.use_env_flags
-                                              ? lito::config::EnvironmentFlagPolicy::Append
-                                              : lito::config::EnvironmentFlagPolicy::Ignore,
+            .mode              = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
+                                                      : lito::config::ConfigLoadMode::Enabled,
+            .overrides         = rstd::move(invocation.config_overrides),
+            .environment_flags = invocation.use_env_flags
+                                     ? lito::config::EnvironmentFlagPolicy::Append
+                                     : lito::config::EnvironmentFlagPolicy::Ignore,
         });
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();

@@ -352,20 +352,14 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     overrides.push(String::make("build.options=[\"-pthread\"]"_str));
     overrides.push(String::make("build.c.options=[\"-Wstrict-prototypes\"]"_str));
     overrides.push(String::make("build.linker-options=[\"-Wl,--as-needed\"]"_str));
-    auto loaded = lito::config::load_project_config(
-        directory.as_path(),
-        lito::config::ProjectConfigRequest {
-            .overrides = rstd::move(overrides),
-            .toolchain =
-                lito::config::ToolchainOverride {
-                    .cxx = Some(PathBuf::from("dedicated-cxx"_str)),
-                },
-            .toolchain_standard_library = Some(String::make("libc++"_str)),
-        });
+    auto loaded = lito::config::load_project_config(directory.as_path(),
+                                                    lito::config::ProjectConfigRequest {
+                                                        .overrides = rstd::move(overrides),
+                                                    });
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
-    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("dedicated-cxx"_str).as_path());
-    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libcxx);
+    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("generic-cxx"_str).as_path());
+    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
     ASSERT_EQ(loaded->build_options.cpp.len(), usize(1));
     EXPECT_EQ(loaded->build_options.cpp[usize {}].source.as_str(), "config.build.options"_str);
     EXPECT_EQ(loaded->build_options.cpp[usize {}].arguments[usize {}].as_str(), "-pthread"_str);

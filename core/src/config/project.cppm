@@ -86,8 +86,6 @@ struct ProjectConfig {
 struct ProjectConfigRequest {
     ConfigLoadMode        mode { ConfigLoadMode::Enabled };
     Vec<String>           overrides;
-    ToolchainOverride     toolchain;
-    Option<String>        toolchain_standard_library;
     EnvironmentFlagPolicy environment_flags { EnvironmentFlagPolicy::Ignore };
 };
 

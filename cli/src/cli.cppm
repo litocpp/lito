@@ -176,8 +176,6 @@ class CliOutcome {
               (Parsed,
                (PathBuf working_directory; bool no_config; bool use_env_flags;
                 Vec<String>                                     config_overrides;
-                lito::config::ToolchainOverride                 toolchain;
-                Option<String>                                  toolchain_standard_library;
                 CliCommand                                      command;)),
               (Exit, (String output; bool standard_error; i32 exit_code;)))
 };
@@ -224,17 +222,6 @@ public:
     }
 };
 
-class StandardLibraryParser {
-public:
-    auto parse(ref<OsStr> value) const -> Result<String, ValueError> {
-        auto text = value.to_str();
-        if (text.is_none()) return Err(ValueError::InvalidUtf8());
-        return Ok(String::make(*text));
-    }
-
-    auto possible_values() const -> Vec<String> { return lito::config::standard_library_names(); }
-};
-
 class LockExportFormatParser {
 public:
     auto parse(ref<OsStr> value) const -> Result<lito::lock::LockExportFormat, ValueError> {
@@ -277,22 +264,11 @@ struct BuildExecutionArgs {
     ArgKey<usize>  jobs;
 };
 
-struct ToolchainArgs {
-    ArgKey<String> cc;
-    ArgKey<String> cxx;
-    ArgKey<String> ld;
-    ArgKey<String> ar;
-    ArgKey<String> strip;
-    ArgKey<String> format;
-    ArgKey<String> stdlib;
-};
-
 struct RootArgs {
     ArgKey<String> directory;
     ArgKey<bool>   no_config;
     ArgKey<bool>   use_env_flags;
     ArgKey<String> config;
-    ToolchainArgs  toolchain;
 };
 
 struct BuildSchema {
@@ -547,39 +523,6 @@ auto config_override_arg() -> Arg<String> {
         .help("Override a configuration value for this invocation"_str)
         .append()
         .global();
-}
-
-auto toolchain_arg(ref<str> id, ref<str> name, ref<str> help) -> Arg<String> {
-    return Arg<String>::value(id, string_parser())
-        .long_name(name)
-        .value_name("TOOL"_str)
-        .help(help)
-        .help_heading("Toolchain"_str)
-        .global();
-}
-
-auto add_toolchain_args(Command& command) -> ToolchainArgs {
-    return ToolchainArgs {
-        .cc = command.add_arg(
-            toolchain_arg("toolchain-cc"_str, "toolchain.cc"_str, "Set the C compiler"_str)),
-        .cxx = command.add_arg(
-            toolchain_arg("toolchain-cxx"_str, "toolchain.cxx"_str, "Set the C++ compiler"_str)),
-        .ld = command.add_arg(
-            toolchain_arg("toolchain-ld"_str, "toolchain.ld"_str, "Set the LLD linker"_str)),
-        .ar = command.add_arg(
-            toolchain_arg("toolchain-ar"_str, "toolchain.ar"_str, "Set the LLVM archiver"_str)),
-        .strip  = command.add_arg(toolchain_arg(
-            "toolchain-strip"_str, "toolchain.strip"_str, "Set the LLVM strip executable"_str)),
-        .format = command.add_arg(toolchain_arg(
-            "toolchain-format"_str, "toolchain.format"_str, "Set the ClangFormat executable"_str)),
-        .stdlib =
-            command.add_arg(Arg<String>::value("toolchain-stdlib"_str, StandardLibraryParser {})
-                                .long_name("toolchain.stdlib"_str)
-                                .value_name("STDLIB"_str)
-                                .help("Set the C++ standard library"_str)
-                                .help_heading("Toolchain"_str)
-                                .global()),
-    };
 }
 
 auto timing_file_arg() -> Arg<String> {
@@ -962,7 +905,6 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .no_config     = root.add_arg(no_config_arg()),
         .use_env_flags = root.add_arg(use_env_flags_arg()),
         .config        = root.add_arg(config_override_arg()),
-        .toolchain     = add_toolchain_args(root),
     };
     root.add_subcommand(rstd::move(build.command));
     root.add_subcommand(rstd::move(install.command));
@@ -1402,32 +1344,12 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
 }
 
 struct CliInvocation {
-    PathBuf                         working_directory;
-    bool                            no_config {};
-    bool                            use_env_flags {};
-    Vec<String>                     config_overrides;
-    lito::config::ToolchainOverride toolchain;
-    Option<String>                  toolchain_standard_library;
-    CliCommand                      command;
+    PathBuf     working_directory;
+    bool        no_config {};
+    bool        use_env_flags {};
+    Vec<String> config_overrides;
+    CliCommand  command;
 };
-
-auto has_toolchain_override(const lito::config::ToolchainOverride& value,
-                            const Option<String>&                  standard_library) -> bool {
-    return value.cc.is_some() || value.cxx.is_some() || value.ld.is_some() || value.ar.is_some() ||
-           value.strip.is_some() || value.format.is_some() || standard_library.is_some();
-}
-
-auto decode_toolchain(const Matches& matches, const ToolchainArgs& args)
-    -> Result<lito::config::ToolchainOverride, CliDecodeError> {
-    return Ok(lito::config::ToolchainOverride {
-        .cc     = rstd_try(optional_path(matches, args.cc)),
-        .cxx    = rstd_try(optional_path(matches, args.cxx)),
-        .ld     = rstd_try(optional_path(matches, args.ld)),
-        .ar     = rstd_try(optional_path(matches, args.ar)),
-        .strip  = rstd_try(optional_path(matches, args.strip)),
-        .format = rstd_try(optional_path(matches, args.format)),
-    });
-}
 
 auto decode_invocation(const CliSchema& schema, const Matches& matches)
     -> Result<CliInvocation, CliDecodeError> {
@@ -1435,9 +1357,7 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     auto no_config     = rstd_try(flag_value(matches, schema.root.no_config));
     auto use_env_flags = rstd_try(flag_value(matches, schema.root.use_env_flags));
     auto overrides     = rstd_try(string_values(matches, schema.root.config));
-    auto toolchain     = rstd_try(decode_toolchain(matches, schema.root.toolchain));
-    auto standard_library = rstd_try(optional_string(matches, schema.root.toolchain.stdlib));
-    auto command          = rstd_try(decode_command(schema, matches));
+    auto command       = rstd_try(decode_command(schema, matches));
     const auto consumes_build_options = command.is_Build() || command.is_Install() ||
                                         command.is_Test() || command.is_Bench() ||
                                         command.is_Doc() || command.is_Scan();
@@ -1445,19 +1365,16 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
         return Err(CliDecodeError::InvalidUsage(String::make(
             "--use-env-flags is only valid for build, install, test, bench, doc, and scan"_str)));
     }
-    if (command.is_Config() && (no_config || ! overrides.is_empty() ||
-                                has_toolchain_override(toolchain, standard_library))) {
+    if (command.is_Config() && (no_config || ! overrides.is_empty())) {
         return Err(CliDecodeError::InvalidUsage(String::make(
-            "the config command cannot be combined with --no-config, --config, or --toolchain.*"_str)));
+            "the config command cannot be combined with --no-config or --config"_str)));
     }
     return Ok(CliInvocation {
-        .working_directory          = PathBuf::from(rstd::move(directory)),
-        .no_config                  = no_config,
-        .use_env_flags              = use_env_flags,
-        .config_overrides           = rstd::move(overrides),
-        .toolchain                  = rstd::move(toolchain),
-        .toolchain_standard_library = rstd::move(standard_library),
-        .command                    = rstd::move(command),
+        .working_directory = PathBuf::from(rstd::move(directory)),
+        .no_config         = no_config,
+        .use_env_flags     = use_env_flags,
+        .config_overrides  = rstd::move(overrides),
+        .command           = rstd::move(command),
     });
 }
 
@@ -1529,8 +1446,6 @@ auto parse() -> CliOutcome {
                               value.no_config,
                               value.use_env_flags,
                               rstd::move(value.config_overrides),
-                              rstd::move(value.toolchain),
-                              rstd::move(value.toolchain_standard_library),
                               rstd::move(value.command));
 }
 

@@ -281,38 +281,6 @@ auto apply_config_override(ConfigDocument& document, ref<str> text, usize index)
         document.value, assignment.key, Toml::String(rstd::move(assignment.value)));
 }
 
-auto apply_toolchain_value(ConfigDocument& document, ref<str> key, Option<PathBuf> value)
-    -> ConfigResult<empty> {
-    if (value.is_none()) return Ok(empty {});
-    auto path = rstd::move(value).unwrap();
-    auto text = path.as_path().to_str();
-    if (text.is_none()) {
-        return document_failure<empty>(rstd::format("--{} must be valid UTF-8", key));
-    }
-    auto parsed_key = rstd::toml::parse_key_path(key).unwrap();
-    return set_config_value(document.value, parsed_key, Toml::String(String::make(*text)));
-}
-
-auto apply_toolchain_standard_library(ConfigDocument& document, Option<String> value)
-    -> ConfigResult<empty> {
-    if (value.is_none()) return Ok(empty {});
-    auto key = rstd::toml::parse_key_path("toolchain.stdlib"_str).unwrap();
-    return set_config_value(document.value, key, Toml::String(rstd::move(value).unwrap()));
-}
-
-auto apply_toolchain_values(ConfigDocument&   document,
-                            ToolchainOverride values,
-                            Option<String>    standard_library) -> ConfigResult<empty> {
-    rstd_try(apply_toolchain_value(document, "toolchain.cc"_str, rstd::move(values.cc)));
-    rstd_try(apply_toolchain_value(document, "toolchain.cxx"_str, rstd::move(values.cxx)));
-    rstd_try(apply_toolchain_value(document, "toolchain.ld"_str, rstd::move(values.ld)));
-    rstd_try(apply_toolchain_value(document, "toolchain.ar"_str, rstd::move(values.ar)));
-    rstd_try(apply_toolchain_value(document, "toolchain.strip"_str, rstd::move(values.strip)));
-    rstd_try(apply_toolchain_value(document, "toolchain.format"_str, rstd::move(values.format)));
-    rstd_try(apply_toolchain_standard_library(document, rstd::move(standard_library)));
-    return Ok(empty {});
-}
-
 auto ensure_config_directory(const ConfigLocation& location) -> ConfigResult<empty> {
     auto metadata = rstd::fs::symlink_metadata(location.directory.as_path());
     if (metadata.is_ok()) {
@@ -399,8 +367,6 @@ auto lito::config::load_project_config(ref<rstd::path::Path> root, ProjectConfig
     for (usize index {}; index < request.overrides.len(); ++index) {
         rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
     }
-    rstd_try(apply_toolchain_values(
-        document, rstd::move(request.toolchain), rstd::move(request.toolchain_standard_library)));
     return decode_project_config(
         document.location.root.clone(), document.value, request.environment_flags);
 }
