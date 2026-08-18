@@ -175,7 +175,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                              request.purpose,
                                              execution->jobs,
                                              preparation_observer,
-                                             rstd::move(catalog));
+                                             rstd::move(catalog),
+                                             request.setup_reporter);
         if (project.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(project).unwrap_err()));
         }

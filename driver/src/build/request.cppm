@@ -3,6 +3,7 @@ export module lito.driver:build.request;
 import rstd;
 import lito.core;
 import :build.event;
+import :build.setup_report;
 import lito.cpp;
 import lito.system;
 
@@ -43,9 +44,10 @@ struct BuildRequest {
     lito::package::PackageSelectionPurpose    purpose {
         lito::package::PackageSelectionPurpose::Production
     };
-    bool                   locked { false };
-    BuildExecutionPolicy   execution;
-    Option<BuildEventSink> observer;
+    bool                         locked { false };
+    BuildExecutionPolicy         execution;
+    Option<BuildEventSink>       observer;
+    Option<BuildSetupReportSink> setup_reporter;
 };
 
 } // namespace lito

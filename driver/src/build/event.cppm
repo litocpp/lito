@@ -12,7 +12,6 @@ export namespace lito
 
 enum class BuildEventKind
 {
-    Toolchain,
     Fetch,
     Extract,
     Scan,
@@ -68,7 +67,6 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
     auto fmt(fmt::Formatter& formatter) const -> bool {
         auto name = "unknown"_str;
         switch (this->self()) {
-        case lito::BuildEventKind::Toolchain: name = "toolchain"_str; break;
         case lito::BuildEventKind::Fetch: name = "fetch"_str; break;
         case lito::BuildEventKind::Extract: name = "extract"_str; break;
         case lito::BuildEventKind::Scan: name = "scan"_str; break;
@@ -109,7 +107,4 @@ auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::S
 auto source_observer(const Option<BuildEventSink>& observer) noexcept
     -> lito::source::SourceEventSink;
 auto cmake_observer(const Option<BuildEventSink>& observer) noexcept -> Option<ToolchainEventSink>;
-auto emit_build_toolchain(const Option<BuildEventSink>& observer,
-                          const ClangToolchain&         toolchain) noexcept -> void;
-
 } // namespace lito

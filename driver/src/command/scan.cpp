@@ -121,7 +121,9 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
                                           request.locked,
                                           lito::package::PackageSelectionPurpose::All,
                                           jobs,
-                                          request.observer);
+                                          request.observer,
+                                          None(),
+                                          request.setup_reporter);
     if (prepared.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(prepared).unwrap_err()));
     }

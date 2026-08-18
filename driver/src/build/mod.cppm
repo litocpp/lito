@@ -7,6 +7,7 @@ export import :build.artifact;
 export import :build.documentation;
 export import :build.result;
 export import :build.error;
+export import :build.setup_report;
 export import :build.layout;
 export import :build.layout_error;
 export import :build.discovery;

@@ -8,6 +8,7 @@ import lito.core;
 import :project.error;
 import lito.cpp;
 import :build.event;
+import :build.setup_report;
 import :build.layout;
 import :dependency.catalog;
 import :dependency.preparation;
@@ -431,15 +432,16 @@ auto prepare_build_project(
     bool                                             locked,
     lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
     usize                                     jobs    = usize(1),
-    const Option<BuildEventSink>&             observer = None(),
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    const Option<BuildEventSink>&             observer       = None(),
+    Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
+    const Option<BuildSetupReportSink>&       setup_reporter = None())
     -> ProjectResult<PreparedBuildProject> {
     auto created = ClangToolchain::create(configuration.toolchain, tool_resolver, environment);
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
     auto toolchain = rstd::move(created).unwrap();
-    emit_build_toolchain(observer, toolchain);
+    emit_build_setup_report(setup_reporter, configuration.toolchain, toolchain);
     auto metadata = resolve_project_metadata(selection,
                                              configuration,
                                              profile,

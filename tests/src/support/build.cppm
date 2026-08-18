@@ -281,18 +281,13 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 
 struct CompileProgressCapture {
     Vec<lito::BuildProgress> values;
-    Vec<String>              toolchain_names;
-    Vec<PathBuf>             toolchain_paths;
+    Vec<PathBuf>             requested_tools;
+    Vec<PathBuf>             resolved_tools;
     bool                     missing {};
 };
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
-    if (event.kind == lito::BuildEventKind::Toolchain) {
-        capture.toolchain_names.push(String::make(event.target));
-        capture.toolchain_paths.push(PathBuf::from(event.path));
-        return;
-    }
     if (event.kind != lito::BuildEventKind::Compile) return;
     if (event.progress.is_none()) {
         capture.missing = true;
@@ -302,6 +297,20 @@ void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) 
         .current = event.progress->current,
         .total   = event.progress->total,
     });
+}
+
+void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report) noexcept {
+    auto&                            capture = *static_cast<CompileProgressCapture*>(raw_context);
+    const lito::BuildToolResolution* tools[] = {
+        rstd::addressof(report.toolchain.cc),
+        rstd::addressof(report.toolchain.cxx),
+        rstd::addressof(report.toolchain.ld),
+        rstd::addressof(report.toolchain.ar),
+    };
+    for (const auto* tool : tools) {
+        capture.requested_tools.push(tool->requested.clone());
+        capture.resolved_tools.push(tool->executable.clone());
+    }
 }
 
 } // namespace lito_test

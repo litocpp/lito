@@ -8,6 +8,7 @@ import lito.core;
 import :build;
 import :build.error;
 import :build.event;
+import :build.setup_report;
 import :build.prepared_project;
 import lito.cpp;
 import :install;
@@ -69,7 +70,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
             rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
     }
     auto resolved_toolchain = rstd::move(toolchain).unwrap();
-    emit_build_toolchain(request.build.observer, resolved_toolchain);
+    emit_build_setup_report(
+        request.build.setup_reporter, request.build.configuration.toolchain, resolved_toolchain);
     auto jobs =
         request.build.execution.scan.jobs.is_some() ? *request.build.execution.scan.jobs : usize(1);
     if (request.build.execution.scan.jobs.is_none()) {

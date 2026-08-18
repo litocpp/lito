@@ -16,7 +16,6 @@ using namespace lito_test;
 using PathBuf = rstd::path::PathBuf;
 
 TEST(Reporting, UserFacingEnumsImplementDisplay) {
-    EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Toolchain).as_str(), "toolchain"_str);
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Scan).as_str(), "scan"_str);
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Fetch).as_str(), "fetch"_str);
     EXPECT_EQ(rstd::format("{}", lito::BuildEventKind::Extract).as_str(), "extract"_str);

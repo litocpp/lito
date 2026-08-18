@@ -15,9 +15,9 @@ struct EventContext {
 void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& context = *static_cast<EventContext*>(raw_context);
     if (event.completed) return;
-    if (! context.verbose && event.kind != lito::BuildEventKind::Toolchain &&
-        event.kind != lito::BuildEventKind::Fetch && event.kind != lito::BuildEventKind::Extract &&
-        event.kind != lito::BuildEventKind::Scan && event.kind != lito::BuildEventKind::Compile &&
+    if (! context.verbose && event.kind != lito::BuildEventKind::Fetch &&
+        event.kind != lito::BuildEventKind::Extract && event.kind != lito::BuildEventKind::Scan &&
+        event.kind != lito::BuildEventKind::Compile &&
         event.kind != lito::BuildEventKind::Configure &&
         event.kind != lito::BuildEventKind::BuildToolFetch &&
         event.kind != lito::BuildEventKind::BuildToolRun &&
@@ -55,6 +55,46 @@ void observe(void* raw_context, const lito::BuildEvent& event) noexcept {
             rstd::io::println("[{}] {} {}", event.kind, event.target, event.path);
         }
     }
+}
+
+auto tool_resolution_text(const lito::BuildToolResolution& tool) -> String {
+    if (tool.requested.as_path() == tool.executable.as_path()) {
+        return rstd::format("{}", tool.executable.as_path());
+    }
+    return rstd::format("{} -> {}", tool.requested.as_path(), tool.executable.as_path());
+}
+
+auto render_build_setup(const lito::BuildSetupReport& report) -> String {
+    return rstd::format("Build setup\n"
+                        "  Toolchain\n"
+                        "    C compiler    {}\n"
+                        "    C++ compiler  {}\n"
+                        "    linker        {}\n"
+                        "    archiver      {}\n\n",
+                        tool_resolution_text(report.toolchain.cc).as_str(),
+                        tool_resolution_text(report.toolchain.cxx).as_str(),
+                        tool_resolution_text(report.toolchain.ld).as_str(),
+                        tool_resolution_text(report.toolchain.ar).as_str());
+}
+
+void report_build_setup(void* raw_context, const lito::BuildSetupReport& report) noexcept {
+    auto& context = *static_cast<EventContext*>(raw_context);
+    auto  output  = render_build_setup(report);
+    if (context.standard_error)
+        rstd::io::eprint("{}", output.as_str());
+    else
+        rstd::io::print("{}", output.as_str());
+}
+
+auto configure_build_output(lito::BuildRequest& request, EventContext& context) -> void {
+    request.observer       = Some(lito::BuildEventSink {
+        .context = rstd::addressof(context),
+        .notify  = observe,
+    });
+    request.setup_reporter = Some(lito::BuildSetupReportSink {
+        .context = rstd::addressof(context),
+        .notify  = report_build_setup,
+    });
 }
 
 void observe_test(void* raw_context, const lito::TestEvent& event) noexcept {
@@ -351,11 +391,8 @@ extern "C++" int main() {
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         auto event_context                   = EventContext { .verbose = options.verbose };
-        request.build.observer               = Some(lito::BuildEventSink {
-            .context = rstd::addressof(event_context),
-            .notify  = observe,
-        });
-        auto result                          = lito::install(rstd::move(request));
+        configure_build_output(request.build, event_context);
+        auto result = lito::install(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
             report_error(error);
@@ -444,8 +481,7 @@ extern "C++" int main() {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
-
-        auto result = lito::format(request);
+        auto result        = lito::format(request);
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
             report_error(error);
@@ -488,10 +524,14 @@ extern "C++" int main() {
         request.source                = rstd::move(options.source);
         request.locked                = options.locked || options.frozen;
         if (options.profile.is_some()) request.profile = Some(options.profile->clone());
-        auto event_context = EventContext { .standard_error = true };
-        request.observer   = Some(lito::BuildEventSink {
+        auto event_context     = EventContext { .standard_error = true };
+        request.observer       = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
+        });
+        request.setup_reporter = Some(lito::BuildSetupReportSink {
+            .context = rstd::addressof(event_context),
+            .notify  = report_build_setup,
         });
 
         auto scanned = lito::scan(request);
@@ -552,17 +592,14 @@ extern "C++" int main() {
             request.frontend = Some(
                 project_output_path(project.root.as_path(), rstd::move(options.frontend).unwrap()));
         }
-        request.data_only      = options.data_only;
-        auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildEventSink {
-            .context = rstd::addressof(event_context),
-            .notify  = observe,
-        });
-        request.observer       = Some(lito::DocEventSink {
+        request.data_only  = options.data_only;
+        auto event_context = EventContext { .verbose = options.verbose };
+        configure_build_output(request.build, event_context);
+        request.observer = Some(lito::DocEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe_doc,
         });
-        auto result            = lito::doc(rstd::move(request));
+        auto result      = lito::doc(rstd::move(request));
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
             report_error(error);
@@ -617,12 +654,9 @@ extern "C++" int main() {
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
-        auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildEventSink {
-            .context = rstd::addressof(event_context),
-            .notify  = observe,
-        });
-        request.observer       = Some(lito::TestObserver {
+        auto event_context = EventContext { .verbose = options.verbose };
+        configure_build_output(request.build, event_context);
+        request.observer = Some(lito::TestObserver {
             .context = rstd::addressof(event_context),
             .notify  = observe_test,
         });
@@ -741,12 +775,9 @@ extern "C++" int main() {
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         if (options.output.is_some()) request.build.output = rstd::move(*options.output);
-        auto event_context     = EventContext { .verbose = options.verbose };
-        request.build.observer = Some(lito::BuildEventSink {
-            .context = rstd::addressof(event_context),
-            .notify  = observe,
-        });
-        request.observer       = Some(lito::BenchObserver {
+        auto event_context = EventContext { .verbose = options.verbose };
+        configure_build_output(request.build, event_context);
+        request.observer = Some(lito::BenchObserver {
             .context = rstd::addressof(event_context),
             .notify  = observe_bench,
         });
@@ -840,11 +871,8 @@ extern "C++" int main() {
     if (options.output.is_some()) request.output = rstd::move(*options.output);
     auto event_context = EventContext { .verbose = options.verbose };
 
-    request.observer = Some(lito::BuildEventSink {
-        .context = rstd::addressof(event_context),
-        .notify  = observe,
-    });
-    auto result      = lito::build(request);
+    configure_build_output(request, event_context);
+    auto result = lito::build(request);
     if (result.is_err()) {
         auto error = rstd::move(result).unwrap_err();
         report_error(error);

@@ -4,6 +4,7 @@ import rstd;
 import lito.core;
 export import :command.error;
 import :build.event;
+import :build.setup_report;
 import lito.cpp;
 import lito.toolchain;
 import lito.frontend;
@@ -29,6 +30,7 @@ struct ScanRequest {
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
     bool                                      locked { false };
     Option<BuildEventSink>                    observer;
+    Option<BuildSetupReportSink>              setup_reporter;
 };
 
 struct ScanReport {

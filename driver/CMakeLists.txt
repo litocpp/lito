@@ -35,6 +35,7 @@ target_sources(
          src/build/request.cppm
          src/build/result.cppm
          src/build/script_error.cppm
+         src/build/setup_report.cppm
          src/build/tool_action_error.cppm
          src/cache/error.cppm
          src/command/bench.cppm
