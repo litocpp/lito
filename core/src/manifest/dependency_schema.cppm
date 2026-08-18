@@ -641,28 +641,25 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
                                                 String      alias,
                                                 ref<str>    context)
     -> ManifestSchemaResult<WorkspaceCMakeExternalDependencyDefinition> {
-    auto package     = required_string(specification, "find-package"_str, context);
-    auto path        = optional_string(specification, "path"_str, context);
-    auto git         = optional_string(specification, "git"_str, context);
-    auto archive     = optional_string(specification, "archive"_str, context);
-    auto archives    = parse_cmake_archive_variants(member(specification, "archives"_str), context);
-    auto sha256      = optional_string(specification, "sha256"_str, context);
-    auto integration = optional_string(specification, "integration"_str, context);
-    auto add_subdirectory_value = member(specification, "add-subdirectory"_str);
-    auto adapter                = optional_string(specification, "adapter"_str, context);
-    auto config_directory       = optional_string(specification, "config-directory"_str, context);
+    auto package  = required_string(specification, "package"_str, context);
+    auto path     = optional_string(specification, "path"_str, context);
+    auto git      = optional_string(specification, "git"_str, context);
+    auto archive  = optional_string(specification, "archive"_str, context);
+    auto archives = parse_cmake_archive_variants(member(specification, "archives"_str), context);
+    auto sha256   = optional_string(specification, "sha256"_str, context);
+    auto adapter  = optional_string(specification, "adapter"_str, context);
+    auto config_directory = optional_string(specification, "config-directory"_str, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     if (git.is_err()) return Err(rstd::move(git).unwrap_err());
     if (archive.is_err()) return Err(rstd::move(archive).unwrap_err());
     if (archives.is_err()) return Err(rstd::move(archives).unwrap_err());
     if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
-    if (integration.is_err()) return Err(rstd::move(integration).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
     if (! lito::dependency::cmake_package_name_is_valid(package->as_str())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.find-package is unsafe", context));
+            rstd::format("{}.package is unsafe", context));
     }
     auto path_value     = rstd::move(path).unwrap();
     auto git_value      = rstd::move(git).unwrap();
@@ -688,64 +685,17 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} cache and config-directory require a source", context));
     }
-    auto integration_kind  = lito::dependency::CMakeIntegration::Install;
-    auto integration_value = rstd::move(integration).unwrap();
-    if (integration_value.is_some()) {
-        if (integration_value->as_str() == "build-tree"_str) {
-            integration_kind = lito::dependency::CMakeIntegration::BuildTree;
-        } else if (integration_value->as_str() != "install"_str) {
-            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-                rstd::format("{}.integration must be 'install' or 'build-tree'", context));
-        }
-    }
-    if (integration_kind == lito::dependency::CMakeIntegration::BuildTree && ! sourced) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} build-tree integration requires a source", context));
-    }
-    if (integration_kind == lito::dependency::CMakeIntegration::BuildTree &&
-        config_directory->is_some()) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} build-tree integration cannot use config-directory", context));
-    }
-    auto add_subdirectory = true;
-    if (add_subdirectory_value.is_some()) {
-        auto parsed = (**add_subdirectory_value).as_bool();
-        if (parsed.is_none()) {
-            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-                rstd::format("{}.add-subdirectory must be a boolean", context));
-        }
-        if (integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
-            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-                rstd::format("{}.add-subdirectory requires build-tree integration", context));
-        }
-        add_subdirectory = *parsed;
-    }
     auto adapter_value = rstd::move(adapter).unwrap();
-    if (adapter_value.is_some() &&
-        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
+    if (adapter_value.is_some() && config_directory->is_some()) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.adapter requires build-tree integration", context));
-    }
-    if (! add_subdirectory && adapter_value.is_none()) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.add-subdirectory = false requires an adapter", context));
+            rstd::format("{}.config-directory cannot be combined with adapter", context));
     }
     auto hash_value = rstd::move(sha256).unwrap();
     if (archive_value.is_some() != hash_value.is_some()) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.archive and .sha256 must be specified together", context));
     }
-    if (archive_value.is_some() &&
-        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.archive requires build-tree integration", context));
-    }
-    if (archives_value.is_some() &&
-        integration_kind != lito::dependency::CMakeIntegration::BuildTree) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.archives requires build-tree integration", context));
-    }
-    auto source = lito::dependency::CMakeDependencySource::Installed();
+    auto source = lito::dependency::CMakeDependencySource::Find();
     if (path_value.is_some()) {
         auto parsed =
             relative_path(rstd::move(path_value).unwrap(), "CMake external dependency path"_str);
@@ -787,8 +737,6 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         .alias            = rstd::move(alias),
         .package          = rstd::move(package).unwrap(),
         .source           = rstd::move(source),
-        .integration      = integration_kind,
-        .add_subdirectory = add_subdirectory,
         .adapter          = rstd::move(adapter_path),
         .config_directory = rstd::move(directory),
         .cache            = rstd::move(cache).unwrap(),
@@ -839,8 +787,6 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
             .alias            = rstd::move(value.alias),
             .package          = rstd::move(value.package),
             .source           = rstd::move(value.source),
-            .integration      = value.integration,
-            .add_subdirectory = value.add_subdirectory,
             .adapter          = rstd::move(value.adapter),
             .config_directory = rstd::move(value.config_directory),
             .cache            = rstd::move(value.cache),

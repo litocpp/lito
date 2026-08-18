@@ -135,37 +135,84 @@ endif()
     return source_tree(files);
 }
 
-auto cmake_build_tree_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
+auto cmake_source_adapter_project_tree()
+    -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
-project(LitoBuildTree VERSION 4.5.6 LANGUAGES CXX)
-add_library(lito_build_tree STATIC src/fixture.cpp)
-target_compile_features(lito_build_tree PUBLIC cxx_std_20)
-target_compile_definitions(lito_build_tree INTERFACE LITO_CMAKE_BUILD_TREE_USAGE=1)
-target_include_directories(lito_build_tree PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
+project(LitoSourceAdapter VERSION 4.5.6 LANGUAGES CXX)
+add_library(lito_source_adapter STATIC src/fixture.cpp)
+target_compile_features(lito_source_adapter PUBLIC cxx_std_20)
+target_compile_definitions(lito_source_adapter INTERFACE LITO_CMAKE_SOURCE_ADAPTER_USAGE=1)
+target_include_directories(lito_source_adapter PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 )"_str },
-        { "include/lito_build_tree.hpp"_str, "#pragma once\nint lito_build_tree_fixture();\n"_str },
+        { "include/lito_source_adapter.hpp"_str,
+          "#pragma once\nint lito_source_adapter_fixture();\n"_str },
         { "src/fixture.cpp"_str,
-          "#include <lito_build_tree.hpp>\nint lito_build_tree_fixture() { return 42; }\n"_str },
-        { "adapter.cmake"_str, R"(if(NOT TARGET lito_build_tree)
-  add_subdirectory("${fixture_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/fixture-source")
+          "#include <lito_source_adapter.hpp>\nint lito_source_adapter_fixture() { return 42; }\n"_str },
+        { "adapter.cmake"_str, R"(if(NOT LITO_CMAKE_DEPENDENCY_MODE STREQUAL "source")
+  message(FATAL_ERROR "LitoSourceAdapter fixture requires source mode")
 endif()
-if(NOT TARGET LitoBuildTree::fixture)
-  add_library(LitoBuildTree::fixture ALIAS lito_build_tree)
+if(NOT LITO_CMAKE_DEPENDENCY_PACKAGE STREQUAL "LitoSourceAdapter")
+  message(FATAL_ERROR "LitoSourceAdapter fixture received the wrong package")
 endif()
-set(LitoBuildTree_VERSION "4.5.6")
+if(NOT DEFINED LITO_CMAKE_DEPENDENCY_SOURCE_DIR)
+  message(FATAL_ERROR "LitoSourceAdapter fixture requires a source directory")
+endif()
+if(NOT TARGET lito_source_adapter)
+  add_subdirectory("${LITO_CMAKE_DEPENDENCY_SOURCE_DIR}" "${CMAKE_BINARY_DIR}/fixture-source")
+endif()
+if(NOT TARGET LitoSourceAdapter::fixture)
+  add_library(LitoSourceAdapter::fixture ALIAS lito_source_adapter)
+endif()
+set(LitoSourceAdapter_VERSION "4.5.6")
 )"_str },
     };
     return source_tree(files);
 }
 
-auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
-                            const lito::cpp::ProfileSpec&                        profile,
-                            const lito::system::BuildPlatform&                   platform,
-                            const lito::cpp::CppArgumentParser&                  parser,
-                            ref<rstd::path::Path>                                work_root,
-                            usize                                                jobs   = usize(1),
-                            Vec<lito::ExternalAssetSet>*                         assets = nullptr)
+auto cmake_find_package_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
+    constexpr ProjectFile files[] = {
+        { "lib/cmake/LitoFindFixture/LitoFindFixtureConfig.cmake"_str,
+          R"(get_filename_component(_LITO_FIND_FIXTURE_PREFIX "${CMAKE_CURRENT_LIST_DIR}/../../.." ABSOLUTE)
+set(LitoFindFixture_VERSION "7.8.9")
+if(NOT TARGET LitoFindFixture::raw)
+  add_library(LitoFindFixture::raw INTERFACE IMPORTED)
+  set_target_properties(LitoFindFixture::raw PROPERTIES
+    INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_FIND_USAGE=1
+    INTERFACE_INCLUDE_DIRECTORIES "${_LITO_FIND_FIXTURE_PREFIX}/include")
+endif()
+)"_str },
+        { "include/lito_find_fixture.hpp"_str, "#pragma once\n"_str },
+        { "adapter.cmake"_str,
+          R"(if(NOT LITO_CMAKE_DEPENDENCY_MODE STREQUAL "find")
+  message(FATAL_ERROR "LitoFindFixture adapter requires find mode")
+endif()
+if(NOT LITO_CMAKE_DEPENDENCY_PACKAGE STREQUAL "LitoFindFixture")
+  message(FATAL_ERROR "LitoFindFixture adapter received the wrong package")
+endif()
+if(DEFINED LITO_CMAKE_DEPENDENCY_SOURCE_DIR)
+  message(FATAL_ERROR "LitoFindFixture adapter received a source directory in find mode")
+endif()
+find_package(${LITO_CMAKE_DEPENDENCY_PACKAGE} REQUIRED CONFIG)
+if(NOT TARGET LitoFindFixture::fixture)
+  add_library(LitoFindFixture::fixture INTERFACE IMPORTED)
+  set_target_properties(LitoFindFixture::fixture PROPERTIES
+    INTERFACE_LINK_LIBRARIES LitoFindFixture::raw)
+endif()
+)"_str },
+    };
+    return source_tree(files);
+}
+
+auto resolve_cmake_fixtures_with_provider(
+    const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
+    const lito::cpp::ProfileSpec&                        profile,
+    const lito::system::BuildPlatform&                   platform,
+    const lito::cpp::CppArgumentParser&                  parser,
+    ref<rstd::path::Path>                                work_root,
+    lito::dependency::CMakeProviderConfig                provider,
+    usize                                                jobs   = usize(1),
+    Vec<lito::ExternalAssetSet>*                         assets = nullptr)
     -> lito::dependency::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
@@ -174,7 +221,6 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
             rstd::into<lito::dependency::DependencyError>(rstd::move(environment).unwrap_err()));
     }
     auto resolver = lito::system::ToolResolver(*environment);
-    auto provider = fixture_cmake();
     auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
     if (tool.is_err()) {
         return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tool).unwrap_err()));
@@ -198,7 +244,9 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
             requirement->adapter_identity =
                 rstd::format("{}\n{}", requirement->adapter->as_path(), contents->as_str());
         }
-        auto plan = lito::plan_cmake_package(*requirement,
+        auto materialized = lito::materialize_cmake_requirement(*requirement);
+        if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+        auto plan = lito::plan_cmake_package(*materialized,
                                              provider,
                                              configuration(),
                                              profile,
@@ -217,6 +265,18 @@ auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>&
         result.push(rstd::move(usage).unwrap());
     }
     return Ok(rstd::move(result));
+}
+
+auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
+                            const lito::cpp::ProfileSpec&                        profile,
+                            const lito::system::BuildPlatform&                   platform,
+                            const lito::cpp::CppArgumentParser&                  parser,
+                            ref<rstd::path::Path>                                work_root,
+                            usize                                                jobs   = usize(1),
+                            Vec<lito::ExternalAssetSet>*                         assets = nullptr)
+    -> lito::dependency::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
+    return resolve_cmake_fixtures_with_provider(
+        declarations, profile, platform, parser, work_root, fixture_cmake(), jobs, assets);
 }
 auto versioned_fixture(
     ref<str>                                   alias,

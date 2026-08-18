@@ -279,30 +279,28 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
         "\"${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
         "  endforeach()\n"
         "endfunction()\n"_str);
-    if (requirement.integration == lito::dependency::CMakeIntegration::BuildTree) {
-        auto source = path_text(area.source.as_path(), "CMake build-tree source"_str);
-        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-        auto quoted_source = cmake_quoted(source->as_str(), "CMake build-tree source"_str);
-        if (quoted_source.is_err()) return Err(rstd::move(quoted_source).unwrap_err());
-        result.push_str("set("_str);
-        result.push_str(requirement.alias.as_str());
-        result.push_str("_SOURCE_DIR "_str);
-        result.push_str(quoted_source->as_str());
-        result.push_str(")\n"_str);
-        if (requirement.source.as_Directory().add_subdirectory) {
-            result.push_str("add_subdirectory("_str);
+    if (requirement.adapter.is_some()) {
+        result.push_str("set(LITO_CMAKE_DEPENDENCY_MODE \""_str);
+        result.push_str(requirement.source.is_Find() ? "find"_str : "source"_str);
+        result.push_str("\")\nset(LITO_CMAKE_DEPENDENCY_PACKAGE \""_str);
+        result.push_str(requirement.package.as_str());
+        result.push_str("\")\n"_str);
+        if (requirement.source.is_Directory()) {
+            auto source = path_text(area.source.as_path(), "CMake dependency source"_str);
+            if (source.is_err()) return Err(rstd::move(source).unwrap_err());
+            auto quoted_source = cmake_quoted(source->as_str(), "CMake dependency source"_str);
+            if (quoted_source.is_err()) return Err(rstd::move(quoted_source).unwrap_err());
+            result.push_str("set(LITO_CMAKE_DEPENDENCY_SOURCE_DIR "_str);
             result.push_str(quoted_source->as_str());
-            result.push_str(" \"${CMAKE_BINARY_DIR}/lito-dependency\")\n"_str);
-        }
-        if (requirement.adapter.is_some()) {
-            auto adapter = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
-            if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
-            auto quoted_adapter = cmake_quoted(adapter->as_str(), "CMake adapter"_str);
-            if (quoted_adapter.is_err()) return Err(rstd::move(quoted_adapter).unwrap_err());
-            result.push_str("include("_str);
-            result.push_str(quoted_adapter->as_str());
             result.push_str(")\n"_str);
         }
+        auto adapter = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
+        if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
+        auto quoted_adapter = cmake_quoted(adapter->as_str(), "CMake adapter"_str);
+        if (quoted_adapter.is_err()) return Err(rstd::move(quoted_adapter).unwrap_err());
+        result.push_str("include("_str);
+        result.push_str(quoted_adapter->as_str());
+        result.push_str(")\n"_str);
     } else if (requirement.source.is_Directory()) {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
@@ -313,10 +311,20 @@ auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const 
         result.push_str(requirement.package.as_str());
         result.push_str(" REQUIRED)\n"_str);
     }
+    auto mode  = requirement.source.is_Find() ? "find"_str : "source"_str;
+    auto owner = requirement.adapter.is_some() ? "adapter"_str : "generic"_str;
     for (const auto& target : requirement.targets) {
         result.push_str("if(NOT TARGET "_str);
         result.push_str(target.name.as_str());
-        result.push_str(")\n  message(FATAL_ERROR \"required imported target "_str);
+        result.push_str(")\n  message(FATAL_ERROR \"CMake dependency "_str);
+        result.push_str(requirement.package.as_str());
+        result.push_str(" (alias "_str);
+        result.push_str(requirement.alias.as_str());
+        result.push_str(", "_str);
+        result.push_str(mode);
+        result.push_ascii(' ');
+        result.push_str(owner);
+        result.push_str(") required target "_str);
         result.push_str(target.name.as_str());
         result.push_str(" is unavailable\")\nendif()\n"_str);
     }
@@ -424,8 +432,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
-    if (requirement.integration == lito::dependency::CMakeIntegration::Install &&
-        requirement.source.is_Directory()) {
+    if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
                                     area.install.as_path(),
@@ -437,7 +444,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
                 arguments, prefix.as_str(), directory.as_path(), "CMake config directory"_str));
         }
     }
-    if (requirement.integration == lito::dependency::CMakeIntegration::BuildTree) {
+    if (requirement.source.is_Directory() && requirement.adapter.is_some()) {
         for (const auto& entry : requirement.cache) {
             arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
         }

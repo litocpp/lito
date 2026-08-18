@@ -14,33 +14,49 @@ export namespace lito
 
 class PreparedCMakeDependencySource {
     RSTD_ENUM(PreparedCMakeDependencySource,
-              (Installed),
+              (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
               (Archive, (String url; String sha256;)),
               (ArchitectureArchives, (Vec<lito::dependency::CMakeArchiveVariant> variants;)))
 };
 
 struct PreparedCMakeDependencyRequirement {
-    String                             alias;
-    String                             package;
-    PreparedCMakeDependencySource      source;
-    bool                               installed_override { false };
-    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
-    bool                               add_subdirectory { true };
-    Option<PathBuf>                    adapter;
-    String                             adapter_identity;
-    Option<PathBuf>                    config_directory;
+    String                                        alias;
+    String                                        package;
+    PreparedCMakeDependencySource                 source;
+    Option<PathBuf>                               adapter;
+    String                                        adapter_identity;
+    Option<PathBuf>                               config_directory;
     Vec<lito::dependency::CMakeCacheEntry>        cache;
     Vec<lito::dependency::CMakeTargetRequirement> targets;
 };
 
 struct PreparedExternalDependency {
     usize                              package {};
+    bool                               installed_override { false };
     PreparedCMakeDependencyRequirement requirement;
 };
 
 struct PreparedExternalDependencySources {
     Vec<PreparedExternalDependency> dependencies;
+};
+
+class SelectedCMakeDependencySource {
+    RSTD_ENUM(SelectedCMakeDependencySource,
+              (Find),
+              (Directory, (PathBuf root; String identity; bool cacheable;)),
+              (Archive, (String url; String sha256;)))
+};
+
+struct SelectedCMakeDependencyRequirement {
+    String                                        alias;
+    String                                        package;
+    SelectedCMakeDependencySource                 source;
+    Option<PathBuf>                               adapter;
+    String                                        adapter_identity;
+    Option<PathBuf>                               config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>        cache;
+    Vec<lito::dependency::CMakeTargetRequirement> targets;
 };
 
 struct DeclaredExternalDependencySources {

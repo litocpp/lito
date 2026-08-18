@@ -68,11 +68,9 @@ struct WorkspaceCMakeExternalDependencyDefinition {
     String                                  alias;
     String                                  package;
     lito::dependency::CMakeDependencySource source;
-    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
-    bool                               add_subdirectory { true };
-    Option<PathBuf>                    adapter;
-    Option<PathBuf>                    config_directory;
-    Vec<lito::dependency::CMakeCacheEntry> cache;
+    Option<PathBuf>                         adapter;
+    Option<PathBuf>                         config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>  cache;
 };
 
 } // namespace lito::manifest

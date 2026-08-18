@@ -43,7 +43,7 @@ struct CMakeArchiveVariant {
 
 class CMakeDependencySource {
     RSTD_ENUM(CMakeDependencySource,
-              (Installed),
+              (Find),
               (Path, (PathBuf path;)),
               (Git, (String url; lito::source::GitReference reference;)),
               (Archive, (String url; String sha256;)),
@@ -75,14 +75,8 @@ public:
             }
             return CMakeDependencySource::ArchitectureArchives(rstd::move(variants));
         }
-        return CMakeDependencySource::Installed();
+        return CMakeDependencySource::Find();
     }
-};
-
-enum class CMakeIntegration
-{
-    Install,
-    BuildTree,
 };
 
 struct CMakeTargetRequirement {
@@ -94,8 +88,6 @@ struct CMakeDependencyRequirement {
     String                      alias;
     String                      package;
     CMakeDependencySource       source;
-    CMakeIntegration            integration { CMakeIntegration::Install };
-    bool                        add_subdirectory { true };
     Option<PathBuf>             adapter;
     Option<PathBuf>             config_directory;
     Vec<CMakeCacheEntry>        cache;
@@ -119,13 +111,11 @@ struct CMakeDependencyRequirement {
             });
         }
         auto result = CMakeDependencyRequirement {
-            .alias            = alias.clone(),
-            .package          = package.clone(),
-            .source           = source.clone(),
-            .integration      = integration,
-            .add_subdirectory = add_subdirectory,
-            .cache            = rstd::move(cache_copy),
-            .targets          = rstd::move(target_copy),
+            .alias   = alias.clone(),
+            .package = package.clone(),
+            .source  = source.clone(),
+            .cache   = rstd::move(cache_copy),
+            .targets = rstd::move(target_copy),
         };
         if (adapter.is_some()) result.adapter = Some(adapter->clone());
         if (config_directory.is_some()) result.config_directory = Some(config_directory->clone());

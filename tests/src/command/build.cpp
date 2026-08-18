@@ -125,7 +125,7 @@ name = "fixture-cmake-installed-override"
 sources = ["main.cpp"]
 
 [external-dependencies.cmake.fixture]
-find-package = "LitoOverrideFixture"
+package = "LitoOverrideFixture"
 git = "https://example.invalid/lito-override-fixture.git"
 commit = "0123456789abcdef0123456789abcdef01234567"
 targets = [{ name = "LitoOverrideFixture::fixture", visibility = "private" }]

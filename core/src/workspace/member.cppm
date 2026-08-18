@@ -235,8 +235,6 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
             .source           = definition->source.clone(),
-            .integration      = definition->integration,
-            .add_subdirectory = definition->add_subdirectory,
             .adapter          = rstd::move(adapter),
             .config_directory = rstd::move(config_directory),
             .cache            = rstd::move(cache),

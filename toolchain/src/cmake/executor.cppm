@@ -39,17 +39,11 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
             requirement.alias.as_str(),
             effective_target));
     }
-    if (requirement.source.is_Archive()) {
-        return cmake_failure<CMakePackagePlan>(rstd::format(
-            "CMake dependency '{}' archive source must be materialized before planning",
-            requirement.alias.as_str()));
-    }
     auto area = work_area(
         requirement, provider, configuration, profile, effective_target, profile_cmake_root);
     if (area.is_err()) return Err(rstd::move(area).unwrap_err());
     auto operations = Vec<CMakePackageOperation>::make();
-    if (requirement.integration == lito::dependency::CMakeIntegration::Install &&
-        ! requirement.source.is_Installed()) {
+    if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
         operations.push(CMakePackageOperation::ConfigureSource);
         operations.push(CMakePackageOperation::BuildSource);
         operations.push(CMakePackageOperation::InstallSource);

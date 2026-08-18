@@ -1079,10 +1079,10 @@
     "cmakeExternalDependencyDefinition": {
       "type": "object",
       "required": [
-        "find-package"
+        "package"
       ],
       "properties": {
-        "find-package": {
+        "package": {
           "$ref": "#/definitions/cmakePackage"
         },
         "path": {
@@ -1111,15 +1111,6 @@
         },
         "archives": {
           "$ref": "#/definitions/cmakeArchitectureArchives"
-        },
-        "integration": {
-          "enum": [
-            "install",
-            "build-tree"
-          ]
-        },
-        "add-subdirectory": {
-          "type": "boolean"
         },
         "adapter": {
           "$ref": "#/definitions/relativePath"
@@ -1220,16 +1211,8 @@
             },
             {
               "required": [
-                "archives",
-                "integration"
+                "archives"
               ],
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "build-tree"
-                  ]
-                }
-              },
               "not": {
                 "anyOf": [
                   {
@@ -1266,11 +1249,6 @@
                     "required": [
                       "rev"
                     ]
-                  },
-                  {
-                    "required": [
-                      "config-directory"
-                    ]
                   }
                 ]
               }
@@ -1278,16 +1256,8 @@
             {
               "required": [
                 "archive",
-                "sha256",
-                "integration"
+                "sha256"
               ],
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "build-tree"
-                  ]
-                }
-              },
               "not": {
                 "anyOf": [
                   {
@@ -1319,23 +1289,11 @@
                     "required": [
                       "rev"
                     ]
-                  },
-                  {
-                    "required": [
-                      "config-directory"
-                    ]
                   }
                 ]
               }
             },
             {
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "install"
-                  ]
-                }
-              },
               "not": {
                 "anyOf": [
                   {
@@ -1387,11 +1345,6 @@
                     "required": [
                       "config-directory"
                     ]
-                  },
-                  {
-                    "required": [
-                      "adapter"
-                    ]
                   }
                 ]
               }
@@ -1399,101 +1352,12 @@
           ]
         },
         {
-          "anyOf": [
-            {
-              "not": {
-                "required": [
-                  "adapter"
-                ]
-              }
-            },
-            {
-              "required": [
-                "integration"
-              ],
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "build-tree"
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        {
-          "if": {
+          "not": {
             "required": [
-              "add-subdirectory"
-            ],
-            "properties": {
-              "add-subdirectory": {
-                "const": false
-              }
-            }
-          },
-          "then": {
-            "required": [
-              "adapter"
+              "adapter",
+              "config-directory"
             ]
           }
-        },
-        {
-          "anyOf": [
-            {
-              "not": {
-                "required": [
-                  "add-subdirectory"
-                ]
-              }
-            },
-            {
-              "required": [
-                "integration"
-              ],
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "build-tree"
-                  ]
-                }
-              }
-            }
-          ]
-        },
-        {
-          "anyOf": [
-            {
-              "not": {
-                "required": [
-                  "integration"
-                ]
-              }
-            },
-            {
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "install"
-                  ]
-                }
-              }
-            },
-            {
-              "properties": {
-                "integration": {
-                  "enum": [
-                    "build-tree"
-                  ]
-                }
-              },
-              "not": {
-                "required": [
-                  "config-directory"
-                ]
-              }
-            }
-          ]
         }
       ],
       "additionalProperties": false

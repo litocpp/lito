@@ -169,7 +169,7 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
             }
         }
         for (const auto& declaration : package.manifest.cmake_external_dependencies) {
-            if (declaration.source.is_Installed()) continue;
+            if (declaration.source.is_Find()) continue;
 
             auto make_record = [&](lito::dependency::ResolvedExternalSource source,
                                    Vec<Architecture>                        architectures) -> void {
@@ -317,7 +317,7 @@ auto validate_cmake_build_overrides(const lito::package::ResolvedPackageGraph&  
         }
         if (! matched) {
             return lito::dependency::dependency_failure<empty>(rstd::format(
-                "cmake.overrides.{}.source = 'installed' does not match any find-package in the "
+                "cmake.overrides.{}.source = 'installed' does not match any CMake package in the "
                 "active package graph",
                 entry.package.as_str()));
         }
@@ -357,18 +357,8 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             const auto& declaration =
                 package.manifest.cmake_external_dependencies[declaration_index];
             const auto installed_override = overrides.contains(declaration.package.as_str());
-            if (installed_override &&
-                declaration.integration == lito::dependency::CMakeIntegration::BuildTree) {
-                return lito::dependency::dependency_failure<AcquiredExternalDependencySources>(
-                    rstd::format(
-                        "cmake.overrides.{}.source = 'installed' cannot replace build-tree "
-                        "dependency '{}:{}'",
-                        declaration.package.as_str(),
-                        package.manifest.name.as_str(),
-                        declaration.alias.as_str()));
-            }
-            auto source_fetch = Option<usize> {};
-            auto acquired     = Option<lito::source::AcquiredSource> {};
+            auto       source_fetch       = Option<usize> {};
+            auto       acquired           = Option<lito::source::AcquiredSource> {};
             if (! installed_override &&
                 (declaration.source.is_Git() || declaration.source.is_Path())) {
                 if (declaration.source.is_Path()) {

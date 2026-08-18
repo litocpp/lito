@@ -54,7 +54,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     struct CMakeBinding {
         usize                              catalog {};
         String                             owner;
-        ResolvedCMakeDependencyRequirement requirement;
+        bool                               installed_override { false };
+        SelectedCMakeDependencyRequirement requirement;
     };
     auto result          = cpp::ExternalUsageCatalog {};
     auto bindings        = Vec<CMakeBinding>::make();
@@ -89,9 +90,10 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             resolve_cmake_requirement_for_platform(declaration.requirement, platform);
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
         bindings.push(CMakeBinding {
-            .catalog     = *catalog_indices[declaration.package],
-            .owner       = package.manifest.name.clone(),
-            .requirement = rstd::move(requirement).unwrap(),
+            .catalog            = *catalog_indices[declaration.package],
+            .owner              = package.manifest.name.clone(),
+            .installed_override = declaration.installed_override,
+            .requirement        = rstd::move(requirement).unwrap(),
         });
     }
     if (bindings.is_empty()) {
@@ -145,21 +147,10 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 rstd::into<lito::dependency::DependencyError>(rstd::move(fetched).unwrap_err()));
         }
         for (usize index {}; index < fetched->len(); ++index) {
-            auto acquired    = rstd::move((*fetched)[index]);
-            auto cmake_lists = acquired.root.join(PathBuf::from("CMakeLists.txt"_str).as_path());
-            auto has_project = rstd::fs::exists(cmake_lists.as_path());
-            if (has_project.is_err()) {
-                return Err(lito::dependency::DependencyError::Io(
-                    String::make("inspect archive CMake project"_str),
-                    rstd::move(cmake_lists),
-                    rstd::move(has_project).unwrap_err()));
-            }
+            auto acquired = rstd::move((*fetched)[index]);
             bindings[archive_bindings[index]].requirement.source =
-                ResolvedCMakeDependencySource::Directory(
-                    rstd::move(acquired.root),
-                    rstd::move(acquired.identity),
-                    bindings[archive_bindings[index]].requirement.add_subdirectory && *has_project,
-                    true);
+                SelectedCMakeDependencySource::Directory(
+                    rstd::move(acquired.root), rstd::move(acquired.identity), true);
         }
     }
 
@@ -167,13 +158,15 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     auto assets          = ExternalAssetCatalog {};
     auto cmake_work_root = layout.cmake_work_root();
     for (auto& binding : bindings) {
+        auto requirement = materialize_cmake_requirement(binding.requirement);
+        if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
         auto contextualize = [&](lito::dependency::DependencyError error) {
-            if (! binding.requirement.installed_override) return error;
+            if (! binding.installed_override) return error;
             return lito::dependency::DependencyError::CMakeOverride(
                 binding.requirement.package.clone(),
                 Box<lito::dependency::DependencyError>::make(rstd::move(error)));
         };
-        auto plan = plan_cmake_package(binding.requirement,
+        auto plan = plan_cmake_package(*requirement,
                                        resolved_cmake,
                                        configuration,
                                        profile,

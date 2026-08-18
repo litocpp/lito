@@ -58,12 +58,13 @@ struct ExternalSourceTask {
 struct PreparedExternalSourceTask {
     usize                              package {};
     usize                              declaration {};
+    bool                               installed_override { false };
     PreparedCMakeDependencyRequirement requirement;
 };
 
 auto prepare_external_source_task(ExternalSourceTask task)
     -> lito::dependency::DependencyResult<PreparedExternalSourceTask> {
-    auto        source      = PreparedCMakeDependencySource::Installed();
+    auto        source      = PreparedCMakeDependencySource::Find();
     const auto& declaration = task.requirement;
     if (! task.installed_override) {
         if (declaration.source.is_Archive()) {
@@ -81,7 +82,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
                 });
             }
             source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
-        } else if (! declaration.source.is_Installed()) {
+        } else if (! declaration.source.is_Find()) {
             if (task.acquired.is_none()) {
                 return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
                     rstd::format("external source for CMake dependency '{}' was not fetched",
@@ -117,7 +118,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
     }
     auto adapter          = Option<PathBuf> {};
     auto adapter_identity = String::make();
-    if (! task.installed_override && declaration.adapter.is_some()) {
+    if (declaration.adapter.is_some()) {
         auto adapter_root = task.source_root.as_path();
         if (declaration.adapter_root.is_some()) adapter_root = declaration.adapter_root->as_path();
         auto path      = PathBuf::from(adapter_root).join(declaration.adapter->as_path());
@@ -144,21 +145,19 @@ auto prepare_external_source_task(ExternalSourceTask task)
         adapter          = Some(rstd::move(canonical).unwrap());
     }
     return Ok(PreparedExternalSourceTask {
-        .package     = task.package,
-        .declaration = task.declaration,
+        .package            = task.package,
+        .declaration        = task.declaration,
+        .installed_override = task.installed_override,
         .requirement =
             PreparedCMakeDependencyRequirement {
-                .alias              = declaration.alias.clone(),
-                .package            = declaration.package.clone(),
-                .source             = rstd::move(source),
-                .installed_override = task.installed_override,
-                .integration        = declaration.integration,
-                .add_subdirectory   = task.installed_override ? true : declaration.add_subdirectory,
-                .adapter            = rstd::move(adapter),
-                .adapter_identity   = rstd::move(adapter_identity),
-                .config_directory   = rstd::move(config_directory),
-                .cache              = rstd::move(cache),
-                .targets            = rstd::move(targets),
+                .alias            = declaration.alias.clone(),
+                .package          = declaration.package.clone(),
+                .source           = rstd::move(source),
+                .adapter          = rstd::move(adapter),
+                .adapter_identity = rstd::move(adapter_identity),
+                .config_directory = rstd::move(config_directory),
+                .cache            = rstd::move(cache),
+                .targets          = rstd::move(targets),
             },
     });
 }
@@ -254,8 +253,9 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
         if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
         auto task = rstd::move(prepared).unwrap();
         result.dependencies.push(PreparedExternalDependency {
-            .package     = task.package,
-            .requirement = rstd::move(task.requirement),
+            .package            = task.package,
+            .installed_override = task.installed_override,
+            .requirement        = rstd::move(task.requirement),
         });
     }
     rstd::slice_::sort_unstable_by(
@@ -321,17 +321,16 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
 
 auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequirement& requirement,
                                             const BuildPlatform&                      platform)
-    -> lito::dependency::DependencyResult<ResolvedCMakeDependencyRequirement> {
-    auto source = ResolvedCMakeDependencySource::Installed();
+    -> lito::dependency::DependencyResult<SelectedCMakeDependencyRequirement> {
+    auto source = SelectedCMakeDependencySource::Find();
     if (requirement.source.is_Directory()) {
-        source = ResolvedCMakeDependencySource::Directory(
+        source = SelectedCMakeDependencySource::Directory(
             requirement.source.as_Directory().root.clone(),
             requirement.source.as_Directory().identity.clone(),
-            requirement.add_subdirectory,
             requirement.source.as_Directory().cacheable);
     } else if (requirement.source.is_Archive()) {
         source =
-            ResolvedCMakeDependencySource::Archive(requirement.source.as_Archive().url.clone(),
+            SelectedCMakeDependencySource::Archive(requirement.source.as_Archive().url.clone(),
                                                    requirement.source.as_Archive().sha256.clone());
     } else if (requirement.source.is_ArchitectureArchives()) {
         const lito::dependency::CMakeArchiveVariant* selected  = nullptr;
@@ -344,7 +343,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
             }
         }
         if (selected == nullptr) {
-            return lito::dependency::dependency_failure<ResolvedCMakeDependencyRequirement>(
+            return lito::dependency::dependency_failure<SelectedCMakeDependencyRequirement>(
                 rstd::format(
                     "CMake dependency '{}' has no archive for target '{}' (architecture '{}'); "
                     "available architectures: {}",
@@ -354,7 +353,54 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
                     available.as_str()));
         }
         source =
-            ResolvedCMakeDependencySource::Archive(selected->url.clone(), selected->sha256.clone());
+            SelectedCMakeDependencySource::Archive(selected->url.clone(), selected->sha256.clone());
+    }
+    auto adapter = Option<PathBuf> {};
+    if (requirement.adapter.is_some()) adapter = Some(requirement.adapter->clone());
+    auto config_directory = Option<PathBuf> {};
+    if (requirement.config_directory.is_some()) {
+        config_directory = Some(requirement.config_directory->clone());
+    }
+    auto cache = Vec<lito::dependency::CMakeCacheEntry>::with_capacity(requirement.cache.len());
+    for (const auto& entry : requirement.cache) {
+        cache.push(lito::dependency::CMakeCacheEntry {
+            .name  = entry.name.clone(),
+            .value = entry.value.clone(),
+        });
+    }
+    auto targets =
+        Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(requirement.targets.len());
+    for (const auto& target : requirement.targets) {
+        targets.push(lito::dependency::CMakeTargetRequirement {
+            .name       = target.name.clone(),
+            .visibility = target.visibility,
+        });
+    }
+    return Ok(SelectedCMakeDependencyRequirement {
+        .alias            = requirement.alias.clone(),
+        .package          = requirement.package.clone(),
+        .source           = rstd::move(source),
+        .adapter          = rstd::move(adapter),
+        .adapter_identity = requirement.adapter_identity.clone(),
+        .config_directory = rstd::move(config_directory),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
+    });
+}
+
+auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& requirement)
+    -> lito::dependency::DependencyResult<ResolvedCMakeDependencyRequirement> {
+    if (requirement.source.is_Archive()) {
+        return lito::dependency::dependency_failure<ResolvedCMakeDependencyRequirement>(
+            rstd::format("CMake dependency '{}' archive source has not been materialized",
+                         requirement.alias.as_str()));
+    }
+    auto source = ResolvedCMakeDependencySource::Find();
+    if (requirement.source.is_Directory()) {
+        source = ResolvedCMakeDependencySource::Directory(
+            requirement.source.as_Directory().root.clone(),
+            requirement.source.as_Directory().identity.clone(),
+            requirement.source.as_Directory().cacheable);
     }
     auto adapter = Option<PathBuf> {};
     if (requirement.adapter.is_some()) adapter = Some(requirement.adapter->clone());
@@ -378,17 +424,14 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         });
     }
     return Ok(ResolvedCMakeDependencyRequirement {
-        .alias              = requirement.alias.clone(),
-        .package            = requirement.package.clone(),
-        .source             = rstd::move(source),
-        .installed_override = requirement.installed_override,
-        .integration        = requirement.integration,
-        .add_subdirectory   = requirement.add_subdirectory,
-        .adapter            = rstd::move(adapter),
-        .adapter_identity   = requirement.adapter_identity.clone(),
-        .config_directory   = rstd::move(config_directory),
-        .cache              = rstd::move(cache),
-        .targets            = rstd::move(targets),
+        .alias            = requirement.alias.clone(),
+        .package          = requirement.package.clone(),
+        .source           = rstd::move(source),
+        .adapter          = rstd::move(adapter),
+        .adapter_identity = requirement.adapter_identity.clone(),
+        .config_directory = rstd::move(config_directory),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
     });
 }
 

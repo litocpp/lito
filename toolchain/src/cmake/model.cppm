@@ -114,12 +114,7 @@ auto source_identity(const ResolvedCMakeDependencyRequirement& requirement) -> S
     if (requirement.source.is_Directory()) {
         return requirement.source.as_Directory().identity.clone();
     }
-    if (requirement.source.is_Archive()) {
-        return rstd::format("archive+{}#sha256:{}",
-                            requirement.source.as_Archive().url.as_str(),
-                            requirement.source.as_Archive().sha256.as_str());
-    }
-    return String::make("installed"_str);
+    return String::make("find"_str);
 }
 
 auto cmake_quoted(ref<str> value, ref<str> context) -> lito::dependency::DependencyResult<String> {
@@ -181,14 +176,9 @@ auto clone_cmake_source(const ResolvedCMakeDependencySource& source)
     if (source.is_Directory()) {
         return ResolvedCMakeDependencySource::Directory(source.as_Directory().root.clone(),
                                                         source.as_Directory().identity.clone(),
-                                                        source.as_Directory().add_subdirectory,
                                                         source.as_Directory().cacheable);
     }
-    if (source.is_Archive()) {
-        return ResolvedCMakeDependencySource::Archive(source.as_Archive().url.clone(),
-                                                      source.as_Archive().sha256.clone());
-    }
-    return ResolvedCMakeDependencySource::Installed();
+    return ResolvedCMakeDependencySource::Find();
 }
 
 auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requirement)
@@ -209,15 +199,12 @@ auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requireme
         });
     }
     auto result = ResolvedCMakeDependencyRequirement {
-        .alias              = requirement.alias.clone(),
-        .package            = requirement.package.clone(),
-        .source             = clone_cmake_source(requirement.source),
-        .installed_override = requirement.installed_override,
-        .integration        = requirement.integration,
-        .add_subdirectory   = requirement.add_subdirectory,
-        .adapter_identity   = requirement.adapter_identity.clone(),
-        .cache              = rstd::move(cache),
-        .targets            = rstd::move(targets),
+        .alias            = requirement.alias.clone(),
+        .package          = requirement.package.clone(),
+        .source           = clone_cmake_source(requirement.source),
+        .adapter_identity = requirement.adapter_identity.clone(),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
     };
     if (requirement.adapter.is_some()) result.adapter = Some(requirement.adapter->clone());
     if (requirement.config_directory.is_some()) {
@@ -286,13 +273,8 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     auto query_recipe = String::make("lito-cmake-query-v5\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());
-    append_identity(query_recipe,
-                    requirement.integration == lito::dependency::CMakeIntegration::BuildTree
-                        ? "build-tree"_str
-                        : "install"_str);
-    append_identity(query_recipe,
-                    requirement.add_subdirectory ? "add-subdirectory"_str
-                                                 : "adapter-owned-source"_str);
+    append_identity(query_recipe, requirement.source.is_Find() ? "find"_str : "source"_str);
+    append_identity(query_recipe, requirement.adapter.is_some() ? "adapter"_str : "generic"_str);
     if (requirement.adapter.is_some()) {
         auto adapter_path = path_text(requirement.adapter->as_path(), "CMake adapter"_str);
         if (adapter_path.is_err()) return Err(rstd::move(adapter_path).unwrap_err());

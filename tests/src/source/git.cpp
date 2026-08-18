@@ -42,7 +42,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
             "sources = [\"source.cppm\"]\n"
             "\n"
             "[external-dependencies.cmake.shader]\n"
-            "find-package = \"FixtureShader\"\n"
+            "package = \"FixtureShader\"\n"
             "path = \"shaders\"\n"
             "targets = [{ name = \"FixtureShader::shader\", visibility = \"private\" }]\n"_str
                 .as_bytes())
@@ -226,10 +226,9 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
     auto changed_manifest = rstd::format(
         "{}\n"
         "[external-dependencies.cmake.changed]\n"
-        "find-package = \"Changed\"\n"
+        "package = \"Changed\"\n"
         "archive = \"https://example.invalid/changed.tar.gz\"\n"
         "sha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
-        "integration = \"build-tree\"\n"
         "targets = [{{ name = \"Changed::changed\", visibility = \"private\" }}]\n",
         manifest);
     ASSERT_TRUE(

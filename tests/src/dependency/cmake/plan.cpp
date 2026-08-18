@@ -36,7 +36,9 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
             project->root.clone(), String::make("lito-test-cmake-planner-pure-v1"_str), false),
         .targets = rstd::move(targets),
     };
-    auto requirement = lito::resolve_cmake_requirement_for_platform(prepared, platform);
+    auto selected = lito::resolve_cmake_requirement_for_platform(prepared, platform);
+    ASSERT_TRUE(selected.is_ok());
+    auto requirement = lito::materialize_cmake_requirement(*selected);
     ASSERT_TRUE(requirement.is_ok());
     auto work_root = build_root("cmake-planner-work"_str);
     auto first     = lito::plan_cmake_package(*requirement,
@@ -72,34 +74,50 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_EQ(first->area.root.as_path(), parallel->area.root.as_path());
     EXPECT_EQ(first->area.query_root.as_path(), parallel->area.query_root.as_path());
 
-    requirement->integration = lito::dependency::CMakeIntegration::BuildTree;
-    auto build_tree          = lito::plan_cmake_package(*requirement,
-                                                        fixture_cmake(),
-                                                        configuration(),
-                                                        default_profile(*parser),
-                                                        platform.compiler_default,
-                                                        platform.effective_target.triple.as_str(),
-                                                        work_root.as_path());
-    ASSERT_TRUE(build_tree.is_ok());
-    ASSERT_EQ(build_tree->operations.len(), usize(4));
-    EXPECT_EQ(build_tree->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
-    EXPECT_EQ(build_tree->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
-    EXPECT_EQ(build_tree->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
-    EXPECT_EQ(build_tree->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+    requirement->adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path()));
+    auto source_adapter  = lito::plan_cmake_package(*requirement,
+                                                    fixture_cmake(),
+                                                    configuration(),
+                                                    default_profile(*parser),
+                                                    platform.compiler_default,
+                                                    platform.effective_target.triple.as_str(),
+                                                    work_root.as_path());
+    ASSERT_TRUE(source_adapter.is_ok());
+    ASSERT_EQ(source_adapter->operations.len(), usize(4));
+    EXPECT_EQ(source_adapter->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(source_adapter->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(source_adapter->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(source_adapter->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
 
-    requirement->integration = lito::dependency::CMakeIntegration::Install;
-    requirement->source      = lito::ResolvedCMakeDependencySource::Installed();
-    auto installed           = lito::plan_cmake_package(*requirement,
-                                                        fixture_cmake(),
-                                                        configuration(),
-                                                        default_profile(*parser),
-                                                        platform.compiler_default,
-                                                        platform.effective_target.triple.as_str(),
-                                                        work_root.as_path());
-    ASSERT_TRUE(installed.is_ok());
-    ASSERT_EQ(installed->operations.len(), usize(4));
-    EXPECT_EQ(installed->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
-    EXPECT_EQ(installed->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
-    EXPECT_EQ(installed->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
-    EXPECT_EQ(installed->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+    requirement->source = lito::ResolvedCMakeDependencySource::Find();
+    auto find_adapter   = lito::plan_cmake_package(*requirement,
+                                                   fixture_cmake(),
+                                                   configuration(),
+                                                   default_profile(*parser),
+                                                   platform.compiler_default,
+                                                   platform.effective_target.triple.as_str(),
+                                                   work_root.as_path());
+    ASSERT_TRUE(find_adapter.is_ok());
+    ASSERT_EQ(find_adapter->operations.len(), usize(4));
+    EXPECT_EQ(find_adapter->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(find_adapter->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(find_adapter->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(find_adapter->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+    EXPECT_NE(source_adapter->area.root.as_path(), find_adapter->area.root.as_path());
+
+    requirement->adapter = None();
+    auto find_generic    = lito::plan_cmake_package(*requirement,
+                                                    fixture_cmake(),
+                                                    configuration(),
+                                                    default_profile(*parser),
+                                                    platform.compiler_default,
+                                                    platform.effective_target.triple.as_str(),
+                                                    work_root.as_path());
+    ASSERT_TRUE(find_generic.is_ok());
+    ASSERT_EQ(find_generic->operations.len(), usize(4));
+    EXPECT_EQ(find_generic->operations[usize {}], lito::CMakePackageOperation::WriteQuery);
+    EXPECT_EQ(find_generic->operations[usize(1)], lito::CMakePackageOperation::ConfigureQuery);
+    EXPECT_EQ(find_generic->operations[usize(2)], lito::CMakePackageOperation::BuildQuery);
+    EXPECT_EQ(find_generic->operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
+    EXPECT_NE(find_adapter->area.query_root.as_path(), find_generic->area.query_root.as_path());
 }

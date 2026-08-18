@@ -13,21 +13,17 @@ export namespace lito
 
 class ResolvedCMakeDependencySource {
     RSTD_ENUM(ResolvedCMakeDependencySource,
-              (Installed),
-              (Directory, (PathBuf root; String identity; bool add_subdirectory; bool cacheable;)),
-              (Archive, (String url; String sha256;)))
+              (Find),
+              (Directory, (PathBuf root; String identity; bool cacheable;)))
 };
 
 struct ResolvedCMakeDependencyRequirement {
-    String                             alias;
-    String                             package;
-    ResolvedCMakeDependencySource      source;
-    bool                               installed_override { false };
-    lito::dependency::CMakeIntegration integration { lito::dependency::CMakeIntegration::Install };
-    bool                               add_subdirectory { true };
-    Option<PathBuf>                    adapter;
-    String                             adapter_identity;
-    Option<PathBuf>                    config_directory;
+    String                                        alias;
+    String                                        package;
+    ResolvedCMakeDependencySource                 source;
+    Option<PathBuf>                               adapter;
+    String                                        adapter_identity;
+    Option<PathBuf>                               config_directory;
     Vec<lito::dependency::CMakeCacheEntry>        cache;
     Vec<lito::dependency::CMakeTargetRequirement> targets;
 };

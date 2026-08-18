@@ -425,7 +425,7 @@ name = "fixture-workspace-cmake-definition-targets"
 members = ["member"]
 
 [workspace.external-dependencies.cmake.fixture]
-find-package = "LitoFixture"
+package = "LitoFixture"
 path = "member"
 targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
 )lito"_str },
