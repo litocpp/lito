@@ -207,8 +207,8 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                                          reference.set.as_str()));
                     }
                     assets.push(InstallRuntimeSearchAsset {
-                        .dependency = reference.dependency.clone(),
-                        .set        = reference.set.clone(),
+                        .dependency  = reference.dependency.clone(),
+                        .set         = reference.set.clone(),
                         .destination = matched->destination.clone(),
                     });
                 }
@@ -231,7 +231,7 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
     return Ok(rstd::move(requirements));
 }
 
-auto resolve_install_artifact_link_variants(InstallBuildRequirements&  requirements,
+auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirements,
                                             const ExternalAssetCatalog& catalog)
     -> InstallResult<empty> {
     if (! requirements.artifact_link_variants.is_empty()) {
@@ -251,15 +251,15 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&  requireme
                 provided = true;
                 continue;
             }
-            materialized = true;
-            auto validated = install_runtime_search_path(
-                requirement.destination.as_path(), asset.destination.as_path());
+            materialized   = true;
+            auto validated = install_runtime_search_path(requirement.destination.as_path(),
+                                                         asset.destination.as_path());
             if (validated.is_err()) {
-                return selection_failure<empty>(rstd::format(
-                    "install runtime search from '{}' to '{}' is invalid: {}",
-                    requirement.destination.as_path(),
-                    asset.destination.as_path(),
-                    rstd::move(validated).unwrap_err()));
+                return selection_failure<empty>(
+                    rstd::format("install runtime search from '{}' to '{}' is invalid: {}",
+                                 requirement.destination.as_path(),
+                                 asset.destination.as_path(),
+                                 rstd::move(validated).unwrap_err()));
             }
             paths.push(rstd::move(validated).unwrap());
         }
@@ -271,10 +271,10 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&  requireme
         if (! materialized) continue;
         auto runpath = lito::artifact::make_elf_runpath(rstd::move(paths));
         if (runpath.is_err()) {
-            return selection_failure<empty>(rstd::format(
-                "install runtime search for '{}' is invalid: {}",
-                lito::package::package_target_id_text(requirement.target),
-                rstd::move(runpath).unwrap_err()));
+            return selection_failure<empty>(
+                rstd::format("install runtime search for '{}' is invalid: {}",
+                             lito::package::package_target_id_text(requirement.target),
+                             rstd::move(runpath).unwrap_err()));
         }
         auto identity = String::make("lito-install-link-v2\n"_str);
         identity.push_str(lito::package::package_target_id_text(requirement.target).as_str());
@@ -282,10 +282,11 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&  requireme
         identity.push_str(lito::artifact::elf_runpath_identity(*runpath).as_str());
         requirements.artifact_link_variants.push(RequestedArtifactLinkVariant {
             .target = requirement.target.clone(),
-            .policy = InstallArtifactLinkPolicy {
-                .runtime_search = rstd::move(runpath).unwrap(),
-                .identity       = rstd::move(identity),
-            },
+            .policy =
+                InstallArtifactLinkPolicy {
+                    .runtime_search = rstd::move(runpath).unwrap(),
+                    .identity       = rstd::move(identity),
+                },
         });
     }
     return Ok(empty {});

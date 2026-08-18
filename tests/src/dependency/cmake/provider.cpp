@@ -261,7 +261,7 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         .source  = lito::PreparedCMakeDependencySource::Find(),
         .targets = rstd::move(targets),
     });
-    auto assets   = Vec<lito::ExternalAssetSet>::make();
+    auto assets = Vec<lito::ExternalAssetSet>::make();
     auto resolved =
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),
@@ -297,8 +297,8 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
     ASSERT_EQ(assets[usize {}].entries.len(), usize(1));
     EXPECT_EQ(assets[usize {}].entries[usize {}].logical_path.as_path(),
               PathBuf::from("runtime.bin"_str).as_path());
-    EXPECT_TRUE(assets[usize {}].entries[usize {}].source.as_path().starts_with(
-        project->root.as_path()));
+    EXPECT_TRUE(
+        assets[usize {}].entries[usize {}].source.as_path().starts_with(project->root.as_path()));
 }
 
 TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
@@ -323,7 +323,7 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
         .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets = rstd::move(targets),
     });
-    auto assets   = Vec<lito::ExternalAssetSet>::make();
+    auto assets = Vec<lito::ExternalAssetSet>::make();
     auto resolved =
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),

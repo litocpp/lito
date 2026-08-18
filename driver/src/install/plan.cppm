@@ -177,8 +177,8 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                 }));
         }
         for (const auto& requested : recipe.external_assets) {
-            auto set = build.external_assets.resolve(
-                requested.dependency.as_str(), requested.set.as_str());
+            auto set = build.external_assets.resolve(requested.dependency.as_str(),
+                                                     requested.set.as_str());
             if (set.is_err()) {
                 return materialize_failure<InstallPlan>(rstd::move(set).unwrap_err());
             }

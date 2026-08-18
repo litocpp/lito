@@ -60,9 +60,9 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
         auto item = JsonMap::make();
         item.insert(String::make("name"_str), Json::String(set.name.clone()));
         item.insert(String::make("disposition"_str),
-                    Json::String(String::make(
-                        set.disposition == ExternalAssetDisposition::Provided ? "provided"_str
-                                                                              : "materialized"_str)));
+                    Json::String(String::make(set.disposition == ExternalAssetDisposition::Provided
+                                                  ? "provided"_str
+                                                  : "materialized"_str)));
         item.insert(String::make("entries"_str), Json::Array(rstd::move(entries)));
         assets.push(Json::Object(rstd::move(item)));
     }

@@ -82,14 +82,13 @@ struct ExternalAssetCatalog {
         for (const auto& set : sets) {
             if (set.alias != dependency || set.name != name) continue;
             if (result != nullptr) {
-                return Err(rstd::format(
-                    "external asset set '{}:{}' is ambiguous", dependency, name));
+                return Err(
+                    rstd::format("external asset set '{}:{}' is ambiguous", dependency, name));
             }
             result = rstd::addressof(set);
         }
         if (result == nullptr) {
-            return Err(rstd::format(
-                "external asset set '{}:{}' is unavailable", dependency, name));
+            return Err(rstd::format("external asset set '{}:{}' is unavailable", dependency, name));
         }
         return Ok(result);
     }

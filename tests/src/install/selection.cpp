@@ -328,7 +328,6 @@ sources = ["main.cpp"]
         .name        = String::make("runtime"_str),
         .disposition = lito::ExternalAssetDisposition::Provided,
     });
-    ASSERT_TRUE(
-        lito::resolve_install_artifact_link_variants(*provided, provided_assets).is_ok());
+    ASSERT_TRUE(lito::resolve_install_artifact_link_variants(*provided, provided_assets).is_ok());
     EXPECT_TRUE(provided->artifact_link_variants.is_empty());
 }

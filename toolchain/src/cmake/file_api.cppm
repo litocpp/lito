@@ -320,7 +320,7 @@ auto normal_asset_path(ref<str> value) -> bool {
 
 auto asset_source_allowed(const CMakeWorkArea&                      area,
                           const ResolvedCMakeDependencyRequirement& requirement,
-                          ref<rstd::path::Path>                      source) -> bool {
+                          ref<rstd::path::Path>                     source) -> bool {
     return requirement.source.is_Find() ||
            (! area.source.is_empty() && source.strip_prefix(area.source.as_path()).is_some()) ||
            source.strip_prefix(area.install.as_path()).is_some() ||
@@ -349,18 +349,18 @@ auto validate_asset_snapshot(const CMakeWorkArea&                      area,
         set.alias = requirement.alias.clone();
         if (set.disposition == ExternalAssetDisposition::Provided) {
             if (! set.entries.is_empty()) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                    "provided CMake asset set '{}:{}' contains materialized entries",
-                    requirement.alias.as_str(),
-                    set.name.as_str()));
+                return cmake_failure<Vec<ExternalAssetSet>>(
+                    rstd::format("provided CMake asset set '{}:{}' contains materialized entries",
+                                 requirement.alias.as_str(),
+                                 set.name.as_str()));
             }
             continue;
         }
         if (set.entries.is_empty()) {
-            return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                "materialized CMake asset set '{}:{}' is empty",
-                requirement.alias.as_str(),
-                set.name.as_str()));
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                rstd::format("materialized CMake asset set '{}:{}' is empty",
+                             requirement.alias.as_str(),
+                             set.name.as_str()));
         }
         for (usize entry_index {}; entry_index < set.entries.len(); ++entry_index) {
             auto& entry   = set.entries[entry_index];
@@ -442,9 +442,9 @@ auto read_asset_snapshot(const CMakeWorkArea&                      area,
             auto declaration = kind->get<1>().split_once("\t"_str);
             if (declaration.is_none() || declaration->get<0>().is_empty() ||
                 declaration->get<1>().contains("\t"_str)) {
-                return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                    "CMake asset receipt '{}' contains an invalid set declaration",
-                    path.as_path()));
+                return cmake_failure<Vec<ExternalAssetSet>>(
+                    rstd::format("CMake asset receipt '{}' contains an invalid set declaration",
+                                 path.as_path()));
             }
             auto disposition = ExternalAssetDisposition::Materialized;
             if (declaration->get<1>() == "provided"_str) {
@@ -484,21 +484,21 @@ auto read_asset_snapshot(const CMakeWorkArea&                      area,
             return cmake_failure<Vec<ExternalAssetSet>>(
                 rstd::format("CMake asset receipt '{}' contains an invalid entry", path.as_path()));
         }
-        ExternalAssetSet* set    = nullptr;
+        ExternalAssetSet* set = nullptr;
         for (auto& candidate : sets) {
             if (candidate.name == named->get<0>()) set = rstd::addressof(candidate);
         }
         if (set == nullptr) {
-            return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                "CMake asset receipt '{}' contains an entry for undeclared set '{}'",
-                path.as_path(),
-                named->get<0>()));
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                rstd::format("CMake asset receipt '{}' contains an entry for undeclared set '{}'",
+                             path.as_path(),
+                             named->get<0>()));
         }
         if (set->disposition == ExternalAssetDisposition::Provided) {
-            return cmake_failure<Vec<ExternalAssetSet>>(rstd::format(
-                "CMake asset receipt '{}' appends an entry to provided set '{}'",
-                path.as_path(),
-                named->get<0>()));
+            return cmake_failure<Vec<ExternalAssetSet>>(
+                rstd::format("CMake asset receipt '{}' appends an entry to provided set '{}'",
+                             path.as_path(),
+                             named->get<0>()));
         }
         set->entries.push(ExternalAssetEntry {
             .logical_path = PathBuf::from(entry->get<0>()),
