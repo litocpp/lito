@@ -88,6 +88,7 @@ struct FrontendStatistics {
     usize                                persistent_scan_source {};
     usize                                persistent_scan_file_dependency {};
     usize                                persistent_scan_include_lookup {};
+    usize                                persistent_scan_embed_lookup {};
     usize                                persistent_scan_external_macro {};
     usize                                persistent_scan_receipt {};
     usize                                persistent_fingerprint_requests {};
@@ -121,6 +122,7 @@ struct FrontendStatistics {
         persistent_scan_source += other.persistent_scan_source;
         persistent_scan_file_dependency += other.persistent_scan_file_dependency;
         persistent_scan_include_lookup += other.persistent_scan_include_lookup;
+        persistent_scan_embed_lookup += other.persistent_scan_embed_lookup;
         persistent_scan_external_macro += other.persistent_scan_external_macro;
         persistent_scan_receipt += other.persistent_scan_receipt;
         persistent_fingerprint_requests += other.persistent_fingerprint_requests;

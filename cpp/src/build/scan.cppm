@@ -20,6 +20,7 @@ struct ScanResult {
     Option<String>                              implementation_module;
     Vec<RequiredModule>                         required_modules;
     Vec<PathBuf>                                header_inputs;
+    Vec<frontend::EmbeddedInput>                embedded_inputs;
     Vec<frontend::ExternalMacroMaterialization> external_macros;
     String                                      preprocessor_environment;
 };

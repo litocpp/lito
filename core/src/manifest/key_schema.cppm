@@ -33,7 +33,7 @@ auto runnable_key(ref<str> key) -> bool {
 }
 
 auto source_group_key(ref<str> key) -> bool {
-    return key == "external-source"_str || key == "sources"_str;
+    return key == "root"_str || key == "external-source"_str || key == "sources"_str;
 }
 
 auto target_when_key(ref<str> key) -> bool {

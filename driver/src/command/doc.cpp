@@ -387,7 +387,7 @@ auto site_manifest_json(const BuildSummary&     summary,
                         const Vec<DocUnitPlan>& plans,
                         ref<rstd::path::Path>   output,
                         ref<rstd::path::Path>   data_output,
-                        ref<rstd::path::Path>   frontend,
+                        const Option<PathBuf>&  frontend,
                         bool                    data_only) -> DocResult<String> {
     auto packages = Vec<PackageResponses>::make();
     for (const auto& selected : summary.selected_packages) {
@@ -454,8 +454,11 @@ auto site_manifest_json(const BuildSummary&     summary,
     root.insert(String::make("title"_str), doc_json_string(summary.package.as_str()));
     root.insert(String::make("output"_str), Json::String(rstd::move(output_text)));
     root.insert(String::make("data_output"_str), Json::String(rstd::move(data_text)));
-    root.insert(String::make("frontend"_str),
-                Json::String(rstd_try(doc_path_text(frontend, "documentation frontend"_str))));
+    if (frontend.is_some()) {
+        root.insert(String::make("frontend"_str),
+                    Json::String(rstd_try(
+                        doc_path_text(frontend->as_path(), "documentation frontend"_str))));
+    }
     root.insert(String::make("data_only"_str), Json::Bool(data_only));
     root.insert(String::make("data_api"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
     root.insert(String::make("template_api"_str),
@@ -543,14 +546,12 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
                              ? summary.output.join(PathBuf::from("doc-data"_str).as_path())
                              : rstd::move(request.data_output);
     auto manifest_path = cache_root.join(PathBuf::from("site.json"_str).as_path());
-    auto frontend =
-        request.frontend.is_some() ? request.frontend->clone() : tool->default_frontend.clone();
-    auto manifest = site_manifest_json(summary,
-                                       plans,
-                                       output.as_path(),
-                                       data_output.as_path(),
-                                       frontend.as_path(),
-                                       request.data_only);
+    auto manifest      = site_manifest_json(summary,
+                                            plans,
+                                            output.as_path(),
+                                            data_output.as_path(),
+                                            request.frontend,
+                                            request.data_only);
     if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
     rstd_try(write_extraction_request(manifest_path.as_path(), manifest->as_str()));
     emit_doc(request.observer, DocEventKind::Generate, summary.package.as_str(), output.as_path());

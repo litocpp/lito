@@ -206,6 +206,20 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
         headers.push(rstd::move(path).unwrap());
     }
 
+    auto embedded = JsonArray::make();
+    for (const auto& input : report.result.embedded_inputs) {
+        auto path = json_path(input.path.as_path());
+        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+        auto value = JsonMap::make();
+        value.insert(String::make("digest"_str), scan_json_string(input.digest.as_str()));
+        value.insert(String::make("length"_str), json_usize(input.length));
+        value.insert(String::make("offset"_str), json_usize(input.offset));
+        value.insert(String::make("path"_str), rstd::move(path).unwrap());
+        value.insert(String::make("size"_str),
+                     Json::Number(rstd::json::Number::from_u64(input.size)));
+        embedded.push(Json::Object(rstd::move(value)));
+    }
+
     auto implementation = Json::Null();
     if (report.result.implementation_module.is_some()) {
         implementation = scan_json_string(report.result.implementation_module->as_str());
@@ -234,7 +248,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     auto document = JsonMap::make();
     document.insert(String::make("format"_str), scan_json_string("lito-scan"_str));
     document.insert(String::make("version"_str),
-                    Json::Number(rstd::json::Number::from_u64(u64(3))));
+                    Json::Number(rstd::json::Number::from_u64(u64(4))));
     document.insert(String::make("target"_str), scan_json_string(report.target.as_str()));
     document.insert(String::make("profile"_str), scan_json_string(report.profile.as_str()));
     document.insert(String::make("source"_str), Json::String(rstd::move(source).unwrap()));
@@ -242,6 +256,7 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     document.insert(String::make("implementation-module"_str), rstd::move(implementation));
     document.insert(String::make("requires"_str), Json::Array(rstd::move(required_modules)));
     document.insert(String::make("headers"_str), Json::Array(rstd::move(headers)));
+    document.insert(String::make("embedded-resources"_str), Json::Array(rstd::move(embedded)));
     document.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     document.insert(String::make("preprocessor-environment"_str),
                     scan_json_string(report.result.preprocessor_environment.as_str()));

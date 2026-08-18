@@ -404,6 +404,20 @@ auto parse_source_groups(Option<ref<Toml>> value)
             return manifest_schema_failure<Vec<SourceGroupManifest>>(
                 rstd::format("{}.external-source must name a package external source", context));
         }
+        auto root       = SourceGroupRoot::Package;
+        auto root_value = rstd_try(optional_string(specification, "root"_str, context.as_str()));
+        if (root_value.is_some()) {
+            if (root_value->as_str() == "generated"_str) {
+                root = SourceGroupRoot::Generated;
+            } else if (root_value->as_str() != "package"_str) {
+                return manifest_schema_failure<Vec<SourceGroupManifest>>(
+                    rstd::format("{}.root must be package or generated", context));
+            }
+        }
+        if (root == SourceGroupRoot::Generated && external.is_some()) {
+            return manifest_schema_failure<Vec<SourceGroupManifest>>(
+                rstd::format("{}.root generated cannot be combined with external-source", context));
+        }
         auto sources = rstd_try(declared_paths(member(specification, "sources"_str),
                                                rstd::format("{}.sources", context).as_str(),
                                                true));
@@ -415,6 +429,7 @@ auto parse_source_groups(Option<ref<Toml>> value)
         }
         result.push(SourceGroupManifest {
             .name            = name.clone(),
+            .root            = root,
             .external_source = rstd::move(external),
             .sources         = rstd::move(sources),
         });

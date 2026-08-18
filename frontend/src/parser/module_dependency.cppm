@@ -175,6 +175,7 @@ public:
                     for (const auto& path : translation.header_inputs) paths.push(path.clone());
                     return paths;
                 }(),
+            .embedded_inputs          = as<Clone>(translation.embedded_inputs).clone(),
             .external_macros          = as<Clone>(translation.external_macros).clone(),
             .preprocessor_environment = translation.environment_identity.clone(),
             .input_bytes              = translation.input_bytes,

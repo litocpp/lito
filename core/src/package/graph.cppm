@@ -63,6 +63,7 @@ struct ResolvedProjectRoot {
 struct ResolvedPackageGraph {
     String                                   name;
     Vec<ResolvedProjectRoot>                 roots;
+    Vec<String>                              default_roots;
     PathBuf                                  root_directory;
     PathBuf                                  manifest_path;
     bool                                     root_is_workspace { false };

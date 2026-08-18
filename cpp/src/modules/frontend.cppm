@@ -48,6 +48,7 @@ auto scan_from_frontend(const frontend::FrontendResult& facts, UnitId unit) -> S
             result.required_modules, imported.logical_name.as_str(), imported.exported);
     }
     for (const auto& header : facts.header_inputs) result.header_inputs.push(header.clone());
+    result.embedded_inputs = as<Clone>(facts.embedded_inputs).clone();
     return result;
 }
 

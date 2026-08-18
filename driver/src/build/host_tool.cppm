@@ -185,12 +185,28 @@ struct ResolvedHostBuildTool {
 
 class ResolvedHostBuildTools {
 public:
-    auto get(ref<str> alias) const noexcept -> Option<ref<ResolvedHostBuildTool>> {
+    auto get(ref<str> package, ref<str> alias) const noexcept
+        -> Option<ref<ResolvedHostBuildTool>> {
         for (const auto& tool : tools_) {
-            if (tool->alias == alias)
+            if (tool->package == package && tool->alias == alias)
                 return Some(ref<ResolvedHostBuildTool>::from_raw_parts(rstd::addressof(*tool)));
         }
         return None();
+    }
+
+    auto get(ref<str> alias) const noexcept -> Option<ref<ResolvedHostBuildTool>> {
+        auto result = Option<ref<ResolvedHostBuildTool>> {};
+        for (const auto& tool : tools_) {
+            if (tool->alias != alias) continue;
+            if (result.is_some()) return None();
+            result = Some(ref<ResolvedHostBuildTool>::from_raw_parts(rstd::addressof(*tool)));
+        }
+        return result;
+    }
+
+    auto identity(ref<str> package, ref<str> alias) const noexcept -> const void* {
+        auto tool = get(package, alias);
+        return tool.is_some() ? static_cast<const void*>(rstd::addressof(**tool)) : nullptr;
     }
 
     auto identity(ref<str> alias) const noexcept -> const void* {
@@ -228,11 +244,6 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&                  metad
     auto archives     = Vec<lito::source::ArchiveSourceFetchRequest>::make();
     for (const auto& owned : metadata.build_tools) {
         if (! requested_package(packages, owned.package.as_str())) continue;
-        for (const auto& existing : requirements) {
-            if (existing->requirement.alias == owned.requirement.alias.as_str()) {
-                return Err(HostBuildToolError::DuplicateAlias(owned.requirement.alias.clone()));
-            }
-        }
         auto archive = rstd_try(select_host_build_tool_archive(owned.requirement, host));
         requirements.push(
             ref<cpp::PackageBuildToolRequirement>::from_raw_parts(rstd::addressof(owned)));

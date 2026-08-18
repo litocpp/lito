@@ -32,6 +32,7 @@ enum class ScanCacheMissReason
     Source,
     FileDependency,
     IncludeLookup,
+    EmbedLookup,
     ExternalMacro,
     Receipt,
 };
@@ -50,6 +51,7 @@ struct ScanCacheStatistics {
     usize                source {};
     usize                file_dependency {};
     usize                include_lookup {};
+    usize                embed_lookup {};
     usize                external_macro {};
     usize                receipt {};
     usize                fingerprint_requests {};
@@ -92,6 +94,16 @@ auto parse_include_kind(ref<str> value) -> Option<frontend::IncludeLookupKind> {
     if (value == "angled"_str) return Some(frontend::IncludeLookupKind::Angled);
     if (value == "next-quoted"_str) return Some(frontend::IncludeLookupKind::NextQuoted);
     if (value == "next-angled"_str) return Some(frontend::IncludeLookupKind::NextAngled);
+    return None();
+}
+
+auto embed_kind_name(frontend::EmbedLookupKind kind) -> ref<str> {
+    return kind == frontend::EmbedLookupKind::Quoted ? "quoted"_str : "angled"_str;
+}
+
+auto parse_embed_kind(ref<str> value) -> Option<frontend::EmbedLookupKind> {
+    if (value == "quoted"_str) return Some(frontend::EmbedLookupKind::Quoted);
+    if (value == "angled"_str) return Some(frontend::EmbedLookupKind::Angled);
     return None();
 }
 
@@ -241,6 +253,77 @@ auto parse_include_lookup(ref<Json> value) -> Option<frontend::IncludeLookupDepe
     });
 }
 
+auto embed_lookup_json(const frontend::EmbedLookupDependency& lookup) -> CacheResult<Json> {
+    auto including = path_string(lookup.including_path.as_path());
+    if (including.is_err()) return Err(rstd::move(including).unwrap_err());
+    auto missing = JsonArray::make();
+    for (const auto& candidate : lookup.missing_candidates) {
+        auto encoded = path_json(candidate.as_path());
+        if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
+        missing.push(rstd::move(encoded).unwrap());
+    }
+    auto resolved = Json::Null();
+    if (lookup.resolved.is_some()) {
+        auto requested = path_string(lookup.resolved->requested_path.as_path());
+        auto canonical = path_string(lookup.resolved->canonical_path.as_path());
+        if (requested.is_err()) return Err(rstd::move(requested).unwrap_err());
+        if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
+        auto value = JsonMap::make();
+        value.insert(String::make("canonical"_str), cache_string(canonical->as_str()));
+        value.insert(String::make("requested"_str), cache_string(requested->as_str()));
+        value.insert(String::make("search-index"_str),
+                     cache_u64(as_cast<u64>(lookup.resolved->search_index)));
+        resolved = Json::Object(rstd::move(value));
+    }
+    auto value = JsonMap::make();
+    value.insert(String::make("including"_str), cache_string(including->as_str()));
+    value.insert(String::make("kind"_str), cache_string(embed_kind_name(lookup.kind)));
+    value.insert(String::make("missing"_str), Json::Array(rstd::move(missing)));
+    value.insert(String::make("name"_str), cache_string(lookup.name.as_str()));
+    value.insert(String::make("resolved"_str), rstd::move(resolved));
+    return Ok(Json::Object(rstd::move(value)));
+}
+
+auto parse_embed_lookup(ref<Json> value) -> Option<frontend::EmbedLookupDependency> {
+    if (! value->is_object()) return None();
+    auto kind_text      = json_text(value, "kind"_str);
+    auto name           = json_text(value, "name"_str);
+    auto including      = json_text(value, "including"_str);
+    auto missing_values = json_array(value, "missing"_str);
+    auto resolved_value = json_member(value, "resolved"_str);
+    if (kind_text.is_none() || name.is_none() || name->is_empty() || including.is_none() ||
+        missing_values.is_none() || resolved_value.is_none()) {
+        return None();
+    }
+    auto kind = parse_embed_kind(*kind_text);
+    if (kind.is_none()) return None();
+    auto missing = Vec<PathBuf>::with_capacity((**missing_values).len());
+    for (const auto& candidate : **missing_values) {
+        auto path = json_path(ref<Json>::from_raw_parts(rstd::addressof(candidate)));
+        if (path.is_none()) return None();
+        missing.push(rstd::move(path).unwrap());
+    }
+    auto resolved = Option<frontend::ResolvedEmbedCandidate> {};
+    if (! (**resolved_value).is_null()) {
+        auto requested    = json_text(*resolved_value, "requested"_str);
+        auto canonical    = json_text(*resolved_value, "canonical"_str);
+        auto search_index = json_number(*resolved_value, "search-index"_str);
+        if (requested.is_none() || canonical.is_none() || search_index.is_none()) return None();
+        resolved = Some(frontend::ResolvedEmbedCandidate {
+            .requested_path = PathBuf::from(*requested),
+            .canonical_path = PathBuf::from(*canonical),
+            .search_index   = usize(static_cast<size_t>(search_index->to_primitive())),
+        });
+    }
+    return Some(frontend::EmbedLookupDependency {
+        .kind               = *kind,
+        .name               = String::make(*name),
+        .including_path     = PathBuf::from(*including),
+        .missing_candidates = rstd::move(missing),
+        .resolved           = rstd::move(resolved),
+    });
+}
+
 auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Json> {
     auto source = path_string(snapshot.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
@@ -276,11 +359,24 @@ auto snapshot_json(const frontend::FrontendSnapshot& snapshot) -> CacheResult<Js
         if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
         headers.push(rstd::move(encoded).unwrap());
     }
+    auto embedded_inputs = JsonArray::with_capacity(snapshot.embedded_inputs.len());
+    for (const auto& embedded : snapshot.embedded_inputs) {
+        auto path = path_string(embedded.path.as_path());
+        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+        auto value = JsonMap::make();
+        value.insert(String::make("digest"_str), cache_string(embedded.digest.as_str()));
+        value.insert(String::make("length"_str), cache_u64(as_cast<u64>(embedded.length)));
+        value.insert(String::make("offset"_str), cache_u64(as_cast<u64>(embedded.offset)));
+        value.insert(String::make("path"_str), cache_string(path->as_str()));
+        value.insert(String::make("size"_str), cache_u64(embedded.size));
+        embedded_inputs.push(Json::Object(rstd::move(value)));
+    }
     auto external_macros = JsonArray::with_capacity(snapshot.external_macros.len());
     for (const auto& macro : snapshot.external_macros) {
         external_macros.push(external_macro_json(macro));
     }
     auto value = JsonMap::make();
+    value.insert(String::make("embedded-inputs"_str), Json::Array(rstd::move(embedded_inputs)));
     value.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     value.insert(String::make("header-inputs"_str), Json::Array(rstd::move(headers)));
     value.insert(String::make("implementation-module"_str), rstd::move(implementation));
@@ -302,10 +398,11 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
     auto implementation_value  = json_member(value, "implementation-module"_str);
     auto import_values         = json_array(value, "imports"_str);
     auto header_values         = json_array(value, "header-inputs"_str);
+    auto embedded_values       = json_array(value, "embedded-inputs"_str);
     auto external_macro_values = json_array(value, "external-macros"_str);
     if (source.is_none() || environment.is_none() || input_bytes.is_none() ||
         provided_value.is_none() || implementation_value.is_none() || import_values.is_none() ||
-        header_values.is_none() || external_macro_values.is_none()) {
+        header_values.is_none() || embedded_values.is_none() || external_macro_values.is_none()) {
         return None();
     }
     auto provided = Option<frontend::ProvidedModule> {};
@@ -354,6 +451,26 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
         if (path.is_none()) return None();
         headers.push(rstd::move(path).unwrap());
     }
+    auto embedded_inputs = Vec<frontend::EmbeddedInput>::with_capacity((**embedded_values).len());
+    for (const auto& item : **embedded_values) {
+        auto item_ref = ref<Json>::from_raw_parts(rstd::addressof(item));
+        auto path     = json_text(item_ref, "path"_str);
+        auto size     = json_number(item_ref, "size"_str);
+        auto digest   = json_text(item_ref, "digest"_str);
+        auto offset   = json_number(item_ref, "offset"_str);
+        auto length   = json_number(item_ref, "length"_str);
+        if (path.is_none() || size.is_none() || digest.is_none() || digest->is_empty() ||
+            offset.is_none() || length.is_none()) {
+            return None();
+        }
+        embedded_inputs.push(frontend::EmbeddedInput {
+            .path   = PathBuf::from(*path),
+            .size   = *size,
+            .digest = String::make(*digest),
+            .offset = usize(static_cast<size_t>(offset->to_primitive())),
+            .length = usize(static_cast<size_t>(length->to_primitive())),
+        });
+    }
     auto external_macros =
         Vec<frontend::ExternalMacroMaterialization>::with_capacity((**external_macro_values).len());
     for (const auto& item : **external_macro_values) {
@@ -367,6 +484,7 @@ auto parse_snapshot(ref<Json> value) -> Option<frontend::FrontendSnapshot> {
         .implementation_module    = rstd::move(implementation),
         .imports                  = rstd::move(imports),
         .header_inputs            = rstd::move(headers),
+        .embedded_inputs          = rstd::move(embedded_inputs),
         .external_macros          = rstd::move(external_macros),
         .preprocessor_environment = String::make(*environment),
         .input_bytes              = usize(static_cast<size_t>(input_bytes->to_primitive())),
@@ -433,6 +551,7 @@ class ScanCacheSession {
         case ScanCacheMissReason::Source: ++statistics->source; break;
         case ScanCacheMissReason::FileDependency: ++statistics->file_dependency; break;
         case ScanCacheMissReason::IncludeLookup: ++statistics->include_lookup; break;
+        case ScanCacheMissReason::EmbedLookup: ++statistics->embed_lookup; break;
         case ScanCacheMissReason::ExternalMacro: ++statistics->external_macro; break;
         case ScanCacheMissReason::Receipt: ++statistics->receipt; break;
         case ScanCacheMissReason::None: __builtin_unreachable();
@@ -519,6 +638,7 @@ class ScanCacheSession {
                  const FileFingerprint&                                      source,
                  const rstd::collections::BTreeMap<String, FileFingerprint>& files,
                  const Vec<frontend::IncludeLookupDependency>&               lookups,
+                 const Vec<frontend::EmbedLookupDependency>&                 embed_lookups,
                  const frontend::FrontendResult& result) const -> CacheResult<String> {
         auto source_path = path_string(input.source.as_path());
         auto relative    = path_string(input.relative_source.as_path());
@@ -552,6 +672,29 @@ class ScanCacheSession {
                             lookup.previous_search_index.is_some()
                                 ? rstd::format("{}", *lookup.previous_search_index).as_str()
                                 : "none"_str);
+            for (const auto& candidate : lookup.missing_candidates) {
+                auto path = path_string(candidate.as_path());
+                if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+                cache::add_text(hash, path->as_str());
+            }
+            if (lookup.resolved.is_some()) {
+                auto requested = path_string(lookup.resolved->requested_path.as_path());
+                auto canonical = path_string(lookup.resolved->canonical_path.as_path());
+                if (requested.is_err()) return Err(rstd::move(requested).unwrap_err());
+                if (canonical.is_err()) return Err(rstd::move(canonical).unwrap_err());
+                cache::add_text(hash, requested->as_str());
+                cache::add_text(hash, canonical->as_str());
+                cache::add_text(hash, rstd::format("{}", lookup.resolved->search_index).as_str());
+            } else {
+                cache::add_text(hash, "unresolved"_str);
+            }
+        }
+        for (const auto& lookup : embed_lookups) {
+            cache::add_text(hash, embed_kind_name(lookup.kind));
+            cache::add_text(hash, lookup.name.as_str());
+            auto including = path_string(lookup.including_path.as_path());
+            if (including.is_err()) return Err(rstd::move(including).unwrap_err());
+            cache::add_text(hash, including->as_str());
             for (const auto& candidate : lookup.missing_candidates) {
                 auto path = path_string(candidate.as_path());
                 if (path.is_err()) return Err(rstd::move(path).unwrap_err());
@@ -630,14 +773,16 @@ private:
         auto stored_source                = json_member(document, "source"_str);
         auto files_value                  = json_array(document, "files"_str);
         auto lookups_value                = json_array(document, "include-lookups"_str);
+        auto embed_lookups_value          = json_array(document, "embed-lookups"_str);
         auto result_value                 = json_member(document, "result"_str);
         auto stored_receipt               = json_text(document, "receipt"_str);
         auto stored_external_macro_schema = json_text(document, "external-macro-schema"_str);
         if (version.is_none() || state.is_none() || *state != "complete"_str || recipe.is_none() ||
             environment.is_none() || target.is_none() || context.is_none() ||
             source_origin.is_none() || stored_working.is_none() || stored_source.is_none() ||
-            files_value.is_none() || lookups_value.is_none() || result_value.is_none() ||
-            stored_receipt.is_none() || stored_external_macro_schema.is_none()) {
+            files_value.is_none() || lookups_value.is_none() || embed_lookups_value.is_none() ||
+            result_value.is_none() || stored_receipt.is_none() ||
+            stored_external_macro_schema.is_none()) {
             return miss(ScanCacheMissReason::Corrupt);
         }
         if (*version != CACHE_VERSION) return miss(ScanCacheMissReason::Version);
@@ -716,6 +861,18 @@ private:
             }
             lookups.push(rstd::move(lookup).unwrap());
         }
+        auto embed_lookups =
+            Vec<frontend::EmbedLookupDependency>::with_capacity((**embed_lookups_value).len());
+        for (const auto& item : **embed_lookups_value) {
+            auto lookup = parse_embed_lookup(ref<Json>::from_raw_parts(rstd::addressof(item)));
+            if (lookup.is_none()) return miss(ScanCacheMissReason::Corrupt);
+            auto valid = frontend::validate(*lookup);
+            if (valid.is_err()) {
+                return cache_failure<ScanCacheLookup>(rstd::move(valid).unwrap_err());
+            }
+            if (! *valid) return miss(ScanCacheMissReason::EmbedLookup);
+            embed_lookups.push(rstd::move(lookup).unwrap());
+        }
         auto stored_snapshot = parse_snapshot(*result_value);
         if (stored_snapshot.is_none()) {
             return miss(ScanCacheMissReason::Corrupt);
@@ -740,10 +897,18 @@ private:
             }
             header_paths.insert(rstd::move(path).unwrap(), empty {});
         }
-        if (header_paths.len() != files.len()) {
+        auto dependency_paths = rstd::move(header_paths);
+        for (const auto& embedded : restored->embedded_inputs) {
+            auto path = path_string(embedded.path.as_path());
+            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+            if (! files.contains_key(path->as_str())) return miss(ScanCacheMissReason::Corrupt);
+            dependency_paths.insert(rstd::move(path).unwrap(), empty {});
+        }
+        if (dependency_paths.len() != files.len()) {
             return miss(ScanCacheMissReason::Corrupt);
         }
-        auto expected_receipt = receipt(input, *source_file, files, lookups, *restored);
+        auto expected_receipt =
+            receipt(input, *source_file, files, lookups, embed_lookups, *restored);
         if (expected_receipt.is_err()) return Err(rstd::move(expected_receipt).unwrap_err());
         if (expected_receipt->as_str() != *stored_receipt) {
             return miss(ScanCacheMissReason::Receipt);
@@ -776,8 +941,16 @@ private:
             if (file.is_err()) return Err(rstd::move(file).unwrap_err());
             files.insert(rstd::move(path).unwrap(), rstd::move(file).unwrap());
         }
-        auto scan_receipt =
-            receipt(input, *source_file, files, value.include_lookups, value.result);
+        for (const auto& embedded : value.result.embedded_inputs) {
+            auto path = path_string(embedded.path.as_path());
+            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+            if (files.contains_key(path->as_str())) continue;
+            auto file = file_fingerprint(embedded.path.as_path());
+            if (file.is_err()) return Err(rstd::move(file).unwrap_err());
+            files.insert(rstd::move(path).unwrap(), rstd::move(file).unwrap());
+        }
+        auto scan_receipt = receipt(
+            input, *source_file, files, value.include_lookups, value.embed_lookups, value.result);
         if (scan_receipt.is_err()) return Err(rstd::move(scan_receipt).unwrap_err());
         auto cacheable = value.result.preprocessor_environment.as_str() ==
                          input.preprocessor_environment.as_str();
@@ -801,6 +974,12 @@ private:
                 if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
                 lookups_json.push(rstd::move(encoded).unwrap());
             }
+            auto embed_lookups_json = JsonArray::make();
+            for (const auto& lookup : value.embed_lookups) {
+                auto encoded = embed_lookup_json(lookup);
+                if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
+                embed_lookups_json.push(rstd::move(encoded).unwrap());
+            }
             auto encoded_result = snapshot_json(frontend::snapshot(value.result));
             if (encoded_result.is_err()) return Err(rstd::move(encoded_result).unwrap_err());
             auto source_json = JsonMap::make();
@@ -813,6 +992,8 @@ private:
             root.insert(String::make("context"_str), cache_string(input.context_identity.as_str()));
             root.insert(String::make("environment"_str),
                         cache_string(state_->environment.as_str()));
+            root.insert(String::make("embed-lookups"_str),
+                        Json::Array(rstd::move(embed_lookups_json)));
             root.insert(String::make("external-macro-schema"_str),
                         cache_string(input.external_macro_schema.as_str()));
             root.insert(String::make("files"_str), Json::Array(rstd::move(files_json)));

@@ -8,7 +8,6 @@ import rstd.json;
 import lito.core;
 import :build;
 import :build.event;
-import :build.resource;
 import :command.doc.event;
 import :command.doc.request;
 import :command.doc_error;
@@ -47,6 +46,15 @@ auto json_protocol_contains(const Json& value, ref<str> key, u64 expected) -> bo
     return false;
 }
 
+auto json_feature_contains(const Json& value, ref<str> expected) -> bool {
+    auto member = value.get("features"_str);
+    if (member.is_none() || (**member).as_array().is_none()) return false;
+    for (const auto& item : **(**member).as_array()) {
+        if (item.as_str() == Some(expected)) return true;
+    }
+    return false;
+}
+
 struct DocToolCapabilities {
     String litodoc_build;
     String clang_version;
@@ -73,7 +81,8 @@ auto parse_capabilities(String                  text,
         (**clang_build).as_str().is_none() ||
         ! json_protocol_contains(*parsed, "extract_protocols"_str, u64(1)) ||
         ! json_protocol_contains(*parsed, "site_manifest_versions"_str, u64(1)) ||
-        ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(2))) {
+        ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(2)) ||
+        ! json_feature_contains(*parsed, "embedded-default-frontend"_str)) {
         return Err(DocError::Protocol(PathBuf::from(executable),
                                       String::make("unsupported litodoc capabilities"_str)));
     }
@@ -191,9 +200,7 @@ auto acquire_doc_tool_lock(ref<rstd::path::Path> root) -> DocResult<rstd::fs::Fi
 
 struct CachedDocTool {
     PathBuf executable;
-    PathBuf default_frontend;
     String  executable_digest;
-    String  frontend_identity;
 };
 
 auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String>;
@@ -210,16 +217,16 @@ auto receipt_tool(ref<rstd::path::Path> receipt, ref<str> expected_key)
     }
     auto parsed = rstd::json::from_str(contents->as_str());
     if (parsed.is_err()) return Ok(None());
+    auto format            = parsed->get("format"_str);
+    auto version           = parsed->get("version"_str);
     auto key               = parsed->get("key"_str);
     auto executable        = parsed->get("executable"_str);
-    auto default_frontend  = parsed->get("default_frontend"_str);
     auto executable_digest = parsed->get("executable_digest"_str);
-    auto frontend_identity = parsed->get("frontend_identity"_str);
-    if (key.is_none() || (**key).as_str() != Some(expected_key) || executable.is_none() ||
-        (**executable).as_str().is_none() || default_frontend.is_none() ||
-        (**default_frontend).as_str().is_none() || executable_digest.is_none() ||
-        (**executable_digest).as_str().is_none() || frontend_identity.is_none() ||
-        (**frontend_identity).as_str().is_none()) {
+    if (format.is_none() || (**format).as_str() != Some("lito-doc-tool"_str) || version.is_none() ||
+        (**version).as_u64() != Some(u64(2)) || key.is_none() ||
+        (**key).as_str() != Some(expected_key) || executable.is_none() ||
+        (**executable).as_str().is_none() || executable_digest.is_none() ||
+        (**executable_digest).as_str().is_none()) {
         return Ok(None());
     }
     auto path     = PathBuf::from(*(**executable).as_str());
@@ -230,14 +237,9 @@ auto receipt_tool(ref<rstd::path::Path> receipt, ref<str> expected_key)
         actual_executable->as_str() != *(**executable_digest).as_str()) {
         return Ok(None());
     }
-    auto frontend = PathBuf::from(*(**default_frontend).as_str());
-    auto actual   = runtime_resource_directory_identity(frontend.as_path());
-    if (actual.is_err() || actual->as_str() != *(**frontend_identity).as_str()) return Ok(None());
     return Ok(Some(CachedDocTool {
         .executable        = rstd::move(path),
-        .default_frontend  = rstd::move(frontend),
         .executable_digest = String::make(*(**executable_digest).as_str()),
-        .frontend_identity = String::make(*(**frontend_identity).as_str()),
     }));
 }
 
@@ -245,31 +247,21 @@ auto write_tool_receipt(ref<rstd::path::Path>      path,
                         ref<str>                   key,
                         ref<str>                   source_identity,
                         ref<rstd::path::Path>      executable,
-                        ref<rstd::path::Path>      default_frontend,
                         ref<str>                   executable_digest,
-                        ref<str>                   frontend_identity,
                         const DocToolCapabilities& capabilities) -> DocResult<empty> {
     auto executable_text = executable.to_str();
     if (executable_text.is_none()) {
         return doc_tool_failure<empty>(
             rstd::format("litodoc executable '{}' is not valid UTF-8", executable));
     }
-    auto frontend_text = default_frontend.to_str();
-    if (frontend_text.is_none()) {
-        return doc_tool_failure<empty>(
-            rstd::format("litodoc default frontend '{}' is not valid UTF-8", default_frontend));
-    }
     auto root = JsonMap::make();
     root.insert(String::make("format"_str), Json::String(String::make("lito-doc-tool"_str)));
-    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
     root.insert(String::make("key"_str), Json::String(String::make(key)));
     root.insert(String::make("source"_str), Json::String(String::make(source_identity)));
     root.insert(String::make("executable"_str), Json::String(String::make(*executable_text)));
-    root.insert(String::make("default_frontend"_str), Json::String(String::make(*frontend_text)));
     root.insert(String::make("executable_digest"_str),
                 Json::String(String::make(executable_digest)));
-    root.insert(String::make("frontend_identity"_str),
-                Json::String(String::make(frontend_identity)));
     root.insert(String::make("capabilities"_str), Json::String(capabilities.json.clone()));
     auto text =
         rstd::json::to_string(Json::Object(rstd::move(root)),
@@ -312,7 +304,6 @@ auto doc_tool_file_digest(ref<rstd::path::Path> path) -> DocResult<String> {
 
 struct PublishedDocTool {
     PathBuf executable;
-    PathBuf default_frontend;
     String  identity;
 };
 
@@ -332,17 +323,14 @@ auto copy_doc_tool_file(ref<rstd::path::Path> source, ref<rstd::path::Path> dest
     return Ok(empty {});
 }
 
-auto published_doc_tool(ref<rstd::path::Path>       tool_root,
-                        ref<rstd::path::Path>       executable,
-                        const BuiltRuntimeResource& frontend,
-                        ref<str> executable_digest) -> DocResult<PublishedDocTool> {
+auto published_doc_tool(ref<rstd::path::Path> tool_root,
+                        ref<rstd::path::Path> executable,
+                        ref<str>              executable_digest) -> DocResult<PublishedDocTool> {
     auto identity = rstd::crypto::sha256_hex(
-        rstd::format("litodoc-artifact-v1\n{}\n{}", executable_digest, frontend.identity.as_str())
-            .as_str());
+        rstd::format("litodoc-artifact-v2\n{}", executable_digest).as_str());
     auto artifacts        = PathBuf::from(tool_root).join(PathBuf::from("artifacts"_str).as_path());
     auto final            = artifacts.join(PathBuf::from(identity.clone()).as_path());
     auto final_executable = final.join(PathBuf::from("bin/litodoc"_str).as_path());
-    auto final_frontend   = final.join(PathBuf::from("frontend"_str).as_path());
     auto exists           = rstd::fs::exists(final.as_path());
     if (exists.is_err()) {
         return Err(doc_io_failure(
@@ -350,14 +338,10 @@ auto published_doc_tool(ref<rstd::path::Path>       tool_root,
     }
     if (*exists) {
         auto actual_executable = doc_tool_file_digest(final_executable.as_path());
-        auto actual_frontend   = runtime_resource_directory_identity(final_frontend.as_path());
-        if (actual_executable.is_ok() && actual_frontend.is_ok() &&
-            actual_executable->as_str() == executable_digest &&
-            actual_frontend->as_str() == frontend.identity.as_str()) {
+        if (actual_executable.is_ok() && actual_executable->as_str() == executable_digest) {
             return Ok(PublishedDocTool {
-                .executable       = rstd::move(final_executable),
-                .default_frontend = rstd::move(final_frontend),
-                .identity         = rstd::move(identity),
+                .executable = rstd::move(final_executable),
+                .identity   = rstd::move(identity),
             });
         }
         auto removed = rstd::fs::remove_dir_all(final.as_path());
@@ -392,20 +376,8 @@ auto published_doc_tool(ref<rstd::path::Path>       tool_root,
     }
     auto staged_executable = staging.join(PathBuf::from("bin/litodoc"_str).as_path());
     rstd_try(copy_doc_tool_file(executable, staged_executable.as_path()));
-    auto staged_frontend = staging.join(PathBuf::from("frontend"_str).as_path());
-    for (const auto& relative : frontend.files) {
-        auto source      = frontend.root.join(relative.as_path());
-        auto destination = staged_frontend.join(relative.as_path());
-        rstd_try(copy_doc_tool_file(source.as_path(), destination.as_path()));
-    }
     auto staged_executable_digest = rstd_try(doc_tool_file_digest(staged_executable.as_path()));
-    auto staged_frontend_identity = runtime_resource_directory_identity(staged_frontend.as_path());
-    if (staged_frontend_identity.is_err()) {
-        return doc_tool_failure<PublishedDocTool>(rstd::format(
-            "cannot validate staged litodoc frontend: {}", staged_frontend_identity.unwrap_err()));
-    }
-    if (staged_executable_digest.as_str() != executable_digest ||
-        staged_frontend_identity->as_str() != frontend.identity.as_str()) {
+    if (staged_executable_digest.as_str() != executable_digest) {
         return doc_tool_failure<PublishedDocTool>(
             "published litodoc artifact identity changed while copying"_str);
     }
@@ -415,9 +387,8 @@ auto published_doc_tool(ref<rstd::path::Path>       tool_root,
             "publish litodoc artifact"_str, final.as_path(), rstd::move(renamed).unwrap_err()));
     }
     return Ok(PublishedDocTool {
-        .executable       = rstd::move(final_executable),
-        .default_frontend = rstd::move(final_frontend),
-        .identity         = rstd::move(identity),
+        .executable = rstd::move(final_executable),
+        .identity   = rstd::move(identity),
     });
 }
 
@@ -428,8 +399,6 @@ namespace lito
 
 struct ResolvedDocTool {
     PathBuf  executable;
-    PathBuf  default_frontend;
-    String   frontend_identity;
     String   source_identity;
     String   build_identity;
     ClangSdk sdk;
@@ -445,7 +414,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     auto resolver = ToolResolver(environment);
     auto source   = acquire_doc_tool_source(request, config, resolver, environment);
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-    auto key_material = rstd::format("lito-doc-tool-v2\n{}\n{}\n{}\n{}\n{}",
+    auto key_material = rstd::format("lito-doc-tool-v3\n{}\n{}\n{}\n{}\n{}",
                                      source->identity.as_str(),
                                      sdk->identity.as_str(),
                                      project.compiler.target.as_str(),
@@ -471,12 +440,10 @@ auto resolve_doc_tool(const BuildRequest&               request,
                          source->identity.as_str(),
                          cached_tool.executable.as_path());
                 return Ok(ResolvedDocTool {
-                    .executable        = rstd::move(cached_tool.executable),
-                    .default_frontend  = rstd::move(cached_tool.default_frontend),
-                    .frontend_identity = rstd::move(cached_tool.frontend_identity),
-                    .source_identity   = source->identity.clone(),
-                    .build_identity    = rstd::move(key),
-                    .sdk               = rstd::move(sdk).unwrap(),
+                    .executable      = rstd::move(cached_tool.executable),
+                    .source_identity = source->identity.clone(),
+                    .build_identity  = rstd::move(key),
+                    .sdk             = rstd::move(sdk).unwrap(),
                 });
             }
         }
@@ -485,6 +452,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     emit_doc(observer, DocEventKind::ToolBuild, source->identity.as_str(), source->root.as_path());
     auto tool_request           = BuildRequest {};
     tool_request.selection.root = source->root.clone();
+    tool_request.selection.packages.push(String::make("litodoc"_str));
     tool_request.exact_targets.push(lito::package::PackageTargetId {
         .package = String::make("litodoc"_str),
         .kind    = lito::package::PackageTargetKind::Binary,
@@ -508,8 +476,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.observer          = request.observer;
     auto built                     = build_with_environment(tool_request, environment);
     if (built.is_err()) return Err(rstd::into<DocError>(rstd::move(built).unwrap_err()));
-    auto executable       = Option<PathBuf> {};
-    auto default_frontend = Option<ref<BuiltRuntimeResource>> {};
+    auto executable = Option<PathBuf> {};
     for (const auto& artifact : built->artifacts) {
         if (artifact.kind == cpp::ArtifactKind::Executable &&
             artifact.target.kind == lito::package::PackageTargetKind::Binary &&
@@ -518,31 +485,16 @@ auto resolve_doc_tool(const BuildRequest&               request,
             executable = Some(artifact.path.clone());
         }
     }
-    for (const auto& resource : built->runtime_resources) {
-        if (resource.target.kind == lito::package::PackageTargetKind::Binary &&
-            resource.target.package.as_str() == "litodoc"_str &&
-            resource.target.name.as_str() == "litodoc"_str &&
-            resource.name.as_str() == "default-frontend"_str) {
-            default_frontend =
-                Some(ref<BuiltRuntimeResource>::from_raw_parts(rstd::addressof(resource)));
-        }
-    }
     if (executable.is_none()) {
         return doc_tool_failure<ResolvedDocTool>(
             "litodoc tool build did not produce the litodoc executable"_str);
-    }
-    if (default_frontend.is_none()) {
-        return doc_tool_failure<ResolvedDocTool>(
-            "litodoc tool build did not produce the default frontend resource"_str);
     }
     auto capabilities = probe_doc_tool(executable->as_path(), project.compiler, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto executable_digest = doc_tool_file_digest(executable->as_path());
     if (executable_digest.is_err()) return Err(rstd::move(executable_digest).unwrap_err());
-    auto published = published_doc_tool(tool_root->as_path(),
-                                        executable->as_path(),
-                                        **default_frontend,
-                                        executable_digest->as_str());
+    auto published = published_doc_tool(
+        tool_root->as_path(), executable->as_path(), executable_digest->as_str());
     if (published.is_err()) return Err(rstd::move(published).unwrap_err());
     capabilities = probe_doc_tool(published->executable.as_path(), project.compiler, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
@@ -550,19 +502,15 @@ auto resolve_doc_tool(const BuildRequest&               request,
                                 key.as_str(),
                                 source->identity.as_str(),
                                 published->executable.as_path(),
-                                published->default_frontend.as_path(),
                                 executable_digest->as_str(),
-                                (**default_frontend).identity.as_str(),
                                 *capabilities));
     return Ok(ResolvedDocTool {
-        .executable        = rstd::move(published->executable),
-        .default_frontend  = rstd::move(published->default_frontend),
-        .frontend_identity = (**default_frontend).identity.clone(),
-        .source_identity   = source->identity.clone(),
-        .build_identity = source->cacheable
-                              ? rstd::move(key)
-                              : rstd::format("{}:{}", key.as_str(), published->identity.as_str()),
-        .sdk            = rstd::move(sdk).unwrap(),
+        .executable      = rstd::move(published->executable),
+        .source_identity = source->identity.clone(),
+        .build_identity  = source->cacheable
+                               ? rstd::move(key)
+                               : rstd::format("{}:{}", key.as_str(), published->identity.as_str()),
+        .sdk             = rstd::move(sdk).unwrap(),
     });
 }
 

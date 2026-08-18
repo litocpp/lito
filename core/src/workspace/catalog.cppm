@@ -74,6 +74,7 @@ class WorkspaceCatalog {
     PathBuf                                   manifest_path_;
     lito::manifest::ProjectProfile            profile_;
     Vec<String>                               names_;
+    Vec<String>                               default_names_;
     PackageMap                                packages_ { PackageMap::make() };
     StringSet                                 member_roots_ { StringSet::make() };
     Option<lito::manifest::WorkspaceManifest> workspace_manifest_;
@@ -134,6 +135,8 @@ public:
 
     auto names() const noexcept -> const Vec<String>& { return names_; }
 
+    auto default_names() const noexcept -> const Vec<String>& { return default_names_; }
+
     auto is_workspace() const noexcept -> bool { return workspace_; }
 
     auto profile() const -> lito::manifest::ProjectProfile { return profile_.clone(); }
@@ -168,7 +171,8 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
         catalog.profile_          = workspace.profile->clone();
         catalog.profile_declared_ = true;
     }
-    auto directories = StringSet::make();
+    auto directories  = StringSet::make();
+    auto member_names = rstd::collections::BTreeMap<String, String>::make();
     for (const auto& declared : workspace.members) {
         auto member =
             workspace_member_directory(workspace, declared.as_path(), "workspace member"_str);
@@ -212,6 +216,7 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
         directories.insert(rstd::move(key).unwrap(), empty {});
         auto member_key = path_text(manifest.root.as_path());
         if (member_key.is_err()) return Err(rstd::move(member_key).unwrap_err());
+        member_names.insert(member_key->clone(), manifest.name.clone());
         catalog.member_roots_.insert(rstd::move(member_key).unwrap(), empty {});
         catalog.names_.push(manifest.name.clone());
         auto package_name = manifest.name.clone();
@@ -234,9 +239,16 @@ auto load_workspace_catalog(lito::manifest::WorkspaceManifest       workspace,
                 rstd::format("workspace default member '{}' is not listed in workspace.members",
                              declared.as_path()));
         }
+        auto name = member_names.get(key->as_str());
+        if (name.is_none()) {
+            return catalog_failure<WorkspaceCatalog>(rstd::format(
+                "workspace default member '{}' has no package identity", declared.as_path()));
+        }
+        catalog.default_names_.push((**name).clone());
         defaults.insert(rstd::move(key).unwrap(), empty {});
     }
     rstd::slice_::sort_unstable(catalog.names_.as_mut_slice().as_mut_ref());
+    rstd::slice_::sort_unstable(catalog.default_names_.as_mut_slice().as_mut_ref());
     catalog.workspace_manifest_ = Some(rstd::move(workspace));
     return Ok(rstd::move(catalog));
 }

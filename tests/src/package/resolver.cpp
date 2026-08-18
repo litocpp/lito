@@ -828,3 +828,54 @@ sources = ["lib.cppm"]
     }
     EXPECT_TRUE(provider_library);
 }
+
+TEST_F(PackageResolver, WorkspaceDefaultsSelectOnlyDeclaredMembers) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "fixture-default-selection"
+members = ["app", "tool"]
+default-members = ["app"]
+)toml"_str },
+        { "app/lito.toml"_str, R"toml([package]
+name = "fixture-default-app"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-default-app"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "app/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "tool/lito.toml"_str, R"toml([package]
+name = "fixture-default-tool"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-default-tool"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "tool/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+    };
+    auto project = materialize("workspace-default-selection"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(selected.is_ok());
+    ASSERT_EQ(selected->selected_root_names.len(), usize(1));
+    EXPECT_EQ(selected->selected_root_names[usize {}].as_str(), "fixture-default-app"_str);
+    ASSERT_EQ(selected->selected_package_names.len(), usize(1));
+    EXPECT_EQ(selected->selected_package_names[usize {}].as_str(), "fixture-default-app"_str);
+
+    auto all = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::All);
+    ASSERT_TRUE(all.is_ok());
+    ASSERT_EQ(all->selected_root_names.len(), usize(2));
+    EXPECT_EQ(all->selected_root_names[usize {}].as_str(), "fixture-default-app"_str);
+    EXPECT_EQ(all->selected_root_names[usize(1)].as_str(), "fixture-default-tool"_str);
+    ASSERT_EQ(all->selected_package_names.len(), usize(2));
+    EXPECT_EQ(all->selected_package_names[usize {}].as_str(), "fixture-default-app"_str);
+    EXPECT_EQ(all->selected_package_names[usize(1)].as_str(), "fixture-default-tool"_str);
+}

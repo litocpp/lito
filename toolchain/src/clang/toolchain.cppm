@@ -439,6 +439,7 @@ public:
         -> ToolchainResult<frontend::UncachedFrontendAnalysis> {
         frontend_service.record_analysis_build();
         auto includes = toolchain::ClangIncludeResolver(*input.environment);
+        auto embeds   = toolchain::ClangEmbedResolver(*input.environment);
         auto builtins = toolchain::ClangBuiltinProvider(
             *input.environment, input.environment->key.working_directory.as_path());
         auto pragmas = toolchain::ClangPragmaHandler {};
@@ -446,13 +447,14 @@ public:
         if (input.language == toolchain::PreprocessorLanguage::C) {
             auto identifiers = lito::c::CIdentifierTokenMatcher {};
             auto consumer    = frontend::parser::HeaderDependencyConsumer::make();
-            auto translation = preprocessor::preprocess_to(
+            auto translation = preprocessor::preprocess_with_embeds_to(
                 preprocessor::PreprocessRequest {
                     .source               = PathBuf::from(source),
                     .environment_identity = input.environment->identity.clone(),
                 },
                 frontend_service,
                 includes,
+                embeds,
                 builtins,
                 *input.external_macros,
                 identifiers,
@@ -471,17 +473,19 @@ public:
             return Ok(frontend::UncachedFrontendAnalysis {
                 .result          = rstd::move(parsed).unwrap(),
                 .include_lookups = includes.take_dependencies(),
+                .embed_lookups   = embeds.take_dependencies(),
             });
         }
         auto identifiers = cpp::CppIdentifierTokenMatcher {};
         auto consumer    = frontend::parser::ModuleDependencyConsumer::make();
-        auto translation = preprocessor::preprocess_to(
+        auto translation = preprocessor::preprocess_with_embeds_to(
             preprocessor::PreprocessRequest {
                 .source               = PathBuf::from(source),
                 .environment_identity = input.environment->identity.clone(),
             },
             frontend_service,
             includes,
+            embeds,
             builtins,
             *input.external_macros,
             identifiers,
@@ -500,6 +504,7 @@ public:
         return Ok(frontend::UncachedFrontendAnalysis {
             .result          = rstd::move(parsed).unwrap(),
             .include_lookups = includes.take_dependencies(),
+            .embed_lookups   = embeds.take_dependencies(),
         });
     }
 

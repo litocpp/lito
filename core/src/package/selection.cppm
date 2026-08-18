@@ -267,8 +267,13 @@ auto resolve_package_selection_with_environment(
     auto selected_roots   = Vec<String>::make();
     auto selected_targets = Vec<PackageTargetId>::make();
     if (selection.packages.is_empty()) {
+        auto defaults = StringSet::make();
+        if (purpose != PackageSelectionPurpose::All) {
+            for (const auto& name : graph.default_roots) defaults.insert(name.clone(), empty {});
+        }
         for (const auto& root : graph.roots) {
-            const auto&                            name      = root.name;
+            const auto& name = root.name;
+            if (! defaults.is_empty() && ! defaults.contains_key(name.as_str())) continue;
             auto                                   supported = true;
             const lito::manifest::PackageManifest* manifest  = nullptr;
             if (target != nullptr) {

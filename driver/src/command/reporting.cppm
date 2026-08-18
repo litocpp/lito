@@ -168,6 +168,8 @@ auto detailed_report(const BuildSummary& summary) -> String {
     append_metric(
         output, "scan miss include lookup"_str, summary.frontend.persistent_scan_include_lookup);
     append_metric(
+        output, "scan miss embed lookup"_str, summary.frontend.persistent_scan_embed_lookup);
+    append_metric(
         output, "scan miss external macro"_str, summary.frontend.persistent_scan_external_macro);
     append_metric(output, "scan miss receipt"_str, summary.frontend.persistent_scan_receipt);
     append_metric(

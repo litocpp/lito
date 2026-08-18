@@ -211,6 +211,81 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(dynamic_warm->frontend.analyze_builds, usize(1));
 }
 
+TEST_F(ScanCache, EmbeddedResourcesInvalidateLookupAndContentCaches) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-embed-cache"
+version = "0.1.0"
+language = "cpp"
+minimum-standard = "c++20"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-embed-cache"
+sources = ["src/main.cpp"]
+)toml"_str },
+        { "src/asset.txt"_str, "abcd"_str },
+        { "src/empty.txt"_str, ""_str },
+        { "staged/asset.txt"_str, "wxyz"_str },
+        { "staged/optional.txt"_str, "optional"_str },
+        { "src/main.cpp"_str, R"cpp(#if __has_embed("empty.txt") != __STDC_EMBED_EMPTY__
+#error empty resource probe returned the wrong state
+#endif
+
+constexpr unsigned char embedded[] = {
+#embed "asset.txt" limit(2) clang::offset(1) prefix(7,) suffix(,9)
+};
+
+#if __has_embed("optional.txt") == __STDC_EMBED_FOUND__
+constexpr unsigned char optional[] = {
+#embed "optional.txt" limit(1)
+};
+#endif
+
+static_assert(sizeof(embedded) == 4);
+static_assert(embedded[0] == 7 && embedded[3] == 9);
+
+auto main() -> int {
+    return 0;
+}
+)cpp"_str },
+    };
+    auto project = materialize("embed-cache"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("embed-cache"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-embed-cache"_str));
+
+    auto cold = lito::build(request);
+    if (cold.is_err()) {
+        auto message = error_chain_text(cold.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(cold->compiled, usize(1));
+
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->compiled, usize {});
+    EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(1));
+
+    auto staged_optional = project->root.join(PathBuf::from("staged/optional.txt"_str).as_path());
+    auto optional        = project->root.join(PathBuf::from("src/optional.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::copy(staged_optional.as_path(), optional.as_path()).is_ok());
+    auto found = lito::build(request);
+    ASSERT_TRUE(found.is_ok());
+    EXPECT_EQ(found->frontend.persistent_scan_embed_lookup, usize(1));
+    EXPECT_EQ(found->compiled, usize(1));
+
+    auto staged_asset = project->root.join(PathBuf::from("staged/asset.txt"_str).as_path());
+    auto asset        = project->root.join(PathBuf::from("src/asset.txt"_str).as_path());
+    ASSERT_TRUE(rstd::fs::copy(staged_asset.as_path(), asset.as_path()).is_ok());
+    auto changed = lito::build(request);
+    ASSERT_TRUE(changed.is_ok());
+    EXPECT_EQ(changed->frontend.persistent_scan_file_dependency, usize(1));
+    EXPECT_EQ(changed->compiled, usize(1));
+}
+
 TEST_F(ScanCache, PackageMetadataInvalidatesOnlyMaterializedInputs) {
     auto              manifest = package_metadata_manifest("0.1.0"_str);
     const ProjectFile files[]  = {

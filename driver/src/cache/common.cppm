@@ -19,8 +19,8 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-inline constexpr auto CACHE_VERSION  = u64(3);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v7"_str;
+inline constexpr auto CACHE_VERSION  = u64(4);
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v8"_str;
 inline constexpr auto COMPILE_RECIPE = "clang-compile-v5"_str;
 
 template<typename T>

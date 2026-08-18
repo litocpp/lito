@@ -213,9 +213,11 @@ public:
         return Ok(rstd::move(canonical).unwrap());
     }
 
-    auto configure_receipt() const -> PathBuf {
+    auto configure_receipt(ref<str> owner) const -> PathBuf {
         auto directory = join(output_.as_path(), "lito-configure"_str);
-        return join(directory.as_path(), "receipt.json"_str);
+        auto name      = String::make(owner);
+        name.push_str(".json"_str);
+        return join(directory.as_path(), name.as_str());
     }
 
     auto build_tool_action_root() const -> PathBuf {

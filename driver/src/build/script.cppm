@@ -89,6 +89,31 @@ auto normal_relative_path(String text, ref<str> context) -> BuildScriptResult<Pa
     return Ok(rstd::move(path));
 }
 
+class BuildOutputRegistry {
+public:
+    auto claim(ref<str> package, ref<rstd::path::Path> relative, ref<str> owner)
+        -> BuildScriptResult<empty> {
+        auto key = String::make(package);
+        key.push_ascii('\n');
+        key.push_str(relative.to_string_lossy().as_str());
+        auto existing = owners_.get(key.as_str());
+        if (existing.is_some()) {
+            return script_failure<empty>(
+                rstd::format("generated output '{}:{}' is claimed by build scripts '{}' and '{}'",
+                             package,
+                             relative,
+                             **existing,
+                             owner));
+        }
+        owners_.insert(rstd::move(key), String::make(owner));
+        return Ok(empty {});
+    }
+
+private:
+    rstd::collections::BTreeMap<String, String> owners_ =
+        rstd::collections::BTreeMap<String, String>::make();
+};
+
 struct ConfigurePackage {
     String  name;
     PathBuf source_root;
@@ -220,8 +245,11 @@ class ConfigureSession {
 public:
     static auto create(const cpp::PackageMetadata& metadata,
                        const BuildLayout&          layout,
-                       const Vec<String>&          selected_packages)
-        -> BuildScriptResult<ConfigureSession> {
+                       const Vec<String>&          selected_packages,
+                       ref<str>                    receipt_owner,
+                       Option<String>              default_package,
+                       ref<str>                    script_owner,
+                       BuildOutputRegistry&        outputs) -> BuildScriptResult<ConfigureSession> {
         auto packages = Vec<ConfigurePackage>::make();
         for (const auto& name : selected_packages) {
             auto source_root = find_package_root(metadata, name.as_str());
@@ -236,7 +264,7 @@ public:
                 .generated_root = rstd::move(generated),
             });
         }
-        auto receipt  = layout.configure_receipt();
+        auto receipt  = layout.configure_receipt(receipt_owner);
         auto previous = load_receipt(receipt.as_path());
         if (previous.is_err()) return Err(rstd::move(previous).unwrap_err());
         auto current = Vec<OwnedOutput>::make();
@@ -247,7 +275,10 @@ public:
         return Ok(ConfigureSession(rstd::move(packages),
                                    rstd::move(receipt),
                                    rstd::move(previous).unwrap(),
-                                   rstd::move(current)));
+                                   rstd::move(current),
+                                   rstd::move(default_package),
+                                   String::make(script_owner),
+                                   outputs));
     }
 
     auto configure(ref<str>               package_name,
@@ -351,6 +382,8 @@ public:
                     "configure_file output '{}' is claimed more than once", output.as_path()));
             }
         }
+        rstd_try(output_registry_->claim(
+            owner->name.as_str(), output_relative->as_path(), script_owner_.as_str()));
 
         auto written =
             rstd::fs::write_atomic_if_changed(output.as_path(), rendered->as_str().as_bytes());
@@ -371,6 +404,11 @@ public:
         case rstd::fs::WriteOutcome::Unchanged: ++report_.unchanged; break;
         }
         return Ok(ConfigureOutcome { rstd::move(output), *written });
+    }
+
+    auto default_package() const noexcept -> Option<ref<str>> {
+        if (default_package_.is_none()) return None();
+        return Some(default_package_->as_str());
     }
 
     auto finish() -> BuildScriptResult<BuildScriptReport> {
@@ -476,17 +514,26 @@ private:
     ConfigureSession(Vec<ConfigurePackage> packages,
                      PathBuf               receipt,
                      Vec<OwnedOutput>      previous,
-                     Vec<OwnedOutput>      current)
+                     Vec<OwnedOutput>      current,
+                     Option<String>        default_package,
+                     String                script_owner,
+                     BuildOutputRegistry&  outputs)
         : packages_(rstd::move(packages)),
           receipt_(rstd::move(receipt)),
           previous_(rstd::move(previous)),
-          current_(rstd::move(current)) {}
+          current_(rstd::move(current)),
+          default_package_(rstd::move(default_package)),
+          script_owner_(rstd::move(script_owner)),
+          output_registry_(rstd::addressof(outputs)) {}
 
     Vec<ConfigurePackage> packages_;
     PathBuf               receipt_;
     Vec<OwnedOutput>      previous_;
     Vec<OwnedOutput>      current_;
     Vec<PathBuf>          claimed_;
+    Option<String>        default_package_;
+    String                script_owner_;
+    BuildOutputRegistry*  output_registry_ {};
     BuildScriptReport     report_;
 };
 
@@ -624,6 +671,9 @@ public:
                       const BuildLayout&                layout,
                       ref<str>                          profile,
                       ref<rstd::path::Path>             script,
+                      Option<String>                    default_package,
+                      String                            script_owner,
+                      BuildOutputRegistry&              outputs,
                       const ResolvedHostBuildTools&     tools,
                       const ResolvedProcessEnvironment& environment,
                       const Option<BuildEventSink>&     observer)
@@ -631,12 +681,17 @@ public:
           layout_(rstd::addressof(layout)),
           profile_(String::make(profile)),
           script_(PathBuf::from(script)),
+          default_package_(rstd::move(default_package)),
+          script_owner_(rstd::move(script_owner)),
+          output_registry_(rstd::addressof(outputs)),
           tools_(rstd::addressof(tools)),
           environment_(rstd::addressof(environment)),
           observer_(rstd::addressof(observer)) {}
 
     auto tool(ref<str> alias) const -> BuildScriptResult<luato::OpaqueHandle> {
-        auto identity = tools_->identity(alias);
+        auto identity = default_package_.is_some()
+                            ? tools_->identity(default_package_->as_str(), alias)
+                            : tools_->identity(alias);
         if (identity == nullptr) {
             return action_failure<luato::OpaqueHandle>(
                 BuildToolActionError::UnknownTool(String::make(alias)));
@@ -657,7 +712,13 @@ public:
             return action_request_failure<bool>(rstd::format("{}", checked.unwrap_err()));
         }
         auto handle  = request.required<luato::OpaqueHandle>("tool"_str);
-        auto package = request.required<String>("package"_str);
+        auto package = Result<String, luato::Error>(
+            Err(luato::Error::binding(String::make("lito.run.package is required"_str))));
+        if (request.contains("package"_str)) {
+            package = request.required<String>("package"_str);
+        } else if (default_package_.is_some()) {
+            package = Ok(default_package_->clone());
+        }
         auto cwd     = request.required<String>("cwd"_str);
         auto args    = request.required<luato::Array>("args"_str);
         auto inputs  = request.required<luato::Array>("inputs"_str);
@@ -743,6 +804,8 @@ public:
                         relative.clone(), String::make("path is declared more than once"_str)));
                 }
             }
+            rstd_try(output_registry_->claim(
+                package->as_str(), relative.as_path(), script_owner_.as_str()));
             output_paths.push(rstd::move(relative));
         }
         auto script_digest = rstd_try(action_file_digest(script_.as_path()));
@@ -954,6 +1017,9 @@ private:
     const BuildLayout*                layout_ {};
     String                            profile_;
     PathBuf                           script_;
+    Option<String>                    default_package_;
+    String                            script_owner_;
+    BuildOutputRegistry*              output_registry_ {};
     const ResolvedHostBuildTools*     tools_ {};
     const ResolvedProcessEnvironment* environment_ {};
     const Option<BuildEventSink>*     observer_ {};
@@ -975,7 +1041,14 @@ auto configure_callback(ConfigureSession& session, luato::CallFrame& frame)
     known.push(String::make("values"_str));
     auto checked = table.reject_unknown_fields(known.as_slice());
     if (checked.is_err()) return Err(rstd::move(checked).unwrap_err_unchecked());
-    auto package    = table.required<String>("package"_str);
+    auto package = Result<String, luato::Error>(
+        Err(luato::Error::binding(String::make("configure_file.package is required"_str))));
+    if (table.contains("package"_str)) {
+        package = table.required<String>("package"_str);
+    } else {
+        auto implicit = session.default_package();
+        if (implicit.is_some()) package = Ok(String::make(*implicit));
+    }
     auto input      = table.required<String>("input"_str);
     auto output     = table.required<String>("output"_str);
     auto raw_values = table.required<luato::Table>("values"_str);
@@ -1044,12 +1117,30 @@ auto run_callback(ToolActionSession& session, luato::CallFrame& frame) -> luato:
     return Ok(usize(1));
 }
 
-auto materialize_generated_includes(cpp::PackageMetadata&             metadata,
-                                    const BuildLayout&                layout,
-                                    const cpp::SourceTargetSelection& selection)
+auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
+                                  const BuildLayout&                layout,
+                                  const cpp::SourceTargetSelection& selection)
     -> BuildScriptResult<empty> {
     for (auto target_id : selection.target_order) {
-        auto& target = metadata.targets[target_id];
+        auto& target         = metadata.targets[target_id];
+        auto  generated_root = Option<PathBuf> {};
+        for (auto& group : target.source_groups) {
+            if (! group.generated) continue;
+            if (generated_root.is_none()) {
+                generated_root =
+                    Some(rstd_try(layout.generated_package_directory(target.id.package.as_str())));
+            }
+            auto inspected = rstd::fs::metadata(generated_root->as_path());
+            if (inspected.is_err() || ! inspected->is_dir()) {
+                return script_failure<empty>(
+                    rstd::format("generated source root '{}' for package '{}' does not exist",
+                                 generated_root->as_path(),
+                                 target.id.package.as_str()));
+            }
+            group.root = generated_root->clone();
+            group.identity =
+                rstd::format("generated:{}:{}", target.id.package.as_str(), layout.output());
+        }
         for (const auto& requirement : target.usage.private_include_directory_requirements) {
             if (requirement.root != lito::dependency::IncludeDirectoryRoot::Generated) continue;
             auto generated =
@@ -1084,9 +1175,12 @@ auto materialize_generated_includes(cpp::PackageMetadata&             metadata,
     return Ok(empty {});
 }
 
-auto has_generated_includes(const cpp::PackageMetadata&       metadata,
-                            const cpp::SourceTargetSelection& selection) noexcept -> bool {
+auto has_generated_inputs(const cpp::PackageMetadata&       metadata,
+                          const cpp::SourceTargetSelection& selection) noexcept -> bool {
     for (auto target : selection.target_order) {
+        for (const auto& group : metadata.targets[target].source_groups) {
+            if (group.generated) return true;
+        }
         if (! metadata.targets[target].usage.private_include_directory_requirements.is_empty()) {
             return true;
         }
@@ -1099,47 +1193,64 @@ auto has_generated_includes(const cpp::PackageMetadata&       metadata,
 namespace lito
 {
 
-auto execute_build_script(cpp::PackageMetadata&                        metadata,
-                          const BuildLayout&                           layout,
-                          ref<str>                                     profile,
-                          const Vec<String>&                           selected_packages,
-                          const cpp::SourceTargetSelection&            selection,
-                          const Option<BuildEventSink>&                observer,
-                          const HostInfo&                              host,
-                          const lito::dependency::CMakeProviderConfig& cmake,
-                          ToolResolver&                                resolver,
-                          const ResolvedProcessEnvironment&            environment,
-                          const lito::source::PackageSourceConfig&     sources,
-                          usize jobs) -> BuildScriptResult<BuildScriptReport> {
-    auto script = metadata.root.join(PathBuf::from("build.lua"_str).as_path());
-    auto exists = rstd::fs::exists(script.as_path());
+struct BuildScriptInvocation {
+    String         owner;
+    PathBuf        script;
+    PathBuf        root;
+    Option<String> package;
+    Vec<String>    packages;
+};
+
+auto build_script_exists(ref<rstd::path::Path> script) -> BuildScriptResult<bool> {
+    auto exists = rstd::fs::exists(script);
     if (exists.is_err()) {
-        return script_io_failure<BuildScriptReport>(
-            "inspect build script"_str, script.as_path(), rstd::move(exists).unwrap_err());
+        return script_io_failure<bool>(
+            "inspect build script"_str, script, rstd::move(exists).unwrap_err());
     }
-    if (! *exists) {
-        if (has_generated_includes(metadata, selection)) {
-            return script_failure<BuildScriptReport>(
-                rstd::format("generated private include directories require build script '{}'",
-                             script.as_path()));
-        }
-        return Ok(BuildScriptReport {});
+    if (! *exists) return Ok(false);
+    auto metadata = rstd::fs::metadata(script);
+    if (metadata.is_err()) {
+        return script_io_failure<bool>(
+            "inspect build script"_str, script, rstd::move(metadata).unwrap_err());
     }
-    auto script_metadata = rstd::fs::metadata(script.as_path());
-    if (script_metadata.is_err()) {
-        return script_io_failure<BuildScriptReport>(
-            "inspect build script"_str, script.as_path(), rstd::move(script_metadata).unwrap_err());
+    if (! metadata->is_file()) {
+        return script_failure<bool>(
+            rstd::format("build script '{}' is not a regular file", script));
     }
-    if (! script_metadata->is_file()) {
-        return script_failure<BuildScriptReport>(
-            rstd::format("build script '{}' is not a regular file", script.as_path()));
-    }
-    auto session = ConfigureSession::create(metadata, layout, selected_packages);
+    return Ok(true);
+}
+
+auto copy_package_names(const Vec<String>& packages) -> Vec<String> {
+    auto copied = Vec<String>::with_capacity(packages.len());
+    for (const auto& package : packages) copied.push(package.clone());
+    return copied;
+}
+
+auto execute_build_script_invocation(const cpp::PackageMetadata&                  metadata,
+                                     const BuildLayout&                           layout,
+                                     ref<str>                                     profile,
+                                     BuildScriptInvocation                        invocation,
+                                     BuildOutputRegistry&                         output_registry,
+                                     const Option<BuildEventSink>&                observer,
+                                     const HostInfo&                              host,
+                                     const lito::dependency::CMakeProviderConfig& cmake,
+                                     ToolResolver&                                resolver,
+                                     const ResolvedProcessEnvironment&            environment,
+                                     const lito::source::PackageSourceConfig&     sources,
+                                     usize jobs) -> BuildScriptResult<BuildScriptReport> {
+    auto default_package = as<Clone>(invocation.package).clone();
+    auto session         = ConfigureSession::create(metadata,
+                                                    layout,
+                                                    invocation.packages,
+                                                    invocation.owner.as_str(),
+                                                    as<Clone>(default_package).clone(),
+                                                    invocation.owner.as_str(),
+                                                    output_registry);
     if (session.is_err()) return Err(rstd::move(session).unwrap_err());
     auto configure = rstd::move(session).unwrap();
     auto resolved_tools =
         resolve_host_build_tools(metadata,
-                                 selected_packages,
+                                 invocation.packages,
                                  host,
                                  layout,
                                  cmake,
@@ -1152,8 +1263,16 @@ auto execute_build_script(cpp::PackageMetadata&                        metadata,
         return Err(rstd::into<BuildScriptError>(rstd::move(resolved_tools).unwrap_err()));
     }
     auto tools   = rstd::move(resolved_tools).unwrap();
-    auto actions = ToolActionSession(
-        metadata, layout, profile, script.as_path(), tools, environment, observer);
+    auto actions = ToolActionSession(metadata,
+                                     layout,
+                                     profile,
+                                     invocation.script.as_path(),
+                                     rstd::move(default_package),
+                                     invocation.owner.clone(),
+                                     output_registry,
+                                     tools,
+                                     environment,
+                                     observer);
 
     auto state = luato::State::create(luato::StateOptions::base());
     if (state.is_err()) {
@@ -1164,11 +1283,26 @@ auto execute_build_script(cpp::PackageMetadata&                        metadata,
     auto lua    = rstd::move(state).unwrap_unchecked();
     auto module = luato::ModuleSpec(String::make("lito"_str));
     module.set(String::make("profile"_str), String::make(profile));
-    auto root_text = metadata.root.as_path().to_str();
-    if (root_text.is_none()) {
+    auto project_root = metadata.root.as_path().to_str();
+    if (project_root.is_none()) {
         return script_failure<BuildScriptReport>("project root is not valid UTF-8"_str);
     }
-    module.set(String::make("project_root"_str), String::make(*root_text));
+    module.set(String::make("project_root"_str), String::make(*project_root));
+    if (invocation.package.is_some()) {
+        auto package_root = invocation.root.as_path().to_str();
+        if (package_root.is_none()) {
+            return script_failure<BuildScriptReport>("package root is not valid UTF-8"_str);
+        }
+        auto generated =
+            rstd_try(layout.create_generated_package_directory(invocation.package->as_str()));
+        auto generated_root = generated.as_path().to_str();
+        if (generated_root.is_none()) {
+            return script_failure<BuildScriptReport>("generated root is not valid UTF-8"_str);
+        }
+        module.set(String::make("package"_str), invocation.package->clone());
+        module.set(String::make("package_root"_str), String::make(*package_root));
+        module.set(String::make("generated_root"_str), String::make(*generated_root));
+    }
     module.add(luato::NativeFunctionSpec::make(
         String::make("configure_file"_str),
         usize(1),
@@ -1193,18 +1327,21 @@ auto execute_build_script(cpp::PackageMetadata&                        metadata,
                                          None(),
                                          rstd::move(registered).unwrap_err_unchecked()));
     }
-    auto executed = lua.execute_file(script.as_path());
+    auto executed = lua.execute_file(invocation.script.as_path());
     if (executed.is_err()) {
         return Err(BuildScriptError::Lua(String::make("execute build script"_str),
-                                         Some(script.clone()),
+                                         Some(invocation.script.clone()),
                                          rstd::move(executed).unwrap_err_unchecked()));
     }
     configure.report().executed = true;
     configure.report().elapsed  = executed->elapsed;
     auto finished               = configure.finish();
     if (finished.is_err()) return Err(rstd::move(finished).unwrap_err());
-    auto materialized = materialize_generated_includes(metadata, layout, selection);
-    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+    finished->executions.push(BuildScriptExecution {
+        .owner   = invocation.owner.clone(),
+        .script  = invocation.script.clone(),
+        .elapsed = executed->elapsed,
+    });
     if (observer.is_some() && observer->notify != nullptr) {
         for (const auto& file : finished->files) {
             auto kind = file.write == rstd::fs::WriteOutcome::Unchanged
@@ -1215,6 +1352,128 @@ auto execute_build_script(cpp::PackageMetadata&                        metadata,
         }
     }
     return finished;
+}
+
+void merge_build_script_report(BuildScriptReport& total, BuildScriptReport report) {
+    total.executed = total.executed || report.executed;
+    total.elapsed += report.elapsed;
+    total.created += report.created;
+    total.replaced += report.replaced;
+    total.unchanged += report.unchanged;
+    total.stale_removed += report.stale_removed;
+    for (auto& file : report.files) total.files.push(rstd::move(file));
+    for (auto& execution : report.executions) total.executions.push(rstd::move(execution));
+}
+
+auto package_has_script(const Vec<String>& packages, ref<str> package) noexcept -> bool {
+    for (const auto& candidate : packages) {
+        if (candidate == package) return true;
+    }
+    return false;
+}
+
+auto execute_build_script(cpp::PackageMetadata&                        metadata,
+                          const BuildLayout&                           layout,
+                          ref<str>                                     profile,
+                          const Vec<String>&                           selected_packages,
+                          const cpp::SourceTargetSelection&            selection,
+                          const Option<BuildEventSink>&                observer,
+                          const HostInfo&                              host,
+                          const lito::dependency::CMakeProviderConfig& cmake,
+                          ToolResolver&                                resolver,
+                          const ResolvedProcessEnvironment&            environment,
+                          const lito::source::PackageSourceConfig&     sources,
+                          usize jobs) -> BuildScriptResult<BuildScriptReport> {
+    auto invocations       = Vec<BuildScriptInvocation>::make();
+    auto scripted_packages = Vec<String>::make();
+    auto workspace_script  = false;
+
+    for (const auto& owner : metadata.build_scripts) {
+        if (owner.kind != cpp::BuildScriptOwnerKind::Workspace) continue;
+        if (! rstd_try(build_script_exists(owner.script.as_path()))) continue;
+        workspace_script = true;
+        invocations.push(BuildScriptInvocation {
+            .owner    = String::make("workspace"_str),
+            .script   = owner.script.clone(),
+            .root     = owner.root.clone(),
+            .package  = None(),
+            .packages = copy_package_names(selected_packages),
+        });
+    }
+    for (const auto& package : selected_packages) {
+        for (const auto& owner : metadata.build_scripts) {
+            if (owner.kind != cpp::BuildScriptOwnerKind::Package || owner.package.is_none() ||
+                owner.package->as_str() != package.as_str()) {
+                continue;
+            }
+            if (! rstd_try(build_script_exists(owner.script.as_path()))) break;
+            auto packages = Vec<String>::make();
+            packages.push(package.clone());
+            invocations.push(BuildScriptInvocation {
+                .owner    = rstd::format("package-{}", package.as_str()),
+                .script   = owner.script.clone(),
+                .root     = owner.root.clone(),
+                .package  = Some(package.clone()),
+                .packages = rstd::move(packages),
+            });
+            scripted_packages.push(package.clone());
+            break;
+        }
+    }
+
+    if (has_generated_inputs(metadata, selection) && ! workspace_script) {
+        for (auto target : selection.target_order) {
+            const auto& candidate = metadata.targets[target];
+            auto        requires_script =
+                ! candidate.usage.private_include_directory_requirements.is_empty();
+            for (const auto& group : candidate.source_groups) {
+                if (group.generated) requires_script = true;
+            }
+            if (! requires_script ||
+                package_has_script(scripted_packages, candidate.id.package.as_str())) {
+                continue;
+            }
+            auto expected = Option<ref<rstd::path::Path>> {};
+            for (const auto& owner : metadata.build_scripts) {
+                if (owner.kind == cpp::BuildScriptOwnerKind::Package && owner.package.is_some() &&
+                    owner.package->as_str() == candidate.id.package.as_str()) {
+                    expected = Some(owner.script.as_path());
+                    break;
+                }
+            }
+            if (expected.is_some()) {
+                return script_failure<BuildScriptReport>(rstd::format(
+                    "generated build inputs for package '{}' require build script '{}'",
+                    candidate.id.package.as_str(),
+                    *expected));
+            }
+            return script_failure<BuildScriptReport>(rstd::format(
+                "generated build inputs for package '{}' have no local build-script owner",
+                candidate.id.package.as_str()));
+        }
+    }
+
+    auto output_registry = BuildOutputRegistry {};
+    auto report          = BuildScriptReport {};
+    for (auto& invocation : invocations) {
+        auto result = execute_build_script_invocation(metadata,
+                                                      layout,
+                                                      profile,
+                                                      rstd::move(invocation),
+                                                      output_registry,
+                                                      observer,
+                                                      host,
+                                                      cmake,
+                                                      resolver,
+                                                      environment,
+                                                      sources,
+                                                      jobs);
+        if (result.is_err()) return Err(rstd::move(result).unwrap_err());
+        merge_build_script_report(report, rstd::move(result).unwrap());
+    }
+    auto materialized = materialize_generated_inputs(metadata, layout, selection);
+    if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
+    return Ok(rstd::move(report));
 }
 
 } // namespace lito

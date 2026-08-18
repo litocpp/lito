@@ -185,6 +185,17 @@ resources = [
   { name = "frontend", root = "source", path = "frontend/default" },
 ]
 )lito"_str },
+    { "manifest-build-tools-cross-package-resource"_str, R"lito([package]
+name = "build-tool-cross-package-resource"
+
+[[bin]]
+link-stdlib = false
+name = "tool-consumer"
+sources = ["main.cpp"]
+resources = [
+  { name = "frontend", package = "provider", root = "generated", path = "frontend/default" },
+]
+)lito"_str },
     { "manifest-build-tools-invalid-version"_str, R"lito([package]
 name = "build-tool-invalid-version"
 

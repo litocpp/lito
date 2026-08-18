@@ -356,6 +356,12 @@ public:
         return result;
     }
 
+    auto default_package_names(usize source) const -> Vec<String> {
+        auto result = Vec<String>::with_capacity(catalog(source).default_names().len());
+        for (const auto& name : catalog(source).default_names()) result.push(name.clone());
+        return result;
+    }
+
     auto source_name(usize source) const noexcept -> ref<str> { return catalog(source).name(); }
 
     auto source_identity(usize source) const noexcept -> ref<str> {
@@ -530,6 +536,7 @@ public:
 
     auto finish(String                         name,
                 Vec<ResolvedProjectRoot>       roots,
+                Vec<String>                    default_roots,
                 PathBuf                        manifest_path,
                 bool                           root_is_workspace,
                 lito::manifest::ProjectProfile profile) -> ResolvedPackageGraph {
@@ -546,6 +553,7 @@ public:
         return ResolvedPackageGraph {
             .name              = rstd::move(name),
             .roots             = rstd::move(roots),
+            .default_roots     = rstd::move(default_roots),
             .root_directory    = rstd::move(root_directory_),
             .manifest_path     = rstd::move(manifest_path),
             .root_is_workspace = root_is_workspace,
@@ -588,6 +596,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>               
     auto project_name      = String::make(resolver.source_name(root_source));
     auto manifest_path     = resolver.source_manifest(root_source);
     auto root_is_workspace = resolver.source_is_workspace(root_source);
+    auto default_roots     = resolver.default_package_names(root_source);
     auto profile           = resolver.source_profile(root_source);
     auto roots             = Vec<ResolvedProjectRoot>::make();
     auto resolve_roots     = [&](usize source_index, ProjectRootRole role) -> PackageResult<empty> {
@@ -614,6 +623,7 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>               
     }
     return Ok(resolver.finish(rstd::move(project_name),
                               rstd::move(roots),
+                              rstd::move(default_roots),
                               rstd::move(manifest_path),
                               root_is_workspace,
                               rstd::move(profile)));

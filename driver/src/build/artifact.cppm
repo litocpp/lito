@@ -43,14 +43,21 @@ struct ConfiguredFile {
     rstd::fs::WriteOutcome write { rstd::fs::WriteOutcome::Unchanged };
 };
 
-struct BuildScriptReport {
-    bool                 executed { false };
+struct BuildScriptExecution {
+    String               owner;
+    PathBuf              script;
     rstd::time::Duration elapsed;
-    usize                created {};
-    usize                replaced {};
-    usize                unchanged {};
-    usize                stale_removed {};
-    Vec<ConfiguredFile>  files;
+};
+
+struct BuildScriptReport {
+    bool                      executed { false };
+    rstd::time::Duration      elapsed;
+    usize                     created {};
+    usize                     replaced {};
+    usize                     unchanged {};
+    usize                     stale_removed {};
+    Vec<ConfiguredFile>       files;
+    Vec<BuildScriptExecution> executions;
 };
 
 } // namespace lito

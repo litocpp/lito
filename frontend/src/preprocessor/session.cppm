@@ -27,6 +27,7 @@ struct PreprocessedTranslationUnit {
     Vec<Token>                                  tokens;
     Vec<CommentTrivia>                          active_comments;
     Vec<rstd::path::PathBuf>                    header_inputs;
+    Vec<frontend::EmbeddedInput>                embedded_inputs;
     Vec<frontend::ExternalMacroMaterialization> external_macros;
     String                                      environment_identity;
     usize                                       input_bytes {};
@@ -35,6 +36,7 @@ struct PreprocessedTranslationUnit {
 
 template<typename Sources,
          typename Includes,
+         typename Embeds,
          typename Builtins,
          typename Externals,
          typename Identifiers,
@@ -60,6 +62,21 @@ class PreprocessorSession {
     struct DisabledMacro {
         SharedMacroDefinition definition;
         bool                  dynamic_builtin { false };
+    };
+
+    struct EmbedDirective {
+        String        name;
+        EmbedKind     kind { EmbedKind::Quoted };
+        usize         offset {};
+        Option<usize> limit;
+        Vec<Token>    prefix;
+        Vec<Token>    suffix;
+        Vec<Token>    if_empty;
+    };
+
+    struct ResolvedEmbed {
+        EmbedResolution resource;
+        usize           length {};
     };
 
     class DisabledMacros {
@@ -134,6 +151,7 @@ public:
     PreprocessorSession(PreprocessRequest request,
                         Sources&          sources,
                         Includes&         includes,
+                        Embeds&           embeds,
                         Builtins&         builtins,
                         Externals&        externals,
                         Identifiers&      identifiers,
@@ -144,6 +162,7 @@ public:
         : request_(rstd::move(request)),
           source_provider_(sources),
           include_resolver_(includes),
+          embed_resolver_(embeds),
           builtin_provider_(builtins),
           external_macro_provider_(externals),
           identifier_matcher_(identifiers),
@@ -191,6 +210,7 @@ public:
             .tokens               = Vec<Token>::make(),
             .active_comments      = rstd::move(active_comments_),
             .header_inputs        = Vec<rstd::path::PathBuf>::make(),
+            .embedded_inputs      = rstd::move(embedded_inputs_),
             .external_macros      = rstd::move(external_macros_),
             .environment_identity = environment_identity(),
             .input_bytes          = input_bytes_,
@@ -941,17 +961,14 @@ private:
                     index = parsed->next;
                     continue;
                 }
-                if (token.text.matches<HasEmbedBuiltin>()) {
-                    return Err(
-                        failure("builtin '__has_embed' is unsupported"_str, token.expansion));
-                }
-
                 auto query_builtin      = BuiltinQuerySet::contains(name_hash, name);
                 auto include_next       = token.text.matches<HasIncludeNextBuiltin>();
                 auto include_builtin    = token.text.matches<HasIncludeBuiltin>() || include_next;
+                auto embed_builtin      = token.text.matches<HasEmbedBuiltin>();
                 auto identifier_builtin = token.text.matches<IsIdentifierBuiltin>();
                 auto building_module    = token.text.matches<BuildingModuleBuiltin>();
-                if (query_builtin || include_builtin || identifier_builtin || building_module) {
+                if (query_builtin || include_builtin || embed_builtin || identifier_builtin ||
+                    building_module) {
                     auto open = index + usize(1);
                     while (open < input.len() && input[open].kind == TokenKind::Newline) ++open;
                     if (open >= input.len() || input[open].text.as_str() != "("_str) {
@@ -970,6 +987,30 @@ private:
                         auto included = include_query(token, include_next, arguments[usize {}]);
                         if (included.is_err()) return Err(rstd::move(included).unwrap_err());
                         value = Ok(i64(*included));
+                    } else if (embed_builtin) {
+                        auto directive =
+                            parse_embed(rstd::move(arguments[usize {}]), token.expansion);
+                        if (directive.is_err()) return Err(rstd::move(directive).unwrap_err());
+                        auto embedded = resolve_embed(*directive, token.expansion, true);
+                        if (embedded.is_err()) return Err(rstd::move(embedded).unwrap_err());
+                        if (embedded->is_none()) {
+                            auto event = emit_name(EventKind::EmbedProbeNotFound,
+                                                   directive->name.as_str(),
+                                                   token.expansion);
+                            if (event.is_err()) return Err(rstd::move(event).unwrap_err());
+                            value = Ok(i64 {});
+                        } else {
+                            auto resolved = rstd::move(embedded).unwrap().unwrap();
+                            record_embed(*directive, resolved);
+                            auto event = emit(Event {
+                                .kind     = EventKind::EmbedProbeResolved,
+                                .name     = directive->name.clone(),
+                                .path     = Some(resolved.resource.path.clone()),
+                                .location = token.expansion,
+                            });
+                            if (event.is_err()) return Err(rstd::move(event).unwrap_err());
+                            value = Ok(resolved.length == usize {} ? i64(2) : i64(1));
+                        }
                     } else if (identifier_builtin || building_module) {
                         if (arguments[usize {}].len() != usize(1) ||
                             arguments[usize {}][usize {}].kind != TokenKind::Identifier) {
@@ -1125,6 +1166,235 @@ private:
             result.push_str(line[index].text.as_str());
         }
         return result;
+    }
+
+    auto embed_parameter_name(ref<str> value) -> ref<str> {
+        if (value.len() >= usize(4) && value.starts_with("__"_str) && value.ends_with("__"_str)) {
+            auto inner = value.get(usize(2), value.len() - usize(2));
+            if (inner.is_some()) return *inner;
+        }
+        return value;
+    }
+
+    auto embed_parameter_tokens(const Vec<Token>& line, usize& cursor, SourceLocation location)
+        -> Result<Vec<Token>> {
+        if (cursor >= line.len() || line[cursor].text.as_str() != "("_str) {
+            return Err(failure("#embed parameter requires parentheses"_str, location));
+        }
+        ++cursor;
+        auto depth  = usize(1);
+        auto result = Vec<Token>::make();
+        while (cursor < line.len()) {
+            if (line[cursor].text.as_str() == "("_str) {
+                ++depth;
+            } else if (line[cursor].text.as_str() == ")"_str) {
+                --depth;
+                if (depth == usize {}) {
+                    ++cursor;
+                    return Ok(rstd::move(result));
+                }
+            }
+            result.push(clone_token(line[cursor]));
+            ++cursor;
+        }
+        return Err(failure("unterminated #embed parameter"_str, location));
+    }
+
+    auto embed_count(const Vec<Token>& tokens, ref<str> parameter, SourceLocation location)
+        -> Result<usize> {
+        if (tokens.is_empty()) {
+            return Err(
+                failure(rstd::format("#embed {} requires an expression", parameter), location));
+        }
+        auto value = evaluate_expression(tokens);
+        if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+        if (*value < i64 {}) {
+            return Err(
+                failure(rstd::format("#embed {} must be non-negative", parameter), location));
+        }
+        return Ok(usize(static_cast<size_t>(value->to_primitive())));
+    }
+
+    auto parse_embed(Vec<Token> line, SourceLocation location) -> Result<EmbedDirective> {
+        auto disabled = DisabledMacros {};
+        auto expanded = expand(rstd::move(line), disabled);
+        if (expanded.is_err()) return Err(rstd::move(expanded).unwrap_err());
+        auto tokens = rstd::move(expanded).unwrap();
+        if (tokens.is_empty()) {
+            return Err(failure("#embed requires a resource"_str, location));
+        }
+        auto result = EmbedDirective {};
+        auto cursor = usize {};
+        if (tokens[cursor].kind == TokenKind::StringLiteral) {
+            auto name = string_contents(tokens[cursor], "#embed"_str);
+            if (name.is_err()) return Err(rstd::move(name).unwrap_err());
+            result.name = rstd::move(name).unwrap();
+            ++cursor;
+        } else if (tokens[cursor].text.as_str() == "<"_str) {
+            result.kind = EmbedKind::Angled;
+            ++cursor;
+            while (cursor < tokens.len() && tokens[cursor].text.as_str() != ">"_str) {
+                result.name.push_str(tokens[cursor].text.as_str());
+                ++cursor;
+            }
+            if (cursor >= tokens.len()) {
+                return Err(failure("#embed has an unterminated angled resource"_str, location));
+            }
+            ++cursor;
+        } else {
+            return Err(failure("#embed requires a quoted or angled resource"_str, location));
+        }
+        if (result.name.is_empty()) {
+            return Err(failure("#embed resource name is empty"_str, location));
+        }
+
+        auto saw_limit    = false;
+        auto saw_offset   = false;
+        auto saw_prefix   = false;
+        auto saw_suffix   = false;
+        auto saw_if_empty = false;
+        while (cursor < tokens.len()) {
+            if (tokens[cursor].kind != TokenKind::Identifier) {
+                return Err(failure("invalid #embed parameter"_str, tokens[cursor].expansion));
+            }
+            auto component          = embed_parameter_name(tokens[cursor].text.as_str());
+            auto name               = String::make(component);
+            auto parameter_location = tokens[cursor].expansion;
+            ++cursor;
+            if (cursor + usize(1) < tokens.len() && tokens[cursor].text.as_str() == "::"_str &&
+                tokens[cursor + usize(1)].kind == TokenKind::Identifier) {
+                name.push_str("::"_str);
+                name.push_str(embed_parameter_name(tokens[cursor + usize(1)].text.as_str()));
+                cursor += usize(2);
+            }
+            auto value = embed_parameter_tokens(tokens, cursor, parameter_location);
+            if (value.is_err()) return Err(rstd::move(value).unwrap_err());
+            if (name.as_str() == "limit"_str) {
+                if (saw_limit)
+                    return Err(failure("duplicate #embed limit parameter"_str, parameter_location));
+                auto count = embed_count(*value, "limit"_str, parameter_location);
+                if (count.is_err()) return Err(rstd::move(count).unwrap_err());
+                saw_limit    = true;
+                result.limit = Some(*count);
+            } else if (name.as_str() == "clang::offset"_str) {
+                if (saw_offset)
+                    return Err(
+                        failure("duplicate #embed offset parameter"_str, parameter_location));
+                auto count = embed_count(*value, "offset"_str, parameter_location);
+                if (count.is_err()) return Err(rstd::move(count).unwrap_err());
+                saw_offset    = true;
+                result.offset = *count;
+            } else if (name.as_str() == "prefix"_str) {
+                if (saw_prefix)
+                    return Err(
+                        failure("duplicate #embed prefix parameter"_str, parameter_location));
+                saw_prefix    = true;
+                result.prefix = rstd::move(value).unwrap();
+            } else if (name.as_str() == "suffix"_str) {
+                if (saw_suffix)
+                    return Err(
+                        failure("duplicate #embed suffix parameter"_str, parameter_location));
+                saw_suffix    = true;
+                result.suffix = rstd::move(value).unwrap();
+            } else if (name.as_str() == "if_empty"_str) {
+                if (saw_if_empty) {
+                    return Err(
+                        failure("duplicate #embed if_empty parameter"_str, parameter_location));
+                }
+                saw_if_empty    = true;
+                result.if_empty = rstd::move(value).unwrap();
+            } else {
+                return Err(failure(rstd::format("unsupported #embed parameter '{}'", name.as_str()),
+                                   parameter_location));
+            }
+        }
+        return Ok(rstd::move(result));
+    }
+
+    auto resolve_embed(const EmbedDirective& directive, SourceLocation location, bool probe)
+        -> Result<Option<ResolvedEmbed>> {
+        if (include_stack_.is_empty()) {
+            return Err(failure("#embed has no current source"_str, location));
+        }
+        const auto& frame = include_stack_[include_stack_.len() - usize(1)];
+        auto        resolved =
+            as<EmbedResolver>(embed_resolver_)
+                .resolve(EmbedRequest {
+                    .name           = directive.name.clone(),
+                    .kind           = directive.kind,
+                    .including_path = rstd::path::PathBuf::from(sources_.path(frame.source)),
+                    .location       = location,
+                    .offset         = directive.offset,
+                    .limit          = directive.limit,
+                    .probe          = probe,
+                });
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        if (resolved->is_none()) return Ok(None());
+        auto resource = rstd::move(resolved).unwrap().unwrap();
+        if (resource.size > u64(usize::MAX.to_primitive())) {
+            return Err(failure("embedded resource is too large for this host"_str, location));
+        }
+        auto size = usize(static_cast<size_t>(resource.size.to_primitive()));
+        if (directive.offset > size) {
+            return Err(failure("#embed offset exceeds the resource size"_str, location));
+        }
+        auto length = size - directive.offset;
+        if (directive.limit.is_some() && *directive.limit < length) length = *directive.limit;
+        return Ok(Some(ResolvedEmbed {
+            .resource = rstd::move(resource),
+            .length   = length,
+        }));
+    }
+
+    auto record_embed(const EmbedDirective& directive, const ResolvedEmbed& resolved) -> void {
+        embedded_inputs_.push(frontend::EmbeddedInput {
+            .path   = resolved.resource.path.clone(),
+            .size   = resolved.resource.size,
+            .digest = resolved.resource.digest.clone(),
+            .offset = directive.offset,
+            .length = resolved.length,
+        });
+    }
+
+    auto handle_embed(Vec<Token> line, SourceLocation location) -> Result<empty> {
+        auto directive = parse_embed(rstd::move(line), location);
+        if (directive.is_err()) return Err(rstd::move(directive).unwrap_err());
+        auto resolved = resolve_embed(*directive, location, false);
+        if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
+        if (resolved->is_none()) {
+            auto event = emit_name(EventKind::EmbedNotFound, directive->name.as_str(), location);
+            if (event.is_err()) return Err(rstd::move(event).unwrap_err());
+            return Err(failure(
+                rstd::format("embedded resource '{}' was not found", directive->name.as_str()),
+                location));
+        }
+        auto value = rstd::move(resolved).unwrap().unwrap();
+        record_embed(*directive, value);
+        auto event = emit(Event {
+            .kind     = EventKind::EmbedResolved,
+            .name     = directive->name.clone(),
+            .path     = Some(value.resource.path.clone()),
+            .location = location,
+        });
+        if (event.is_err()) return Err(rstd::move(event).unwrap_err());
+        auto output = Vec<Token>::make();
+        if (value.length == usize {}) {
+            for (auto& token : directive->if_empty) output.push(rstd::move(token));
+        } else {
+            for (auto& token : directive->prefix) output.push(rstd::move(token));
+            output.push(number_token(i64 {},
+                                     Token {
+                                         .kind      = TokenKind::PpNumber,
+                                         .text      = String::make("0"_str),
+                                         .spelling  = location,
+                                         .expansion = location,
+                                     }));
+            for (auto& token : directive->suffix) output.push(rstd::move(token));
+        }
+        if (output.is_empty()) return Ok(empty {});
+        ++raw_statistics_.consumer_batches;
+        raw_statistics_.consumer_tokens += output.len().to_primitive();
+        return as<PreprocessedTokenConsumer>(consumer_).consume(rstd::move(output));
     }
 
     auto include_name(const Vec<Token>& line, IncludeKind& kind, SourceLocation location)
@@ -1501,6 +1771,9 @@ private:
                 auto included =
                     handle_include(rstd::move(rest), keyword == "include_next"_str, location);
                 if (included.is_err()) return Err(rstd::move(included).unwrap_err());
+            } else if (keyword == "embed"_str) {
+                auto embedded = handle_embed(rstd::move(rest), location);
+                if (embedded.is_err()) return Err(rstd::move(embedded).unwrap_err());
             } else if (keyword == "pragma"_str) {
                 auto handled = handle_pragma(rstd::move(rest), location);
                 if (handled.is_err()) return Err(rstd::move(handled).unwrap_err());
@@ -1586,6 +1859,7 @@ private:
     PreprocessRequest                           request_;
     Sources&                                    source_provider_;
     Includes&                                   include_resolver_;
+    Embeds&                                     embed_resolver_;
     Builtins&                                   builtin_provider_;
     Externals&                                  external_macro_provider_;
     Identifiers&                                identifier_matcher_;
@@ -1597,6 +1871,7 @@ private:
     MacroTable                                  macros_;
     rstd::collections::BTreeMap<String, empty>  resolved_external_macros_;
     Vec<frontend::ExternalMacroMaterialization> external_macros_;
+    Vec<frontend::EmbeddedInput>                embedded_inputs_;
     Vec<IncludeFrame>                           include_stack_;
     Vec<CommentTrivia>                          active_comments_;
     rstd::collections::BTreeMap<String, empty>  once_files_;
@@ -1624,6 +1899,51 @@ private:
 
 template<typename Sources,
          typename Includes,
+         typename Embeds,
+         typename Builtins,
+         typename Externals,
+         typename Identifiers,
+         typename Pragmas,
+         typename Events,
+         typename Consumer,
+         typename Observer>
+    requires Impled<Identifiers, TokenMatcher>
+auto preprocess_with_embeds_to(PreprocessRequest request,
+                               Sources&          sources,
+                               Includes&         includes,
+                               Embeds&           embeds,
+                               Builtins&         builtins,
+                               Externals&        externals,
+                               Identifiers&      identifiers,
+                               Pragmas&          pragmas,
+                               Events&           events,
+                               Consumer&         consumer,
+                               Observer&         observer) -> Result<PreprocessedTranslationUnit> {
+    return PreprocessorSession<Sources,
+                               Includes,
+                               Embeds,
+                               Builtins,
+                               Externals,
+                               Identifiers,
+                               Pragmas,
+                               Events,
+                               Consumer,
+                               Observer>(rstd::move(request),
+                                         sources,
+                                         includes,
+                                         embeds,
+                                         builtins,
+                                         externals,
+                                         identifiers,
+                                         pragmas,
+                                         events,
+                                         consumer,
+                                         observer)
+        .run();
+}
+
+template<typename Sources,
+         typename Includes,
          typename Builtins,
          typename Externals,
          typename Identifiers,
@@ -1642,25 +1962,18 @@ auto preprocess_to(PreprocessRequest request,
                    Events&           events,
                    Consumer&         consumer,
                    Observer&         observer) -> Result<PreprocessedTranslationUnit> {
-    return PreprocessorSession<Sources,
-                               Includes,
-                               Builtins,
-                               Externals,
-                               Identifiers,
-                               Pragmas,
-                               Events,
-                               Consumer,
-                               Observer>(rstd::move(request),
-                                         sources,
-                                         includes,
-                                         builtins,
-                                         externals,
-                                         identifiers,
-                                         pragmas,
-                                         events,
-                                         consumer,
-                                         observer)
-        .run();
+    auto embeds = UnsupportedEmbedResolver {};
+    return preprocess_with_embeds_to(rstd::move(request),
+                                     sources,
+                                     includes,
+                                     embeds,
+                                     builtins,
+                                     externals,
+                                     identifiers,
+                                     pragmas,
+                                     events,
+                                     consumer,
+                                     observer);
 }
 
 template<typename Sources,

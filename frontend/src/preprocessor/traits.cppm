@@ -46,6 +46,25 @@ struct IncludeResolution {
     bool                system { false };
 };
 
+using EmbedKind = frontend::EmbedLookupKind;
+
+struct EmbedRequest {
+    String              name;
+    EmbedKind           kind { EmbedKind::Quoted };
+    rstd::path::PathBuf including_path;
+    SourceLocation      location;
+    usize               offset {};
+    Option<usize>       limit;
+    bool                probe { false };
+};
+
+struct EmbedResolution {
+    rstd::path::PathBuf path;
+    usize               search_index {};
+    u64                 size {};
+    String              digest;
+};
+
 enum class BuiltinTextKind
 {
     Date,
@@ -101,6 +120,10 @@ enum class EventKind
     IncludeNotFound,
     IncludeProbeResolved,
     IncludeProbeNotFound,
+    EmbedResolved,
+    EmbedNotFound,
+    EmbedProbeResolved,
+    EmbedProbeNotFound,
     MacroDefined,
     MacroUndefined,
     MacroExpanded,
@@ -141,6 +164,28 @@ struct IncludeResolver {
 
     template<typename T>
     using Funcs = TraitFuncs<&T::resolve>;
+};
+
+struct EmbedResolver {
+    template<typename Self, typename = void>
+    struct Api {
+        using Trait = EmbedResolver;
+
+        auto resolve(const EmbedRequest& request) -> Result<Option<EmbedResolution>> {
+            return rstd::trait_call<0>(this, request);
+        }
+    };
+
+    template<typename T>
+    using Funcs = TraitFuncs<&T::resolve>;
+};
+
+class UnsupportedEmbedResolver {
+public:
+    auto resolve(const EmbedRequest& request) -> Result<Option<EmbedResolution>> {
+        return Err(Error::at(String::make("#embed is not supported by this frontend context"_str),
+                             request.location));
+    }
 };
 
 struct BuiltinProvider {

@@ -107,6 +107,108 @@ private:
     Vec<frontend::IncludeLookupDependency> dependencies_;
 };
 
+class ClangEmbedResolver {
+public:
+    explicit ClangEmbedResolver(const PreprocessorEnvironment& environment)
+        : environment_(environment) {}
+
+    auto resolve(const preprocessor::EmbedRequest& request)
+        -> preprocessor::Result<Option<preprocessor::EmbedResolution>> {
+        auto dependency = frontend::EmbedLookupDependency {
+            .kind           = request.kind,
+            .name           = request.name.clone(),
+            .including_path = request.including_path.clone(),
+        };
+        if (request.kind == preprocessor::EmbedKind::Quoted) {
+            auto parent = request.including_path.as_path().parent();
+            if (parent.is_some()) {
+                auto resolved = candidate(*parent, request.name.as_str(), usize {}, dependency);
+                if (resolved.is_err()) return resolved;
+                if (resolved->is_some()) {
+                    dependencies_.push(rstd::move(dependency));
+                    return resolved;
+                }
+            }
+        }
+        for (auto index = usize(1); index <= environment_.include_search.len(); ++index) {
+            const auto& entry = environment_.include_search[index - usize(1)];
+            auto        resolved =
+                candidate(entry.directory.as_path(), request.name.as_str(), index, dependency);
+            if (resolved.is_err()) return resolved;
+            if (resolved->is_some()) {
+                dependencies_.push(rstd::move(dependency));
+                return resolved;
+            }
+        }
+        dependencies_.push(rstd::move(dependency));
+        return Ok(None());
+    }
+
+    auto take_dependencies() -> Vec<frontend::EmbedLookupDependency> {
+        return rstd::move(dependencies_);
+    }
+
+private:
+    auto candidate(ref<rstd::path::Path>            directory,
+                   ref<str>                         name,
+                   usize                            search_index,
+                   frontend::EmbedLookupDependency& dependency)
+        -> preprocessor::Result<Option<preprocessor::EmbedResolution>> {
+        auto requested = PathBuf::from(directory).join(PathBuf::from(name).as_path());
+        auto exists    = rstd::fs::exists(requested.as_path());
+        if (exists.is_err()) {
+            return Err(
+                preprocessor::Error::make(rstd::format("cannot inspect embed candidate '{}': {}",
+                                                       requested.as_path(),
+                                                       rstd::move(exists).unwrap_err())));
+        }
+        if (! *exists) {
+            dependency.missing_candidates.push(requested.clone());
+            return Ok(None());
+        }
+        auto canonical = rstd::fs::canonicalize(requested.as_path());
+        if (canonical.is_err()) {
+            return Err(
+                preprocessor::Error::make(rstd::format("cannot resolve embed candidate '{}': {}",
+                                                       requested.as_path(),
+                                                       rstd::move(canonical).unwrap_err())));
+        }
+        auto metadata = rstd::fs::metadata(canonical->as_path());
+        if (metadata.is_err()) {
+            return Err(
+                preprocessor::Error::make(rstd::format("cannot inspect embedded resource '{}': {}",
+                                                       canonical->as_path(),
+                                                       rstd::move(metadata).unwrap_err())));
+        }
+        if (! metadata->is_file()) {
+            return Err(preprocessor::Error::make(rstd::format(
+                "embedded resource '{}' is not a regular file", canonical->as_path())));
+        }
+        auto contents = rstd::fs::read(canonical->as_path());
+        if (contents.is_err()) {
+            return Err(
+                preprocessor::Error::make(rstd::format("cannot read embedded resource '{}': {}",
+                                                       canonical->as_path(),
+                                                       rstd::move(contents).unwrap_err())));
+        }
+        auto canonical_path = rstd::move(canonical).unwrap();
+        dependency.resolved = Some(frontend::ResolvedEmbedCandidate {
+            .requested_path = requested.clone(),
+            .canonical_path = canonical_path.clone(),
+            .search_index   = search_index,
+        });
+        return Ok(Some(preprocessor::EmbedResolution {
+            .path         = rstd::move(canonical_path),
+            .search_index = search_index,
+            .size         = metadata->size(),
+            .digest       = rstd::crypto::sha256_hex(contents->as_slice()),
+        }));
+    }
+
+    const PreprocessorEnvironment&       environment_;
+    Vec<frontend::EmbedLookupDependency> dependencies_;
+};
+
 class ClangBuiltinProvider {
 public:
     ClangBuiltinProvider(const PreprocessorEnvironment& environment,

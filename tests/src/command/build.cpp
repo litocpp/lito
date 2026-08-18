@@ -113,6 +113,90 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
     }
 }
 
+TEST_F(BuildCommand, DependencyPackageBuildScriptGeneratesSourceBeforeDiscovery) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "generated-source-workspace"
+members = ["generated", "app"]
+
+[workspace.package]
+version = "0.1.0"
+
+[workspace.dependencies.fixture-generated-lib]
+path = "generated"
+)toml"_str },
+        { "generated/lito.toml"_str, R"toml([package]
+name = "fixture-generated-lib"
+version = { workspace = true }
+
+[lib]
+name = "fixture-generated-lib"
+module = "fixture.generated"
+archive = "fixture_generated"
+sources = ["src/lib.cppm"]
+source-groups = ["generated"]
+
+[source-groups.generated]
+root = "generated"
+sources = ["src/generated.cpp"]
+)toml"_str },
+        { "generated/build.lua"_str, R"lua(lito.configure_file({
+  input = "src/generated.cpp.in",
+  output = "src/generated.cpp",
+  values = {}
+})
+)lua"_str },
+        { "generated/src/lib.cppm"_str, R"cpp(export module fixture.generated;
+
+export auto generated_answer() noexcept -> int;
+)cpp"_str },
+        { "generated/src/generated.cpp.in"_str, R"cpp(module fixture.generated;
+
+auto generated_answer() noexcept -> int {
+    return 42;
+}
+)cpp"_str },
+        { "app/lito.toml"_str, R"toml([package]
+name = "fixture-generated-app"
+version = { workspace = true }
+
+[[bin]]
+link-stdlib = false
+name = "fixture-generated-app"
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-generated-lib]
+workspace = true
+visibility = "private"
+)toml"_str },
+        { "app/src/main.cpp"_str, R"cpp(import fixture.generated;
+
+auto main() -> int {
+    return generated_answer() == 42 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("package-build-script-generated-source"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("package-build-script-generated-source"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-generated-app"_str));
+    auto summary = lito::build(request);
+    if (summary.is_err()) {
+        auto message = error_chain_text(summary.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(summary->script.executed);
+    ASSERT_EQ(summary->script.executions.len(), usize(1));
+    EXPECT_EQ(summary->script.executions[usize {}].owner.as_str(),
+              "package-fixture-generated-lib"_str);
+    auto generated = output.join(
+        PathBuf::from("generated/fixture-generated-lib/src/generated.cpp"_str).as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+    EXPECT_EQ(summary->compiled, usize(3));
+}
+
 TEST_F(BuildCommand, CMakeInstalledOverrideBuildsFromSearchPathAndPreservesLockSource) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

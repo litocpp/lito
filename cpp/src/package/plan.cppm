@@ -489,20 +489,20 @@ auto resolve_build_script_packages(const PackageMetadata&       package,
                                    const SourceTargetSelection& selection)
     -> lito::package::PackageResult<Vec<String>> {
     auto result = Vec<String>::make();
-    for (auto target : selection.selected_targets) {
+    for (auto target : selection.target_order) {
         if (target >= package.targets.len()) {
             return plan_failure<Vec<String>>("source target selection does not match package"_str);
         }
         auto name    = package.targets[target].id.package.as_str();
         auto allowed = false;
-        for (const auto& candidate : package.build_script_packages) {
-            if (candidate == name) {
+        for (const auto& candidate : package.build_scripts) {
+            if (candidate.kind == BuildScriptOwnerKind::Package && candidate.package.is_some() &&
+                candidate.package->as_str() == name) {
                 allowed = true;
                 break;
             }
         }
-        if (! allowed) continue;
-        append_unique(result, name);
+        if (allowed) append_unique(result, name);
     }
     return Ok(rstd::move(result));
 }

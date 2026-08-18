@@ -41,10 +41,17 @@ struct TargetSourceManifest {
     Vec<ConditionalTargetSources> conditions;
 };
 
+enum class SourceGroupRoot
+{
+    Package,
+    Generated,
+};
+
 struct SourceGroupManifest {
-    String         name;
-    Option<String> external_source;
-    Vec<PathBuf>   sources;
+    String          name;
+    SourceGroupRoot root { SourceGroupRoot::Package };
+    Option<String>  external_source;
+    Vec<PathBuf>    sources;
 };
 
 enum class RuntimeResourceRoot

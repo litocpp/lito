@@ -597,9 +597,10 @@ auto resolve_source_groups(usize                                       package_i
                              package.manifest.name.as_str(),
                              name.as_str()));
         }
-        auto root     = package.manifest.root.clone();
-        auto identity = package.source_identity.clone();
-        auto external = false;
+        auto root      = package.manifest.root.clone();
+        auto identity  = package.source_identity.clone();
+        auto generated = declaration->root == lito::manifest::SourceGroupRoot::Generated;
+        auto external  = false;
         if (declaration->external_source.is_some()) {
             const ExternalSourceRoot* source = nullptr;
             for (const auto& candidate : catalog.sources) {
@@ -621,11 +622,12 @@ auto resolve_source_groups(usize                                       package_i
             external = true;
         }
         result.push(ResolvedSourceGroup {
-            .name     = declaration->name.clone(),
-            .root     = rstd::move(root),
-            .identity = rstd::move(identity),
-            .sources  = as<Clone>(declaration->sources).clone(),
-            .external = external,
+            .name      = declaration->name.clone(),
+            .root      = rstd::move(root),
+            .identity  = rstd::move(identity),
+            .sources   = as<Clone>(declaration->sources).clone(),
+            .generated = generated,
+            .external  = external,
         });
     }
     return Ok(rstd::move(result));
@@ -861,8 +863,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 attachments = rstd::move(manifest_target.as_Test().attachments);
             }
             auto runtime_resources = Vec<lito::manifest::RuntimeResourceManifest>::make();
-            if (manifest_target.is_Binary())
+            if (manifest_target.is_Binary()) {
                 runtime_resources = rstd::move(manifest_target.as_Binary().resources);
+            }
             auto target_dependencies = clone_dependencies(dependencies);
             if (development_target(kind)) {
                 for (const auto& dependency : dev_dependencies) {
@@ -1044,12 +1047,27 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         default_targets.push(target.clone());
     }
-    auto build_script_packages = Vec<String>::make();
+    auto build_scripts = Vec<BuildScriptOwner>::make();
+    if (graph.root_is_workspace) {
+        build_scripts.push(BuildScriptOwner {
+            .kind            = BuildScriptOwnerKind::Workspace,
+            .package         = None(),
+            .source_identity = String::make("workspace"_str),
+            .root            = graph.root_directory.clone(),
+            .script          = graph.root_directory.join(PathBuf::from("build.lua"_str).as_path()),
+        });
+    }
     for (const auto& root : graph.roots) {
-        if (root.role == lito::package::ProjectRootRole::AssociatedTest) continue;
-        for (const auto& target : selected_targets) {
-            if (target.package != root.name.as_str()) continue;
-            build_script_packages.push(root.name.clone());
+        if (! selected.contains_key(root.name.as_str())) continue;
+        for (const auto& package : graph.packages) {
+            if (package.manifest.name != root.name.as_str()) continue;
+            build_scripts.push(BuildScriptOwner {
+                .kind            = BuildScriptOwnerKind::Package,
+                .package         = Some(root.name.clone()),
+                .source_identity = root.source_identity.clone(),
+                .root            = package.manifest.root.clone(),
+                .script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
+            });
             break;
         }
     }
@@ -1075,14 +1093,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     auto default_profile = profile.name.clone();
     profiles.push(rstd::move(profile));
     return Ok(PackageMetadata {
-        .name                  = rstd::move(graph.name),
-        .root                  = rstd::move(graph.root_directory),
-        .manifest_path         = rstd::move(graph.manifest_path),
-        .build_script_packages = rstd::move(build_script_packages),
-        .default_profile       = rstd::move(default_profile),
-        .default_targets       = rstd::move(default_targets),
-        .selected_packages     = rstd::move(selected_packages),
-        .build_tools           = rstd::move(build_tools),
+        .name              = rstd::move(graph.name),
+        .root              = rstd::move(graph.root_directory),
+        .manifest_path     = rstd::move(graph.manifest_path),
+        .build_scripts     = rstd::move(build_scripts),
+        .default_profile   = rstd::move(default_profile),
+        .default_targets   = rstd::move(default_targets),
+        .selected_packages = rstd::move(selected_packages),
+        .build_tools       = rstd::move(build_tools),
         .toolchain =
             lito::config::ToolchainSpec {
                 .cc     = configuration.toolchain.cc.clone(),

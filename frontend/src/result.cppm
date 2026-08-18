@@ -52,6 +52,36 @@ struct IncludeLookupDependency {
     Option<ResolvedIncludeCandidate> resolved;
 };
 
+enum class EmbedLookupKind
+{
+    Quoted,
+    Angled,
+};
+
+struct ResolvedEmbedCandidate {
+    rstd::path::PathBuf requested_path;
+    rstd::path::PathBuf canonical_path;
+    usize               search_index {};
+};
+
+struct EmbedLookupDependency {
+    EmbedLookupKind                kind { EmbedLookupKind::Quoted };
+    String                         name;
+    rstd::path::PathBuf            including_path;
+    Vec<rstd::path::PathBuf>       missing_candidates;
+    Option<ResolvedEmbedCandidate> resolved;
+};
+
+struct EmbeddedInput : DefaultInClass<EmbeddedInput, Clone> {
+    rstd::path::PathBuf path;
+    u64                 size {};
+    String              digest;
+    usize               offset {};
+    usize               length {};
+
+    auto clone() const -> EmbeddedInput;
+};
+
 enum class ExternalMacroState
 {
     Defined,
@@ -74,6 +104,7 @@ struct FrontendResult : DefaultInClass<FrontendResult, Clone> {
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<rstd::path::PathBuf>          header_inputs;
+    Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
     String                            preprocessor_environment;
     usize                             input_bytes {};
@@ -87,6 +118,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
     Option<String>                    implementation_module;
     Vec<ModuleImport>                 imports;
     Vec<rstd::path::PathBuf>          header_inputs;
+    Vec<EmbeddedInput>                embedded_inputs;
     Vec<ExternalMacroMaterialization> external_macros;
     String                            preprocessor_environment;
     usize                             input_bytes {};
@@ -97,6 +129,7 @@ struct FrontendSnapshot : DefaultInClass<FrontendSnapshot, Clone> {
 struct UncachedFrontendAnalysis {
     FrontendResult               result;
     Vec<IncludeLookupDependency> include_lookups;
+    Vec<EmbedLookupDependency>   embed_lookups;
 };
 
 enum class FrontendAnalysisOrigin
@@ -147,6 +180,16 @@ auto ExternalMacroMaterialization::clone() const -> ExternalMacroMaterialization
     };
 }
 
+auto EmbeddedInput::clone() const -> EmbeddedInput {
+    return EmbeddedInput {
+        .path   = path.clone(),
+        .size   = size,
+        .digest = digest.clone(),
+        .offset = offset,
+        .length = length,
+    };
+}
+
 auto FrontendResult::clone() const -> FrontendResult {
     return FrontendResult {
         .source                   = source.clone(),
@@ -154,6 +197,7 @@ auto FrontendResult::clone() const -> FrontendResult {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
+        .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
         .preprocessor_environment = preprocessor_environment.clone(),
         .input_bytes              = input_bytes,
@@ -167,6 +211,7 @@ auto FrontendSnapshot::clone() const -> FrontendSnapshot {
         .implementation_module    = as<Clone>(implementation_module).clone(),
         .imports                  = as<Clone>(imports).clone(),
         .header_inputs            = as<Clone>(header_inputs).clone(),
+        .embedded_inputs          = as<Clone>(embedded_inputs).clone(),
         .external_macros          = as<Clone>(external_macros).clone(),
         .preprocessor_environment = preprocessor_environment.clone(),
         .input_bytes              = input_bytes,
@@ -180,6 +225,7 @@ auto snapshot(const FrontendResult& result) -> FrontendSnapshot {
         .implementation_module    = as<Clone>(result.implementation_module).clone(),
         .imports                  = as<Clone>(result.imports).clone(),
         .header_inputs            = as<Clone>(result.header_inputs).clone(),
+        .embedded_inputs          = as<Clone>(result.embedded_inputs).clone(),
         .external_macros          = as<Clone>(result.external_macros).clone(),
         .preprocessor_environment = result.preprocessor_environment.clone(),
         .input_bytes              = result.input_bytes,
@@ -203,12 +249,23 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
             return None();
         }
     }
+    for (const auto& embedded : value.embedded_inputs) {
+        if (embedded.path.is_empty() || embedded.digest.is_empty() ||
+            embedded.size > u64(usize::MAX.to_primitive())) {
+            return None();
+        }
+        auto size = usize(static_cast<size_t>(embedded.size.to_primitive()));
+        if (embedded.offset > size || embedded.length > size - embedded.offset) {
+            return None();
+        }
+    }
     return Some(FrontendResult {
         .source                   = rstd::move(value.source),
         .provided                 = rstd::move(value.provided),
         .implementation_module    = rstd::move(value.implementation_module),
         .imports                  = rstd::move(value.imports),
         .header_inputs            = rstd::move(value.header_inputs),
+        .embedded_inputs          = rstd::move(value.embedded_inputs),
         .external_macros          = rstd::move(value.external_macros),
         .preprocessor_environment = rstd::move(value.preprocessor_environment),
         .input_bytes              = value.input_bytes,
@@ -236,6 +293,33 @@ auto validate(const IncludeLookupDependency& lookup) -> Result<bool, String> {
     auto canonical = rstd::fs::canonicalize(lookup.resolved->requested_path.as_path());
     if (canonical.is_err()) {
         return Err(rstd::format("cannot resolve include candidate '{}': {}",
+                                lookup.resolved->requested_path.as_path(),
+                                rstd::move(canonical).unwrap_err()));
+    }
+    return Ok(canonical->as_path() == lookup.resolved->canonical_path.as_path());
+}
+
+auto validate(const EmbedLookupDependency& lookup) -> Result<bool, String> {
+    for (const auto& candidate : lookup.missing_candidates) {
+        auto exists = rstd::fs::exists(candidate.as_path());
+        if (exists.is_err()) {
+            return Err(rstd::format("cannot inspect embed candidate '{}': {}",
+                                    candidate.as_path(),
+                                    rstd::move(exists).unwrap_err()));
+        }
+        if (*exists) return Ok(false);
+    }
+    if (lookup.resolved.is_none()) return Ok(true);
+    auto exists = rstd::fs::exists(lookup.resolved->requested_path.as_path());
+    if (exists.is_err()) {
+        return Err(rstd::format("cannot inspect embed candidate '{}': {}",
+                                lookup.resolved->requested_path.as_path(),
+                                rstd::move(exists).unwrap_err()));
+    }
+    if (! *exists) return Ok(false);
+    auto canonical = rstd::fs::canonicalize(lookup.resolved->requested_path.as_path());
+    if (canonical.is_err()) {
+        return Err(rstd::format("cannot resolve embed candidate '{}': {}",
                                 lookup.resolved->requested_path.as_path(),
                                 rstd::move(canonical).unwrap_err()));
     }

@@ -25,6 +25,7 @@ public:
         return Ok(FrontendResult {
             .source = rstd::path::PathBuf::from(translation.sources.path(translation.main_source)),
             .header_inputs            = rstd::move(headers),
+            .embedded_inputs          = as<Clone>(translation.embedded_inputs).clone(),
             .external_macros          = as<Clone>(translation.external_macros).clone(),
             .preprocessor_environment = translation.environment_identity.clone(),
             .input_bytes              = translation.input_bytes,

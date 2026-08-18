@@ -471,7 +471,9 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
         return Ok(empty {});
     };
     for (const auto& group : manifest.source_groups) {
-        if (group.external_source.is_some()) continue;
+        if (group.external_source.is_some() ||
+            group.root == lito::manifest::SourceGroupRoot::Generated)
+            continue;
         for (const auto& declared : group.sources) {
             auto appended = append(declared);
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());

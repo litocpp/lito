@@ -55,6 +55,7 @@ struct ResolvedSourceGroup {
     PathBuf      root;
     String       identity;
     Vec<PathBuf> sources;
+    bool         generated { false };
     bool         external { false };
 };
 
@@ -84,6 +85,20 @@ struct PackageBuildToolRequirement {
     lito::manifest::BuildToolRequirement requirement;
 };
 
+enum class BuildScriptOwnerKind
+{
+    Workspace,
+    Package,
+};
+
+struct BuildScriptOwner {
+    BuildScriptOwnerKind kind { BuildScriptOwnerKind::Package };
+    Option<String>       package;
+    String               source_identity;
+    PathBuf              root;
+    PathBuf              script;
+};
+
 struct SelectedPackageMetadata {
     String         name;
     Option<String> version;
@@ -95,7 +110,7 @@ struct PackageMetadata {
     String                              name;
     PathBuf                             root;
     PathBuf                             manifest_path;
-    Vec<String>                         build_script_packages;
+    Vec<BuildScriptOwner>               build_scripts;
     String                              default_profile;
     Vec<lito::package::PackageTargetId> default_targets;
     Vec<SelectedPackageMetadata>        selected_packages;
