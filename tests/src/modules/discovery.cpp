@@ -75,7 +75,9 @@ visibility = "private"
 path = "../beta"
 visibility = "private"
 )module"_str },
-        { "app/src/main.cppm"_str, R"module(import fixture.alpha;
+        { "app/src/main.cppm"_str, R"module(export module fixture.ambiguous.app;
+
+import fixture.alpha;
 import fixture.beta;
 import fixture.error;
 
@@ -122,7 +124,9 @@ name = "fixture-discovery-app"
 path = "../lib"
 visibility = "private"
 )module"_str },
-        { "app/src/main.cppm"_str, R"module(import fixture.discovery.lib;
+        { "app/src/main.cppm"_str, R"module(export module fixture.discovery.app;
+
+import fixture.discovery.lib;
 
 auto main() -> int {
     return discovery_value() == 17 ? 0 : 1;
@@ -666,4 +670,31 @@ TEST_F(ModuleDiscovery, DiscoveryAndModuleConventionsBuildExpectedCases) {
         auto built   = lito::build(request);
         EXPECT_EQ(built.is_ok(), item.valid);
     }
+}
+
+TEST_F(ModuleDiscovery, RunnableModuleEntryRequiresModuleContextDuringDiscovery) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"module([package]
+name = "fixture-runnable-module-context"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-runnable-module-context"
+link-stdlib = false
+)module"_str },
+        { "src/main.cppm"_str, R"module(auto main() -> int {
+    return 0;
+}
+)module"_str },
+    };
+    auto project = materialize("runnable-module-context"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "runnable-module-context"_str, project->root.as_path(), Vec<String>::make());
+    auto built = lito::build(request);
+    ASSERT_TRUE(built.is_err());
+    auto error = rstd::move(built).unwrap_err();
+    ASSERT_TRUE(error.is_Discovery());
+    auto message = rstd::format("{}", error.as_Discovery().source);
+    EXPECT_TRUE(message.as_str().contains("must declare a module"_str));
 }

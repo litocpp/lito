@@ -743,6 +743,13 @@ auto discover_sources(const cpp::PackageMetadata&          package,
             const auto* cpp_facts = projected->language.is_Cpp()
                                         ? rstd::addressof(projected->language.as_Cpp().facts)
                                         : nullptr;
+            if (candidate.source.module_context_required &&
+                (cpp_facts == nullptr || cpp_facts->provided.is_none())) {
+                auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
+                    rstd::format("runnable module entry '{}' must declare a module",
+                                 candidate.source.canonical_path.as_path()));
+                return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
+            }
             if (candidate.source.expected_module.is_some()) {
                 if (cpp_facts == nullptr || cpp_facts->provided.is_none() ||
                     cpp_facts->provided->logical_name.as_str() !=

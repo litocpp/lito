@@ -298,8 +298,15 @@ auto module_entry_source(const ResolvedTarget& target) -> ModuleResult<ResolvedS
         if (source_root_result.is_err()) return Err(rstd::move(source_root_result).unwrap_err());
         auto source_root = rstd::move(source_root_result).unwrap();
         auto requested   = source_root.join(PathBuf::from("main.cppm"_str).as_path());
-        return canonical_candidate(
-            target.source_root.as_path(), source_root.as_path(), requested.as_path(), None());
+        auto expected    = Option<String> {};
+        if (target.source.module.is_some()) expected = Some(target.source.module->clone());
+        auto source = canonical_candidate(target.source_root.as_path(),
+                                          source_root.as_path(),
+                                          requested.as_path(),
+                                          rstd::move(expected));
+        if (source.is_err()) return source;
+        source->module_context_required = true;
+        return source;
     }
     return root_module_source(target);
 }

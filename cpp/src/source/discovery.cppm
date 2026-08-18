@@ -26,6 +26,7 @@ struct ResolvedSource {
     bool                               external { false };
     SourceOrigin                       origin { SourceOrigin::Explicit };
     bool                               module_companion { false };
+    bool                               module_context_required { false };
     Option<String>                     expected_module;
     Option<frontend::FrontendAnalysis> frontend_analysis;
 };

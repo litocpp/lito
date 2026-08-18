@@ -641,10 +641,6 @@
         "default": {
           "type": "boolean",
           "default": false
-        },
-        "macro": {
-          "type": "string",
-          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$"
         }
       },
       "additionalProperties": false
