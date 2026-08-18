@@ -1,12 +1,17 @@
 # Lito
 
-Lito is a module-first C++ build tool with manifest.  
-It uses `lito.toml` manifest to build packages.  
+Lito is a module-first build tool for C++.   
+A fixed `lito.toml` describes packages, workspaces, targets, dependencies, and build policy.  
+Lito discovers named module sources and drives Clang, LLD, and LLVM tools.  
+
+[Documentation](https://lito.litocpp.org/)
 
 ## Requirements
 
-- LLVM/Clang 22 with libc++ and LLD
-- CMake 4.0 or newer
+- LLVM/Clang 22: `clang`, `clang++`, `ld.lld`, `llvm-ar`, and `llvm-strip`.
+- libc++ or libstdc++ for targets that link the C++ standard library.
+- `clang-format` for `lito format`.
+- CMake 4 and Ninja when bootstrapping Lito or building a CMake dependency.
 
 ## Bootstrap
 
@@ -15,12 +20,21 @@ cmake --preset release
 cmake --build --preset release
 cmake --install build/cmake-release --prefix build/install
 
-./build/install/bin/lito
+./build/install/bin/lito --version
 ```
 
-## Usage
+## First project
 
-Create a `lito.toml`:
+Create this layout:
+
+```text
+hello/
+├── lito.toml
+└── src/
+    └── main.cppm
+```
+
+`lito.toml`:
 
 ```toml
 [package]
@@ -29,21 +43,37 @@ version = "0.1.0"
 
 [[bin]]
 name = "hello"
-sources = ["src/main.cpp"]
+module = "hello"
 ```
 
-Declaring `sources` makes the target use those sources explicitly.
-If it is not declared, Lito will discover `src/lib.cppm` or `src/main.cppm`.
+`src/main.cppm`:
 
-Then run:
+```cpp
+module;
+
+#include <cstdio>
+
+export module hello;
+
+auto main() -> int {
+    std::puts("Hello from Lito");
+    return 0;
+}
+```
+
+Build and run:
 
 ```sh
 lito build
-lito test
-lito format --check
+./build/debug/bin/hello/hello
 ```
 
-See the [manifest schema](schema/lito.schema.json) for the complete configuration contract.
+Because the target omits `sources`, Lito uses the runnable entry convention at `src/main.cppm` and
+discovers its module dependencies. Use explicit `sources` for targets that do not follow the module
+convention.
+
+See the [manifest schema](schema/lito.schema.json) for the machine-readable structure and the
+[documentation](https://lito.litocpp.org/) for package, workspace, configuration, and CLI details.
 
 ## License
 
