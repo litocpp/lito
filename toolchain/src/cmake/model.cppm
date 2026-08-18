@@ -218,6 +218,7 @@ auto clone_profile(const cpp::ProfileSpec& profile) -> cpp::ProfileSpec {
         .name           = profile.name.clone(),
         .family         = profile.family,
         .bmi            = profile.bmi,
+        .c              = profile.c.clone(),
         .cpp            = profile.cpp.clone(),
         .strip          = profile.strip,
         .linker_options = as<Clone>(profile.linker_options).clone(),

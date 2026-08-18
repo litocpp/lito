@@ -379,7 +379,8 @@ auto package_compile_metadata(const lito::package::ResolvedPackage& package)
 auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
     auto result = CppArgumentLayer {};
     for (const auto& occurrence : arguments.occurrences) {
-        auto promoted = occurrence.argument.is_Threading();
+        auto promoted = occurrence.argument.is_Common() &&
+                        occurrence.argument.as_Common().argument.is_Threading();
         if (occurrence.argument.is_Macro()) {
             promoted = is_cpp_standard_library_mode_macro(
                 occurrence.argument.as_Macro().directive.value.as_str());
@@ -399,7 +400,9 @@ auto usage_link_requirements(const lito::manifest::PackageManifest& package,
         result.thread_sources.push(usage_source(package, "usage.threads"_str));
     }
     for (const auto& occurrence : arguments.occurrences) {
-        if (! occurrence.argument.is_Threading()) continue;
+        if (! occurrence.argument.is_Common() ||
+            ! occurrence.argument.as_Common().argument.is_Threading())
+            continue;
         result.posix_threads = true;
         result.thread_sources.push(occurrence.source.clone());
     }
@@ -778,8 +781,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
         if (package.manifest.usage.threads) {
             arguments.occurrences.push(CppCompilerArgumentOccurrence {
-                .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
-                .source   = usage_source(package.manifest, "usage.threads"_str),
+                .argument =
+                    CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
+                        lito::compiler::ThreadingModel::Posix)),
+                .source = usage_source(package.manifest, "usage.threads"_str),
             });
         }
         auto interface_arguments = promoted_arguments(arguments);

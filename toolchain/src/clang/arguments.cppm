@@ -48,15 +48,18 @@ auto add_toggles(cpp::CppArgumentSchema&      schema,
     schema.add(kind, rstd::move(item), family);
 }
 
-auto add_warning(cpp::CppArgumentSchema& schema,
-                 cpp::CppWarning         warning,
-                 bool                    enabled,
-                 ref<str>                name,
-                 ref<str>                spelling_value) -> void {
+auto add_warning(cpp::CppArgumentSchema&   schema,
+                 compiler::CompilerWarning warning,
+                 bool                      enabled,
+                 ref<str>                  name,
+                 ref<str>                  spelling_value) -> void {
     auto item = definition(name);
     spelling(item, spelling_value);
-    schema.add_typed(cpp::CppCompilerArgument::Warning(
-                         cpp::CppWarningOption { .warning = warning, .enabled = enabled }),
+    schema.add_typed(cpp::CppCompilerArgument::Common(
+                         compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
+                             .warning = warning,
+                             .enabled = enabled,
+                         })),
                      rstd::move(item));
 }
 
@@ -190,10 +193,14 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
 
     auto pic = definition("position-independent-code"_str);
     spelling(pic, "-fPIC"_str);
-    schema.add_typed(cpp::CppCompilerArgument::PositionIndependentCode(true), rstd::move(pic));
+    schema.add_typed(cpp::CppCompilerArgument::Common(
+                         compiler::CommonCompilerArgument::PositionIndependentCode(true)),
+                     rstd::move(pic));
     auto no_pic = definition("no-position-independent-code"_str);
     spelling(no_pic, "-fno-PIC"_str);
-    schema.add_typed(cpp::CppCompilerArgument::PositionIndependentCode(false), rstd::move(no_pic));
+    schema.add_typed(cpp::CppCompilerArgument::Common(
+                         compiler::CommonCompilerArgument::PositionIndependentCode(false)),
+                     rstd::move(no_pic));
 
     add_visibility(schema,
                    cpp::CppCompilerArgumentKind::SymbolVisibility,
@@ -357,20 +364,24 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
         "-fno-ptrauth"_str,
         cpp::CompilerArgumentValueForm::OptionalJoined);
 
-    add_warning(schema, cpp::CppWarning::All, true, "all-warnings"_str, "-Wall"_str);
-    add_warning(schema, cpp::CppWarning::Pedantic, true, "pedantic-warnings"_str, "-Wpedantic"_str);
+    add_warning(schema, compiler::CompilerWarning::All, true, "all-warnings"_str, "-Wall"_str);
     add_warning(schema,
-                cpp::CppWarning::GnuStatementExpression,
+                compiler::CompilerWarning::Pedantic,
+                true,
+                "pedantic-warnings"_str,
+                "-Wpedantic"_str);
+    add_warning(schema,
+                compiler::CompilerWarning::GnuStatementExpression,
                 false,
                 "gnu-statement-expression-warnings"_str,
                 "-Wno-gnu-statement-expression"_str);
     add_warning(schema,
-                cpp::CppWarning::DeprecatedDeclarations,
+                compiler::CompilerWarning::DeprecatedDeclarations,
                 false,
                 "deprecated-declaration-warnings"_str,
                 "-Wno-deprecated-declarations"_str);
     add_warning(schema,
-                cpp::CppWarning::UnknownAttributes,
+                compiler::CompilerWarning::UnknownAttributes,
                 true,
                 "unknown-attribute-warnings"_str,
                 "-Wunknown-attributes"_str);

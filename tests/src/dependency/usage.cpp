@@ -75,8 +75,10 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
-    EXPECT_TRUE(planned->contexts[usize {}].language.as_Cpp().options.common.posix_threads);
-    EXPECT_TRUE(planned->contexts[usize(1)].language.as_Cpp().options.common.posix_threads);
+    EXPECT_TRUE(lito::compiler::uses_posix_threads(
+        planned->contexts[usize {}].language.as_Cpp().options.common));
+    EXPECT_TRUE(lito::compiler::uses_posix_threads(
+        planned->contexts[usize(1)].language.as_Cpp().options.common));
     EXPECT_TRUE(planned->link_requirements[usize(1)].posix_threads);
     ASSERT_EQ(planned->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(planned->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
@@ -86,7 +88,8 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
         lito::dependency::DependencyVisibility::LinkOnly;
     auto link_only = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(link_only.is_ok());
-    EXPECT_FALSE(link_only->contexts[usize(1)].language.as_Cpp().options.common.posix_threads);
+    EXPECT_FALSE(lito::compiler::uses_posix_threads(
+        link_only->contexts[usize(1)].language.as_Cpp().options.common));
     EXPECT_TRUE(link_only->link_requirements[usize(1)].posix_threads);
     ASSERT_EQ(link_only->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(link_only->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
@@ -100,7 +103,7 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
         external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
-    metadata->profiles[usize {}].cpp.common.posix_threads        = true;
+    metadata->profiles[usize {}].cpp.common.threading = lito::compiler::ThreadingModel::Posix;
     metadata->profiles[usize {}].link_requirements.posix_threads = true;
     metadata->profiles[usize {}].link_requirements.thread_sources.push(
         String::make("build.options"_str));

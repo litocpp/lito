@@ -16,23 +16,58 @@ TEST(Cpp, MaterializesTypedDefaultWarnings) {
     auto defaults = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     ASSERT_EQ(defaults.diagnostics.warnings.len(), usize(5));
-    EXPECT_EQ(defaults.diagnostics.warnings[usize {}].warning, cpp::CppWarning::All);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize {}].warning, compiler::CompilerWarning::All);
     EXPECT_TRUE(defaults.diagnostics.warnings[usize {}].enabled);
-    EXPECT_EQ(defaults.diagnostics.warnings[usize(1)].warning, cpp::CppWarning::Pedantic);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(1)].warning, compiler::CompilerWarning::Pedantic);
     EXPECT_TRUE(defaults.diagnostics.warnings[usize(1)].enabled);
     EXPECT_EQ(defaults.diagnostics.warnings[usize(2)].warning,
-              cpp::CppWarning::GnuStatementExpression);
+              compiler::CompilerWarning::GnuStatementExpression);
     EXPECT_FALSE(defaults.diagnostics.warnings[usize(2)].enabled);
     EXPECT_EQ(defaults.diagnostics.warnings[usize(3)].warning,
-              cpp::CppWarning::DeprecatedDeclarations);
+              compiler::CompilerWarning::DeprecatedDeclarations);
     EXPECT_FALSE(defaults.diagnostics.warnings[usize(3)].enabled);
-    EXPECT_EQ(defaults.diagnostics.warnings[usize(4)].warning, cpp::CppWarning::UnknownAttributes);
+    EXPECT_EQ(defaults.diagnostics.warnings[usize(4)].warning,
+              compiler::CompilerWarning::UnknownAttributes);
     EXPECT_TRUE(defaults.diagnostics.warnings[usize(4)].enabled);
 
     auto parsed = argument_layer(strings("-Wall"_str, "-Wno-deprecated-declarations"_str));
     ASSERT_EQ(parsed.occurrences.len(), usize(2));
-    EXPECT_TRUE(parsed.occurrences[usize {}].argument.is_Warning());
-    EXPECT_TRUE(parsed.occurrences[usize(1)].argument.is_Warning());
+    ASSERT_TRUE(parsed.occurrences[usize {}].argument.is_Common());
+    ASSERT_TRUE(parsed.occurrences[usize(1)].argument.is_Common());
+    EXPECT_TRUE(parsed.occurrences[usize {}].argument.as_Common().argument.is_Warning());
+    EXPECT_TRUE(parsed.occurrences[usize(1)].argument.as_Common().argument.is_Warning());
+}
+
+TEST(C, MaterializesTypedCommonOptions) {
+    auto options =
+        c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C23);
+    ASSERT_EQ(options.diagnostics.warnings.len(), usize(3));
+    EXPECT_EQ(options.diagnostics.warnings[usize {}].warning, compiler::CompilerWarning::All);
+    EXPECT_EQ(options.diagnostics.warnings[usize(1)].warning, compiler::CompilerWarning::Pedantic);
+    EXPECT_EQ(options.diagnostics.warnings[usize(2)].warning,
+              compiler::CompilerWarning::UnknownAttributes);
+
+    auto layer = c::COptionLayer {};
+    layer.arguments.push(
+        compiler::CommonCompilerArgument::Target(String::make("aarch64-linux-gnu"_str)));
+    layer.arguments.push(
+        compiler::CommonCompilerArgument::Sysroot(String::make("/opt/aarch64-sysroot"_str)));
+    layer.arguments.push(
+        compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
+    layer.arguments.push(compiler::CommonCompilerArgument::PositionIndependentCode(false));
+    layer.arguments.push(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
+        .warning = compiler::CompilerWarning::Pedantic,
+        .enabled = false,
+    }));
+    options = c::apply_c_option_layer(rstd::move(options), rstd::move(layer));
+
+    ASSERT_TRUE(options.common.target.target.is_some());
+    EXPECT_EQ(options.common.target.target->as_str(), "aarch64-linux-gnu"_str);
+    ASSERT_TRUE(options.common.target.sysroot.is_some());
+    EXPECT_EQ(options.common.target.sysroot->as_str(), "/opt/aarch64-sysroot"_str);
+    EXPECT_TRUE(compiler::uses_posix_threads(options.common));
+    EXPECT_FALSE(options.common.codegen.position_independent_code);
+    EXPECT_FALSE(options.diagnostics.warnings[usize(1)].enabled);
 }
 
 TEST(Cpp, MaterializesTypedDefaultPositionIndependentCode) {
@@ -42,7 +77,9 @@ TEST(Cpp, MaterializesTypedDefaultPositionIndependentCode) {
 
     auto parsed = argument_layer(strings("-fno-PIC"_str));
     ASSERT_EQ(parsed.occurrences.len(), usize(1));
-    EXPECT_TRUE(parsed.occurrences[usize {}].argument.is_PositionIndependentCode());
+    ASSERT_TRUE(parsed.occurrences[usize {}].argument.is_Common());
+    EXPECT_TRUE(
+        parsed.occurrences[usize {}].argument.as_Common().argument.is_PositionIndependentCode());
 
     auto disabled = cpp_options("c++20"_str,
                                 lito::manifest::Optimization::None,

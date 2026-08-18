@@ -173,8 +173,8 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
                    cpp_sized_deallocation_name(provider.language.sized_deallocation),
                    cpp_sized_deallocation_name(consumer.language.sized_deallocation));
     add_difference(BmiCompatibilityField::Threading,
-                   bool_text(provider.common.posix_threads),
-                   bool_text(consumer.common.posix_threads));
+                   bool_text(lito::compiler::uses_posix_threads(provider.common)),
+                   bool_text(lito::compiler::uses_posix_threads(consumer.common)));
     auto provider_language = family_identity("language"_str, provider.language.modes);
     auto consumer_language = family_identity("language"_str, consumer.language.modes);
     add_difference(BmiCompatibilityField::LanguageModes,

@@ -156,8 +156,11 @@ TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
     EXPECT_FALSE(debug->cpp.language.rtti);
     EXPECT_FALSE(release->cpp.language.exceptions);
     EXPECT_FALSE(release->cpp.language.rtti);
-    EXPECT_EQ(debug->c_standard, lito::manifest::CStandard::C99);
-    EXPECT_EQ(release->c_standard, lito::manifest::CStandard::C99);
+    EXPECT_EQ(debug->c.standard, lito::manifest::CStandard::C99);
+    EXPECT_EQ(release->c.standard, lito::manifest::CStandard::C99);
+    ASSERT_EQ(debug->c.diagnostics.warnings.len(), usize(3));
+    EXPECT_EQ(debug->c.diagnostics.warnings[usize {}].warning,
+              lito::compiler::CompilerWarning::All);
     EXPECT_NE(debug->cpp.common.codegen.optimization, release->cpp.common.codegen.optimization);
     EXPECT_TRUE(debug->cpp.common.codegen.position_independent_code);
     EXPECT_TRUE(release->cpp.common.codegen.position_independent_code);
@@ -173,7 +176,8 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
                                                 build_profile("debug"_str),
                                                 *parser);
     ASSERT_TRUE(profile.is_ok());
-    EXPECT_TRUE(profile->cpp.common.posix_threads);
+    EXPECT_TRUE(lito::compiler::uses_posix_threads(profile->cpp.common));
+    EXPECT_TRUE(lito::compiler::uses_posix_threads(profile->c.common));
     EXPECT_TRUE(profile->link_requirements.posix_threads);
     ASSERT_EQ(profile->link_requirements.thread_sources.len(), usize(1));
     EXPECT_EQ(profile->link_requirements.thread_sources[usize {}].as_str(), "build.options"_str);

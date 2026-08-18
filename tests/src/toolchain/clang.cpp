@@ -30,6 +30,54 @@ TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
     EXPECT_TRUE(invalid.unwrap_err().as_str().contains("C++ module facts"_str));
 }
 
+TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain = rstd::move(created).unwrap();
+
+    auto layer = c::COptionLayer {};
+    layer.arguments.push(
+        compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
+    layer.arguments.push(compiler::CommonCompilerArgument::PositionIndependentCode(false));
+    layer.arguments.push(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
+        .warning = compiler::CompilerWarning::Pedantic,
+        .enabled = false,
+    }));
+    auto options = c::apply_c_option_layer(
+        c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C23),
+        rstd::move(layer));
+    auto context = cpp::CompileContext {
+        .id       = String::make("c-context"_str),
+        .language = cpp::LanguageCompileContext::C(rstd::move(options), c::CPublicRequirements {}),
+    };
+    auto prepared = cpp::PreparedUnit {
+        .unit =
+            cpp::UnitSpec {
+                .source   = PathBuf::from("/tmp/lito-c-source.c"_str),
+                .object   = PathBuf::from("/tmp/lito-c-source.o"_str),
+                .language = cpp::LanguageSourceUnit::C(),
+                .context  = rstd::addressof(context),
+            },
+        .working_directory = PathBuf::from("/tmp"_str),
+    };
+    auto invocation =
+        toolchain.prepare_compile(prepared,
+                                  cpp::ScanResult {
+                                      .language = cpp::LanguageScanResult::C(cpp::CScanResult {}),
+                                  },
+                                  Vec<cpp::ModuleArtifactDependency>::make());
+    ASSERT_TRUE(invocation.is_ok());
+    EXPECT_TRUE(has_argument(invocation->arguments, "-std=c23"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-pthread"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-fno-PIC"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-pedantic"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));
+}
+
 TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),

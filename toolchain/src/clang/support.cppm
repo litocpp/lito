@@ -130,17 +130,18 @@ auto argument_identity(ref<str> recipe, const Vec<String>& arguments) -> String 
     return identity;
 }
 
-auto clang_warning_option(cpp::CppWarningOption option) noexcept -> ref<str> {
+auto clang_warning_option(compiler::CompilerWarningOption option) noexcept -> ref<str> {
     switch (option.warning) {
-    case cpp::CppWarning::All: return option.enabled ? "-Wall"_str : "-Wno-all"_str;
-    case cpp::CppWarning::Pedantic: return option.enabled ? "-Wpedantic"_str : "-Wno-pedantic"_str;
-    case cpp::CppWarning::GnuStatementExpression:
+    case compiler::CompilerWarning::All: return option.enabled ? "-Wall"_str : "-Wno-all"_str;
+    case compiler::CompilerWarning::Pedantic:
+        return option.enabled ? "-Wpedantic"_str : "-Wno-pedantic"_str;
+    case compiler::CompilerWarning::GnuStatementExpression:
         return option.enabled ? "-Wgnu-statement-expression"_str
                               : "-Wno-gnu-statement-expression"_str;
-    case cpp::CppWarning::DeprecatedDeclarations:
+    case compiler::CompilerWarning::DeprecatedDeclarations:
         return option.enabled ? "-Wdeprecated-declarations"_str
                               : "-Wno-deprecated-declarations"_str;
-    case cpp::CppWarning::UnknownAttributes:
+    case compiler::CompilerWarning::UnknownAttributes:
         return option.enabled ? "-Wunknown-attributes"_str : "-Wno-unknown-attributes"_str;
     }
     return {};
@@ -191,7 +192,7 @@ auto append_typed_options(Vec<String>&                  command,
     }
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
-    if (options.common.posix_threads) command.push(String::make("-pthread"_str));
+    if (compiler::uses_posix_threads(options.common)) command.push(String::make("-pthread"_str));
     for (const auto& option : options.target.features) command.push(option.value.clone());
     for (const auto& option : options.codegen.modes) command.push(option.value.clone());
     for (const auto& option : options.codegen.instrumentation) command.push(option.clone());
@@ -243,11 +244,14 @@ auto append_c_typed_options(Vec<String>&                    command,
             command,
             options.common.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     }
-    if (options.common.posix_threads) toolchain::command::push_option(command, "-pthread"_str);
+    if (compiler::uses_posix_threads(options.common)) {
+        toolchain::command::push_option(command, "-pthread"_str);
+    }
     if (! semantic_only) {
-        toolchain::command::push_option(command, "-Wall"_str);
-        toolchain::command::push_option(command, "-Wpedantic"_str);
-        toolchain::command::push_option(command, "-Wunknown-attributes"_str);
+        for (const auto& warning : options.diagnostics.warnings) {
+            toolchain::command::push_option(command, clang_warning_option(warning));
+        }
+        for (const auto& option : options.diagnostics.options) command.push(option.clone());
     }
 }
 

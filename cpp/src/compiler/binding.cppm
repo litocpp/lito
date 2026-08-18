@@ -153,9 +153,11 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
                         : CppIncludeDirectoryKind::User,
         }));
     case CppCompilerArgumentKind::Target:
-        return Ok(CppCompilerArgument::Target(compiler_argument_value(matched).clone()));
+        return Ok(CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Target(
+            compiler_argument_value(matched).clone())));
     case CppCompilerArgumentKind::Sysroot:
-        return Ok(CppCompilerArgument::Sysroot(compiler_argument_value(matched).clone()));
+        return Ok(CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Sysroot(
+            compiler_argument_value(matched).clone())));
     case CppCompilerArgumentKind::OwnedLanguageStandard:
     case CppCompilerArgumentKind::OwnedStandardLibrary:
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
@@ -177,7 +179,8 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
             family_domain(kind), rstd::move(family), canonical_argument(matched)));
     }
     case CppCompilerArgumentKind::Threading:
-        return Ok(CppCompilerArgument::Threading(CppThreadingModel::Posix));
+        return Ok(CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
+            lito::compiler::ThreadingModel::Posix)));
     case CppCompilerArgumentKind::Instrumentation:
         return Ok(CppCompilerArgument::Instrumentation(canonical_argument(matched)));
     case CppCompilerArgumentKind::SymbolVisibility:

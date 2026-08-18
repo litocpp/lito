@@ -104,9 +104,9 @@ auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) con
 auto explicit_cpp_target(const CppArgumentLayer& arguments) -> Option<ref<str>> {
     auto result = Option<ref<str>> {};
     for (const auto& occurrence : arguments.occurrences) {
-        if (occurrence.argument.is_Target()) {
-            result = Some(occurrence.argument.as_Target().value.as_str());
-        }
+        if (! occurrence.argument.is_Common()) continue;
+        const auto& common = occurrence.argument.as_Common().argument;
+        if (common.is_Target()) result = Some(common.as_Target().value.as_str());
     }
     return result;
 }

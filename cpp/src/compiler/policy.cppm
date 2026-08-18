@@ -41,28 +41,25 @@ auto append_unique(Vec<CppIncludeDirectory>& output, CppIncludeDirectory value) 
     output.push(rstd::move(value));
 }
 
-auto set_warning(Vec<CppWarningOption>& output, CppWarningOption value) -> void {
-    for (auto& existing : output) {
-        if (existing.warning != value.warning) continue;
-        existing.enabled = value.enabled;
-        return;
-    }
-    output.push(rstd::move(value));
-}
-
-auto default_cpp_warnings() -> Vec<CppWarningOption> {
-    auto result = Vec<CppWarningOption>::make();
-    result.push(CppWarningOption { .warning = CppWarning::All });
-    result.push(CppWarningOption { .warning = CppWarning::Pedantic });
-    result.push(CppWarningOption {
-        .warning = CppWarning::GnuStatementExpression,
+auto default_cpp_warnings() -> Vec<lito::compiler::CompilerWarningOption> {
+    auto result = Vec<lito::compiler::CompilerWarningOption>::make();
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::All,
+    });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::Pedantic,
+    });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::GnuStatementExpression,
         .enabled = false,
     });
-    result.push(CppWarningOption {
-        .warning = CppWarning::DeprecatedDeclarations,
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::DeprecatedDeclarations,
         .enabled = false,
     });
-    result.push(CppWarningOption { .warning = CppWarning::UnknownAttributes });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::UnknownAttributes,
+    });
     return result;
 }
 
@@ -142,7 +139,7 @@ auto make_cpp_options(ref<str>                      language_standard,
             },
         .codegen = CppCodegenOptions {},
         .diagnostics =
-            CppDiagnosticOptions {
+            lito::compiler::DiagnosticOptions {
                 .warnings = default_cpp_warnings(),
             },
     };
@@ -183,11 +180,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             RSTD_CASE(IncludeDirectory, directory) {
                 append_unique(input.preprocessor.include_directories, rstd::move(directory));
             }
-            RSTD_CASE(Target, value) {
-                input.common.target.target = Some(rstd::move(value));
-            }
-            RSTD_CASE(Sysroot, value) {
-                input.common.target.sysroot = Some(rstd::move(value));
+            RSTD_CASE(Common, argument) {
+                lito::compiler::apply_common_compiler_argument(
+                    input.common, input.diagnostics, rstd::move(argument));
             }
             RSTD_CASE(OwnedSetting, setting) {
                 static_cast<void>(setting);
@@ -203,14 +198,8 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
                 }
                 modes->insert(rstd::move(family), rstd::move(value));
             }
-            RSTD_CASE(Threading, model) {
-                if (model == CppThreadingModel::Posix) input.common.posix_threads = true;
-            }
             RSTD_CASE(Instrumentation, value) {
                 instrumentation.insert(rstd::move(value), empty {});
-            }
-            RSTD_CASE(PositionIndependentCode, enabled) {
-                input.common.codegen.position_independent_code = enabled;
             }
             RSTD_CASE(SymbolVisibility, value) {
                 input.codegen.visibility.symbols = value;
@@ -223,9 +212,6 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             }
             RSTD_CASE(SizedDeallocation, value) {
                 input.language.sized_deallocation = value;
-            }
-            RSTD_CASE(Warning, option) {
-                set_warning(input.diagnostics.warnings, option);
             }
             RSTD_CASE(Diagnostic, value) {
                 append_unique(input.diagnostics.options, rstd::move(value));
@@ -287,9 +273,11 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
                 CppOptionFamilyDomain::Abi, value.family.clone(), value.value.clone()),
         });
     }
-    if (extra.common.posix_threads) {
+    if (lito::compiler::uses_posix_threads(extra.common)) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
-            .argument = CppCompilerArgument::Threading(CppThreadingModel::Posix),
+            .argument =
+                CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
+                    lito::compiler::ThreadingModel::Posix)),
         });
     }
     for (const auto& value : extra.target.features) {
@@ -310,8 +298,9 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         });
     }
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
-        .argument = CppCompilerArgument::PositionIndependentCode(
-            extra.common.codegen.position_independent_code),
+        .argument = CppCompilerArgument::Common(
+            lito::compiler::CommonCompilerArgument::PositionIndependentCode(
+                extra.common.codegen.position_independent_code)),
     });
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
         .argument = CppCompilerArgument::SymbolVisibility(extra.codegen.visibility.symbols),
@@ -330,7 +319,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
     });
     for (const auto& value : extra.diagnostics.warnings) {
         layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
-            .argument = CppCompilerArgument::Warning(value),
+            .argument =
+                CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Warning(value)),
         });
     }
     for (const auto& value : extra.diagnostics.options) {

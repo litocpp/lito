@@ -104,7 +104,9 @@ auto append_unique(CppLinkRequirements& output, const ResolvedExternalDependency
     append_unique(output, input.link_requirements);
     for (const auto& target : input.targets) {
         for (const auto& occurrence : target.compile_arguments.occurrences) {
-            if (! occurrence.argument.is_Threading()) continue;
+            if (! occurrence.argument.is_Common() ||
+                ! occurrence.argument.as_Common().argument.is_Threading())
+                continue;
             output.posix_threads = true;
             append_unique(output.thread_sources, occurrence.source.as_str());
         }
@@ -582,12 +584,8 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             auto public_layer = lito::c::COptionLayer {};
             append_unique(public_layer.include_directories, exported_usage.include_directories);
             append_unique(public_layer.definitions, exported_usage.definitions);
-            auto c_options = lito::c::apply_c_option_layer(
-                lito::c::CCompileOptions {
-                    .common   = selected_profile.cpp.common.clone(),
-                    .standard = selected_profile.c_standard,
-                },
-                rstd::move(public_layer));
+            auto c_options =
+                lito::c::apply_c_option_layer(selected_profile.c.clone(), rstd::move(public_layer));
             auto requirements = lito::c::c_public_requirements(c_options);
             context.language =
                 LanguageCompileContext::C(rstd::move(c_options), rstd::move(requirements));
@@ -652,7 +650,9 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             };
             auto& c   = context.language.as_C();
             c.options = lito::c::apply_c_option_layer(rstd::move(c.options), rstd::move(c_layer));
-            if (spec.usage.link_requirements.posix_threads) c.options.common.posix_threads = true;
+            if (spec.usage.link_requirements.posix_threads) {
+                c.options.common.threading = lito::compiler::ThreadingModel::Posix;
+            }
         } else {
             auto& cpp = context.language.as_Cpp();
             auto  applied =
@@ -719,12 +719,11 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         auto dependency_order = Vec<TargetId>::make();
         auto ordered          = visit_target(package, target, colors, dependency_order);
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
-        auto& inputs       = link_inputs[target];
-        auto& requirements = link_requirements[target];
-        requirements.posix_threads =
-            contexts[target].language.is_C()
-                ? contexts[target].language.as_C().options.common.posix_threads
-                : contexts[target].language.as_Cpp().options.common.posix_threads;
+        auto& inputs               = link_inputs[target];
+        auto& requirements         = link_requirements[target];
+        requirements.posix_threads = lito::compiler::uses_posix_threads(
+            contexts[target].language.is_C() ? contexts[target].language.as_C().options.common
+                                             : contexts[target].language.as_Cpp().options.common);
         append_unique(requirements, package.profiles[profile].link_requirements);
         append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {

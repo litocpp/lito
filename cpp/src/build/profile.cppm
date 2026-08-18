@@ -23,8 +23,8 @@ struct ProfileSpec {
     String                             name;
     lito::manifest::BuildProfileFamily family { lito::manifest::BuildProfileFamily::Debug };
     BmiRequest                         bmi;
+    lito::c::CCompileOptions           c;
     CppCompileOptions                  cpp;
-    lito::manifest::CStandard          c_standard { lito::manifest::CStandard::C99 };
     CppLinkRequirements                link_requirements;
     lito::manifest::StripMode          strip { lito::manifest::StripMode::None };
     Vec<String>                        linker_options;
@@ -97,26 +97,19 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             RSTD_CASE(IncludeDirectory, value) {
                 static_cast<void>(value);
             }
-            RSTD_CASE(Target, value) {
-                static_cast<void>(value);
-            }
-            RSTD_CASE(Sysroot, value) {
-                static_cast<void>(value);
+            RSTD_CASE(Common, value) {
+                if (value.is_Threading() &&
+                    value.as_Threading().model == lito::compiler::ThreadingModel::Posix) {
+                    link_requirements.posix_threads = true;
+                    link_requirements.thread_sources.push(occurrence.source.clone());
+                }
             }
             RSTD_CASE(Family, domain, family, value) {
                 static_cast<void>(domain);
                 static_cast<void>(family);
                 static_cast<void>(value);
             }
-            RSTD_CASE(Threading, value) {
-                static_cast<void>(value);
-                link_requirements.posix_threads = true;
-                link_requirements.thread_sources.push(occurrence.source.clone());
-            }
             RSTD_CASE(Instrumentation, value) {
-                static_cast<void>(value);
-            }
-            RSTD_CASE(PositionIndependentCode, value) {
                 static_cast<void>(value);
             }
             RSTD_CASE(SymbolVisibility, value) {
@@ -129,9 +122,6 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
                 static_cast<void>(value);
             }
             RSTD_CASE(SizedDeallocation, value) {
-                static_cast<void>(value);
-            }
-            RSTD_CASE(Warning, value) {
                 static_cast<void>(value);
             }
             RSTD_CASE(Diagnostic, value) {
@@ -158,16 +148,37 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             return profile_failure(rstd::format(
                 "build linker option '{}' overrides the selected profile", option.as_str()));
     }
-    auto layer = CppOptionLayer {};
-    if (selected.ndebug) layer.definitions.push(String::make("NDEBUG"_str));
-    layer.arguments = rstd::move(arguments);
-    auto cpp_result = make_cpp_options(configuration.language_standard.as_str(),
-                                       configuration.standard_library,
-                                       project_profile.exceptions,
-                                       project_profile.rtti,
-                                       selected.optimization,
-                                       selected.debug_info,
-                                       rstd::move(layer));
+    auto c_layer = lito::c::COptionLayer {};
+    if (selected.ndebug) c_layer.definitions.push(String::make("NDEBUG"_str));
+    for (const auto& occurrence : arguments.occurrences) {
+        if (! occurrence.argument.is_Common()) continue;
+        c_layer.arguments.push(as<Clone>(occurrence.argument.as_Common().argument).clone());
+    }
+    auto c_common = lito::compiler::CommonCompileOptions {
+        .codegen =
+            lito::compiler::CodegenOptions {
+                .optimization = selected.optimization,
+                .debug_info   = selected.debug_info,
+                .lto          = selected.lto,
+            },
+    };
+    auto c =
+        lito::c::apply_c_option_layer(lito::c::make_c_options(rstd::move(c_common),
+                                                              configuration.c_standard.is_some()
+                                                                  ? *configuration.c_standard
+                                                                  : lito::manifest::CStandard::C99),
+                                      rstd::move(c_layer));
+
+    auto cpp_layer = CppOptionLayer {};
+    if (selected.ndebug) cpp_layer.definitions.push(String::make("NDEBUG"_str));
+    cpp_layer.arguments = rstd::move(arguments);
+    auto cpp_result     = make_cpp_options(configuration.language_standard.as_str(),
+                                           configuration.standard_library,
+                                           project_profile.exceptions,
+                                           project_profile.rtti,
+                                           selected.optimization,
+                                           selected.debug_info,
+                                           rstd::move(cpp_layer));
     if (cpp_result.is_err()) {
         return Err(lito::manifest::BuildProfileError::Options(
             erase_error(rstd::move(cpp_result).unwrap_err())));
@@ -179,9 +190,8 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
         .family            = selected.family,
         .bmi               = BmiRequest { .representation   = configuration.bmi_mode,
                                           .source_embedding = configuration.bmi_source_embedding },
+        .c                 = rstd::move(c),
         .cpp               = rstd::move(cpp),
-        .c_standard        = configuration.c_standard.is_some() ? *configuration.c_standard
-                                                                : lito::manifest::CStandard::C99,
         .link_requirements = rstd::move(link_requirements),
         .strip             = selected.strip,
         .linker_options    = configuration.linker_options.clone(),

@@ -33,11 +33,6 @@ enum class CppSymbolVisibility
     Protected,
 };
 
-enum class CppThreadingModel
-{
-    Posix,
-};
-
 enum class CppCompatibilityDomain
 {
     Target,
@@ -140,20 +135,6 @@ enum class CppCompilerArgumentKind
     VendorPreprocessorUnsupported,
 };
 
-enum class CppWarning
-{
-    All,
-    Pedantic,
-    GnuStatementExpression,
-    DeprecatedDeclarations,
-    UnknownAttributes,
-};
-
-struct CppWarningOption {
-    CppWarning warning { CppWarning::All };
-    bool       enabled { true };
-};
-
 struct CppMacroDirective : DefaultInClass<CppMacroDirective, Clone> {
     CppMacroAction action { CppMacroAction::Define };
     String         value;
@@ -238,11 +219,6 @@ struct CppCodegenOptions {
     Vec<String>          instrumentation;
 };
 
-struct CppDiagnosticOptions {
-    Vec<CppWarningOption> warnings;
-    Vec<String>           options;
-};
-
 struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
     lito::compiler::CommonCompileOptions common;
     CppLanguageOptions                   language;
@@ -250,7 +226,7 @@ struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
     CppTargetOptions                     target;
     CppPreprocessorOptions               preprocessor;
     CppCodegenOptions                    codegen;
-    CppDiagnosticOptions                 diagnostics;
+    lito::compiler::DiagnosticOptions    diagnostics;
     Vec<CppVendorOption>                 vendor;
 
     auto clone() const -> CppCompileOptions;
@@ -272,18 +248,14 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
     RSTD_ENUM(CppCompilerArgument,
               (Macro, (CppMacroDirective directive;)),
               (IncludeDirectory, (CppIncludeDirectory directory;)),
-              (Target, (String value;)),
-              (Sysroot, (String value;)),
+              (Common, (lito::compiler::CommonCompilerArgument argument;)),
               (OwnedSetting, (CppOwnedSetting setting;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
-              (Threading, (CppThreadingModel model;)),
               (Instrumentation, (String value;)),
-              (PositionIndependentCode, (bool enabled;)),
               (SymbolVisibility, (CppSymbolVisibility value;)),
               (TypeVisibility, (CppSymbolVisibility value;)),
               (InlineVisibilityHidden, (bool enabled;)),
               (SizedDeallocation, (CppSizedDeallocation value;)),
-              (Warning, (CppWarningOption option;)),
               (Diagnostic, (String value;)),
               (Vendor, (CppVendorOption option;)))
 
@@ -361,11 +333,8 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(IncludeDirectory, directory) {
             return CppCompilerArgument::IncludeDirectory(as<Clone>(directory).clone());
         }
-        RSTD_CASE(Target, value) {
-            return CppCompilerArgument::Target(value.clone());
-        }
-        RSTD_CASE(Sysroot, value) {
-            return CppCompilerArgument::Sysroot(value.clone());
+        RSTD_CASE(Common, argument) {
+            return CppCompilerArgument::Common(as<Clone>(argument).clone());
         }
         RSTD_CASE(OwnedSetting, setting) {
             return CppCompilerArgument::OwnedSetting(setting);
@@ -373,14 +342,8 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(Family, domain, family, value) {
             return CppCompilerArgument::Family(domain, family.clone(), value.clone());
         }
-        RSTD_CASE(Threading, model) {
-            return CppCompilerArgument::Threading(model);
-        }
         RSTD_CASE(Instrumentation, value) {
             return CppCompilerArgument::Instrumentation(value.clone());
-        }
-        RSTD_CASE(PositionIndependentCode, enabled) {
-            return CppCompilerArgument::PositionIndependentCode(enabled);
         }
         RSTD_CASE(SymbolVisibility, value) {
             return CppCompilerArgument::SymbolVisibility(value);
@@ -393,9 +356,6 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         }
         RSTD_CASE(SizedDeallocation, value) {
             return CppCompilerArgument::SizedDeallocation(value);
-        }
-        RSTD_CASE(Warning, option) {
-            return CppCompilerArgument::Warning(option);
         }
         RSTD_CASE(Diagnostic, value) {
             return CppCompilerArgument::Diagnostic(value.clone());
@@ -454,12 +414,8 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
                 .modes           = as<Clone>(input.codegen.modes).clone(),
                 .instrumentation = as<Clone>(input.codegen.instrumentation).clone(),
             },
-        .diagnostics =
-            CppDiagnosticOptions {
-                .warnings = input.diagnostics.warnings.clone(),
-                .options  = as<Clone>(input.diagnostics.options).clone(),
-            },
-        .vendor = as<Clone>(input.vendor).clone(),
+        .diagnostics = input.diagnostics.clone(),
+        .vendor      = as<Clone>(input.vendor).clone(),
     };
     if (input.abi.resolved_standard_library.is_some()) {
         result.abi.resolved_standard_library = Some(input.abi.resolved_standard_library->clone());
@@ -546,13 +502,15 @@ auto parse_cpp_symbol_visibility(ref<str> value) noexcept -> Option<CppSymbolVis
     return None();
 }
 
-auto cpp_warning_name(CppWarning value) noexcept -> ref<str> {
+auto cpp_warning_name(lito::compiler::CompilerWarning value) noexcept -> ref<str> {
     switch (value) {
-    case CppWarning::All: return "all"_str;
-    case CppWarning::Pedantic: return "pedantic"_str;
-    case CppWarning::GnuStatementExpression: return "gnu-statement-expression"_str;
-    case CppWarning::DeprecatedDeclarations: return "deprecated-declarations"_str;
-    case CppWarning::UnknownAttributes: return "unknown-attributes"_str;
+    case lito::compiler::CompilerWarning::All: return "all"_str;
+    case lito::compiler::CompilerWarning::Pedantic: return "pedantic"_str;
+    case lito::compiler::CompilerWarning::GnuStatementExpression:
+        return "gnu-statement-expression"_str;
+    case lito::compiler::CompilerWarning::DeprecatedDeclarations:
+        return "deprecated-declarations"_str;
+    case lito::compiler::CompilerWarning::UnknownAttributes: return "unknown-attributes"_str;
     }
     return "unknown"_str;
 }

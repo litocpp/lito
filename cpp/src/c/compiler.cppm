@@ -45,6 +45,7 @@ struct CCompileOptions {
     lito::manifest::CStandard            standard { lito::manifest::CStandard::C99 };
     Vec<CIncludeDirectory>               include_directories;
     Vec<CMacroDirective>                 macros;
+    lito::compiler::DiagnosticOptions    diagnostics;
 
     auto clone() const -> CCompileOptions {
         auto includes = Vec<CIncludeDirectory>::with_capacity(include_directories.len());
@@ -56,6 +57,7 @@ struct CCompileOptions {
             .standard            = standard,
             .include_directories = rstd::move(includes),
             .macros              = rstd::move(copied_macros),
+            .diagnostics         = diagnostics.clone(),
         };
     }
 };
@@ -77,9 +79,36 @@ struct CPublicRequirements {
 };
 
 struct COptionLayer {
-    Vec<PathBuf> include_directories;
-    Vec<String>  definitions;
+    Vec<PathBuf>                                include_directories;
+    Vec<String>                                 definitions;
+    Vec<lito::compiler::CommonCompilerArgument> arguments;
 };
+
+auto default_c_warnings() -> Vec<lito::compiler::CompilerWarningOption> {
+    auto result = Vec<lito::compiler::CompilerWarningOption>::make();
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::All,
+    });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::Pedantic,
+    });
+    result.push(lito::compiler::CompilerWarningOption {
+        .warning = lito::compiler::CompilerWarning::UnknownAttributes,
+    });
+    return result;
+}
+
+auto make_c_options(lito::compiler::CommonCompileOptions common, lito::manifest::CStandard standard)
+    -> CCompileOptions {
+    return CCompileOptions {
+        .common   = rstd::move(common),
+        .standard = standard,
+        .diagnostics =
+            lito::compiler::DiagnosticOptions {
+                .warnings = default_c_warnings(),
+            },
+    };
+}
 
 auto apply_c_option_layer(CCompileOptions options, COptionLayer layer) -> CCompileOptions {
     for (auto& include : layer.include_directories) {
@@ -111,6 +140,10 @@ auto apply_c_option_layer(CCompileOptions options, COptionLayer layer) -> CCompi
             });
         }
     }
+    for (auto& argument : layer.arguments) {
+        lito::compiler::apply_common_compiler_argument(
+            options.common, options.diagnostics, rstd::move(argument));
+    }
     return options;
 }
 
@@ -123,7 +156,7 @@ auto c_public_requirements(const CCompileOptions& options) -> CPublicRequirement
 }
 
 auto c_compile_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-compile-options-v2\n"_str);
+    auto result = String::make("lito-c-compile-options-v3\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -154,12 +187,21 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
                          macro.value.as_str())
                 .as_str());
     }
-    result.push_str(options.common.posix_threads ? "threads:posix\n"_str : "threads:none\n"_str);
+    result.push_str(lito::compiler::uses_posix_threads(options.common) ? "threads:posix\n"_str
+                                                                       : "threads:none\n"_str);
+    for (const auto& warning : options.diagnostics.warnings) {
+        result.push_str(
+            rstd::format("warning:{}:{}\n", static_cast<int>(warning.warning), warning.enabled)
+                .as_str());
+    }
+    for (const auto& option : options.diagnostics.options) {
+        result.push_str(rstd::format("diagnostic:{}\n", option.as_str()).as_str());
+    }
     return result;
 }
 
 auto c_scan_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-scan-options-v2\n"_str);
+    auto result = String::make("lito-c-scan-options-v3\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -184,6 +226,8 @@ auto c_scan_identity(const CCompileOptions& options) -> String {
                          macro.value.as_str())
                 .as_str());
     }
+    result.push_str(lito::compiler::uses_posix_threads(options.common) ? "threads:posix\n"_str
+                                                                       : "threads:none\n"_str);
     return result;
 }
 

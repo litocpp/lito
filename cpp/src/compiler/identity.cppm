@@ -112,7 +112,7 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
                       "resolved-stdlib"_str,
                       options.abi.resolved_standard_library->headers_identity.as_str());
     }
-    push_identity(output, "posix-threads"_str, options.common.posix_threads);
+    push_identity(output, "posix-threads"_str, lito::compiler::uses_posix_threads(options.common));
     for (const auto& value : options.language.modes) {
         push_identity(output,
                       rstd::format("language:{}", value.family.as_str()).as_str(),

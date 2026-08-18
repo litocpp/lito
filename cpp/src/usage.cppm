@@ -52,10 +52,13 @@ auto merge_cpp_import_requirements(CppCompileOptions& left, CppCompileOptions& r
     static_assert(semantics.domain == CppCompatibilityDomain::ImportClosure);
     static_assert(semantics.merge == CppRequirementMergePolicy::Enable);
 
-    auto enabled = left.common.posix_threads || right.common.posix_threads;
-    auto changed = left.common.posix_threads != enabled || right.common.posix_threads != enabled;
-    left.common.posix_threads  = enabled;
-    right.common.posix_threads = enabled;
+    auto enabled = lito::compiler::uses_posix_threads(left.common) ||
+                   lito::compiler::uses_posix_threads(right.common);
+    auto model =
+        enabled ? lito::compiler::ThreadingModel::Posix : lito::compiler::ThreadingModel::None;
+    auto changed           = left.common.threading != model || right.common.threading != model;
+    left.common.threading  = model;
+    right.common.threading = model;
     return changed;
 }
 
