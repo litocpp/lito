@@ -1,7 +1,7 @@
 <release version="0.3.0" date="2026-08-18">
   <description>
     <ul>
-      <li>C and C++ package support.</li>
+      <li>C package support.</li>
       <li>External sources and CMake dependency adapters.</li>
       <li>Package build tools and install artifact handling.</li>
       <li>Conditional features and global build options.</li>
