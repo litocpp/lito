@@ -32,7 +32,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(rstd::fs::create_dir_all(count_directory.as_path()).is_ok());
     auto count_path =
         count_directory.join(rstd::path::PathBuf::from("configure-count"_str).as_path());
-    auto target       = pkg_config_target();
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     auto targets      = Vec<lito::dependency::CMakeTargetRequirement>::make();
     targets.push(lito::dependency::CMakeTargetRequirement {
@@ -65,7 +64,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto resolved    = resolve_cmake_fixtures(declarations,
                                               default_profile(*parser),
                                               native_platform(),
-                                              *parser,
                                               build_root("cmake-fixture-work"_str).as_path(),
                                               usize(1),
                                               rstd::addressof(cold_assets));
@@ -82,9 +80,12 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_EQ(dependency.targets.len(), usize(3));
     EXPECT_EQ(dependency.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
 
+    auto compile_arguments = parser->parse(dependency.targets[usize {}].compile_options,
+                                           dependency.targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
     auto has_macro   = false;
     auto has_include = false;
-    for (const auto& occurrence : dependency.targets[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence : compile_arguments->occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
                                          "LITO_CMAKE_USAGE=1"_str;
@@ -122,7 +123,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto warm        = resolve_cmake_fixtures(declarations,
                                               default_profile(*parser),
                                               native_platform(),
-                                              *parser,
                                               build_root("cmake-fixture-work"_str).as_path(),
                                               usize(1),
                                               rstd::addressof(warm_assets));
@@ -143,7 +143,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto queried_again = resolve_cmake_fixtures(declarations,
                                                 default_profile(*parser),
                                                 native_platform(),
-                                                *parser,
                                                 build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
@@ -157,7 +156,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto installed_again = resolve_cmake_fixtures(declarations,
                                                   default_profile(*parser),
                                                   native_platform(),
-                                                  *parser,
                                                   build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
@@ -175,7 +173,6 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     auto profile_variant = resolve_cmake_fixtures(declarations,
                                                   *disabled_profile,
                                                   native_platform(),
-                                                  *parser,
                                                   build_root("cmake-fixture-work"_str).as_path());
     ASSERT_TRUE(profile_variant.is_ok());
     auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
@@ -204,11 +201,9 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
         .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets = rstd::move(targets),
     });
-    auto target   = pkg_config_target();
     auto resolved = resolve_cmake_fixtures(declarations,
                                            default_profile(*parser),
                                            native_platform(),
-                                           *parser,
                                            build_root("cmake-source-adapter-work"_str).as_path());
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
@@ -221,9 +216,12 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
     EXPECT_EQ(dependency.version.as_str(), "4.5.6"_str);
     ASSERT_EQ(dependency.targets.len(), usize(1));
 
+    auto compile_arguments = parser->parse(dependency.targets[usize {}].compile_options,
+                                           dependency.targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
     auto has_macro   = false;
     auto has_include = false;
-    for (const auto& occurrence : dependency.targets[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence : compile_arguments->occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
                                          "LITO_CMAKE_SOURCE_ADAPTER_USAGE=1"_str;
@@ -267,7 +265,6 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),
                                              native_platform(),
-                                             *parser,
                                              build_root("cmake-find-generic-work"_str).as_path(),
                                              rstd::move(provider));
     if (resolved.is_err()) {
@@ -279,9 +276,12 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
     ASSERT_EQ(resolved->len(), usize(1));
     EXPECT_EQ((*resolved)[usize {}].version.as_str(), "7.8.9"_str);
     ASSERT_EQ((*resolved)[usize {}].targets.len(), usize(1));
+    auto compile_arguments =
+        parser->parse((*resolved)[usize {}].targets[usize {}].compile_options,
+                      (*resolved)[usize {}].targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
     auto has_macro = false;
-    for (const auto& occurrence :
-         (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence : compile_arguments->occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
                                          "LITO_CMAKE_FIND_USAGE=1"_str;
@@ -316,7 +316,6 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),
                                              native_platform(),
-                                             *parser,
                                              build_root("cmake-find-adapter-work"_str).as_path(),
                                              rstd::move(provider));
     if (resolved.is_err()) {
@@ -328,9 +327,12 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
     ASSERT_EQ(resolved->len(), usize(1));
     EXPECT_EQ((*resolved)[usize {}].version.as_str(), "7.8.9"_str);
     ASSERT_EQ((*resolved)[usize {}].targets.len(), usize(1));
+    auto compile_arguments =
+        parser->parse((*resolved)[usize {}].targets[usize {}].compile_options,
+                      (*resolved)[usize {}].targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
     auto has_macro = false;
-    for (const auto& occurrence :
-         (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence : compile_arguments->occurrences) {
         if (occurrence.argument.is_Macro()) {
             has_macro = has_macro || occurrence.argument.as_Macro().directive.value.as_str() ==
                                          "LITO_CMAKE_FIND_USAGE=1"_str;
@@ -365,7 +367,6 @@ TEST_F(CMakeProvider, CMakeProviderReportsFindAdapterTargetContractFailure) {
         declarations,
         default_profile(*parser),
         native_platform(),
-        *parser,
         build_root("cmake-find-adapter-missing-target-work"_str).as_path(),
         rstd::move(provider));
     ASSERT_TRUE(resolved.is_err());

@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.cpp:package.plan;
 
 import rstd;
@@ -83,6 +86,55 @@ auto append_unique(CppArgumentLayer& output, const CppArgumentLayer& input) -> v
     }
 }
 
+auto append_unique(lito::c::CArgumentLayer& output, const lito::c::CArgumentLayer& input) -> void {
+    for (const auto& occurrence : input.occurrences) {
+        auto present = false;
+        for (const auto& existing : output.occurrences) {
+            if (same_tokens(existing.raw_tokens, occurrence.raw_tokens)) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) output.occurrences.push(occurrence.clone());
+    }
+}
+
+auto append_language_arguments(LanguageArgumentLayer&       output,
+                               const LanguageArgumentLayer& input,
+                               ref<str>                     consumer,
+                               ref<str> provider) -> lito::package::PackageResult<empty> {
+    if (output.is_C()) {
+        if (! input.is_C()) {
+            return plan_failure<empty>(
+                rstd::format("C target '{}' cannot consume C++ compiler arguments from '{}'",
+                             consumer,
+                             provider));
+        }
+        append_unique(output.as_C().layer, input.as_C().layer);
+        return Ok(empty {});
+    }
+    if (input.is_Cpp()) {
+        append_unique(output.as_Cpp().layer, input.as_Cpp().layer);
+        return Ok(empty {});
+    }
+    for (const auto& occurrence : input.as_C().layer.occurrences) {
+        if (! occurrence.argument.is_Common()) {
+            return plan_failure<empty>(rstd::format(
+                "C++ target '{}' cannot consume language-specific C compiler arguments from '{}'",
+                consumer,
+                provider));
+        }
+        output.as_Cpp().layer.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument = CppCompilerArgument::Common(
+                as<Clone>(occurrence.argument.as_Common().argument).clone()),
+            .raw_tokens = as<Clone>(occurrence.raw_tokens).clone(),
+            .range      = occurrence.range,
+            .source     = occurrence.source.clone(),
+        });
+    }
+    return Ok(empty {});
+}
+
 auto append_unique(CppLinkRequirements& output, const CppLinkRequirements& input) -> void {
     if (input.posix_threads) {
         output.posix_threads = true;
@@ -103,12 +155,22 @@ auto append_unique(CppLinkRequirements& output, const CppLinkRequirements& input
 auto append_unique(CppLinkRequirements& output, const ResolvedExternalDependency& input) -> void {
     append_unique(output, input.link_requirements);
     for (const auto& target : input.targets) {
-        for (const auto& occurrence : target.compile_arguments.occurrences) {
-            if (! occurrence.argument.is_Common() ||
-                ! occurrence.argument.as_Common().argument.is_Threading())
-                continue;
-            output.posix_threads = true;
-            append_unique(output.thread_sources, occurrence.source.as_str());
+        if (target.compile_arguments.is_C()) {
+            for (const auto& occurrence : target.compile_arguments.as_C().layer.occurrences) {
+                if (! occurrence.argument.is_Common() ||
+                    ! occurrence.argument.as_Common().argument.is_Threading())
+                    continue;
+                output.posix_threads = true;
+                append_unique(output.thread_sources, occurrence.source.as_str());
+            }
+        } else {
+            for (const auto& occurrence : target.compile_arguments.as_Cpp().layer.occurrences) {
+                if (! occurrence.argument.is_Common() ||
+                    ! occurrence.argument.as_Common().argument.is_Threading())
+                    continue;
+                output.posix_threads = true;
+                append_unique(output.thread_sources, occurrence.source.as_str());
+            }
         }
     }
 }
@@ -149,10 +211,10 @@ auto target_index(const PackageSpec& package, const lito::package::PackageTarget
 }
 
 struct PublicUsage {
-    Vec<PathBuf>     include_directories;
-    Vec<String>      definitions;
-    CppArgumentLayer arguments;
-    Vec<String>      external_identities;
+    Vec<PathBuf>          include_directories;
+    Vec<String>           definitions;
+    LanguageArgumentLayer arguments;
+    Vec<String>           external_identities;
 };
 
 auto visit_target(const PackageMetadata& package,
@@ -539,16 +601,24 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
 
     for (auto target : target_order) {
         const auto& spec  = package.targets[target];
-        auto        usage = PublicUsage {};
+        auto        usage = PublicUsage {
+            .arguments = empty_language_arguments(spec.language),
+        };
         if (spec.id.kind == lito::package::PackageTargetKind::Library) {
             append_unique(usage.include_directories, spec.usage.public_include_directories);
             append_unique(usage.definitions, spec.usage.public_definitions);
-            append_unique(usage.arguments, spec.usage.interface_arguments);
+            rstd_try(append_language_arguments(usage.arguments,
+                                               spec.usage.interface_arguments,
+                                               target_text(spec.id).as_str(),
+                                               target_text(spec.id).as_str()));
             for (const auto& dependency : spec.external_dependencies) {
                 for (const auto& target : dependency.targets) {
                     if (target.visibility != lito::dependency::DependencyVisibility::Public)
                         continue;
-                    append_unique(usage.arguments, target.compile_arguments);
+                    rstd_try(append_language_arguments(usage.arguments,
+                                                       target.compile_arguments,
+                                                       target_text(spec.id).as_str(),
+                                                       target.name.as_str()));
                     append_unique(usage.external_identities, target.identity.as_str());
                 }
             }
@@ -562,7 +632,11 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             auto& nested_usage  = *public_usage[dependency_id];
             append_unique(usage.include_directories, nested_usage.include_directories);
             append_unique(usage.definitions, nested_usage.definitions);
-            append_unique(usage.arguments, nested_usage.arguments);
+            rstd_try(
+                append_language_arguments(usage.arguments,
+                                          nested_usage.arguments,
+                                          target_text(spec.id).as_str(),
+                                          target_text(package.targets[dependency_id].id).as_str()));
             append_unique(usage.external_identities, nested_usage.external_identities);
             append_unique(exported_targets, public_targets[dependency_id]);
         }
@@ -576,14 +650,15 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         auto        context          = CompileContext {};
         const auto& exported_usage   = *public_usage[target];
         if (spec.language == lito::manifest::PackageLanguage::C) {
-            if (! exported_usage.arguments.occurrences.is_empty()) {
-                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
-                    "C target '{}' received C++ compiler arguments from its public usage",
-                    target_text(spec.id).as_str()));
+            if (! exported_usage.arguments.is_C()) {
+                return plan_failure<ResolvedNativeTargetPlan>(
+                    rstd::format("C target '{}' received compiler arguments for the wrong language",
+                                 target_text(spec.id).as_str()));
             }
-            auto public_layer = lito::c::COptionLayer {};
+            auto public_layer = lito::c::CArgumentLayer {};
             append_unique(public_layer.include_directories, exported_usage.include_directories);
             append_unique(public_layer.definitions, exported_usage.definitions);
+            append_unique(public_layer, exported_usage.arguments.as_C().layer);
             auto c_options =
                 lito::c::apply_c_option_layer(selected_profile.c.clone(), rstd::move(public_layer));
             auto requirements = lito::c::c_public_requirements(c_options);
@@ -593,7 +668,12 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             auto public_layer = CppOptionLayer {};
             append_unique(public_layer.include_directories, exported_usage.include_directories);
             append_unique(public_layer.definitions, exported_usage.definitions);
-            append_unique(public_layer.arguments, exported_usage.arguments);
+            if (! exported_usage.arguments.is_Cpp()) {
+                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                    "C++ target '{}' received compiler arguments for the wrong language",
+                    target_text(spec.id).as_str()));
+            }
+            append_unique(public_layer.arguments, exported_usage.arguments.as_Cpp().layer);
             auto public_cpp = apply_cpp_option_layer(as<Clone>(selected_profile.cpp).clone(),
                                                      rstd::move(public_layer));
             if (public_cpp.is_err()) {
@@ -607,10 +687,15 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         }
         append_unique(context.external_identities, exported_usage.external_identities);
 
-        auto private_layer = CppOptionLayer {};
-        append_unique(private_layer.include_directories, spec.usage.private_include_directories);
-        append_unique(private_layer.definitions, spec.usage.private_definitions);
-        append_unique(private_layer.arguments, spec.usage.arguments);
+        auto private_include_directories = Vec<PathBuf>::make();
+        auto private_definitions         = Vec<String>::make();
+        auto private_arguments           = empty_language_arguments(spec.language);
+        append_unique(private_include_directories, spec.usage.private_include_directories);
+        append_unique(private_definitions, spec.usage.private_definitions);
+        rstd_try(append_language_arguments(private_arguments,
+                                           spec.usage.arguments,
+                                           target_text(spec.id).as_str(),
+                                           target_text(spec.id).as_str()));
         for (const auto& dependency : spec.external_dependencies) {
             for (const auto& external_target : dependency.targets) {
                 const auto consumed_publicly =
@@ -620,7 +705,10 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                     ! consumed_publicly) {
                     continue;
                 }
-                append_unique(private_layer.arguments, external_target.compile_arguments);
+                rstd_try(append_language_arguments(private_arguments,
+                                                   external_target.compile_arguments,
+                                                   target_text(spec.id).as_str(),
+                                                   external_target.name.as_str()));
                 append_unique(context.external_identities, external_target.identity.as_str());
             }
         }
@@ -633,20 +721,25 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             append_unique(visible, public_targets[dependency_id]);
             if (dependency.visibility == lito::dependency::DependencyVisibility::Public) continue;
             const auto& usage = *public_usage[dependency_id];
-            append_unique(private_layer.include_directories, usage.include_directories);
-            append_unique(private_layer.definitions, usage.definitions);
-            append_unique(private_layer.arguments, usage.arguments);
+            append_unique(private_include_directories, usage.include_directories);
+            append_unique(private_definitions, usage.definitions);
+            rstd_try(
+                append_language_arguments(private_arguments,
+                                          usage.arguments,
+                                          target_text(spec.id).as_str(),
+                                          target_text(package.targets[dependency_id].id).as_str()));
             append_unique(context.external_identities, usage.external_identities);
         }
         if (spec.language == lito::manifest::PackageLanguage::C) {
-            if (! private_layer.arguments.occurrences.is_empty()) {
+            if (! private_arguments.is_C()) {
                 return plan_failure<ResolvedNativeTargetPlan>(
-                    rstd::format("C target '{}' received C++ compiler arguments from a dependency",
+                    rstd::format("C target '{}' received compiler arguments for the wrong language",
                                  target_text(spec.id).as_str()));
             }
-            auto c_layer = lito::c::COptionLayer {
-                .include_directories = rstd::move(private_layer.include_directories),
-                .definitions         = rstd::move(private_layer.definitions),
+            auto c_layer = lito::c::CArgumentLayer {
+                .include_directories = rstd::move(private_include_directories),
+                .definitions         = rstd::move(private_definitions),
+                .occurrences         = rstd::move(private_arguments.as_C().layer.occurrences),
             };
             auto& c   = context.language.as_C();
             c.options = lito::c::apply_c_option_layer(rstd::move(c.options), rstd::move(c_layer));
@@ -654,6 +747,16 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                 c.options.common.threading = lito::compiler::ThreadingModel::Posix;
             }
         } else {
+            if (! private_arguments.is_Cpp()) {
+                return plan_failure<ResolvedNativeTargetPlan>(rstd::format(
+                    "C++ target '{}' received compiler arguments for the wrong language",
+                    target_text(spec.id).as_str()));
+            }
+            auto private_layer = CppOptionLayer {
+                .include_directories = rstd::move(private_include_directories),
+                .definitions         = rstd::move(private_definitions),
+                .arguments           = rstd::move(private_arguments.as_Cpp().layer),
+            };
             auto& cpp = context.language.as_Cpp();
             auto  applied =
                 apply_cpp_option_layer(rstd::move(cpp.options), rstd::move(private_layer));

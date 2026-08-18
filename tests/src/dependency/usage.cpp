@@ -62,8 +62,10 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
 
     auto parsed = parser->parse(strings("-pthread"_str), "static library usage"_str);
     ASSERT_TRUE(parsed.is_ok());
-    metadata->targets[usize {}].usage.arguments                       = as<Clone>(*parsed).clone();
-    metadata->targets[usize {}].usage.interface_arguments             = rstd::move(parsed).unwrap();
+    metadata->targets[usize {}].usage.arguments =
+        lito::cpp::LanguageArgumentLayer::Cpp(as<Clone>(*parsed).clone());
+    metadata->targets[usize {}].usage.interface_arguments =
+        lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(parsed).unwrap());
     metadata->targets[usize {}].usage.link_requirements.posix_threads = true;
     metadata->targets[usize {}].usage.link_requirements.thread_sources.push(
         String::make("static library usage"_str));
@@ -113,6 +115,33 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
     EXPECT_TRUE(planned->link_requirements[usize(1)].posix_threads);
 }
 
+TEST(DependencyUsage, ExternalCompileOptionsResolveInTheConsumerLanguage) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto targets = Vec<lito::cpp::ExternalTargetUsage>::make();
+    targets.push(lito::cpp::ExternalTargetUsage {
+        .name            = String::make("fixture"_str),
+        .compile_options = strings("-fno-builtin"_str, "-pthread"_str),
+        .compile_source  = String::make("external fixture"_str),
+    });
+    auto dependencies = Vec<lito::cpp::ExternalDependencyUsage>::make();
+    dependencies.push(lito::cpp::ExternalDependencyUsage {
+        .alias   = String::make("fixture"_str),
+        .targets = rstd::move(targets),
+    });
+
+    auto resolved = lito::cpp::resolve_external_usage(
+        rstd::move(dependencies), lito::manifest::PackageLanguage::C, *parser);
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_EQ(resolved->len(), usize(1));
+    ASSERT_EQ((*resolved)[usize {}].targets.len(), usize(1));
+    const auto& arguments = (*resolved)[usize {}].targets[usize {}].compile_arguments;
+    ASSERT_TRUE(arguments.is_C());
+    ASSERT_EQ(arguments.as_C().layer.occurrences.len(), usize(2));
+    EXPECT_TRUE(arguments.as_C().layer.occurrences[usize {}].argument.is_Vendor());
+    EXPECT_TRUE(arguments.as_C().layer.occurrences[usize(1)].argument.is_Common());
+}
+
 TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -122,7 +151,8 @@ TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
 
     auto parsed = parser->parse(strings("-D_GLIBCXX_DEBUG=1"_str), "library ABI"_str);
     ASSERT_TRUE(parsed.is_ok());
-    metadata->targets[usize {}].usage.arguments = rstd::move(parsed).unwrap();
+    metadata->targets[usize {}].usage.arguments =
+        lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(parsed).unwrap());
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_err());

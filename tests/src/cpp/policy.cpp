@@ -47,15 +47,18 @@ TEST(C, MaterializesTypedCommonOptions) {
     EXPECT_EQ(options.diagnostics.warnings[usize(2)].warning,
               compiler::CompilerWarning::UnknownAttributes);
 
-    auto layer = c::COptionLayer {};
-    layer.arguments.push(
-        compiler::CommonCompilerArgument::Target(String::make("aarch64-linux-gnu"_str)));
-    layer.arguments.push(
+    auto       layer       = c::CArgumentLayer {};
+    const auto push_common = [&](compiler::CommonCompilerArgument argument) {
+        layer.occurrences.push(c::CCompilerArgumentOccurrence {
+            .argument = c::CCompilerArgument::Common(rstd::move(argument)),
+        });
+    };
+    push_common(compiler::CommonCompilerArgument::Target(String::make("aarch64-linux-gnu"_str)));
+    push_common(
         compiler::CommonCompilerArgument::Sysroot(String::make("/opt/aarch64-sysroot"_str)));
-    layer.arguments.push(
-        compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
-    layer.arguments.push(compiler::CommonCompilerArgument::PositionIndependentCode(false));
-    layer.arguments.push(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
+    push_common(compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
+    push_common(compiler::CommonCompilerArgument::PositionIndependentCode(false));
+    push_common(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
         .warning = compiler::CompilerWarning::Pedantic,
         .enabled = false,
     }));

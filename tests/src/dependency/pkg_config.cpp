@@ -277,11 +277,10 @@ TEST_F(PkgConfig, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingTh
     EXPECT_EQ((*double_quoted)[usize {}].as_str(), "double\\literal"_str);
 }
 
-TEST_F(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirements) {
+TEST_F(PkgConfig, PkgConfigProviderProducesCompileAndOrderedLinkRequirements) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
-    auto target       = pkg_config_target();
     auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture("fixture"_str,
                                         lito::dependency::PkgConfigVersionOperator::GreaterEqual,
@@ -292,16 +291,18 @@ TEST_F(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirement
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        native_platform(),
-                                                        *parser);
+                                                        native_platform());
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(1));
     EXPECT_EQ((*resolved)[usize {}].version.as_str(), "2.3.4"_str);
 
+    auto compile_arguments =
+        parser->parse((*resolved)[usize {}].targets[usize {}].compile_options,
+                      (*resolved)[usize {}].targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
     auto user_include   = false;
     auto system_include = false;
-    for (const auto& occurrence :
-         (*resolved)[usize {}].targets[usize {}].compile_arguments.occurrences) {
+    for (const auto& occurrence : compile_arguments->occurrences) {
         if (! occurrence.argument.is_IncludeDirectory()) continue;
         const auto& include = occurrence.argument.as_IncludeDirectory().directory;
         user_include = user_include || include.kind == lito::cpp::CppIncludeDirectoryKind::User;
@@ -332,8 +333,7 @@ TEST_F(PkgConfig, PkgConfigProviderProducesTypedCompileAndOrderedLinkRequirement
                                                       fixture_cmake(),
                                                       configuration(),
                                                       default_profile(*parser),
-                                                      native_platform(),
-                                                      *parser);
+                                                      native_platform());
     ASSERT_TRUE(shared.is_ok());
     for (const auto& token : (*shared)[usize {}].link_arguments.tokens) {
         EXPECT_NE(token.as_str(), "-llito_private"_str);
@@ -344,7 +344,6 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
-    auto target       = pkg_config_target();
     auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
         "equal"_str, lito::dependency::PkgConfigVersionOperator::Equal, "2.3.4"_str));
@@ -362,8 +361,7 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        native_platform(),
-                                                        *parser);
+                                                        native_platform());
     ASSERT_TRUE(resolved.is_ok());
     EXPECT_EQ(resolved->len(), usize(5));
 
@@ -375,8 +373,7 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
                                                       fixture_cmake(),
                                                       configuration(),
                                                       default_profile(*parser),
-                                                      native_platform(),
-                                                      *parser);
+                                                      native_platform());
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
     ASSERT_TRUE(error.is_Message());
@@ -388,7 +385,6 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto config       = fixture_pkg_config();
-    auto target       = pkg_config_target();
     auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
         "fixture"_str, lito::dependency::PkgConfigVersionOperator::GreaterEqual, "2.0.0"_str));
@@ -399,8 +395,7 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
-                                            *parser);
+                                            explicit_platform("aarch64-unknown-linux-gnu"_str));
     EXPECT_TRUE(implicit_cross.is_err());
 
     config.target_configured = true;
@@ -410,8 +405,7 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                             fixture_cmake(),
                                             configuration(),
                                             default_profile(*parser),
-                                            explicit_platform("aarch64-unknown-linux-gnu"_str),
-                                            *parser);
+                                            explicit_platform("aarch64-unknown-linux-gnu"_str));
     EXPECT_TRUE(explicit_cross.is_ok());
 
     config.executable     = rstd::path::PathBuf::from("lito-missing-pkg-config-provider"_str);
@@ -420,8 +414,7 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                                 fixture_cmake(),
                                                                 configuration(),
                                                                 default_profile(*parser),
-                                                                native_platform(),
-                                                                *parser);
+                                                                native_platform());
     ASSERT_TRUE(missing_provider.is_err());
     auto provider_error = rstd::move(missing_provider).unwrap_err();
     EXPECT_TRUE(error_chain_text(provider_error).as_str().contains("fixture"_str));
@@ -435,8 +428,7 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               fixture_cmake(),
                                                               configuration(),
                                                               default_profile(*parser),
-                                                              native_platform(),
-                                                              *parser);
+                                                              native_platform());
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
     ASSERT_TRUE(module_error.is_Message());
@@ -456,7 +448,6 @@ TEST_F(PkgConfig, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
         .sysroot           = Some(directory.clone()),
         .target_configured = true,
     };
-    auto target       = pkg_config_target();
     auto declarations = Vec<lito::dependency::PkgConfigExternalDependency>::make();
     declarations.push(versioned_fixture(
         "first"_str, lito::dependency::PkgConfigVersionOperator::GreaterEqual, "1.0.0"_str));
@@ -467,8 +458,7 @@ TEST_F(PkgConfig, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
                                                         fixture_cmake(),
                                                         configuration(),
                                                         default_profile(*parser),
-                                                        native_platform(),
-                                                        *parser);
+                                                        native_platform());
     ASSERT_TRUE(resolved.is_ok());
     ASSERT_EQ(resolved->len(), usize(2));
     auto count = rstd::fs::read_to_string(

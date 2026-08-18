@@ -247,6 +247,17 @@ auto append_c_typed_options(Vec<String>&                    command,
     if (compiler::uses_posix_threads(options.common)) {
         toolchain::command::push_option(command, "-pthread"_str);
     }
+    for (const auto& option : options.vendor) {
+        if (semantic_only && (option.effect == lito::c::CVendorOptionEffect::Codegen ||
+                              option.effect == lito::c::CVendorOptionEffect::Diagnostic)) {
+            continue;
+        }
+        if (option.preserve_raw_tokens) {
+            for (const auto& token : option.raw_tokens) command.push(token.clone());
+        } else {
+            command.push(option.value.clone());
+        }
+    }
     if (! semantic_only) {
         for (const auto& warning : options.diagnostics.warnings) {
             toolchain::command::push_option(command, clang_warning_option(warning));

@@ -38,14 +38,25 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     ASSERT_TRUE(created.is_ok());
     auto toolchain = rstd::move(created).unwrap();
 
-    auto layer = c::COptionLayer {};
-    layer.arguments.push(
-        compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
-    layer.arguments.push(compiler::CommonCompilerArgument::PositionIndependentCode(false));
-    layer.arguments.push(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
+    auto       layer       = c::CArgumentLayer {};
+    const auto push_common = [&](compiler::CommonCompilerArgument argument) {
+        layer.occurrences.push(c::CCompilerArgumentOccurrence {
+            .argument = c::CCompilerArgument::Common(rstd::move(argument)),
+        });
+    };
+    push_common(compiler::CommonCompilerArgument::Threading(compiler::ThreadingModel::Posix));
+    push_common(compiler::CommonCompilerArgument::PositionIndependentCode(false));
+    push_common(compiler::CommonCompilerArgument::Warning(compiler::CompilerWarningOption {
         .warning = compiler::CompilerWarning::Pedantic,
         .enabled = false,
     }));
+    layer.occurrences.push(c::CCompilerArgumentOccurrence {
+        .argument = c::CCompilerArgument::Vendor(c::CVendorOption {
+            .value               = String::make("-fno-builtin"_str),
+            .raw_tokens          = strings("-fno-builtin"_str),
+            .preserve_raw_tokens = true,
+        }),
+    });
     auto options = c::apply_c_option_layer(
         c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C23),
         rstd::move(layer));
@@ -73,6 +84,7 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     EXPECT_TRUE(has_argument(invocation->arguments, "-std=c23"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-pthread"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-fno-PIC"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-fno-builtin"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-pedantic"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wunknown-attributes"_str));

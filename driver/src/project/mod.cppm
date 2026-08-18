@@ -308,7 +308,6 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   resolved_profile,
                                                                   *layout,
                                                                   session.platform,
-                                                                  toolchain.argument_parser(),
                                                                   tool_resolver,
                                                                   environment,
                                                                   jobs,

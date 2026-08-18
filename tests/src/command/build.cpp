@@ -132,6 +132,9 @@ minimum-standard = "c17"
 name = "fixture-c-lib"
 archive = "fixture_c_lib"
 sources = ["src/value.c"]
+
+[usage]
+options = ["-fno-builtin"]
 )toml"_str },
         { "c-lib/src/value.c"_str, "int fixture_c_value(void) { return 42; }\n"_str },
         { "app/lito.toml"_str, R"toml([package]

@@ -212,12 +212,11 @@ auto resolve_cmake_fixtures_with_provider(
     const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
     const lito::cpp::ProfileSpec&                        profile,
     const lito::system::BuildPlatform&                   platform,
-    const lito::cpp::CppArgumentParser&                  parser,
     ref<rstd::path::Path>                                work_root,
     lito::dependency::CMakeProviderConfig                provider,
     usize                                                jobs   = usize(1),
     Vec<lito::ExternalAssetSet>*                         assets = nullptr)
-    -> lito::dependency::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
+    -> lito::dependency::DependencyResult<Vec<lito::cpp::ExternalDependencyUsage>> {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     if (environment.is_err()) {
@@ -233,7 +232,7 @@ auto resolve_cmake_fixtures_with_provider(
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);
     if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
     provider    = rstd::move(identified).unwrap();
-    auto result = Vec<lito::cpp::ResolvedExternalDependency>::make();
+    auto result = Vec<lito::cpp::ExternalDependencyUsage>::make();
     for (const auto& declaration : declarations) {
         auto requirement = lito::resolve_cmake_requirement_for_platform(declaration, platform);
         if (requirement.is_err()) return Err(rstd::move(requirement).unwrap_err());
@@ -264,7 +263,7 @@ auto resolve_cmake_fixtures_with_provider(
         if (assets != nullptr) {
             for (const auto& set : snapshot->assets) assets->push(set.clone());
         }
-        auto usage = lito::materialize_cmake_usage(*plan, *snapshot, parser);
+        auto usage = lito::materialize_cmake_usage(*plan, *snapshot);
         if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
         result.push(rstd::move(usage).unwrap());
     }
@@ -274,13 +273,12 @@ auto resolve_cmake_fixtures_with_provider(
 auto resolve_cmake_fixtures(const Vec<lito::PreparedCMakeDependencyRequirement>& declarations,
                             const lito::cpp::ProfileSpec&                        profile,
                             const lito::system::BuildPlatform&                   platform,
-                            const lito::cpp::CppArgumentParser&                  parser,
                             ref<rstd::path::Path>                                work_root,
                             usize                                                jobs   = usize(1),
                             Vec<lito::ExternalAssetSet>*                         assets = nullptr)
-    -> lito::dependency::DependencyResult<Vec<lito::cpp::ResolvedExternalDependency>> {
+    -> lito::dependency::DependencyResult<Vec<lito::cpp::ExternalDependencyUsage>> {
     return resolve_cmake_fixtures_with_provider(
-        declarations, profile, platform, parser, work_root, fixture_cmake(), jobs, assets);
+        declarations, profile, platform, work_root, fixture_cmake(), jobs, assets);
 }
 auto versioned_fixture(
     ref<str>                                   alias,
@@ -317,7 +315,7 @@ auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
     external_targets.push(lito::cpp::ResolvedExternalTargetUsage {
         .name              = String::make("lito-fixture"_str),
         .visibility        = visibility,
-        .compile_arguments = rstd::move(arguments).unwrap(),
+        .compile_arguments = lito::cpp::LanguageArgumentLayer::Cpp(rstd::move(arguments).unwrap()),
         .identity          = String::make("fixture-resolution-v1"_str),
     });
     external.push(lito::cpp::ResolvedExternalDependency {

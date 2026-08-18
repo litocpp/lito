@@ -8,6 +8,7 @@ import rstd;
 import :compiler.argument;
 import :compiler.binding;
 import :compiler.option;
+import :c.compiler;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -19,6 +20,9 @@ class CppArgumentParser {
 public:
     auto parse(const Vec<String>& arguments, ref<str> source) const
         -> CppOptionResult<CppArgumentLayer>;
+
+    auto parse_c(const Vec<String>& arguments, ref<str> source) const
+        -> CompilerOptionResult<lito::c::CArgumentLayer>;
 
 private:
     friend class CppArgumentSchema;
@@ -92,6 +96,30 @@ auto CppArgumentParser::parse(const Vec<String>& arguments, ref<str> source) con
                             : static_cast<const CppCompilerArgumentBinding*>(nullptr);
         auto argument = rstd_try(make_cpp_compiler_argument(matched, binding, source));
         result.occurrences.push(CppCompilerArgumentOccurrence {
+            .argument   = rstd::move(argument),
+            .raw_tokens = rstd::move(matched.raw_tokens),
+            .range      = matched.range,
+            .source     = String::make(source),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto CppArgumentParser::parse_c(const Vec<String>& arguments, ref<str> source) const
+    -> CompilerOptionResult<lito::c::CArgumentLayer> {
+    auto parsed_result = parser_.parse(arguments);
+    if (parsed_result.is_err()) {
+        return Err(CompilerOptionError::Argument(rstd::move(parsed_result).unwrap_err(),
+                                                 String::make(source)));
+    }
+    auto parsed = rstd::move(parsed_result).unwrap();
+    auto result = lito::c::CArgumentLayer {};
+    for (auto& matched : parsed) {
+        auto binding  = matched.definition.is_some()
+                            ? rstd::addressof(bindings_[*matched.definition])
+                            : static_cast<const CppCompilerArgumentBinding*>(nullptr);
+        auto argument = rstd_try(make_c_compiler_argument(matched, binding, source));
+        result.occurrences.push(lito::c::CCompilerArgumentOccurrence {
             .argument   = rstd::move(argument),
             .raw_tokens = rstd::move(matched.raw_tokens),
             .range      = matched.range,

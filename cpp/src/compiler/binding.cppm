@@ -5,6 +5,7 @@ module;
 export module lito.cpp:compiler.binding;
 
 import rstd;
+import :c.compiler;
 import :compiler.argument;
 import :compiler.option;
 
@@ -229,6 +230,119 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
         .effect              = CppVendorOptionEffect::Unknown,
         .preserve_raw_tokens = true,
     }));
+}
+
+auto c_vendor_effect(CppCompilerArgumentKind kind) noexcept -> lito::c::CVendorOptionEffect {
+    switch (kind) {
+    case CppCompilerArgumentKind::Diagnostic: return lito::c::CVendorOptionEffect::Diagnostic;
+    case CppCompilerArgumentKind::VendorCodegen:
+    case CppCompilerArgumentKind::CodegenMode:
+    case CppCompilerArgumentKind::Instrumentation:
+    case CppCompilerArgumentKind::SymbolVisibility: return lito::c::CVendorOptionEffect::Codegen;
+    case CppCompilerArgumentKind::VendorPreprocessorUnsupported:
+        return lito::c::CVendorOptionEffect::Preprocessor;
+    case CppCompilerArgumentKind::LanguageMode:
+    case CppCompilerArgumentKind::VendorLanguage: return lito::c::CVendorOptionEffect::Language;
+    case CppCompilerArgumentKind::AbiMode: return lito::c::CVendorOptionEffect::Abi;
+    case CppCompilerArgumentKind::TargetMode: return lito::c::CVendorOptionEffect::Target;
+    default: return lito::c::CVendorOptionEffect::Unknown;
+    }
+}
+
+auto c_vendor_argument(const CompilerArgumentMatch& matched, lito::c::CVendorOptionEffect effect)
+    -> lito::c::CCompilerArgument {
+    return lito::c::CCompilerArgument::Vendor(lito::c::CVendorOption {
+        .value                           = canonical_argument(matched),
+        .raw_tokens                      = compiler_argument_raw_tokens(matched),
+        .effect                          = effect,
+        .native_preprocessor_unsupported = effect == lito::c::CVendorOptionEffect::Preprocessor,
+        .preserve_raw_tokens             = matched.definition.is_none(),
+    });
+}
+
+auto make_c_compiler_argument(const CompilerArgumentMatch&      matched,
+                              const CppCompilerArgumentBinding* binding,
+                              ref<str> source) -> CompilerOptionResult<lito::c::CCompilerArgument> {
+    if (binding == nullptr) {
+        return Ok(c_vendor_argument(matched, lito::c::CVendorOptionEffect::Unknown));
+    }
+    if (binding->typed.is_some()) {
+        const auto& typed = *binding->typed;
+        if (typed.is_Common()) {
+            return Ok(
+                lito::c::CCompilerArgument::Common(as<Clone>(typed.as_Common().argument).clone()));
+        }
+        return Err(CompilerOptionError::Message(
+            rstd::format("{} arguments {}..{}: compiler option '{}' is C++-specific",
+                         source,
+                         matched.range.begin,
+                         matched.range.end,
+                         matched.raw_tokens[usize {}].as_str())));
+    }
+    auto kind = binding->kind;
+    switch (kind) {
+    case CppCompilerArgumentKind::MacroDefine:
+    case CppCompilerArgumentKind::MacroUndefine:
+        return Ok(lito::c::CCompilerArgument::Macro(lito::c::CMacroDirective {
+            .action = kind == CppCompilerArgumentKind::MacroDefine
+                          ? lito::c::CMacroAction::Define
+                          : lito::c::CMacroAction::Undefine,
+            .value  = compiler_argument_value(matched).clone(),
+        }));
+    case CppCompilerArgumentKind::IncludeDirectory:
+    case CppCompilerArgumentKind::SystemIncludeDirectory:
+        return Ok(lito::c::CCompilerArgument::IncludeDirectory(lito::c::CIncludeDirectory {
+            .path = PathBuf::from(compiler_argument_value(matched).clone()),
+            .kind = kind == CppCompilerArgumentKind::SystemIncludeDirectory
+                        ? lito::c::CIncludeDirectoryKind::System
+                        : lito::c::CIncludeDirectoryKind::User,
+        }));
+    case CppCompilerArgumentKind::Target:
+        return Ok(lito::c::CCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Target(
+            compiler_argument_value(matched).clone())));
+    case CppCompilerArgumentKind::Sysroot:
+        return Ok(
+            lito::c::CCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Sysroot(
+                compiler_argument_value(matched).clone())));
+    case CppCompilerArgumentKind::Threading:
+        return Ok(
+            lito::c::CCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
+                lito::compiler::ThreadingModel::Posix)));
+    case CppCompilerArgumentKind::OwnedLanguageStandard:
+    case CppCompilerArgumentKind::OwnedStandardLibrary:
+    case CppCompilerArgumentKind::OwnedBmiRepresentation:
+    case CppCompilerArgumentKind::OwnedRtti:
+    case CppCompilerArgumentKind::OwnedExceptions:
+    case CppCompilerArgumentKind::OwnedOptimization:
+    case CppCompilerArgumentKind::OwnedDebugInfo:
+    case CppCompilerArgumentKind::OwnedLto:
+        return Err(CompilerOptionError::Message(
+            rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned setting",
+                         source,
+                         matched.range.begin,
+                         matched.range.end,
+                         matched.raw_tokens[usize {}].as_str())));
+    case CppCompilerArgumentKind::TypeVisibility:
+        return Err(CompilerOptionError::Message(
+            rstd::format("{} arguments {}..{}: compiler option '{}' is C++-specific",
+                         source,
+                         matched.range.begin,
+                         matched.range.end,
+                         matched.raw_tokens[usize {}].as_str())));
+    case CppCompilerArgumentKind::Diagnostic:
+        return Ok(lito::c::CCompilerArgument::Diagnostic(canonical_argument(matched)));
+    case CppCompilerArgumentKind::LanguageMode:
+    case CppCompilerArgumentKind::AbiMode:
+    case CppCompilerArgumentKind::TargetMode:
+    case CppCompilerArgumentKind::CodegenMode:
+    case CppCompilerArgumentKind::Instrumentation:
+    case CppCompilerArgumentKind::SymbolVisibility:
+    case CppCompilerArgumentKind::VendorLanguage:
+    case CppCompilerArgumentKind::VendorCodegen:
+    case CppCompilerArgumentKind::VendorPreprocessorUnsupported:
+        return Ok(c_vendor_argument(matched, c_vendor_effect(kind)));
+    }
+    return Ok(c_vendor_argument(matched, lito::c::CVendorOptionEffect::Unknown));
 }
 
 } // namespace lito::cpp

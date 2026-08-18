@@ -183,3 +183,25 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
     ASSERT_EQ(normalized.arguments.tokens.len(), usize(1));
     EXPECT_EQ(normalized.arguments.tokens[usize {}].as_str(), "-lm"_str);
 }
+
+TEST(CompilerArguments, KeepsCVendorOptionsInTheCLanguageDomain) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto arguments =
+        parser->parse_c(strings("-fno-builtin"_str, "-pthread"_str), "C compiler arguments"_str);
+    ASSERT_TRUE(arguments.is_ok());
+    ASSERT_EQ(arguments->occurrences.len(), usize(2));
+    ASSERT_TRUE(arguments->occurrences[usize {}].argument.is_Vendor());
+    EXPECT_EQ(arguments->occurrences[usize {}].argument.as_Vendor().option.effect,
+              c::CVendorOptionEffect::Unknown);
+    EXPECT_TRUE(arguments->occurrences[usize {}].argument.as_Vendor().option.preserve_raw_tokens);
+    ASSERT_TRUE(arguments->occurrences[usize(1)].argument.is_Common());
+    EXPECT_TRUE(arguments->occurrences[usize(1)].argument.as_Common().argument.is_Threading());
+
+    auto options = c::apply_c_option_layer(
+        c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C17),
+        rstd::move(arguments).unwrap());
+    ASSERT_EQ(options.vendor.len(), usize(1));
+    EXPECT_EQ(options.vendor[usize {}].value.as_str(), "-fno-builtin"_str);
+    EXPECT_TRUE(compiler::uses_posix_threads(options.common));
+}

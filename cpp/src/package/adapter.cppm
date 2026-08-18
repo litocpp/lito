@@ -95,14 +95,25 @@ auto adapter_failure(String message) -> lito::package::PackageResult<T> {
     return Err(lito::package::PackageError::Message(rstd::move(message)));
 }
 
-auto parse_options(const CppArgumentParser& parser, const Vec<String>& options, String source)
-    -> lito::package::PackageResult<CppArgumentLayer> {
+auto parse_options(const CppArgumentParser&        parser,
+                   const Vec<String>&              options,
+                   String                          source,
+                   lito::manifest::PackageLanguage language)
+    -> lito::package::PackageResult<LanguageArgumentLayer> {
+    if (language == lito::manifest::PackageLanguage::C) {
+        auto parsed = parser.parse_c(options, source.as_str());
+        if (parsed.is_err()) {
+            return Err(lito::package::PackageError::Configuration(
+                erase_error(rstd::move(parsed).unwrap_err())));
+        }
+        return Ok(LanguageArgumentLayer::C(rstd::move(parsed).unwrap()));
+    }
     auto parsed = parser.parse(options, source.as_str());
     if (parsed.is_err()) {
         return Err(lito::package::PackageError::Configuration(
             erase_error(rstd::move(parsed).unwrap_err())));
     }
-    return Ok(rstd::move(parsed).unwrap());
+    return Ok(LanguageArgumentLayer::Cpp(rstd::move(parsed).unwrap()));
 }
 
 auto usage_source(const lito::manifest::PackageManifest& package, ref<str> field) -> String {
@@ -343,9 +354,23 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
 }
 
 auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& package,
-                                         const CppArgumentLayer&                arguments)
+                                         const LanguageArgumentLayer&           arguments)
     -> lito::package::PackageResult<empty> {
-    for (const auto& occurrence : arguments.occurrences) {
+    if (arguments.is_C()) {
+        for (const auto& occurrence : arguments.as_C().layer.occurrences) {
+            if (! occurrence.argument.is_Macro()) continue;
+            const auto& value = occurrence.argument.as_Macro().directive.value;
+            auto        name  = definition_name(value.as_str());
+            if (! package_metadata_macro(name)) continue;
+            return adapter_failure<empty>(
+                rstd::format("package '{}' option from {} overrides Lito-owned macro '{}'",
+                             package.name.as_str(),
+                             occurrence.source.as_str(),
+                             name));
+        }
+        return Ok(empty {});
+    }
+    for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
         if (! occurrence.argument.is_Macro()) continue;
         const auto& value = occurrence.argument.as_Macro().directive.value;
         auto        name  = definition_name(value.as_str());
@@ -376,9 +401,18 @@ auto package_compile_metadata(const lito::package::ResolvedPackage& package)
     return result;
 }
 
-auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
+auto promoted_arguments(const LanguageArgumentLayer& arguments) -> LanguageArgumentLayer {
+    if (arguments.is_C()) {
+        auto result = lito::c::CArgumentLayer {};
+        for (const auto& occurrence : arguments.as_C().layer.occurrences) {
+            auto promoted = occurrence.argument.is_Common() &&
+                            occurrence.argument.as_Common().argument.is_Threading();
+            if (promoted) result.occurrences.push(occurrence.clone());
+        }
+        return LanguageArgumentLayer::C(rstd::move(result));
+    }
     auto result = CppArgumentLayer {};
-    for (const auto& occurrence : arguments.occurrences) {
+    for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
         auto promoted = occurrence.argument.is_Common() &&
                         occurrence.argument.as_Common().argument.is_Threading();
         if (occurrence.argument.is_Macro()) {
@@ -387,11 +421,11 @@ auto promoted_arguments(const CppArgumentLayer& arguments) -> CppArgumentLayer {
         }
         if (promoted) result.occurrences.push(as<Clone>(occurrence).clone());
     }
-    return result;
+    return LanguageArgumentLayer::Cpp(rstd::move(result));
 }
 
 auto usage_link_requirements(const lito::manifest::PackageManifest& package,
-                             const CppArgumentLayer&                arguments)
+                             const LanguageArgumentLayer&           arguments)
     -> lito::package::PackageResult<CppLinkRequirements> {
     const auto& usage  = package.usage;
     auto        result = CppLinkRequirements {};
@@ -399,12 +433,22 @@ auto usage_link_requirements(const lito::manifest::PackageManifest& package,
         result.posix_threads = true;
         result.thread_sources.push(usage_source(package, "usage.threads"_str));
     }
-    for (const auto& occurrence : arguments.occurrences) {
-        if (! occurrence.argument.is_Common() ||
-            ! occurrence.argument.as_Common().argument.is_Threading())
-            continue;
-        result.posix_threads = true;
-        result.thread_sources.push(occurrence.source.clone());
+    if (arguments.is_C()) {
+        for (const auto& occurrence : arguments.as_C().layer.occurrences) {
+            if (! occurrence.argument.is_Common() ||
+                ! occurrence.argument.as_Common().argument.is_Threading())
+                continue;
+            result.posix_threads = true;
+            result.thread_sources.push(occurrence.source.clone());
+        }
+    } else {
+        for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
+            if (! occurrence.argument.is_Common() ||
+                ! occurrence.argument.as_Common().argument.is_Threading())
+                continue;
+            result.posix_threads = true;
+            result.thread_sources.push(occurrence.source.clone());
+        }
     }
     for (const auto& library : usage.system_libraries) {
         if (! valid_system_library_name(library.as_str())) {
@@ -488,8 +532,8 @@ auto materialize_external_include_requirements(usize                            
 }
 
 auto clone_usage(const lito::dependency::DeclaredUsageRequirements& usage,
-                 const CppArgumentLayer&                            arguments,
-                 const CppArgumentLayer&                            interface_arguments,
+                 const LanguageArgumentLayer&                       arguments,
+                 const LanguageArgumentLayer&                       interface_arguments,
                  const CppLinkRequirements& link_requirements) -> UsageRequirements {
     auto include_requirements = Vec<lito::dependency::IncludeDirectoryRequirement>::with_capacity(
         usage.private_include_directory_requirements.len());
@@ -650,25 +694,25 @@ auto apply_package_configuration(lito::package::ResolvedPackage& package,
 }
 
 struct ExternalPackageUsage {
-    String                          package;
-    Vec<ResolvedExternalDependency> dependencies;
-    bool                            consumed { false };
+    String                       package;
+    Vec<ExternalDependencyUsage> dependencies;
+    bool                         consumed { false };
 };
 
 struct ExternalUsageCatalog {
     Vec<ExternalPackageUsage> packages;
 
-    auto take(ref<str> package) -> lito::package::PackageResult<Vec<ResolvedExternalDependency>> {
+    auto take(ref<str> package) -> lito::package::PackageResult<Vec<ExternalDependencyUsage>> {
         for (auto& entry : packages) {
             if (entry.package.as_str() != package) continue;
             if (entry.consumed) {
-                return adapter_failure<Vec<ResolvedExternalDependency>>(rstd::format(
+                return adapter_failure<Vec<ExternalDependencyUsage>>(rstd::format(
                     "external usage for package '{}' was consumed more than once", package));
             }
             entry.consumed = true;
             return Ok(rstd::move(entry.dependencies));
         }
-        return adapter_failure<Vec<ResolvedExternalDependency>>(
+        return adapter_failure<Vec<ExternalDependencyUsage>>(
             rstd::format("external usage catalog has no package '{}'", package));
     }
 
@@ -679,6 +723,36 @@ struct ExternalUsageCatalog {
         return true;
     }
 };
+
+auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
+                            lito::manifest::PackageLanguage language,
+                            const CppArgumentParser&        parser)
+    -> lito::package::PackageResult<Vec<ResolvedExternalDependency>> {
+    auto result = Vec<ResolvedExternalDependency>::with_capacity(dependencies.len());
+    for (auto& dependency : dependencies) {
+        auto targets = Vec<ResolvedExternalTargetUsage>::with_capacity(dependency.targets.len());
+        for (auto& target : dependency.targets) {
+            auto arguments = rstd_try(parse_options(
+                parser, target.compile_options, target.compile_source.clone(), language));
+            targets.push(ResolvedExternalTargetUsage {
+                .name              = rstd::move(target.name),
+                .visibility        = target.visibility,
+                .compile_arguments = rstd::move(arguments),
+                .identity          = rstd::move(target.identity),
+            });
+        }
+        result.push(ResolvedExternalDependency {
+            .alias             = rstd::move(dependency.alias),
+            .provider          = rstd::move(dependency.provider),
+            .version           = rstd::move(dependency.version),
+            .targets           = rstd::move(targets),
+            .link_arguments    = rstd::move(dependency.link_arguments),
+            .link_requirements = rstd::move(dependency.link_requirements),
+            .identity          = rstd::move(dependency.identity),
+        });
+    }
+    return Ok(rstd::move(result));
+}
 
 auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        graph,
                                   const Vec<String>&                         selected_package_names,
@@ -706,8 +780,17 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (usize index {}; index < graph.packages.len(); ++index) {
         external_by_package.emplace_back();
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
-        external_by_package[index] =
+        auto unresolved =
             rstd_try(external_usage.take(graph.packages[index].manifest.name.as_str()));
+        if (graph.packages[index].manifest.language.is_none()) {
+            return adapter_failure<PackageMetadata>(
+                rstd::format("selected package '{}' has external usage but no language contract",
+                             graph.packages[index].manifest.name.as_str()));
+        }
+        external_by_package[index] =
+            rstd_try(resolve_external_usage(rstd::move(unresolved),
+                                            graph.packages[index].manifest.language->language,
+                                            argument_parser));
     }
     if (! external_usage.all_consumed()) {
         return adapter_failure<PackageMetadata>(
@@ -769,23 +852,27 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .requirement = rstd::move(requirement),
             });
         }
-        if (package_language == lito::manifest::PackageLanguage::C &&
-            ! package.manifest.usage.options.is_empty()) {
-            return adapter_failure<PackageMetadata>(rstd::format(
-                "C package '{}' cannot declare C++ usage.options", package.manifest.name.as_str()));
-        }
-        auto arguments =
-            rstd_try(parse_options(argument_parser,
-                                   package.manifest.usage.options,
-                                   usage_source(package.manifest, "usage.options"_str)));
+        auto arguments = rstd_try(parse_options(argument_parser,
+                                                package.manifest.usage.options,
+                                                usage_source(package.manifest, "usage.options"_str),
+                                                package_language));
         rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
         if (package.manifest.usage.threads) {
-            arguments.occurrences.push(CppCompilerArgumentOccurrence {
-                .argument =
-                    CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
-                        lito::compiler::ThreadingModel::Posix)),
-                .source = usage_source(package.manifest, "usage.threads"_str),
-            });
+            if (arguments.is_C()) {
+                arguments.as_C().layer.occurrences.push(lito::c::CCompilerArgumentOccurrence {
+                    .argument = lito::c::CCompilerArgument::Common(
+                        lito::compiler::CommonCompilerArgument::Threading(
+                            lito::compiler::ThreadingModel::Posix)),
+                    .source = usage_source(package.manifest, "usage.threads"_str),
+                });
+            } else {
+                arguments.as_Cpp().layer.occurrences.push(CppCompilerArgumentOccurrence {
+                    .argument = CppCompilerArgument::Common(
+                        lito::compiler::CommonCompilerArgument::Threading(
+                            lito::compiler::ThreadingModel::Posix)),
+                    .source = usage_source(package.manifest, "usage.threads"_str),
+                });
+            }
         }
         auto interface_arguments = promoted_arguments(arguments);
         auto link_requirements   = rstd_try(usage_link_requirements(package.manifest, arguments));
@@ -797,13 +884,19 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                                                     test.options,
                                                     rstd::format("package '{}'.compile-test '{}'",
                                                                  package.manifest.name.as_str(),
-                                                                 test.name.as_str())));
+                                                                 test.name.as_str()),
+                                                    package_language));
             rstd_try(validate_package_metadata_arguments(package.manifest, arguments));
+            if (! arguments.is_Cpp()) {
+                return adapter_failure<PackageMetadata>(rstd::format(
+                    "C package '{}' cannot declare compile tests", package.manifest.name.as_str()));
+            }
+            auto cpp_arguments = rstd::move(arguments.as_Cpp().layer);
             compile_tests.push(ResolvedCompileTestCase {
                 .name                    = test.name.clone(),
                 .source                  = test.source.clone(),
                 .outcome                 = test.outcome,
-                .arguments               = rstd::move(arguments),
+                .arguments               = rstd::move(cpp_arguments),
                 .diagnostic_contains     = test.diagnostic_contains.clone(),
                 .diagnostic_contains_any = test.diagnostic_contains_any.clone(),
             });

@@ -435,7 +435,15 @@ public:
                             const cpp::PackageCompileMetadata& compile_metadata,
                             ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
-        if (compile_context.language.is_Cpp()) {
+        if (compile_context.language.is_C()) {
+            for (const auto& option : compile_context.language.as_C().options.vendor) {
+                if (option.native_preprocessor_unsupported) {
+                    return failure<toolchain::PreparedScanInput>(rstd::format(
+                        "compiler option '{}' is not supported by the native preprocessor",
+                        option.value.as_str()));
+                }
+            }
+        } else {
             for (const auto& option : compile_context.language.as_Cpp().options.vendor) {
                 if (option.native_preprocessor_unsupported) {
                     return failure<toolchain::PreparedScanInput>(rstd::format(

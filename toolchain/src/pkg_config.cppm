@@ -97,17 +97,19 @@ auto provider_environment(const lito::dependency::PkgConfigProviderConfig& confi
 struct PkgConfigSnapshot {
     String                    module;
     String                    version;
-    cpp::CppArgumentLayer     compile_arguments;
+    Vec<String>               compile_options;
+    String                    compile_source;
     cpp::LinkArgumentSequence link_arguments;
     String                    identity;
 
     auto clone() const -> PkgConfigSnapshot {
         return PkgConfigSnapshot {
-            .module            = module.clone(),
-            .version           = version.clone(),
-            .compile_arguments = as<Clone>(compile_arguments).clone(),
-            .link_arguments    = link_arguments.clone(),
-            .identity          = identity.clone(),
+            .module          = module.clone(),
+            .version         = version.clone(),
+            .compile_options = as<Clone>(compile_options).clone(),
+            .compile_source  = compile_source.clone(),
+            .link_arguments  = link_arguments.clone(),
+            .identity        = identity.clone(),
         };
     }
 };

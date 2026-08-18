@@ -38,7 +38,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                     const cpp::ProfileSpec&                          profile,
                                     const BuildLayout&                               layout,
                                     const BuildPlatform&                             platform,
-                                    const cpp::CppArgumentParser&                    parser,
                                     ToolResolver&                                    tool_resolver,
                                     const ResolvedProcessEnvironment&        process_environment,
                                     usize                                    jobs,
@@ -70,7 +69,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             resolve_pkg_config_dependencies(package.manifest.pkg_config_external_dependencies,
                                             pkg_config,
                                             platform,
-                                            parser,
                                             tool_resolver,
                                             process_environment);
         if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
@@ -294,12 +292,12 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
         }
         auto cached = snapshots.get(*key_text);
-        auto usage  = [&]() -> lito::dependency::DependencyResult<cpp::ResolvedExternalDependency> {
-            if (cached.is_some()) return materialize_cmake_usage(*plan, **cached, parser);
+        auto usage  = [&]() -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
+            if (cached.is_some()) return materialize_cmake_usage(*plan, **cached);
             auto tool_observer = cmake_observer(observer);
             auto executed      = execute_cmake_package(*plan, process_environment, tool_observer);
             if (executed.is_err()) return Err(rstd::move(executed).unwrap_err());
-            auto materialized = materialize_cmake_usage(*plan, *executed, parser);
+            auto materialized = materialize_cmake_usage(*plan, *executed);
             if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
             snapshots.insert(String::make(*key_text), rstd::move(executed).unwrap());
             return materialized;

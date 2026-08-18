@@ -1,7 +1,12 @@
+module;
+#include <rstd/enum.hpp>
+#include <rstd/macro.hpp>
+
 export module lito.cpp:c.compiler;
 
 import rstd;
 import lito.core;
+import :compiler.argument;
 import :compiler.common;
 
 using namespace rstd::prelude;
@@ -40,24 +45,57 @@ struct CIncludeDirectory {
     }
 };
 
+enum class CVendorOptionEffect
+{
+    Preprocessor,
+    Language,
+    Abi,
+    Target,
+    Codegen,
+    Diagnostic,
+    Unknown,
+};
+
+struct CVendorOption {
+    String              value;
+    Vec<String>         raw_tokens;
+    CVendorOptionEffect effect { CVendorOptionEffect::Unknown };
+    bool                native_preprocessor_unsupported { false };
+    bool                preserve_raw_tokens { false };
+
+    auto clone() const -> CVendorOption {
+        return CVendorOption {
+            .value                           = value.clone(),
+            .raw_tokens                      = as<Clone>(raw_tokens).clone(),
+            .effect                          = effect,
+            .native_preprocessor_unsupported = native_preprocessor_unsupported,
+            .preserve_raw_tokens             = preserve_raw_tokens,
+        };
+    }
+};
+
 struct CCompileOptions {
     lito::compiler::CommonCompileOptions common;
     lito::manifest::CStandard            standard { lito::manifest::CStandard::C99 };
     Vec<CIncludeDirectory>               include_directories;
     Vec<CMacroDirective>                 macros;
     lito::compiler::DiagnosticOptions    diagnostics;
+    Vec<CVendorOption>                   vendor;
 
     auto clone() const -> CCompileOptions {
         auto includes = Vec<CIncludeDirectory>::with_capacity(include_directories.len());
         for (const auto& include : include_directories) includes.push(include.clone());
         auto copied_macros = Vec<CMacroDirective>::with_capacity(macros.len());
         for (const auto& macro : macros) copied_macros.push(macro.clone());
+        auto copied_vendor = Vec<CVendorOption>::with_capacity(vendor.len());
+        for (const auto& option : vendor) copied_vendor.push(option.clone());
         return CCompileOptions {
             .common              = common.clone(),
             .standard            = standard,
             .include_directories = rstd::move(includes),
             .macros              = rstd::move(copied_macros),
             .diagnostics         = diagnostics.clone(),
+            .vendor              = rstd::move(copied_vendor),
         };
     }
 };
@@ -78,10 +116,70 @@ struct CPublicRequirements {
     }
 };
 
-struct COptionLayer {
-    Vec<PathBuf>                                include_directories;
-    Vec<String>                                 definitions;
-    Vec<lito::compiler::CommonCompilerArgument> arguments;
+class CCompilerArgument : public DefaultInClass<CCompilerArgument, Clone> {
+    RSTD_ENUM(CCompilerArgument,
+              (Macro, (CMacroDirective directive;)),
+              (IncludeDirectory, (CIncludeDirectory directory;)),
+              (Common, (lito::compiler::CommonCompilerArgument argument;)),
+              (Diagnostic, (String value;)),
+              (Vendor, (CVendorOption option;)))
+
+public:
+    auto clone() const -> CCompilerArgument {
+        RSTD_MATCH(*this) {
+            RSTD_CASE(Macro, directive) {
+                return Macro(directive.clone());
+            }
+            RSTD_CASE(IncludeDirectory, directory) {
+                return IncludeDirectory(directory.clone());
+            }
+            RSTD_CASE(Common, argument) {
+                return Common(as<Clone>(argument).clone());
+            }
+            RSTD_CASE(Diagnostic, value) {
+                return Diagnostic(value.clone());
+            }
+            RSTD_CASE(Vendor, option) {
+                return Vendor(option.clone());
+            }
+        }
+        rstd::unreachable();
+    }
+};
+
+struct CCompilerArgumentOccurrence {
+    CCompilerArgument                      argument;
+    Vec<String>                            raw_tokens;
+    lito::cpp::CompilerArgumentSourceRange range;
+    String                                 source;
+
+    auto clone() const -> CCompilerArgumentOccurrence {
+        return CCompilerArgumentOccurrence {
+            .argument   = as<Clone>(argument).clone(),
+            .raw_tokens = as<Clone>(raw_tokens).clone(),
+            .range      = range,
+            .source     = source.clone(),
+        };
+    }
+};
+
+struct CArgumentLayer {
+    Vec<PathBuf>                     include_directories;
+    Vec<String>                      definitions;
+    Vec<CCompilerArgumentOccurrence> occurrences;
+
+    auto clone() const -> CArgumentLayer {
+        auto copied_occurrences =
+            Vec<CCompilerArgumentOccurrence>::with_capacity(occurrences.len());
+        for (const auto& occurrence : occurrences) {
+            copied_occurrences.push(occurrence.clone());
+        }
+        return CArgumentLayer {
+            .include_directories = as<Clone>(include_directories).clone(),
+            .definitions         = as<Clone>(definitions).clone(),
+            .occurrences         = rstd::move(copied_occurrences),
+        };
+    }
 };
 
 auto default_c_warnings() -> Vec<lito::compiler::CompilerWarningOption> {
@@ -110,7 +208,7 @@ auto make_c_options(lito::compiler::CommonCompileOptions common, lito::manifest:
     };
 }
 
-auto apply_c_option_layer(CCompileOptions options, COptionLayer layer) -> CCompileOptions {
+auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer) -> CCompileOptions {
     for (auto& include : layer.include_directories) {
         auto repeated = false;
         for (const auto& existing : options.include_directories) {
@@ -140,9 +238,37 @@ auto apply_c_option_layer(CCompileOptions options, COptionLayer layer) -> CCompi
             });
         }
     }
-    for (auto& argument : layer.arguments) {
-        lito::compiler::apply_common_compiler_argument(
-            options.common, options.diagnostics, rstd::move(argument));
+    for (auto& occurrence : layer.occurrences) {
+        RSTD_MATCH(rstd::move(occurrence.argument)) {
+            RSTD_CASE(Macro, directive) {
+                options.macros.push(rstd::move(directive));
+            }
+            RSTD_CASE(IncludeDirectory, directory) {
+                auto repeated = false;
+                for (const auto& existing : options.include_directories) {
+                    if (existing.kind == directory.kind &&
+                        existing.path.as_path() == directory.path.as_path()) {
+                        repeated = true;
+                        break;
+                    }
+                }
+                if (! repeated) options.include_directories.push(rstd::move(directory));
+            }
+            RSTD_CASE(Common, argument) {
+                lito::compiler::apply_common_compiler_argument(
+                    options.common, options.diagnostics, rstd::move(argument));
+            }
+            RSTD_CASE(Diagnostic, value) {
+                auto repeated = false;
+                for (const auto& existing : options.diagnostics.options) {
+                    if (existing == value.as_str()) repeated = true;
+                }
+                if (! repeated) options.diagnostics.options.push(rstd::move(value));
+            }
+            RSTD_CASE(Vendor, option) {
+                options.vendor.push(rstd::move(option));
+            }
+        }
     }
     return options;
 }
@@ -155,8 +281,24 @@ auto c_public_requirements(const CCompileOptions& options) -> CPublicRequirement
     return result;
 }
 
+auto append_c_vendor_identity(String& result, const CVendorOption& option) -> void {
+    result.push_str(rstd::format("vendor:{}:{}:{}:{}\n",
+                                 static_cast<int>(option.effect),
+                                 option.native_preprocessor_unsupported,
+                                 option.preserve_raw_tokens,
+                                 option.value.len())
+                        .as_str());
+    result.push_str(option.value.as_str());
+    result.push_ascii('\n');
+    for (const auto& token : option.raw_tokens) {
+        result.push_str(rstd::format("token:{}\n", token.len()).as_str());
+        result.push_str(token.as_str());
+        result.push_ascii('\n');
+    }
+}
+
 auto c_compile_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-compile-options-v3\n"_str);
+    auto result = String::make("lito-c-compile-options-v4\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -197,11 +339,14 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
     for (const auto& option : options.diagnostics.options) {
         result.push_str(rstd::format("diagnostic:{}\n", option.as_str()).as_str());
     }
+    for (const auto& option : options.vendor) {
+        append_c_vendor_identity(result, option);
+    }
     return result;
 }
 
 auto c_scan_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-scan-options-v3\n"_str);
+    auto result = String::make("lito-c-scan-options-v4\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -228,6 +373,13 @@ auto c_scan_identity(const CCompileOptions& options) -> String {
     }
     result.push_str(lito::compiler::uses_posix_threads(options.common) ? "threads:posix\n"_str
                                                                        : "threads:none\n"_str);
+    for (const auto& option : options.vendor) {
+        if (option.effect == CVendorOptionEffect::Codegen ||
+            option.effect == CVendorOptionEffect::Diagnostic) {
+            continue;
+        }
+        append_c_vendor_identity(result, option);
+    }
     return result;
 }
 

@@ -148,11 +148,17 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             return profile_failure(rstd::format(
                 "build linker option '{}' overrides the selected profile", option.as_str()));
     }
-    auto c_layer = lito::c::COptionLayer {};
+    auto c_layer = lito::c::CArgumentLayer {};
     if (selected.ndebug) c_layer.definitions.push(String::make("NDEBUG"_str));
     for (const auto& occurrence : arguments.occurrences) {
         if (! occurrence.argument.is_Common()) continue;
-        c_layer.arguments.push(as<Clone>(occurrence.argument.as_Common().argument).clone());
+        c_layer.occurrences.push(lito::c::CCompilerArgumentOccurrence {
+            .argument = lito::c::CCompilerArgument::Common(
+                as<Clone>(occurrence.argument.as_Common().argument).clone()),
+            .raw_tokens = as<Clone>(occurrence.raw_tokens).clone(),
+            .range      = occurrence.range,
+            .source     = occurrence.source.clone(),
+        });
     }
     auto c_common = lito::compiler::CommonCompileOptions {
         .codegen =

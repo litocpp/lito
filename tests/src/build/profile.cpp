@@ -183,6 +183,21 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
     EXPECT_EQ(profile->link_requirements.thread_sources[usize {}].as_str(), "build.options"_str);
 }
 
+TEST_F(BuildProfile, GlobalVendorOptionsRemainInTheCppLanguageDomain) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.options.push(String::make("-fno-builtin"_str));
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    ASSERT_EQ(profile->cpp.vendor.len(), usize(1));
+    EXPECT_EQ(profile->cpp.vendor[usize {}].value.as_str(), "-fno-builtin"_str);
+    EXPECT_TRUE(profile->c.vendor.is_empty());
+}
+
 TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     auto project = profile_project("profile-values"_str);
     ASSERT_TRUE(project.is_ok());

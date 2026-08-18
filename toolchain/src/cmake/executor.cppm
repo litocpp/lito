@@ -261,22 +261,20 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
     return Ok(rstd::move(snapshots).unwrap());
 }
 
-auto materialize_cmake_usage(const CMakePackagePlan&       plan,
-                             const CMakeUsageSnapshot&     snapshots,
-                             const cpp::CppArgumentParser& parser)
-    -> lito::dependency::DependencyResult<cpp::ResolvedExternalDependency> {
+auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnapshot& snapshots)
+    -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {
     const auto& requirement        = plan.requirement;
     const auto& provider           = plan.provider;
     const auto& effective_target   = plan.effective_target;
     const auto& normalized_version = snapshots.version;
     if (snapshots.targets.len() != requirement.targets.len()) {
-        return cmake_failure<cpp::ResolvedExternalDependency>(
+        return cmake_failure<cpp::ExternalDependencyUsage>(
             rstd::format("CMake package '{}' usage snapshot has {} targets, expected {}",
                          requirement.package.as_str(),
                          snapshots.targets.len(),
                          requirement.targets.len()));
     }
-    auto targets = Vec<cpp::ResolvedExternalTargetUsage>::with_capacity(requirement.targets.len());
+    auto targets = Vec<cpp::ExternalTargetUsage>::with_capacity(requirement.targets.len());
     for (usize index {}; index < requirement.targets.len(); ++index) {
         const auto& target   = requirement.targets[index];
         const auto& snapshot = snapshots.targets[index];
@@ -284,23 +282,19 @@ auto materialize_cmake_usage(const CMakePackagePlan&       plan,
                                             requirement.alias.as_str(),
                                             requirement.package.as_str(),
                                             target.name.as_str());
-        auto        compile  = parser.parse(snapshot.compile, source.as_str());
-        if (compile.is_err()) {
-            return Err(lito::dependency::DependencyError::Configuration(
-                source.clone(), erase_error(rstd::move(compile).unwrap_err())));
-        }
-        auto identity = target_snapshot_identity(provider,
-                                                 requirement,
-                                                 target.name.as_str(),
-                                                 normalized_version.as_str(),
-                                                 snapshot,
-                                                 effective_target.as_str());
+        auto        identity = target_snapshot_identity(provider,
+                                                        requirement,
+                                                        target.name.as_str(),
+                                                        normalized_version.as_str(),
+                                                        snapshot,
+                                                        effective_target.as_str());
         if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
-        targets.push(cpp::ResolvedExternalTargetUsage {
-            .name              = target.name.clone(),
-            .visibility        = target.visibility,
-            .compile_arguments = rstd::move(compile).unwrap(),
-            .identity          = rstd::move(identity).unwrap(),
+        targets.push(cpp::ExternalTargetUsage {
+            .name            = target.name.clone(),
+            .visibility      = target.visibility,
+            .compile_options = as<Clone>(snapshot.compile).clone(),
+            .compile_source  = rstd::move(source),
+            .identity        = rstd::move(identity).unwrap(),
         });
     }
     auto identity = dependency_identity(
@@ -309,7 +303,7 @@ auto materialize_cmake_usage(const CMakePackagePlan&       plan,
     auto link_arguments =
         materialize_link_tokens(snapshots.combined.link, plan.area.query_build.as_path());
     if (link_arguments.is_err()) return Err(rstd::move(link_arguments).unwrap_err());
-    return Ok(cpp::ResolvedExternalDependency {
+    return Ok(cpp::ExternalDependencyUsage {
         .alias    = requirement.alias.clone(),
         .provider = String::make("cmake"_str),
         .version  = normalized_version.clone(),
