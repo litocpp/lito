@@ -128,9 +128,12 @@ module = "libcurl"
 version = ">= 7.86.0"
 static = true
 
+[workspace.external-sources.fixture]
+path = "cmake-package"
+
 [workspace.external-dependencies.cmake.fixture]
 package = "LitoFixture"
-path = "cmake-package"
+source = "fixture"
 adapter = "fixture-adapter.cmake"
 )toml"_str,
         },
@@ -166,6 +169,9 @@ visibility = "private"
 [external-dependencies.pkg-config.curl]
 workspace = true
 visibility = "public"
+
+[external-sources.fixture]
+workspace = true
 
 [external-dependencies.cmake.fixture]
 workspace = true
@@ -205,7 +211,11 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(document->workspace->pkg_config_external_dependencies.len(), usize(1));
     ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
     EXPECT_TRUE(document->workspace->dependencies[usize {}].source.is_Path());
-    EXPECT_TRUE(document->workspace->cmake_external_dependencies[usize {}].source.is_Path());
+    ASSERT_EQ(document->workspace->external_sources.len(), usize(1));
+    EXPECT_TRUE(document->workspace->external_sources[usize {}].source.is_Path());
+    ASSERT_TRUE(document->workspace->cmake_external_dependencies[usize {}].source.is_some());
+    EXPECT_EQ(document->workspace->cmake_external_dependencies[usize {}].source->as_str(),
+              "fixture"_str);
 
     auto graph = lito::package::resolve_package_graph(directory.as_path());
     ASSERT_TRUE(graph.is_ok());
@@ -215,6 +225,7 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_TRUE(app.manifest.workspace_dependencies.is_empty());
     EXPECT_TRUE(app.manifest.workspace_pkg_config_external_dependencies.is_empty());
     EXPECT_TRUE(app.manifest.workspace_cmake_external_dependencies.is_empty());
+    EXPECT_TRUE(app.manifest.workspace_external_sources.is_empty());
     ASSERT_EQ(app.dependencies.len(), usize(1));
     EXPECT_EQ(app.dependencies[usize {}].name.as_str(), "fixture-workspace-inherited-library"_str);
     ASSERT_EQ(app.manifest.dependencies.len(), usize(1));
@@ -239,6 +250,10 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(cmake.declaration_root->as_path(), directory.as_path());
     ASSERT_TRUE(cmake.adapter_root.is_some());
     EXPECT_EQ(cmake.adapter_root->as_path(), directory.as_path());
+    ASSERT_TRUE(cmake.source.is_some());
+    EXPECT_EQ(cmake.source->as_str(), "fixture"_str);
+    ASSERT_EQ(app.manifest.external_sources.len(), usize(1));
+    EXPECT_TRUE(app.manifest.external_sources[usize {}].source.is_Path());
 
     auto prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(prepared_sources.is_ok());

@@ -6,9 +6,9 @@ export module lito.core:dependency.cmake;
 import rstd;
 import :dependency.visibility;
 import lito.system;
-import :source.git;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 
@@ -35,50 +35,6 @@ struct CMakeCacheEntry {
     String value;
 };
 
-struct CMakeArchiveVariant {
-    Architecture architecture;
-    String       url;
-    String       sha256;
-};
-
-class CMakeDependencySource {
-    RSTD_ENUM(CMakeDependencySource,
-              (Find),
-              (Path, (PathBuf path;)),
-              (Git, (String url; lito::source::GitReference reference;)),
-              (Archive, (String url; String sha256;)),
-              (ArchitectureArchives, (Vec<CMakeArchiveVariant> variants;)))
-
-public:
-    auto clone() const -> CMakeDependencySource {
-        if (is_Path()) return CMakeDependencySource::Path(as_Path().path.clone());
-        if (is_Git()) {
-            return CMakeDependencySource::Git(as_Git().url.clone(),
-                                              lito::source::GitReference {
-                                                  .kind  = as_Git().reference.kind,
-                                                  .value = as_Git().reference.value.clone(),
-                                              });
-        }
-        if (is_Archive()) {
-            return CMakeDependencySource::Archive(as_Archive().url.clone(),
-                                                  as_Archive().sha256.clone());
-        }
-        if (is_ArchitectureArchives()) {
-            auto variants =
-                Vec<CMakeArchiveVariant>::with_capacity(as_ArchitectureArchives().variants.len());
-            for (const auto& variant : as_ArchitectureArchives().variants) {
-                variants.push(CMakeArchiveVariant {
-                    .architecture = variant.architecture.clone(),
-                    .url          = variant.url.clone(),
-                    .sha256       = variant.sha256.clone(),
-                });
-            }
-            return CMakeDependencySource::ArchitectureArchives(rstd::move(variants));
-        }
-        return CMakeDependencySource::Find();
-    }
-};
-
 struct CMakeTargetRequirement {
     String               name;
     DependencyVisibility visibility { DependencyVisibility::Private };
@@ -87,7 +43,7 @@ struct CMakeTargetRequirement {
 struct CMakeDependencyRequirement {
     String                      alias;
     String                      package;
-    CMakeDependencySource       source;
+    Option<String>              source;
     Option<PathBuf>             adapter;
     Option<PathBuf>             config_directory;
     Vec<CMakeCacheEntry>        cache;
@@ -113,10 +69,10 @@ struct CMakeDependencyRequirement {
         auto result = CMakeDependencyRequirement {
             .alias   = alias.clone(),
             .package = package.clone(),
-            .source  = source.clone(),
             .cache   = rstd::move(cache_copy),
             .targets = rstd::move(target_copy),
         };
+        if (source.is_some()) result.source = Some(source->clone());
         if (adapter.is_some()) result.adapter = Some(adapter->clone());
         if (config_directory.is_some()) result.config_directory = Some(config_directory->clone());
         if (declaration_root.is_some()) result.declaration_root = Some(declaration_root->clone());

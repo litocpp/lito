@@ -13,6 +13,7 @@ import :package.identity;
 import :dependency.usage;
 import lito.system;
 import :manifest.profile;
+import :manifest.language;
 import :manifest.primitives;
 import :manifest.key_schema;
 import :manifest.convention;
@@ -230,6 +231,60 @@ auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source
     return Ok(empty {});
 }
 
+auto parse_source_group_names(Option<ref<Toml>> value, ref<str> context, bool required)
+    -> ManifestSchemaResult<Vec<String>> {
+    auto names = rstd_try(string_array(value, context));
+    if (required && names.is_empty()) {
+        return manifest_schema_failure<Vec<String>>(rstd::format("{} must not be empty", context));
+    }
+    auto seen = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& name : names) {
+        if (! package_name_is_valid(name.as_str())) {
+            return manifest_schema_failure<Vec<String>>(
+                rstd::format("{} contains invalid source group name '{}'", context, name.as_str()));
+        }
+        if (seen.contains_key(name.as_str())) {
+            return manifest_schema_failure<Vec<String>>(
+                rstd::format("{} repeats source group '{}'", context, name.as_str()));
+        }
+        seen.insert(name.clone(), empty {});
+    }
+    return Ok(rstd::move(names));
+}
+
+auto parse_target_source_conditions(Option<ref<Toml>> value, ref<str> owner)
+    -> ManifestSchemaResult<Vec<ConditionalTargetSources>> {
+    auto result = Vec<ConditionalTargetSources>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto entries = (**value).as_array();
+    if (entries.is_none()) {
+        return manifest_schema_failure<Vec<ConditionalTargetSources>>(
+            rstd::format("{}.when must be an array", owner));
+    }
+    for (usize index {}; index < (**entries).len(); ++index) {
+        const auto  context = rstd::format("{}.when[{}]", owner, index);
+        const auto& entry   = (**entries)[index];
+        auto        table   = rstd_try(table_value(entry, context.as_str()));
+        rstd_try(reject_unknown(*table, context.as_str(), target_when_key));
+        auto source    = rstd_try(required_string(entry, "condition"_str, context.as_str()));
+        auto condition = lito::condition::parse(source.as_str());
+        if (condition.is_err()) {
+            return manifest_schema_failure<Vec<ConditionalTargetSources>>(rstd::format(
+                "{} condition '{}': {}", context, source.as_str(), condition.unwrap_err()));
+        }
+        auto groups =
+            rstd_try(parse_source_group_names(member(entry, "source-groups"_str),
+                                              rstd::format("{}.source-groups", context).as_str(),
+                                              true));
+        result.push(ConditionalTargetSources {
+            .source        = rstd::move(source),
+            .condition     = rstd::move(condition).unwrap(),
+            .source_groups = rstd::move(groups),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
     -> ManifestSchemaResult<Vec<TestAttachmentManifest>> {
     auto result = Vec<TestAttachmentManifest>::make();
@@ -285,18 +340,32 @@ auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
     return Ok(rstd::move(result));
 }
 
-auto parse_target_source(const Toml& value, ref<str> context, bool module_required)
-    -> ManifestSchemaResult<TargetSourceManifest> {
+auto parse_target_source(const Toml&     value,
+                         ref<str>        context,
+                         bool            module_required,
+                         PackageLanguage language) -> ManifestSchemaResult<TargetSourceManifest> {
     auto module = rstd_try(optional_string(value, "module"_str, context));
     if (module.is_some() && ! valid_module_name(module->as_str())) {
         return manifest_schema_failure<TargetSourceManifest>(
             rstd::format("{}.module must be a valid module name", context));
     }
     auto source_value = member(value, "sources"_str);
+    auto group_value  = member(value, "source-groups"_str);
     auto sources =
         rstd_try(declared_paths(source_value, rstd::format("{}.sources", context).as_str(), false));
-    const auto module_discovery = source_value.is_none();
-    if (! module_discovery && sources.is_empty()) {
+    auto groups     = rstd_try(parse_source_group_names(
+        group_value, rstd::format("{}.source-groups", context).as_str(), false));
+    auto conditions = rstd_try(parse_target_source_conditions(member(value, "when"_str), context));
+    const auto module_discovery = source_value.is_none() && group_value.is_none();
+    if (language == PackageLanguage::C && module.is_some()) {
+        return manifest_schema_failure<TargetSourceManifest>(
+            rstd::format("{}.module is not supported by a C package", context));
+    }
+    if (language == PackageLanguage::C && module_discovery) {
+        return manifest_schema_failure<TargetSourceManifest>(
+            rstd::format("{} must declare sources or source-groups for a C package", context));
+    }
+    if (source_value.is_some() && sources.is_empty()) {
         return manifest_schema_failure<TargetSourceManifest>(
             rstd::format("{}.sources must not be empty", context));
     }
@@ -308,10 +377,52 @@ auto parse_target_source(const Toml& value, ref<str> context, bool module_requir
         .module    = rstd::move(module),
         .discovery = module_discovery ? SourceDiscoveryMode::Module : SourceDiscoveryMode::Explicit,
         .declared_sources = rstd::move(sources),
+        .source_groups    = rstd::move(groups),
+        .conditions       = rstd::move(conditions),
     });
 }
 
-auto parse_library_target(Option<ref<Toml>> value)
+auto parse_source_groups(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<Vec<SourceGroupManifest>> {
+    auto result = Vec<SourceGroupManifest>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = rstd_try(table_value(**value, "manifest.source-groups"_str));
+    auto keys  = table->keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name    = **key;
+        const auto  context = rstd::format("source group '{}'", name.as_str());
+        if (! package_name_is_valid(name.as_str())) {
+            return manifest_schema_failure<Vec<SourceGroupManifest>>(
+                rstd::format("source group name '{}' is invalid", name.as_str()));
+        }
+        const auto& specification = **table->get(name.as_str());
+        auto        fields        = rstd_try(table_value(specification, context.as_str()));
+        rstd_try(reject_unknown(*fields, context.as_str(), source_group_key));
+        auto external =
+            rstd_try(optional_string(specification, "external-source"_str, context.as_str()));
+        if (external.is_some() && ! package_name_is_valid(external->as_str())) {
+            return manifest_schema_failure<Vec<SourceGroupManifest>>(
+                rstd::format("{}.external-source must name a package external source", context));
+        }
+        auto sources = rstd_try(declared_paths(member(specification, "sources"_str),
+                                               rstd::format("{}.sources", context).as_str(),
+                                               true));
+        for (const auto& source : sources) {
+            if (! source.as_path().is_safe_relative()) {
+                return manifest_schema_failure<Vec<SourceGroupManifest>>(rstd::format(
+                    "{} source '{}' must be a safe relative path", context, source.as_path()));
+            }
+        }
+        result.push(SourceGroupManifest {
+            .name            = name.clone(),
+            .external_source = rstd::move(external),
+            .sources         = rstd::move(sources),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
     -> ManifestSchemaResult<Option<PackageTargetManifest>> {
     if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
     auto table = rstd_try(table_value(**value, "manifest.lib"_str));
@@ -326,7 +437,8 @@ auto parse_library_target(Option<ref<Toml>> value)
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib.archive must be a safe artifact basename"_str);
     }
-    auto source = rstd_try(parse_target_source(**value, "manifest.lib"_str, true));
+    auto source = rstd_try(parse_target_source(
+        **value, "manifest.lib"_str, language == PackageLanguage::Cpp, language));
     return Ok(Some(
         PackageTargetManifest::Library(rstd::move(name), rstd::move(archive), rstd::move(source))));
 }
@@ -377,7 +489,9 @@ auto parse_runtime_resources(Option<ref<Toml>> value, ref<str> context)
 
 auto parse_runnable_targets(Option<ref<Toml>>                value,
                             lito::package::PackageTargetKind kind,
-                            ref<str> key) -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
+                            ref<str>                         key,
+                            PackageLanguage                  language)
+    -> ManifestSchemaResult<Vec<PackageTargetManifest>> {
     auto result = Vec<PackageTargetManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
     auto entries = (**value).as_array();
@@ -409,8 +523,8 @@ auto parse_runnable_targets(Option<ref<Toml>>                value,
                     rstd::format("manifest.{} repeats target name '{}'", key, name.as_str()));
             }
         }
-        auto source               = rstd_try(parse_target_source(item, context.as_str(), false));
-        auto link_stdlib          = true;
+        auto source      = rstd_try(parse_target_source(item, context.as_str(), false, language));
+        auto link_stdlib = true;
         auto declared_link_stdlib = member(item, "link-stdlib"_str);
         if (declared_link_stdlib.is_some()) {
             auto parsed = (**declared_link_stdlib).as_bool();
@@ -499,15 +613,35 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_unknown(**table, item_context.as_str(), include_directory_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto declared_path = required_string(item, "path"_str, item_context.as_str());
-        auto declared_root = optional_string(item, "root"_str, item_context.as_str());
+        auto declared_path   = required_string(item, "path"_str, item_context.as_str());
+        auto declared_root   = optional_string(item, "root"_str, item_context.as_str());
+        auto external_source = optional_string(item, "external-source"_str, item_context.as_str());
         if (declared_path.is_err()) return Err(rstd::move(declared_path).unwrap_err());
         if (declared_root.is_err()) return Err(rstd::move(declared_root).unwrap_err());
+        if (external_source.is_err()) return Err(rstd::move(external_source).unwrap_err());
         auto relative = relative_path(rstd::move(declared_path).unwrap(),
                                       rstd::format("{}.path", item_context.as_str()).as_str());
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
-        auto root_value = rstd::move(declared_root).unwrap();
-        auto root_kind  = root_value.is_some() ? root_value->as_str() : "package"_str;
+        auto root_value     = rstd::move(declared_root).unwrap();
+        auto external_value = rstd::move(external_source).unwrap();
+        if (external_value.is_some()) {
+            if (root_value.is_some()) {
+                return manifest_schema_failure<ResolvedIncludeDirectories>(rstd::format(
+                    "{} cannot combine root and external-source", item_context.as_str()));
+            }
+            if (! package_name_is_valid(external_value->as_str())) {
+                return manifest_schema_failure<ResolvedIncludeDirectories>(
+                    rstd::format("{}.external-source must name a package external source",
+                                 item_context.as_str()));
+            }
+            result.deferred.push(lito::dependency::IncludeDirectoryRequirement {
+                .root            = lito::dependency::IncludeDirectoryRoot::ExternalSource,
+                .path            = rstd::move(relative).unwrap(),
+                .external_source = rstd::move(external_value),
+            });
+            continue;
+        }
+        auto root_kind = root_value.is_some() ? root_value->as_str() : "package"_str;
         if (root_kind == "package"_str) {
             auto resolved = resolve_package_include_directory(
                 rstd::move(relative).unwrap(), root, item_context.as_str());
@@ -685,6 +819,7 @@ auto parse_usage(Option<ref<Toml>>     value,
         .threads                                = threads,
         .system_libraries                       = rstd::move(system_library_values),
         .private_include_directory_requirements = rstd::move(private_include_values.deferred),
+        .public_include_directory_requirements  = rstd::move(public_include_values.deferred),
     });
 }
 

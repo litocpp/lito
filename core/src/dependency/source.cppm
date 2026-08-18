@@ -14,6 +14,42 @@ using namespace lito::system;
 export namespace lito::dependency
 {
 
+struct ExternalArchiveVariant {
+    Architecture architecture;
+    String       url;
+    String       sha256;
+};
+
+class ExternalSourceRequirement {
+    RSTD_ENUM(ExternalSourceRequirement,
+              (Path, (PathBuf path;)),
+              (Git, (String url; lito::source::GitReference reference;)),
+              (Archive, (String url; String sha256;)),
+              (ArchitectureArchives, (Vec<ExternalArchiveVariant> variants;)))
+
+public:
+    auto clone() const -> ExternalSourceRequirement {
+        if (is_Path()) return ExternalSourceRequirement::Path(as_Path().path.clone());
+        if (is_Git()) {
+            return ExternalSourceRequirement::Git(as_Git().url.clone(), as_Git().reference.clone());
+        }
+        if (is_Archive()) {
+            return ExternalSourceRequirement::Archive(as_Archive().url.clone(),
+                                                      as_Archive().sha256.clone());
+        }
+        auto variants =
+            Vec<ExternalArchiveVariant>::with_capacity(as_ArchitectureArchives().variants.len());
+        for (const auto& variant : as_ArchitectureArchives().variants) {
+            variants.push(ExternalArchiveVariant {
+                .architecture = variant.architecture.clone(),
+                .url          = variant.url.clone(),
+                .sha256       = variant.sha256.clone(),
+            });
+        }
+        return ExternalSourceRequirement::ArchitectureArchives(rstd::move(variants));
+    }
+};
+
 class ResolvedExternalSource {
     RSTD_ENUM(ResolvedExternalSource,
               (Path, (PathBuf path;)),
@@ -22,20 +58,10 @@ class ResolvedExternalSource {
               (Archive, (String url; String sha256;)))
 };
 
-struct ResolvedBuildToolSourceMetadata {
-    String  version;
-    PathBuf executable;
-    String  operating_system;
-    u64     schema_version { u64(1) };
-};
-
 struct ResolvedExternalSourceRecord {
-    String                                  package;
-    String                                  alias;
-    String                                  provider;
-    Vec<Architecture>                       architectures;
-    Option<ResolvedBuildToolSourceMetadata> build_tool;
-    ResolvedExternalSource                  source;
+    String                 name;
+    Vec<Architecture>      architectures;
+    ResolvedExternalSource source;
 };
 
 } // namespace lito::dependency

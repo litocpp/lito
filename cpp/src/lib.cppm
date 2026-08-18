@@ -1,6 +1,7 @@
 export module lito.cpp;
 
 export import lito.core;
+export import lito.c;
 export import lito.frontend;
 
 export import :compiler;

@@ -1,0 +1,82 @@
+export module lito.core:package.language;
+
+import rstd;
+import :manifest.language;
+import :package.graph;
+import :package.error;
+
+using namespace rstd::prelude;
+using namespace rstd::literals;
+
+export namespace lito::package
+{
+
+struct EffectiveLanguageStandards {
+    Option<lito::manifest::CStandard>   c;
+    Option<lito::manifest::CppStandard> cpp;
+    Vec<String>                         c_provenance;
+    Vec<String>                         cpp_provenance;
+};
+
+auto resolve_effective_language_standards(const ResolvedPackageGraph& graph,
+                                          const Vec<String>&          selected_packages)
+    -> PackageResult<EffectiveLanguageStandards> {
+    auto selected = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& name : selected_packages) selected.insert(name.clone(), empty {});
+
+    auto result = EffectiveLanguageStandards {};
+    for (const auto& package : graph.packages) {
+        if (! selected.contains_key(package.manifest.name.as_str()) ||
+            package.manifest.language.is_none()) {
+            continue;
+        }
+        const auto& requirement = *package.manifest.language;
+        if (requirement.language == lito::manifest::PackageLanguage::C) {
+            if (result.c.is_none() || lito::manifest::c_standard_rank(requirement.c) >
+                                          lito::manifest::c_standard_rank(*result.c)) {
+                result.c = Some<lito::manifest::CStandard>(requirement.c);
+                result.c_provenance.clear();
+                result.c_provenance.push(package.manifest.name.clone());
+            } else if (requirement.c == *result.c) {
+                result.c_provenance.push(package.manifest.name.clone());
+            }
+            continue;
+        }
+        if (result.cpp.is_none() || lito::manifest::cpp_standard_rank(requirement.cpp) >
+                                        lito::manifest::cpp_standard_rank(*result.cpp)) {
+            result.cpp = Some<lito::manifest::CppStandard>(requirement.cpp);
+            result.cpp_provenance.clear();
+            result.cpp_provenance.push(package.manifest.name.clone());
+        } else if (requirement.cpp == *result.cpp) {
+            result.cpp_provenance.push(package.manifest.name.clone());
+        }
+    }
+
+    for (const auto& package : graph.packages) {
+        if (! selected.contains_key(package.manifest.name.as_str()) ||
+            package.manifest.language.is_none() ||
+            package.manifest.language->language != lito::manifest::PackageLanguage::C) {
+            continue;
+        }
+        for (const auto& dependency : package.dependencies) {
+            if (! selected.contains_key(dependency.name.as_str())) continue;
+            const lito::manifest::PackageManifest* dependency_manifest = nullptr;
+            for (const auto& candidate : graph.packages) {
+                if (candidate.manifest.name == dependency.name.as_str()) {
+                    dependency_manifest = rstd::addressof(candidate.manifest);
+                    break;
+                }
+            }
+            if (dependency_manifest == nullptr || dependency_manifest->language.is_none()) continue;
+            if (dependency_manifest->language->language == lito::manifest::PackageLanguage::Cpp) {
+                return Err(PackageError::Message(
+                    rstd::format("C package '{}' cannot depend on C++ package '{}'",
+                                 package.manifest.name.as_str(),
+                                 dependency.name.as_str())));
+            }
+        }
+    }
+    return Ok(rstd::move(result));
+}
+
+} // namespace lito::package

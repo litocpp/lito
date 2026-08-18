@@ -42,4 +42,4 @@ target_sources(
          src/package/spec.cppm
          src/package/target.cppm
          src/source/discovery.cppm)
-target_link_libraries(lito.cpp PUBLIC lito.core lito.frontend rstd.std)
+target_link_libraries(lito.cpp PUBLIC lito.core lito.c lito.frontend rstd.std)

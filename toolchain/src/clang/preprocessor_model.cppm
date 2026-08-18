@@ -32,6 +32,17 @@ struct BuiltinSemanticContext {
     bool   exceptions { false };
 };
 
+enum class PreprocessorLanguage
+{
+    C,
+    Cpp,
+};
+
+struct PreprocessorMacroDirective {
+    bool   defined { true };
+    String value;
+};
+
 inline constexpr auto CLANG_STANDARD_LIBRARY_CAPABILITY_ID =
     "lito-clang-standard-library-capabilities-v1"_str;
 
@@ -235,6 +246,7 @@ using SharedPackageMacroCatalog = rstd::sync::Arc<PackageMacroCatalog>;
 struct PreparedScanInput {
     SharedPreprocessorEnvironment environment;
     SharedPackageMacroCatalog     external_macros;
+    PreprocessorLanguage          language { PreprocessorLanguage::Cpp };
 };
 
 } // namespace lito::toolchain

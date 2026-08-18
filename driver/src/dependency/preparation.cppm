@@ -17,12 +17,13 @@ class PreparedCMakeDependencySource {
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
               (Archive, (String url; String sha256;)),
-              (ArchitectureArchives, (Vec<lito::dependency::CMakeArchiveVariant> variants;)))
+              (ArchitectureArchives, (Vec<lito::dependency::ExternalArchiveVariant> variants;)))
 };
 
 struct PreparedCMakeDependencyRequirement {
     String                                        alias;
     String                                        package;
+    Option<String>                                source_name;
     PreparedCMakeDependencySource                 source;
     Option<PathBuf>                               adapter;
     String                                        adapter_identity;
@@ -37,8 +38,16 @@ struct PreparedExternalDependency {
     PreparedCMakeDependencyRequirement requirement;
 };
 
+struct PreparedPackageExternalSource {
+    usize                                       package {};
+    String                                      name;
+    lito::dependency::ExternalSourceRequirement source;
+    Option<lito::source::AcquiredSource>        acquired;
+};
+
 struct PreparedExternalDependencySources {
-    Vec<PreparedExternalDependency> dependencies;
+    Vec<PreparedExternalDependency>    dependencies;
+    Vec<PreparedPackageExternalSource> sources;
 };
 
 class SelectedCMakeDependencySource {

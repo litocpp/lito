@@ -8,6 +8,7 @@ import :compiler.option;
 import :package.target;
 import :package.metadata;
 import :usage;
+import lito.c;
 
 using namespace rstd::prelude;
 
@@ -19,6 +20,7 @@ using TargetId = usize;
 struct TargetSpec {
     lito::package::PackageTargetId  id;
     ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
+    lito::manifest::PackageLanguage language { lito::manifest::PackageLanguage::Cpp };
     String                          artifact_name;
     bool                            link_stdlib { true };
     String                          archive_stem;
@@ -46,12 +48,15 @@ struct PackageSpec {
 };
 
 struct CompileContext {
-    String                id;
-    String                scan_id;
-    BmiRequest            bmi;
-    CppCompileOptions     cpp;
-    CppPublicRequirements public_requirements;
-    Vec<String>           external_identities;
+    String                          id;
+    String                          scan_id;
+    BmiRequest                      bmi;
+    lito::manifest::PackageLanguage language { lito::manifest::PackageLanguage::Cpp };
+    CppCompileOptions               cpp;
+    lito::c::CCompileOptions        c;
+    CppPublicRequirements           public_requirements;
+    lito::c::CPublicRequirements    c_public_requirements;
+    Vec<String>                     external_identities;
 };
 
 } // namespace lito::cpp

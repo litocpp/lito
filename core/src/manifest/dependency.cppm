@@ -5,6 +5,7 @@ import :source.requirement;
 import :dependency.visibility;
 import :dependency.cmake;
 import :dependency.pkg_config;
+import :dependency.source;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -65,12 +66,27 @@ struct WorkspacePkgConfigExternalDependencyDefinition {
 };
 
 struct WorkspaceCMakeExternalDependencyDefinition {
-    String                                  alias;
-    String                                  package;
-    lito::dependency::CMakeDependencySource source;
-    Option<PathBuf>                         adapter;
-    Option<PathBuf>                         config_directory;
-    Vec<lito::dependency::CMakeCacheEntry>  cache;
+    String                                 alias;
+    String                                 package;
+    Option<String>                         source;
+    Option<PathBuf>                        adapter;
+    Option<PathBuf>                        config_directory;
+    Vec<lito::dependency::CMakeCacheEntry> cache;
+};
+
+struct PackageExternalSourceDeclaration {
+    String                                      name;
+    lito::dependency::ExternalSourceRequirement source;
+    Option<PathBuf>                             declaration_root;
+};
+
+struct WorkspaceExternalSourceReference {
+    String name;
+};
+
+struct WorkspaceExternalSourceDefinition {
+    String                                      name;
+    lito::dependency::ExternalSourceRequirement source;
 };
 
 } // namespace lito::manifest

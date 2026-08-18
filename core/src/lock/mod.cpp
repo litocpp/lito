@@ -69,23 +69,27 @@ auto reference_json(const lito::source::GitReference& value) -> Json {
     return Json::Object(rstd::move(reference));
 }
 
-auto package_source_json(const lito::source::ResolvedPackageSource& source) -> LockResult<Json> {
-    auto item = Map::make();
+auto locked_package_source(const lito::source::ResolvedPackageSource& source) -> LockedSource {
     if (source.kind == lito::source::PackageSourceKind::Path) {
-        auto path = rstd_try(path_string(source.path.as_path()));
-        item.insert(String::make("kind"_str), string_json("path"_str));
-        item.insert(String::make("path"_str), string_json(path.as_str()));
-    } else {
-        item.insert(String::make("commit"_str), string_json(source.commit.as_str()));
-        item.insert(String::make("kind"_str), string_json("git"_str));
-        item.insert(String::make("reference"_str), reference_json(source.reference));
-        item.insert(String::make("url"_str), string_json(source.git.as_str()));
+        return LockedSource::Path(source.path.clone());
     }
-    return Ok(Json::Object(rstd::move(item)));
+    return LockedSource::Git(source.git.clone(), source.reference.clone(), source.commit.clone());
 }
 
-auto external_source_json(const lito::dependency::ResolvedExternalSource& source)
-    -> LockResult<Json> {
+auto locked_external_source(const lito::dependency::ResolvedExternalSource& source)
+    -> LockedSource {
+    if (source.is_Path()) return LockedSource::Path(source.as_Path().path.clone());
+    if (source.is_Package()) return LockedSource::Package(source.as_Package().path.clone());
+    if (source.is_Git()) {
+        return LockedSource::Git(source.as_Git().url.clone(),
+                                 source.as_Git().reference.clone(),
+                                 source.as_Git().commit.clone());
+    }
+    return LockedSource::Archive(source.as_Archive().url.clone(),
+                                 source.as_Archive().sha256.clone());
+}
+
+auto locked_source_json(const LockedSource& source) -> LockResult<Json> {
     auto item = Map::make();
     if (source.is_Path()) {
         auto path = rstd_try(path_string(source.as_Path().path.as_path()));
@@ -108,29 +112,13 @@ auto external_source_json(const lito::dependency::ResolvedExternalSource& source
     return Ok(Json::Object(rstd::move(item)));
 }
 
-auto build_tool_metadata_json(const lito::dependency::ResolvedBuildToolSourceMetadata& metadata)
-    -> LockResult<Json> {
-    auto executable = rstd_try(path_string(metadata.executable.as_path()));
-    auto item       = Map::make();
-    item.insert(String::make("executable"_str), string_json(executable.as_str()));
-    item.insert(String::make("operating-system"_str),
-                string_json(metadata.operating_system.as_str()));
-    item.insert(String::make("schema-version"_str),
-                Json::Number(rstd::json::Number::from_u64(metadata.schema_version)));
-    item.insert(String::make("version"_str), string_json(metadata.version.as_str()));
-    return Ok(Json::Object(rstd::move(item)));
-}
-
 auto external_order_key(const lito::dependency::ResolvedExternalSourceRecord& external) -> String {
     auto architectures = Vec<String>::with_capacity(external.architectures.len());
     for (const auto& architecture : external.architectures) {
         architectures.push(architecture.name.clone());
     }
     rstd::slice_::sort_unstable(architectures.as_mut_slice().as_mut_ref());
-    auto key = rstd::format("{}\n{}\n{}",
-                            external.package.as_str(),
-                            external.alias.as_str(),
-                            external.provider.as_str());
+    auto key = external.name.clone();
     for (const auto& architecture : architectures) {
         key.push_ascii(u8('\n'));
         key.push_str(architecture.as_str());
@@ -180,8 +168,41 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph) -> LockResult<
                     Json::Array(rstd::move(runtime_dependencies)));
         item.insert(String::make("manifest"_str), string_json(manifest->as_str()));
         item.insert(String::make("name"_str), string_json(package.manifest.name.as_str()));
-        auto source = rstd_try(package_source_json(package.source));
+        auto source = rstd_try(locked_source_json(locked_package_source(package.source)));
         item.insert(String::make("source"_str), rstd::move(source));
+        auto external_indices = Vec<usize>::with_capacity(package.externals.len());
+        for (usize external {}; external < package.externals.len(); ++external) {
+            external_indices.push(usize(external));
+        }
+        rstd::slice_::sort_unstable_by(external_indices.as_mut_slice().as_mut_ref(),
+                                       [&package](usize left, usize right) {
+                                           return external_order_key(package.externals[left]) <
+                                                  external_order_key(package.externals[right]);
+                                       });
+        auto externals = Array::make();
+        for (const auto external_index : external_indices) {
+            const auto& external    = package.externals[external_index];
+            auto architecture_names = Vec<String>::with_capacity(external.architectures.len());
+            for (const auto& architecture : external.architectures) {
+                architecture_names.push(architecture.name.clone());
+            }
+            rstd::slice_::sort_unstable(architecture_names.as_mut_slice().as_mut_ref());
+            auto architectures = Array::make();
+            for (const auto& architecture : architecture_names) {
+                architectures.push(string_json(architecture.as_str()));
+            }
+            auto external_item = Map::make();
+            if (! architectures.is_empty()) {
+                external_item.insert(String::make("architectures"_str),
+                                     Json::Array(rstd::move(architectures)));
+            }
+            external_item.insert(String::make("name"_str), string_json(external.name.as_str()));
+            auto external_source =
+                rstd_try(locked_source_json(locked_external_source(external.source)));
+            external_item.insert(String::make("source"_str), rstd::move(external_source));
+            externals.push(Json::Object(rstd::move(external_item)));
+        }
+        item.insert(String::make("externals"_str), Json::Array(rstd::move(externals)));
         if (package.manifest.version.value.is_some()) {
             item.insert(String::make("version"_str),
                         string_json(package.manifest.version.value->as_str()));
@@ -189,44 +210,7 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph) -> LockResult<
         packages.push(Json::Object(rstd::move(item)));
     }
 
-    auto external_indices = Vec<usize>::with_capacity(graph.externals.len());
-    for (usize index {}; index < graph.externals.len(); ++index)
-        external_indices.push(usize(index));
-    rstd::slice_::sort_unstable_by(external_indices.as_mut_slice().as_mut_ref(),
-                                   [&graph](usize left, usize right) {
-                                       return external_order_key(graph.externals[left]) <
-                                              external_order_key(graph.externals[right]);
-                                   });
-    auto externals = Array::make();
-    for (const auto index : external_indices) {
-        const auto& external           = graph.externals[index];
-        auto        architecture_names = Vec<String>::with_capacity(external.architectures.len());
-        for (const auto& architecture : external.architectures) {
-            architecture_names.push(architecture.name.clone());
-        }
-        rstd::slice_::sort_unstable(architecture_names.as_mut_slice().as_mut_ref());
-        auto architectures = Array::make();
-        for (const auto& architecture : architecture_names) {
-            architectures.push(string_json(architecture.as_str()));
-        }
-        auto item = Map::make();
-        item.insert(String::make("alias"_str), string_json(external.alias.as_str()));
-        if (! architectures.is_empty()) {
-            item.insert(String::make("architectures"_str), Json::Array(rstd::move(architectures)));
-        }
-        item.insert(String::make("package"_str), string_json(external.package.as_str()));
-        item.insert(String::make("provider"_str), string_json(external.provider.as_str()));
-        if (external.build_tool.is_some()) {
-            auto metadata = rstd_try(build_tool_metadata_json(*external.build_tool));
-            item.insert(String::make("build-tool"_str), rstd::move(metadata));
-        }
-        auto source = rstd_try(external_source_json(external.source));
-        item.insert(String::make("source"_str), rstd::move(source));
-        externals.push(Json::Object(rstd::move(item)));
-    }
-
     auto root = Map::make();
-    root.insert(String::make("externals"_str), Json::Array(rstd::move(externals)));
     root.insert(String::make("packages"_str), Json::Array(rstd::move(packages)));
     root.insert(String::make("version"_str),
                 Json::Number(rstd::json::Number::from_u64(LOCK_FORMAT_VERSION)));
@@ -251,7 +235,8 @@ auto reject_unknown(const Json& value, ref<str> context, KeyPredicate allowed)
 
 auto lock_package_key(ref<str> key) -> bool {
     return key == "dependencies"_str || key == "manifest"_str || key == "name"_str ||
-           key == "runtime-dependencies"_str || key == "source"_str || key == "version"_str;
+           key == "runtime-dependencies"_str || key == "source"_str || key == "version"_str ||
+           key == "externals"_str;
 }
 
 auto path_source_key(ref<str> key) -> bool {
@@ -290,17 +275,11 @@ auto valid_source_manifest(ref<str> value) -> bool {
 }
 
 auto root_key(ref<str> key) -> bool {
-    return key == "externals"_str || key == "packages"_str || key == "version"_str;
+    return key == "packages"_str || key == "version"_str;
 }
 
 auto external_key(ref<str> key) -> bool {
-    return key == "alias"_str || key == "architectures"_str || key == "build-tool"_str ||
-           key == "package"_str || key == "provider"_str || key == "source"_str;
-}
-
-auto build_tool_metadata_key(ref<str> key) -> bool {
-    return key == "executable"_str || key == "operating-system"_str ||
-           key == "schema-version"_str || key == "version"_str;
+    return key == "name"_str || key == "architectures"_str || key == "source"_str;
 }
 
 auto archive_source_key(ref<str> key) -> bool {
@@ -417,10 +396,9 @@ auto validate_source(const Json& value, ref<str> context, bool external_source)
 
 auto validate_current_lock(const Json& document) -> LockResult<empty> {
     rstd_try(reject_unknown(document, "lock root"_str, root_key));
-    auto version_value   = rstd_try(required_member(document, "version"_str, "lock root"_str));
-    auto packages_value  = rstd_try(required_member(document, "packages"_str, "lock root"_str));
-    auto externals_value = rstd_try(required_member(document, "externals"_str, "lock root"_str));
-    auto version         = version_value->as_u64();
+    auto version_value  = rstd_try(required_member(document, "version"_str, "lock root"_str));
+    auto packages_value = rstd_try(required_member(document, "packages"_str, "lock root"_str));
+    auto version        = version_value->as_u64();
     if (version.is_none()) {
         return lock_failure<empty>(
             rstd::format("lock.version must be integer {}", LOCK_FORMAT_VERSION));
@@ -431,15 +409,10 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
                          *version,
                          LOCK_FORMAT_VERSION));
     }
-    auto packages  = packages_value->as_array();
-    auto externals = externals_value->as_array();
+    auto packages = packages_value->as_array();
     if (packages.is_none() || (**packages).is_empty()) {
         return lock_failure<empty>("lock.packages must be a non-empty array"_str);
     }
-    if (externals.is_none()) {
-        return lock_failure<empty>("lock.externals must be an array"_str);
-    }
-
     auto names = StringSet::make();
     for (const auto& package : **packages) {
         rstd_try(reject_unknown(package, "lock package"_str, lock_package_key));
@@ -450,6 +423,7 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
             rstd_try(required_member(package, "dependencies"_str, "lock package"_str));
         auto runtime_dependencies =
             rstd_try(required_member(package, "runtime-dependencies"_str, "lock package"_str));
+        auto externals = rstd_try(required_member(package, "externals"_str, "lock package"_str));
         if (! lito::manifest::valid_package_name(name)) {
             return lock_failure<empty>(rstd::format("lock package name '{}' is invalid", name));
         }
@@ -470,6 +444,68 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
                 "lock package manifest must be a relative path without parent components"_str);
         }
         rstd_try(validate_source(*source, "lock package source"_str, false));
+        auto external_array = externals->as_array();
+        if (external_array.is_none()) {
+            return lock_failure<empty>("lock package externals must be an array"_str);
+        }
+        auto external_identities = StringSet::make();
+        for (const auto& external : **external_array) {
+            rstd_try(reject_unknown(external, "lock package external"_str, external_key));
+            auto external_name =
+                rstd_try(required_string(external, "name"_str, "lock package external"_str));
+            auto external_source =
+                rstd_try(required_member(external, "source"_str, "lock package external"_str));
+            if (external_name.is_empty()) {
+                return lock_failure<empty>("lock package external name must not be empty"_str);
+            }
+            auto architecture_key = String::make();
+            auto architectures    = external.get("architectures"_str);
+            if (architectures.is_some()) {
+                auto values = (**architectures).as_array();
+                if (values.is_none() || (**values).is_empty()) {
+                    return lock_failure<empty>(
+                        "lock package external architectures must be a non-empty array when present"_str);
+                }
+                auto seen     = StringSet::make();
+                auto previous = Option<String> {};
+                for (const auto& architecture : **values) {
+                    auto architecture_name = architecture.as_str();
+                    if (architecture_name.is_none()) {
+                        return lock_failure<empty>(
+                            "lock package external architecture must be a string"_str);
+                    }
+                    auto canonical = canonical_architecture(*architecture_name);
+                    if (canonical.is_err() || canonical->as_str() != *architecture_name) {
+                        return lock_failure<empty>(rstd::format(
+                            "lock package external architecture '{}' must be canonical",
+                            *architecture_name));
+                    }
+                    if (seen.contains_key(*architecture_name)) {
+                        return lock_failure<empty>(rstd::format(
+                            "lock package external repeats architecture '{}'", *architecture_name));
+                    }
+                    auto canonical_name = String::make(*architecture_name);
+                    if (previous.is_some() && canonical_name < *previous) {
+                        return lock_failure<empty>(
+                            "lock package external architectures must use stable sorted order"_str);
+                    }
+                    seen.insert(canonical_name.clone(), empty {});
+                    previous = Some(rstd::move(canonical_name));
+                    if (! architecture_key.is_empty()) architecture_key.push_ascii(u8(','));
+                    architecture_key.push_str(*architecture_name);
+                }
+            }
+            auto identity = rstd::format("{}\n{}", external_name, architecture_key.as_str());
+            if (external_identities.contains_key(identity.as_str())) {
+                return lock_failure<empty>(
+                    rstd::format("lock package '{}' repeats external '{}' for architectures '{}'",
+                                 name,
+                                 external_name,
+                                 architecture_key.as_str()));
+            }
+            external_identities.insert(rstd::move(identity), empty {});
+            rstd_try(validate_source(*external_source, "lock package external source"_str, true));
+        }
         auto dependency_array = dependencies->as_array();
         if (dependency_array.is_none()) {
             return lock_failure<empty>("lock package dependencies must be an array"_str);
@@ -528,106 +564,6 @@ auto validate_current_lock(const Json& document) -> LockResult<empty> {
         }
     }
 
-    auto identities = StringSet::make();
-    for (const auto& external : **externals) {
-        rstd_try(reject_unknown(external, "lock external"_str, external_key));
-        auto package  = rstd_try(required_string(external, "package"_str, "lock external"_str));
-        auto alias    = rstd_try(required_string(external, "alias"_str, "lock external"_str));
-        auto provider = rstd_try(required_string(external, "provider"_str, "lock external"_str));
-        auto source   = rstd_try(required_member(external, "source"_str, "lock external"_str));
-        if (! names.contains_key(package)) {
-            return lock_failure<empty>(rstd::format(
-                "lock external '{}:{}' references missing package '{}'", package, alias, package));
-        }
-        if (alias.is_empty() || provider.is_empty()) {
-            return lock_failure<empty>("lock external alias and provider must not be empty"_str);
-        }
-        auto architecture_key = String::make();
-        auto architectures    = external.get("architectures"_str);
-        if (architectures.is_some()) {
-            auto values = (**architectures).as_array();
-            if (values.is_none() || (**values).is_empty()) {
-                return lock_failure<empty>(
-                    "lock external architectures must be a non-empty array when present"_str);
-            }
-            auto seen     = StringSet::make();
-            auto previous = Option<String> {};
-            for (const auto& architecture : **values) {
-                auto name = architecture.as_str();
-                if (name.is_none()) {
-                    return lock_failure<empty>("lock external architecture must be a string"_str);
-                }
-                auto canonical = canonical_architecture(*name);
-                if (canonical.is_err() || canonical->as_str() != *name) {
-                    return lock_failure<empty>(
-                        rstd::format("lock external architecture '{}' must be canonical", *name));
-                }
-                if (seen.contains_key(*name)) {
-                    return lock_failure<empty>(
-                        rstd::format("lock external repeats architecture '{}'", *name));
-                }
-                auto canonical_name = String::make(*name);
-                if (previous.is_some() && canonical_name < *previous) {
-                    return lock_failure<empty>(
-                        "lock external architectures must use stable sorted order"_str);
-                }
-                seen.insert(canonical_name.clone(), empty {});
-                previous = Some(rstd::move(canonical_name));
-                if (! architecture_key.is_empty()) architecture_key.push_ascii(u8(','));
-                architecture_key.push_str(*name);
-            }
-        }
-        auto identity =
-            rstd::format("{}\n{}\n{}\n{}", package, alias, provider, architecture_key.as_str());
-        if (identities.contains_key(identity.as_str())) {
-            return lock_failure<empty>(
-                rstd::format("lock repeats external '{}:{}' for architectures '{}'",
-                             package,
-                             alias,
-                             architecture_key.as_str()));
-        }
-        identities.insert(rstd::move(identity), empty {});
-        rstd_try(validate_source(*source, "lock external source"_str, true));
-        auto       build_tool    = external.get("build-tool"_str);
-        const auto tool_provider = provider.starts_with("build-tool:"_str);
-        if (tool_provider != build_tool.is_some()) {
-            return lock_failure<empty>(
-                "lock build-tool external must contain build-tool metadata"_str);
-        }
-        if (build_tool.is_some()) {
-            rstd_try(reject_unknown(
-                **build_tool, "lock build-tool metadata"_str, build_tool_metadata_key));
-            auto version = rstd_try(
-                required_string(**build_tool, "version"_str, "lock build-tool metadata"_str));
-            auto executable = rstd_try(
-                required_string(**build_tool, "executable"_str, "lock build-tool metadata"_str));
-            auto operating_system = rstd_try(required_string(
-                **build_tool, "operating-system"_str, "lock build-tool metadata"_str));
-            auto schema           = rstd_try(required_member(
-                **build_tool, "schema-version"_str, "lock build-tool metadata"_str));
-            auto schema_version   = schema->as_u64();
-            if (version.is_empty() || version.trim_ascii() != version) {
-                return lock_failure<empty>(
-                    "lock build-tool version must be a non-empty exact value"_str);
-            }
-            if (executable.is_empty() || ! PathBuf::from(executable).as_path().is_safe_relative()) {
-                return lock_failure<empty>(
-                    "lock build-tool executable must be a safe non-empty relative path"_str);
-            }
-            if (operating_system.is_empty() ||
-                provider != rstd::format("build-tool:{}", operating_system).as_str()) {
-                return lock_failure<empty>(
-                    "lock build-tool operating system must match its provider"_str);
-            }
-            if (schema_version != Some(u64(1))) {
-                return lock_failure<empty>("lock build-tool schema-version must be integer 1"_str);
-            }
-            auto source_kind = source->get("kind"_str);
-            if (source_kind.is_none() || (**source_kind).as_str() != Some("archive"_str)) {
-                return lock_failure<empty>("lock build-tool source must be an archive"_str);
-            }
-        }
-    }
     return Ok(empty {});
 }
 
@@ -646,9 +582,13 @@ auto load_existing(ref<rstd::path::Path> path) -> LockResult<Option<Json>> {
         return Err(LockError::Json(PathBuf::from(path), rstd::move(parsed).unwrap_err()));
     }
     auto document = rstd::move(parsed).unwrap();
-    auto valid    = validate_current_lock(document);
-    if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
     return Ok(Some(rstd::move(document)));
+}
+
+auto lock_document_version(const Json& document) -> Option<u64> {
+    auto version = document.get("version"_str);
+    if (version.is_none()) return None();
+    return (**version).as_u64();
 }
 
 auto parse_reference(const Json& value) -> lito::source::GitReference {
@@ -664,40 +604,21 @@ auto parse_reference(const Json& value) -> lito::source::GitReference {
     };
 }
 
-auto parse_locked_package_source(const Json& value) -> LockedPackageSource {
+auto parse_locked_source(const Json& value) -> LockedSource {
     auto kind = *(**value.get("kind"_str)).as_str();
     if (kind == "path"_str) {
-        return LockedPackageSource::Path(PathBuf::from(*(**value.get("path"_str)).as_str()));
-    }
-    return LockedPackageSource::Git(String::make(*(**value.get("url"_str)).as_str()),
-                                    parse_reference(**value.get("reference"_str)),
-                                    String::make(*(**value.get("commit"_str)).as_str()));
-}
-
-auto parse_locked_external_source(const Json& value) -> LockedExternalSource {
-    auto kind = *(**value.get("kind"_str)).as_str();
-    if (kind == "path"_str) {
-        return LockedExternalSource::Path(PathBuf::from(*(**value.get("path"_str)).as_str()));
+        return LockedSource::Path(PathBuf::from(*(**value.get("path"_str)).as_str()));
     }
     if (kind == "package"_str) {
-        return LockedExternalSource::Package(PathBuf::from(*(**value.get("path"_str)).as_str()));
+        return LockedSource::Package(PathBuf::from(*(**value.get("path"_str)).as_str()));
     }
     if (kind == "git"_str) {
-        return LockedExternalSource::Git(String::make(*(**value.get("url"_str)).as_str()),
-                                         parse_reference(**value.get("reference"_str)),
-                                         String::make(*(**value.get("commit"_str)).as_str()));
+        return LockedSource::Git(String::make(*(**value.get("url"_str)).as_str()),
+                                 parse_reference(**value.get("reference"_str)),
+                                 String::make(*(**value.get("commit"_str)).as_str()));
     }
-    return LockedExternalSource::Archive(String::make(*(**value.get("url"_str)).as_str()),
-                                         String::make(*(**value.get("sha256"_str)).as_str()));
-}
-
-auto parse_locked_build_tool_metadata(const Json& value) -> LockedBuildToolSourceMetadata {
-    return LockedBuildToolSourceMetadata {
-        .version          = String::make(*(**value.get("version"_str)).as_str()),
-        .executable       = PathBuf::from(*(**value.get("executable"_str)).as_str()),
-        .operating_system = String::make(*(**value.get("operating-system"_str)).as_str()),
-        .schema_version   = *(**value.get("schema-version"_str)).as_u64(),
-    };
+    return LockedSource::Archive(String::make(*(**value.get("url"_str)).as_str()),
+                                 String::make(*(**value.get("sha256"_str)).as_str()));
 }
 
 auto parse_locked_project(const Json& document) -> LockedProject {
@@ -716,37 +637,29 @@ auto parse_locked_project(const Json& document) -> LockedProject {
         auto version       = Option<String> {};
         auto version_value = package.get("version"_str);
         if (version_value.is_some()) version = Some(String::make(*(**version_value).as_str()));
+        auto externals = Vec<LockedPackageExternalSource>::make();
+        for (const auto& external : **(**package.get("externals"_str)).as_array()) {
+            auto architectures = Vec<String>::make();
+            auto values        = external.get("architectures"_str);
+            if (values.is_some()) {
+                for (const auto& architecture : **(**values).as_array()) {
+                    architectures.push(String::make(*architecture.as_str()));
+                }
+            }
+            externals.push(LockedPackageExternalSource {
+                .name          = String::make(*(**external.get("name"_str)).as_str()),
+                .architectures = rstd::move(architectures),
+                .source        = parse_locked_source(**external.get("source"_str)),
+            });
+        }
         result.packages.push(LockedPackage {
             .name                 = String::make(*(**package.get("name"_str)).as_str()),
             .version              = rstd::move(version),
-            .source               = parse_locked_package_source(**package.get("source"_str)),
+            .source               = parse_locked_source(**package.get("source"_str)),
             .manifest             = PathBuf::from(*(**package.get("manifest"_str)).as_str()),
             .dependencies         = rstd::move(dependencies),
             .runtime_dependencies = rstd::move(runtime_dependencies),
-        });
-    }
-    const auto& externals = **(**document.get("externals"_str)).as_array();
-    result.externals      = Vec<LockedExternal>::with_capacity(externals.len());
-    for (const auto& external : externals) {
-        auto architectures = Vec<String>::make();
-        auto values        = external.get("architectures"_str);
-        if (values.is_some()) {
-            for (const auto& architecture : **(**values).as_array()) {
-                architectures.push(String::make(*architecture.as_str()));
-            }
-        }
-        auto build_tool = Option<LockedBuildToolSourceMetadata> {};
-        auto metadata   = external.get("build-tool"_str);
-        if (metadata.is_some()) {
-            build_tool = Some(parse_locked_build_tool_metadata(**metadata));
-        }
-        result.externals.push(LockedExternal {
-            .package       = String::make(*(**external.get("package"_str)).as_str()),
-            .alias         = String::make(*(**external.get("alias"_str)).as_str()),
-            .provider      = String::make(*(**external.get("provider"_str)).as_str()),
-            .architectures = rstd::move(architectures),
-            .build_tool    = rstd::move(build_tool),
-            .source        = parse_locked_external_source(**external.get("source"_str)),
+            .externals            = rstd::move(externals),
         });
     }
     return result;
@@ -792,12 +705,14 @@ auto append_project_pins(lito::source::SourceResolutionOptions& options,
                                 package.source.as_Git().reference,
                                 package.source.as_Git().commit.as_str()));
     }
-    for (const auto& external : project.externals) {
-        if (! external.source.is_Git()) continue;
-        rstd_try(append_git_pin(options,
-                                external.source.as_Git().url.as_str(),
-                                external.source.as_Git().reference,
-                                external.source.as_Git().commit.as_str()));
+    for (const auto& package : project.packages) {
+        for (const auto& external : package.externals) {
+            if (! external.source.is_Git()) continue;
+            rstd_try(append_git_pin(options,
+                                    external.source.as_Git().url.as_str(),
+                                    external.source.as_Git().reference,
+                                    external.source.as_Git().commit.as_str()));
+        }
     }
     return Ok(empty {});
 }
@@ -823,6 +738,7 @@ auto lito::lock::load_locked_project(ref<rstd::path::Path> root, const LockConfi
         return lock_failure<LockedProject>(
             rstd::format("lock file '{}' does not exist", destination.as_path()));
     }
+    rstd_try(validate_current_lock(*loaded));
     return Ok(parse_locked_project(*loaded));
 }
 
@@ -848,6 +764,24 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
         session.options_ = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
         return Ok(rstd::move(session));
     }
+
+    const auto version = lock_document_version(*existing);
+    if (version == Some(u64(1))) {
+        if (locked) {
+            return lock_failure<LockSession>(rstd::format(
+                "lock file '{}' uses version 1, but this Lito requires version {}; run 'lito "
+                "update'",
+                destination.as_path(),
+                LOCK_FORMAT_VERSION));
+        }
+        auto session         = LockSession {};
+        session.root_        = PathBuf::from(root);
+        session.destination_ = rstd::move(destination);
+        session.existing_    = rstd::move(existing);
+        session.options_ = lito::source::SourceResolutionOptions { .locked = false, .git = git };
+        return Ok(rstd::move(session));
+    }
+    rstd_try(validate_current_lock(*existing));
 
     auto options = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
     auto project = Some(parse_locked_project(*existing));

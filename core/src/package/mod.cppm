@@ -1,6 +1,7 @@
 export module lito.core:package;
 
 export import :package.identity;
+export import :package.language;
 export import :package.graph;
 export import :package.features;
 export import :package.runtime;

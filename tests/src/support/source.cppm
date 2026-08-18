@@ -48,14 +48,20 @@ auto external_git_graph(ref<str>                   url,
     declarations.push(lito::dependency::CMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
         .package = String::make("Fixture"_str),
-        .source =
-            lito::dependency::CMakeDependencySource::Git(String::make(url), rstd::move(reference)),
+        .source  = Some(String::make("fixture"_str)),
+    });
+    auto external_sources = Vec<lito::manifest::PackageExternalSourceDeclaration>::make();
+    external_sources.push(lito::manifest::PackageExternalSourceDeclaration {
+        .name   = String::make("fixture"_str),
+        .source = lito::dependency::ExternalSourceRequirement::Git(String::make(url),
+                                                                   rstd::move(reference)),
     });
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(lito::package::ResolvedPackage {
         .manifest =
             lito::manifest::PackageManifest {
                 .name                        = String::make("fixture-root"_str),
+                .external_sources            = rstd::move(external_sources),
                 .cmake_external_dependencies = rstd::move(declarations),
             },
     });
@@ -66,6 +72,11 @@ auto external_git_graph(ref<str>                   url,
 }
 
 auto resolved_git_commit(const lito::package::ResolvedPackageGraph& graph) -> Option<ref<str>> {
+    for (const auto& package : graph.packages) {
+        for (const auto& external : package.externals) {
+            if (external.source.is_Git()) return Some(external.source.as_Git().commit.as_str());
+        }
+    }
     for (const auto& source : graph.sources) {
         if (source.kind == lito::source::PackageSourceKind::Git)
             return Some(source.commit.as_str());

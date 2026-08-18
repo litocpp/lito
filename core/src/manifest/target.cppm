@@ -7,6 +7,7 @@ import rstd;
 import lito.system;
 import :dependency.usage;
 import :package.identity;
+import :condition;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -26,10 +27,24 @@ struct TestAttachmentManifest {
     Vec<PathBuf> sources;
 };
 
+struct ConditionalTargetSources {
+    String                      source;
+    lito::condition::Expression condition;
+    Vec<String>                 source_groups;
+};
+
 struct TargetSourceManifest {
-    Option<String>      module;
-    SourceDiscoveryMode discovery { SourceDiscoveryMode::Explicit };
-    Vec<PathBuf>        declared_sources;
+    Option<String>                module;
+    SourceDiscoveryMode           discovery { SourceDiscoveryMode::Explicit };
+    Vec<PathBuf>                  declared_sources;
+    Vec<String>                   source_groups;
+    Vec<ConditionalTargetSources> conditions;
+};
+
+struct SourceGroupManifest {
+    String         name;
+    Option<String> external_source;
+    Vec<PathBuf>   sources;
 };
 
 enum class RuntimeResourceRoot

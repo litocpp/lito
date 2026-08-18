@@ -781,3 +781,50 @@ sources = ["main.cpp"]
     EXPECT_FALSE(package->root_is_workspace);
     EXPECT_EQ(package->name.as_str(), "demo-app"_str);
 }
+
+TEST_F(PackageResolver, EffectiveTargetsIncludeDependencyLibraries) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-effective-root"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-effective-root"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[dependencies.fixture-effective-provider]
+path = "provider"
+visibility = "private"
+)toml"_str },
+        { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+        { "provider/lito.toml"_str, R"toml([package]
+name = "fixture-effective-provider"
+version = "0.1.0"
+
+[lib]
+name = "fixture-effective-provider"
+module = "fixture.effective.provider"
+archive = "fixture-effective-provider"
+sources = ["lib.cppm"]
+)toml"_str },
+        { "provider/lib.cppm"_str, "export module fixture.effective.provider;\n"_str },
+    };
+    auto project = materialize("effective-targets"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selected = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Production);
+    ASSERT_TRUE(selected.is_ok());
+    ASSERT_EQ(selected->selected_targets.len(), usize(1));
+    EXPECT_EQ(selected->selected_targets[usize {}].package.as_str(), "fixture-effective-root"_str);
+    ASSERT_EQ(selected->effective_targets.len(), usize(2));
+    auto provider_library = false;
+    for (const auto& target : selected->effective_targets) {
+        if (target.package.as_str() == "fixture-effective-provider"_str &&
+            target.kind == lito::package::PackageTargetKind::Library) {
+            provider_library = true;
+        }
+    }
+    EXPECT_TRUE(provider_library);
+}

@@ -23,7 +23,7 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(toolchain.capabilities().one_phase_bmi);
     EXPECT_TRUE(toolchain.capabilities().exact_module_mapping);
     auto cpp = cpp_options(
-        "c++20"_str, lito::manifest::CppOptimization::None, lito::manifest::CppDebugInfo::None);
+        "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     auto context = cpp::CompileContext {
         .id  = String::make("context"_str),
         .cpp = rstd::move(cpp),
@@ -77,8 +77,8 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-ftype-visibility=protected"_str));
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-fvisibility-inlines-hidden"_str));
 
-    context.cpp.codegen.lto = lito::manifest::CppLto::Thin;
-    auto lto_invocation     = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
+    context.cpp.codegen.common.lto = lito::manifest::Lto::Thin;
+    auto lto_invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(lto_invocation.is_ok());
     EXPECT_TRUE(has_argument(lto_invocation->arguments, "-flto=thin"_str));
     EXPECT_TRUE(has_argument(lto_invocation->arguments, "-fvisibility=default"_str));

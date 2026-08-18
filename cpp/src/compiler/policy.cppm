@@ -114,12 +114,12 @@ auto merge_cpp_public_requirements(CppPublicRequirements input, const CppPublicR
 auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
     -> CppOptionResult<CppCompileOptions>;
 
-auto make_cpp_options(ref<str>                        language_standard,
-                      lito::config::StandardLibrary   standard_library,
-                      bool                            exceptions,
-                      bool                            rtti,
-                      lito::manifest::CppOptimization optimization_value,
-                      lito::manifest::CppDebugInfo    debug_info,
+auto make_cpp_options(ref<str>                      language_standard,
+                      lito::config::StandardLibrary standard_library,
+                      bool                          exceptions,
+                      bool                          rtti,
+                      lito::manifest::Optimization  optimization_value,
+                      lito::manifest::DebugInfo     debug_info,
                       CppOptionLayer layer = {}) -> CppOptionResult<CppCompileOptions> {
     auto result = CppCompileOptions {
         .language =
@@ -134,8 +134,11 @@ auto make_cpp_options(ref<str>                        language_standard,
             },
         .codegen =
             CppCodegenOptions {
-                .optimization = optimization_value,
-                .debug_info   = debug_info,
+                .common =
+                    lito::compiler::CodegenOptions {
+                        .optimization = optimization_value,
+                        .debug_info   = debug_info,
+                    },
             },
         .diagnostics =
             CppDiagnosticOptions {
@@ -180,10 +183,10 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
                 append_unique(input.preprocessor.include_directories, rstd::move(directory));
             }
             RSTD_CASE(Target, value) {
-                input.target.target = Some(rstd::move(value));
+                input.target.common.target = Some(rstd::move(value));
             }
             RSTD_CASE(Sysroot, value) {
-                input.target.sysroot = Some(rstd::move(value));
+                input.target.common.sysroot = Some(rstd::move(value));
             }
             RSTD_CASE(OwnedSetting, setting) {
                 static_cast<void>(setting);
@@ -206,7 +209,7 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
                 instrumentation.insert(rstd::move(value), empty {});
             }
             RSTD_CASE(PositionIndependentCode, enabled) {
-                input.codegen.position_independent_code = enabled;
+                input.codegen.common.position_independent_code = enabled;
             }
             RSTD_CASE(SymbolVisibility, value) {
                 input.codegen.visibility.symbols = value;
@@ -306,8 +309,8 @@ auto merge_cpp_options(CppCompileOptions input, const CppCompileOptions& extra)
         });
     }
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
-        .argument =
-            CppCompilerArgument::PositionIndependentCode(extra.codegen.position_independent_code),
+        .argument = CppCompilerArgument::PositionIndependentCode(
+            extra.codegen.common.position_independent_code),
     });
     layer.arguments.occurrences.push(CppCompilerArgumentOccurrence {
         .argument = CppCompilerArgument::SymbolVisibility(extra.codegen.visibility.symbols),

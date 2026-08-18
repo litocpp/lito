@@ -9,6 +9,7 @@ import :package.metadata;
 import :package.spec;
 import :package.target;
 import :usage;
+import lito.c;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -213,6 +214,19 @@ auto resolve_import_requirements(const PackageMetadata& package,
                         target_text(dependency.target).as_str(),
                         target_text(package.targets[importer].id).as_str()));
                 }
+                if (package.targets[importer].language == lito::manifest::PackageLanguage::C) {
+                    if (package.targets[*provider].language ==
+                        lito::manifest::PackageLanguage::Cpp) {
+                        return plan_failure<empty>(
+                            rstd::format("C target '{}' cannot import C++ target '{}'",
+                                         target_text(package.targets[importer].id).as_str(),
+                                         target_text(package.targets[*provider].id).as_str()));
+                    }
+                    continue;
+                }
+                if (package.targets[*provider].language == lito::manifest::PackageLanguage::C) {
+                    continue;
+                }
                 if (merge_cpp_import_requirements(contexts[importer].cpp,
                                                   contexts[*provider].cpp)) {
                     changed = true;
@@ -224,7 +238,17 @@ auto resolve_import_requirements(const PackageMetadata& package,
 }
 
 auto context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-compile-context-v4\n"_str);
+    auto result = String::make("lito-compile-context-v5\n"_str);
+    if (context.language == lito::manifest::PackageLanguage::C) {
+        result.push_str("language:c\n"_str);
+        result.push_str(lito::c::c_compile_identity(context.c).as_str());
+        for (const auto& identity : context.external_identities) {
+            result.push_str(
+                rstd::format("external:{}:{}\n", identity.len(), identity.as_str()).as_str());
+        }
+        return result;
+    }
+    result.push_str("language:cpp\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
@@ -239,7 +263,17 @@ auto context_id(const CompileContext& context) -> String {
 }
 
 auto scan_context_id(const CompileContext& context) -> String {
-    auto result = String::make("lito-scan-context-v2\n"_str);
+    auto result = String::make("lito-scan-context-v3\n"_str);
+    if (context.language == lito::manifest::PackageLanguage::C) {
+        result.push_str("language:c\n"_str);
+        result.push_str(lito::c::c_scan_identity(context.c).as_str());
+        for (const auto& identity : context.external_identities) {
+            result.push_str(
+                rstd::format("external:{}:{}\n", identity.len(), identity.as_str()).as_str());
+        }
+        return result;
+    }
+    result.push_str("language:cpp\n"_str);
     result.push_str(bmi_representation_name(context.bmi.representation));
     result.push_ascii('\n');
     result.push_str(bmi_source_embedding_name(context.bmi.source_embedding));
@@ -263,11 +297,18 @@ auto attachment_context(const CompileContext&       library,
             "test attachment cannot merge different BMI requests"_str);
     }
     auto result = CompileContext {
-        .bmi                 = library.bmi,
-        .cpp                 = as<Clone>(library.cpp).clone(),
-        .public_requirements = as<Clone>(library.public_requirements).clone(),
-        .external_identities = as<Clone>(library.external_identities).clone(),
+        .bmi                   = library.bmi,
+        .language              = library.language,
+        .cpp                   = as<Clone>(library.cpp).clone(),
+        .c                     = library.c.clone(),
+        .public_requirements   = as<Clone>(library.public_requirements).clone(),
+        .c_public_requirements = library.c_public_requirements.clone(),
+        .external_identities   = as<Clone>(library.external_identities).clone(),
     };
+    if (library.language != lito::manifest::PackageLanguage::Cpp ||
+        test.language != lito::manifest::PackageLanguage::Cpp) {
+        return plan_failure<CompileContext>("test attachments currently require C++ targets"_str);
+    }
     auto merged = merge_cpp_options(rstd::move(result.cpp), test.cpp);
     if (merged.is_err()) {
         return Err(lito::package::PackageError::Configuration(
@@ -293,10 +334,13 @@ export namespace lito::cpp
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
     -> lito::package::PackageResult<CompileContext> {
     auto context = CompileContext {
-        .bmi                 = base.bmi,
-        .cpp                 = as<Clone>(base.cpp).clone(),
-        .public_requirements = as<Clone>(base.public_requirements).clone(),
-        .external_identities = as<Clone>(base.external_identities).clone(),
+        .bmi                   = base.bmi,
+        .language              = base.language,
+        .cpp                   = as<Clone>(base.cpp).clone(),
+        .c                     = base.c.clone(),
+        .public_requirements   = as<Clone>(base.public_requirements).clone(),
+        .c_public_requirements = base.c_public_requirements.clone(),
+        .external_identities   = as<Clone>(base.external_identities).clone(),
     };
     auto layer      = CppOptionLayer {};
     layer.arguments = as<Clone>(test.arguments).clone();
@@ -532,21 +576,36 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         const auto& spec             = package.targets[target];
         const auto& selected_profile = package.profiles[profile];
         auto        context          = CompileContext {
-            .bmi = selected_profile.bmi,
+            .bmi      = selected_profile.bmi,
+            .language = spec.language,
         };
-        auto        public_layer   = CppOptionLayer {};
         const auto& exported_usage = *public_usage[target];
-        append_unique(public_layer.include_directories, exported_usage.include_directories);
-        append_unique(public_layer.definitions, exported_usage.definitions);
-        append_unique(public_layer.arguments, exported_usage.arguments);
-        auto public_cpp = apply_cpp_option_layer(as<Clone>(selected_profile.cpp).clone(),
-                                                 rstd::move(public_layer));
-        if (public_cpp.is_err()) {
-            return Err(lito::package::PackageError::Configuration(
-                erase_error(rstd::move(public_cpp).unwrap_err())));
+        if (spec.language == lito::manifest::PackageLanguage::C) {
+            if (! exported_usage.arguments.occurrences.is_empty()) {
+                return plan_failure<SourceDiscoveryPlan>(rstd::format(
+                    "C target '{}' received C++ compiler arguments from its public usage",
+                    target_text(spec.id).as_str()));
+            }
+            auto public_layer = lito::c::COptionLayer {};
+            append_unique(public_layer.include_directories, exported_usage.include_directories);
+            append_unique(public_layer.definitions, exported_usage.definitions);
+            context.c =
+                lito::c::apply_c_option_layer(selected_profile.c.clone(), rstd::move(public_layer));
+            context.c_public_requirements = lito::c::c_public_requirements(context.c);
+        } else {
+            auto public_layer = CppOptionLayer {};
+            append_unique(public_layer.include_directories, exported_usage.include_directories);
+            append_unique(public_layer.definitions, exported_usage.definitions);
+            append_unique(public_layer.arguments, exported_usage.arguments);
+            auto public_cpp = apply_cpp_option_layer(as<Clone>(selected_profile.cpp).clone(),
+                                                     rstd::move(public_layer));
+            if (public_cpp.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(public_cpp).unwrap_err())));
+            }
+            context.public_requirements = cpp_public_requirements(*public_cpp);
+            context.cpp                 = rstd::move(public_cpp).unwrap();
         }
-        context.public_requirements = cpp_public_requirements(*public_cpp);
-        context.cpp                 = rstd::move(public_cpp).unwrap();
         append_unique(context.external_identities, exported_usage.external_identities);
 
         auto private_layer = CppOptionLayer {};
@@ -580,12 +639,27 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
             append_unique(private_layer.arguments, usage.arguments);
             append_unique(context.external_identities, usage.external_identities);
         }
-        auto applied = apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
-        if (applied.is_err()) {
-            return Err(lito::package::PackageError::Configuration(
-                erase_error(rstd::move(applied).unwrap_err())));
+        if (spec.language == lito::manifest::PackageLanguage::C) {
+            if (! private_layer.arguments.occurrences.is_empty()) {
+                return plan_failure<SourceDiscoveryPlan>(
+                    rstd::format("C target '{}' received C++ compiler arguments from a dependency",
+                                 target_text(spec.id).as_str()));
+            }
+            auto c_layer = lito::c::COptionLayer {
+                .include_directories = rstd::move(private_layer.include_directories),
+                .definitions         = rstd::move(private_layer.definitions),
+            };
+            context.c = lito::c::apply_c_option_layer(rstd::move(context.c), rstd::move(c_layer));
+            if (spec.usage.link_requirements.posix_threads) context.c.posix_threads = true;
+        } else {
+            auto applied =
+                apply_cpp_option_layer(rstd::move(context.cpp), rstd::move(private_layer));
+            if (applied.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(applied).unwrap_err())));
+            }
+            context.cpp = rstd::move(applied).unwrap();
         }
-        context.cpp             = rstd::move(applied).unwrap();
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
         append_unique(linker_options[target], selected_profile.linker_options);
@@ -644,14 +718,20 @@ auto resolve_source_discovery(const PackageMetadata& package, SourceTargetSelect
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs               = link_inputs[target];
         auto& requirements         = link_requirements[target];
-        requirements.posix_threads = contexts[target].cpp.threading.posix;
+        requirements.posix_threads = contexts[target].language == lito::manifest::PackageLanguage::C
+                                         ? contexts[target].c.posix_threads
+                                         : contexts[target].cpp.threading.posix;
         append_unique(requirements, package.profiles[profile].link_requirements);
         append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {
             const auto candidate = dependency_order[index - usize(1)];
             if (candidate == target) continue;
-            auto abi_difference =
-                check_cpp_abi_compatibility(contexts[candidate].cpp, contexts[target].cpp);
+            auto abi_difference = Option<CppAbiCompatibilityDifference> {};
+            if (contexts[candidate].language == lito::manifest::PackageLanguage::Cpp &&
+                contexts[target].language == lito::manifest::PackageLanguage::Cpp) {
+                abi_difference =
+                    check_cpp_abi_compatibility(contexts[candidate].cpp, contexts[target].cpp);
+            }
             if (abi_difference.is_some()) {
                 return plan_failure<SourceDiscoveryPlan>(rstd::format(
                     "artifact ABI conflict in {}: target '{}' has '{}', dependency '{}' has '{}'",

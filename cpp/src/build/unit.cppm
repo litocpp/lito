@@ -17,6 +17,7 @@ struct UnitSpec {
     UnitId                         id {};
     TargetId                       target {};
     PathBuf                        relative_source;
+    String                         source_origin_identity;
     PathBuf                        source;
     PathBuf                        object;
     PathBuf                        cache_record;

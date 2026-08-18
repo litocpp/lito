@@ -374,6 +374,62 @@ link-stdlib = false
 name = "fixture-source-root-descendant"
 sources = ["main.cpp"]
 )lito"_str },
+    { "manifest-minimum-standard-without-language"_str, R"lito([package]
+name = "fixture-minimum-standard-without-language"
+version = "0.1.0"
+minimum-standard = "c17"
+
+[lib]
+name = "fixture-minimum-standard-without-language"
+module = "fixture.minimum_standard_without_language"
+archive = "fixture-minimum-standard-without-language"
+sources = ["lib.cppm"]
+)lito"_str },
+    { "manifest-c-with-cpp-standard"_str, R"lito([package]
+name = "fixture-c-with-cpp-standard"
+version = "0.1.0"
+language = "c"
+minimum-standard = "c++20"
+
+[lib]
+name = "fixture-c-with-cpp-standard"
+archive = "fixture-c-with-cpp-standard"
+sources = ["lib.c"]
+)lito"_str },
+    { "manifest-c-module"_str, R"lito([package]
+name = "fixture-c-module"
+version = "0.1.0"
+language = "c"
+
+[lib]
+name = "fixture-c-module"
+module = "fixture.c_module"
+archive = "fixture-c-module"
+sources = ["lib.c"]
+)lito"_str },
+    { "manifest-c-implicit-source-discovery"_str, R"lito([package]
+name = "fixture-c-implicit-source-discovery"
+version = "0.1.0"
+language = "c"
+
+[lib]
+name = "fixture-c-implicit-source-discovery"
+archive = "fixture-c-implicit-source-discovery"
+)lito"_str },
+    { "manifest-source-group-condition"_str, R"lito([package]
+name = "fixture-source-group-condition"
+version = "0.1.0"
+
+[source-groups.runtime]
+sources = ["runtime.cpp"]
+condition = 'target.os == "linux"'
+
+[lib]
+name = "fixture-source-group-condition"
+module = "fixture.source_group_condition"
+archive = "fixture-source-group-condition"
+source-groups = ["runtime"]
+)lito"_str },
     { "manifest-target-link-stdlib-type"_str, R"lito([package]
 name = "fixture-target-link-stdlib-type"
 version = "0.1.0"
@@ -586,6 +642,61 @@ archive = "fixture.convention.markers"
     ASSERT_EQ(module->targets.len(), usize(1));
     EXPECT_EQ(lito::manifest::package_target_source(module->targets[usize {}]).discovery,
               lito::manifest::SourceDiscoveryMode::Module);
+}
+
+TEST_F(Manifest, PackageLanguageAndSourceGroupsAreTyped) {
+    auto project = manifest("language-source-groups"_str, R"toml([package]
+name = "fixture-language-source-groups"
+version = "0.1.0"
+language = "c"
+minimum-standard = "c17"
+
+[external-sources.vendor]
+path = "vendor"
+
+[source-groups.runtime]
+external-source = "vendor"
+sources = ["src/runtime.c"]
+
+[source-groups.linux]
+sources = ["src/linux.c"]
+
+[lib]
+name = "fixture-language-source-groups"
+archive = "fixture-language-source-groups"
+source-groups = ["runtime"]
+
+[[lib.when]]
+condition = 'target.os == "linux"'
+source-groups = ["linux"]
+
+[usage]
+public-include-directories = [
+  { external-source = "vendor", path = "src" },
+]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->language.is_some());
+    EXPECT_EQ(loaded->language->language, lito::manifest::PackageLanguage::C);
+    EXPECT_EQ(loaded->language->c, lito::manifest::CStandard::C17);
+    ASSERT_EQ(loaded->external_sources.len(), usize(1));
+    EXPECT_EQ(loaded->external_sources[usize {}].name.as_str(), "vendor"_str);
+    ASSERT_EQ(loaded->source_groups.len(), usize(2));
+    ASSERT_EQ(loaded->targets.len(), usize(1));
+    const auto& source = lito::manifest::package_target_source(loaded->targets[usize {}]);
+    ASSERT_EQ(source.source_groups.len(), usize(1));
+    EXPECT_EQ(source.source_groups[usize {}].as_str(), "runtime"_str);
+    ASSERT_EQ(source.conditions.len(), usize(1));
+    EXPECT_EQ(source.conditions[usize {}].source.as_str(), "target.os == \"linux\""_str);
+    ASSERT_EQ(source.conditions[usize {}].source_groups.len(), usize(1));
+    EXPECT_EQ(source.conditions[usize {}].source_groups[usize {}].as_str(), "linux"_str);
+    ASSERT_EQ(loaded->usage.public_include_directory_requirements.len(), usize(1));
+    const auto& include = loaded->usage.public_include_directory_requirements[usize {}];
+    EXPECT_EQ(include.root, lito::dependency::IncludeDirectoryRoot::ExternalSource);
+    ASSERT_TRUE(include.external_source.is_some());
+    EXPECT_EQ(include.external_source->as_str(), "vendor"_str);
 }
 
 TEST_F(Manifest, ParsesConditionalUsageFeaturesAndDependencyRequests) {

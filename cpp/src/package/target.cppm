@@ -33,6 +33,9 @@ struct DependencySpec {
 struct TargetSource {
     PathBuf                            relative_path;
     PathBuf                            path;
+    PathBuf                            source_root;
+    String                             origin_identity;
+    bool                               external { false };
     Option<String>                     expected_module;
     Option<frontend::FrontendAnalysis> frontend_analysis;
 };

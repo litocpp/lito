@@ -63,6 +63,7 @@ struct ScanCacheInput {
     PathBuf                              record;
     String                               target;
     PathBuf                              relative_source;
+    String                               source_origin_identity;
     PathBuf                              source;
     String                               context_identity;
     PathBuf                              working_directory;
@@ -534,6 +535,7 @@ class ScanCacheSession {
         cache::add_text(hash, working->as_str());
         cache::add_text(hash, source_path->as_str());
         cache::add_text(hash, relative->as_str());
+        cache::add_text(hash, input.source_origin_identity.as_str());
         cache::add_text(hash, source.fingerprint.as_str());
         auto iter = files.iter();
         for (auto item = iter.next(); item.is_some(); item = iter.next()) {
@@ -623,6 +625,7 @@ private:
         auto environment                  = json_text(document, "environment"_str);
         auto target                       = json_text(document, "target"_str);
         auto context                      = json_text(document, "context"_str);
+        auto source_origin                = json_text(document, "source-origin"_str);
         auto stored_working               = json_text(document, "working-directory"_str);
         auto stored_source                = json_member(document, "source"_str);
         auto files_value                  = json_array(document, "files"_str);
@@ -632,9 +635,9 @@ private:
         auto stored_external_macro_schema = json_text(document, "external-macro-schema"_str);
         if (version.is_none() || state.is_none() || *state != "complete"_str || recipe.is_none() ||
             environment.is_none() || target.is_none() || context.is_none() ||
-            stored_working.is_none() || stored_source.is_none() || files_value.is_none() ||
-            lookups_value.is_none() || result_value.is_none() || stored_receipt.is_none() ||
-            stored_external_macro_schema.is_none()) {
+            source_origin.is_none() || stored_working.is_none() || stored_source.is_none() ||
+            files_value.is_none() || lookups_value.is_none() || result_value.is_none() ||
+            stored_receipt.is_none() || stored_external_macro_schema.is_none()) {
             return miss(ScanCacheMissReason::Corrupt);
         }
         if (*version != CACHE_VERSION) return miss(ScanCacheMissReason::Version);
@@ -643,6 +646,7 @@ private:
             return miss(ScanCacheMissReason::Environment);
         }
         if (*target != input.target.as_str() || *context != input.context_identity.as_str() ||
+            *source_origin != input.source_origin_identity.as_str() ||
             *stored_working != working->as_str()) {
             return miss(ScanCacheMissReason::Context);
         }
@@ -817,6 +821,8 @@ private:
             root.insert(String::make("recipe"_str), cache_string(SCAN_RECIPE));
             root.insert(String::make("result"_str), rstd::move(encoded_result).unwrap());
             root.insert(String::make("source"_str), Json::Object(rstd::move(source_json)));
+            root.insert(String::make("source-origin"_str),
+                        cache_string(input.source_origin_identity.as_str()));
             root.insert(String::make("state"_str), cache_string("complete"_str));
             root.insert(String::make("target"_str), cache_string(input.target.as_str()));
             root.insert(String::make("version"_str), cache_u64(CACHE_VERSION));

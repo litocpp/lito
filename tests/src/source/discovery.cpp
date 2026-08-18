@@ -10,8 +10,15 @@ import lito.test.support;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito_test;
+using PathBuf = rstd::path::PathBuf;
 
 class SourceDiscovery : public ProjectFixture {};
+
+auto discovery_sources(ref<str> source) -> Vec<PathBuf> {
+    auto result = Vec<PathBuf>::make();
+    result.push(PathBuf::from(source));
+    return result;
+}
 
 TEST_F(SourceDiscovery, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
     struct ExplicitSourceCase {
@@ -63,4 +70,83 @@ sources = {}
         auto discovered = lito::discover_explicit_sources(target);
         EXPECT_TRUE(discovered.is_err());
     }
+}
+
+TEST_F(SourceDiscovery, SourceGroupsRetainOriginsAcrossMultipleRoots) {
+    const ProjectFile files[] = {
+        { "local.c"_str, "int local_value(void) { return 1; }\n"_str },
+        { "vendor/vendor.c"_str, "int vendor_value(void) { return 2; }\n"_str },
+    };
+    auto project = materialize("source-group-origins"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto groups = Vec<lito::cpp::ResolvedSourceGroup>::make();
+    groups.push(lito::cpp::ResolvedSourceGroup {
+        .name     = String::make("local"_str),
+        .root     = project->root.clone(),
+        .identity = String::make("package:fixture"_str),
+        .sources  = discovery_sources("local.c"_str),
+    });
+    groups.push(lito::cpp::ResolvedSourceGroup {
+        .name     = String::make("vendor"_str),
+        .root     = project->root.join(PathBuf::from("vendor"_str).as_path()),
+        .identity = String::make("archive:vendor"_str),
+        .sources  = discovery_sources("vendor.c"_str),
+        .external = true,
+    });
+    auto target = lito::cpp::ResolvedTarget {
+        .id =
+            lito::package::PackageTargetId {
+                .package = String::make("fixture-source-groups"_str),
+                .kind    = lito::package::PackageTargetKind::Library,
+                .name    = String::make("fixture-source-groups"_str),
+            },
+        .language      = lito::manifest::PackageLanguage::C,
+        .source_groups = rstd::move(groups),
+        .root          = project->root.clone(),
+        .source_root   = project->root.clone(),
+    };
+
+    auto discovered = lito::discover_explicit_sources(target);
+    ASSERT_TRUE(discovered.is_ok());
+    ASSERT_EQ(discovered->sources.len(), usize(2));
+    EXPECT_EQ(discovered->sources[usize {}].origin_identity.as_str(), "package:fixture"_str);
+    EXPECT_FALSE(discovered->sources[usize {}].external);
+    EXPECT_EQ(discovered->sources[usize(1)].origin_identity.as_str(), "archive:vendor"_str);
+    EXPECT_TRUE(discovered->sources[usize(1)].external);
+}
+
+TEST_F(SourceDiscovery, DuplicatePhysicalSourceNamesBothSourceGroups) {
+    const ProjectFile files[] = {
+        { "shared.c"_str, "int shared_value(void) { return 1; }\n"_str },
+    };
+    auto project = materialize("source-group-duplicate"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto               groups        = Vec<lito::cpp::ResolvedSourceGroup>::make();
+    constexpr ref<str> group_names[] = { "first"_str, "second"_str };
+    for (auto name : group_names) {
+        groups.push(lito::cpp::ResolvedSourceGroup {
+            .name     = String::make(name),
+            .root     = project->root.clone(),
+            .identity = String::make("package:fixture"_str),
+            .sources  = discovery_sources("shared.c"_str),
+        });
+    }
+    auto target = lito::cpp::ResolvedTarget {
+        .id =
+            lito::package::PackageTargetId {
+                .package = String::make("fixture-source-groups"_str),
+                .kind    = lito::package::PackageTargetKind::Library,
+                .name    = String::make("fixture-source-groups"_str),
+            },
+        .language      = lito::manifest::PackageLanguage::C,
+        .source_groups = rstd::move(groups),
+        .root          = project->root.clone(),
+        .source_root   = project->root.clone(),
+    };
+
+    auto discovered = lito::discover_explicit_sources(target);
+    ASSERT_TRUE(discovered.is_err());
+    auto message = rstd::format("{}", rstd::move(discovered).unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("first"_str));
+    EXPECT_TRUE(message.as_str().contains("second"_str));
 }

@@ -53,6 +53,7 @@ sources = [
   "src/manifest/mod.cpp",
   "src/modules/discovery.cpp",
   "src/package/resolver.cpp",
+  "src/package/language.cpp",
   "src/package/features.cpp",
   "src/package/test.cpp",
   "src/source/cache.cpp",

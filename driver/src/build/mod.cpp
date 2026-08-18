@@ -548,10 +548,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
                                                 link_inputs,
+                                                target_spec.language,
                                                 package_plan.profile->cpp.abi.standard_library,
                                                 project.platform.effective_target,
                                                 target_spec.link_stdlib,
-                                                package_plan.profile->cpp.codegen.lto,
+                                                package_plan.profile->cpp.codegen.common.lto,
                                                 package_plan.link_requirements[target],
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());

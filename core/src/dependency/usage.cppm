@@ -12,14 +12,18 @@ enum class IncludeDirectoryRoot
 {
     Package,
     Generated,
+    ExternalSource,
 };
 
 struct IncludeDirectoryRequirement {
     IncludeDirectoryRoot root { IncludeDirectoryRoot::Package };
     PathBuf              path;
+    Option<String>       external_source;
 
     auto clone() const -> IncludeDirectoryRequirement {
-        return IncludeDirectoryRequirement { .root = root, .path = path.clone() };
+        auto result = IncludeDirectoryRequirement { .root = root, .path = path.clone() };
+        if (external_source.is_some()) result.external_source = Some(external_source->clone());
+        return result;
     }
 };
 
@@ -33,6 +37,7 @@ struct DeclaredUsageRequirements {
     bool                             threads { false };
     Vec<String>                      system_libraries;
     Vec<IncludeDirectoryRequirement> private_include_directory_requirements;
+    Vec<IncludeDirectoryRequirement> public_include_directory_requirements;
 };
 
 } // namespace lito::dependency

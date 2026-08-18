@@ -9,6 +9,7 @@ import :source.git;
 import :source.requirement;
 import :dependency.cmake;
 import :dependency.pkg_config;
+import :dependency.source;
 import :manifest;
 
 using namespace rstd::prelude;
@@ -109,6 +110,11 @@ auto clone_pkg_config_requirement(
     };
 }
 
+auto clone_external_source(const lito::dependency::ExternalSourceRequirement& source)
+    -> lito::dependency::ExternalSourceRequirement {
+    return source.clone();
+}
+
 auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&         manifest,
                                            const lito::manifest::WorkspaceManifest& workspace)
     -> WorkspaceResult<empty> {
@@ -173,6 +179,29 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
     }
     manifest.workspace_runtime_dependencies.clear();
 
+    for (const auto& reference : manifest.workspace_external_sources) {
+        const lito::manifest::WorkspaceExternalSourceDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.external_sources) {
+            if (candidate.name == reference.name) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(
+                rstd::format("workspace member '{}' inherits external source '{}' but "
+                             "workspace.external-sources has no matching definition",
+                             manifest.name.as_str(),
+                             reference.name.as_str()));
+        }
+        manifest.external_sources.push(lito::manifest::PackageExternalSourceDeclaration {
+            .name             = reference.name.clone(),
+            .source           = clone_external_source(definition->source),
+            .declaration_root = Some(workspace.root.clone()),
+        });
+    }
+    manifest.workspace_external_sources.clear();
+
     for (const auto& reference : manifest.workspace_pkg_config_external_dependencies) {
         const lito::manifest::WorkspacePkgConfigExternalDependencyDefinition* definition = nullptr;
         for (const auto& candidate : workspace.pkg_config_external_dependencies) {
@@ -231,19 +260,35 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .visibility = target.visibility,
             });
         }
-        manifest.cmake_external_dependencies.push(lito::dependency::CMakeDependencyRequirement {
+        auto requirement = lito::dependency::CMakeDependencyRequirement {
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
-            .source           = definition->source.clone(),
             .adapter          = rstd::move(adapter),
             .config_directory = rstd::move(config_directory),
             .cache            = rstd::move(cache),
             .targets          = rstd::move(targets),
             .declaration_root = Some(workspace.root.clone()),
             .adapter_root     = Some(workspace.root.clone()),
-        });
+        };
+        if (definition->source.is_some()) requirement.source = Some(definition->source->clone());
+        manifest.cmake_external_dependencies.push(rstd::move(requirement));
     }
     manifest.workspace_cmake_external_dependencies.clear();
+    for (const auto& dependency : manifest.cmake_external_dependencies) {
+        if (dependency.source.is_none()) continue;
+        auto found = false;
+        for (const auto& source : manifest.external_sources) {
+            if (source.name == dependency.source->as_str()) found = true;
+        }
+        if (! found) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' CMake dependency '{}' references unknown external source "
+                "'{}'",
+                manifest.name.as_str(),
+                dependency.alias.as_str(),
+                dependency.source->as_str()));
+        }
+    }
     return Ok(empty {});
 }
 

@@ -95,6 +95,7 @@ struct ClangBuiltinContext {
     Vec<String>                       query_command;
     toolchain::BuiltinSemanticContext semantic;
     String                            key;
+    toolchain::PreprocessorLanguage   language { toolchain::PreprocessorLanguage::Cpp };
     usize                             ignored_options {};
 };
 

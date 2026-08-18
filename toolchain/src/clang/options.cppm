@@ -36,6 +36,7 @@ inline constexpr auto STANDARD_INPUT    = "-"_str;
 
 inline constexpr auto LANGUAGE            = "-x"_str;
 inline constexpr auto CXX_SOURCE          = "c++"_str;
+inline constexpr auto C_SOURCE            = "c"_str;
 inline constexpr auto CXX_MODULE          = "c++-module"_str;
 inline constexpr auto MODULE_OUTPUT       = "-fmodule-output="_str;
 inline constexpr auto MODULE_FILE         = "-fmodule-file="_str;

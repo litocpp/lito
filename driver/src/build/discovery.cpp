@@ -72,12 +72,14 @@ auto resolve_declared_source(ref<rstd::path::Path> source_root, ref<rstd::path::
     }
     if (! lito::manifest::supported_manifest_source(resolved.as_path())) {
         return discovery_failure<cpp::ResolvedSource>(
-            rstd::format("unsupported C++ source extension: {}", declared));
+            rstd::format("unsupported source extension: {}", declared));
     }
     return Ok(cpp::ResolvedSource {
-        .relative_path  = PathBuf::from(*relative),
-        .canonical_path = rstd::move(resolved),
-        .origin         = cpp::SourceOrigin::Explicit,
+        .relative_path   = PathBuf::from(*relative),
+        .canonical_path  = rstd::move(resolved),
+        .source_root     = PathBuf::from(source_root),
+        .origin_identity = rstd::format("path:{}", source_root),
+        .origin          = cpp::SourceOrigin::Explicit,
     });
 }
 
@@ -128,9 +130,11 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
             .key = rstd::move(key).unwrap(),
             .source =
                 cpp::ResolvedSource {
-                    .relative_path  = PathBuf::from(*relative),
-                    .canonical_path = rstd::move(resolved),
-                    .origin         = cpp::SourceOrigin::Convention,
+                    .relative_path   = PathBuf::from(*relative),
+                    .canonical_path  = rstd::move(resolved),
+                    .source_root     = PathBuf::from(source_root),
+                    .origin_identity = rstd::format("path:{}", source_root),
+                    .origin          = cpp::SourceOrigin::Convention,
                 },
         });
     }
@@ -306,13 +310,13 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         const auto& compile_context =
             context->is_some() ? **context : plan.contexts[candidate.target];
-        auto analysis =
-            analysis_service.analyze(package.targets[candidate.target].id,
-                                     candidate.source.relative_path.as_path(),
-                                     candidate.source.canonical_path.as_path(),
-                                     compile_context,
-                                     package.targets[candidate.target].compile_metadata,
-                                     package.targets[candidate.target].source_root.as_path());
+        auto analysis = analysis_service.analyze(package.targets[candidate.target].id,
+                                                 candidate.source.relative_path.as_path(),
+                                                 candidate.source.origin_identity.as_str(),
+                                                 candidate.source.canonical_path.as_path(),
+                                                 compile_context,
+                                                 package.targets[candidate.target].compile_metadata,
+                                                 candidate.source.source_root.as_path());
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
         auto value = rstd::move(analysis).unwrap();
         if (value.result.provided.is_none() ||
@@ -345,30 +349,76 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
 namespace lito
 {
 
-static auto
-discover_explicit_sources_impl(ref<rstd::path::Path>                       source_root,
-                               const lito::manifest::TargetSourceManifest& source_manifest)
+static auto discover_explicit_sources_impl(const cpp::ResolvedTarget& target)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
-    auto       seen    = StringSet::make();
+    auto       owners  = StringMap::make();
     auto       entries = Vec<SourceEntry>::make();
-    const auto append  = [&](const PathBuf& declared) -> cpp::SourceDiscoveryResult<empty> {
-        auto resolved = resolve_declared_source(source_root, declared.as_path());
+    const auto append  = [&](ref<rstd::path::Path> root,
+                             const PathBuf&        declared,
+                             ref<str>              group,
+                             ref<str>              identity,
+                             bool                  external) -> cpp::SourceDiscoveryResult<empty> {
+        auto resolved = resolve_declared_source(root, declared.as_path());
         if (resolved.is_err()) return Err(rstd::move(resolved).unwrap_err());
-        auto source = rstd::move(resolved).unwrap();
-        auto key    = path_text(source.relative_path.as_path());
+        auto       source = rstd::move(resolved).unwrap();
+        const auto language_matches =
+            target.language == lito::manifest::PackageLanguage::C
+                ? lito::manifest::c_manifest_source(source.canonical_path.as_path())
+                : lito::manifest::cpp_manifest_source(source.canonical_path.as_path());
+        if (! language_matches) {
+            return discovery_failure<empty>(
+                rstd::format("target '{}::{}' is a {} target and cannot compile source '{}'",
+                             target.id.package.as_str(),
+                             target.id.name.as_str(),
+                             lito::manifest::package_language_name(target.language),
+                             source.canonical_path.as_path()));
+        }
+        auto key = path_text(source.canonical_path.as_path());
         if (key.is_err()) return Err(rstd::move(key).unwrap_err());
         auto source_key = rstd::move(key).unwrap();
-        if (seen.contains_key(source_key.as_str())) {
-            return discovery_failure<empty>(
-                rstd::format("artifact sources repeat source '{}'", source_key.as_str()));
+        auto owner      = group.is_empty() ? "target sources"_str : group;
+        auto first      = owners.get(source_key.as_str());
+        if (first.is_some()) {
+            return discovery_failure<empty>(rstd::format(
+                "target '{}::{}' source groups '{}' and '{}' repeat physical source '{}'",
+                target.id.package.as_str(),
+                target.id.name.as_str(),
+                (**first).as_str(),
+                owner,
+                source.canonical_path.as_path()));
         }
-        seen.insert(source_key.clone(), empty {});
+        if (! group.is_empty()) {
+            auto virtual_root = PathBuf::from("source-groups"_str);
+            virtual_root.push(PathBuf::from(group).as_path());
+            virtual_root.push(source.relative_path.as_path());
+            source.relative_path = rstd::move(virtual_root);
+        }
+        source.source_root     = PathBuf::from(root);
+        source.origin_identity = String::make(identity);
+        source.external        = external;
+        owners.insert(source_key.clone(), String::make(owner));
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
     };
-    for (const auto& declared : source_manifest.declared_sources) {
-        auto appended = append(declared);
+    auto local_identity_result = path_text(target.source_root.as_path());
+    if (local_identity_result.is_err()) {
+        return Err(rstd::move(local_identity_result).unwrap_err());
+    }
+    auto local_identity = rstd::move(local_identity_result).unwrap();
+    for (const auto& declared : target.source.declared_sources) {
+        auto appended =
+            append(target.source_root.as_path(), declared, ""_str, local_identity.as_str(), false);
         if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+    }
+    for (const auto& group : target.source_groups) {
+        for (const auto& declared : group.sources) {
+            auto appended = append(group.root.as_path(),
+                                   declared,
+                                   group.name.as_str(),
+                                   group.identity.as_str(),
+                                   group.external);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
     }
     rstd::slice_::sort_unstable_by(entries.as_mut_slice().as_mut_ref(),
                                    [](const SourceEntry& left, const SourceEntry& right) {
@@ -386,7 +436,7 @@ namespace lito
 
 auto discover_explicit_sources(const cpp::ResolvedTarget& target)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet> {
-    return discover_explicit_sources_impl(target.source_root.as_path(), target.source);
+    return discover_explicit_sources_impl(target);
 }
 
 auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
@@ -420,6 +470,13 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
         entries.push(SourceEntry { .key = rstd::move(source_key), .source = rstd::move(source) });
         return Ok(empty {});
     };
+    for (const auto& group : manifest.source_groups) {
+        if (group.external_source.is_some()) continue;
+        for (const auto& declared : group.sources) {
+            auto appended = append(declared);
+            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+        }
+    }
     for (const auto& target : manifest.targets) {
         const auto& source = lito::manifest::package_target_source(target);
         for (const auto& declared : source.declared_sources) {
@@ -589,10 +646,11 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                 resolved_context->is_some() ? **resolved_context : plan.contexts[candidate.target];
             auto task = analysis_service.prepare(target.id,
                                                  candidate.source.relative_path.as_path(),
+                                                 candidate.source.origin_identity.as_str(),
                                                  candidate.source.canonical_path.as_path(),
                                                  context,
                                                  target.compile_metadata,
-                                                 target.source_root.as_path(),
+                                                 candidate.source.source_root.as_path(),
                                                  ScanSourceOrigin::Discovery);
             if (task.is_err()) {
                 return Err(rstd::move(task).unwrap_err());

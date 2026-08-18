@@ -33,10 +33,10 @@ auto argument_layer(Vec<String> options) -> cpp::CppArgumentLayer {
     return parsed.is_ok() ? rstd::move(parsed).unwrap() : cpp::CppArgumentLayer {};
 }
 
-auto cpp_options(ref<str>                        standard,
-                 lito::manifest::CppOptimization optimization,
-                 lito::manifest::CppDebugInfo    debug_info,
-                 Vec<String>                     options = {}) -> cpp::CppCompileOptions {
+auto cpp_options(ref<str>                     standard,
+                 lito::manifest::Optimization optimization,
+                 lito::manifest::DebugInfo    debug_info,
+                 Vec<String>                  options = {}) -> cpp::CppCompileOptions {
     auto result = cpp::make_cpp_options(standard,
                                         lito::config::StandardLibrary::Libcxx,
                                         false,

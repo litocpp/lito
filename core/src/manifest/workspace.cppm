@@ -24,6 +24,7 @@ struct WorkspaceManifest {
     Vec<PathBuf>                                        default_members;
     WorkspacePackageDefaults                            package;
     Vec<WorkspaceDependencyDefinition>                  dependencies;
+    Vec<WorkspaceExternalSourceDefinition>              external_sources;
     Vec<WorkspacePkgConfigExternalDependencyDefinition> pkg_config_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyDefinition>     cmake_external_dependencies;
 };

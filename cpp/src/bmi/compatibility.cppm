@@ -183,14 +183,14 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     auto provider_abi = family_identity("abi"_str, provider.abi.modes);
     auto consumer_abi = family_identity("abi"_str, consumer.abi.modes);
     add_difference(BmiCompatibilityField::AbiModes, provider_abi.as_str(), consumer_abi.as_str());
-    auto provider_target = option_text(provider.target.target);
-    auto consumer_target = option_text(consumer.target.target);
-    if (provider.target.target.is_none()) provider_target = provider_format.target.clone();
-    if (consumer.target.target.is_none()) consumer_target = consumer_format.target.clone();
+    auto provider_target = option_text(provider.target.common.target);
+    auto consumer_target = option_text(consumer.target.common.target);
+    if (provider.target.common.target.is_none()) provider_target = provider_format.target.clone();
+    if (consumer.target.common.target.is_none()) consumer_target = consumer_format.target.clone();
     add_difference(
         BmiCompatibilityField::Target, provider_target.as_str(), consumer_target.as_str());
-    auto provider_sysroot = option_text(provider.target.sysroot);
-    auto consumer_sysroot = option_text(consumer.target.sysroot);
+    auto provider_sysroot = option_text(provider.target.common.sysroot);
+    auto consumer_sysroot = option_text(consumer.target.common.sysroot);
     add_difference(
         BmiCompatibilityField::Sysroot, provider_sysroot.as_str(), consumer_sysroot.as_str());
     auto provider_features = family_identity("target"_str, provider.target.features);

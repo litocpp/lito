@@ -96,6 +96,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         }
         auto workspace_dependencies =
             rstd_try(parse_workspace_dependencies(member(**workspace_value, "dependencies"_str)));
+        auto workspace_external_sources = rstd_try(
+            parse_workspace_external_sources(member(**workspace_value, "external-sources"_str)));
         auto external_dependencies = rstd_try(parse_workspace_external_dependencies(
             member(**workspace_value, "external-dependencies"_str)));
         auto profile = rstd_try(parse_project_profile(member(document, "profile"_str)));
@@ -110,6 +112,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
                 .default_members                  = rstd::move(default_members).unwrap(),
                 .package                          = rstd::move(package_defaults),
                 .dependencies                     = rstd::move(workspace_dependencies),
+                .external_sources                 = rstd::move(workspace_external_sources),
                 .pkg_config_external_dependencies = rstd::move(external_dependencies.pkg_config),
                 .cmake_external_dependencies      = rstd::move(external_dependencies.cmake),
             }),
@@ -131,13 +134,25 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         return manifest_schema_failure<ManifestDocument>(
             "package.name must contain only ASCII letters, digits, '-' or '_'"_str);
     }
-    auto library = rstd_try(parse_library_target(member(document, "lib"_str)));
-    auto bins    = rstd_try(parse_runnable_targets(
-        member(document, "bin"_str), lito::package::PackageTargetKind::Binary, "bin"_str));
-    auto tests   = rstd_try(parse_runnable_targets(
-        member(document, "test"_str), lito::package::PackageTargetKind::Test, "test"_str));
-    auto benches = rstd_try(parse_runnable_targets(
-        member(document, "bench"_str), lito::package::PackageTargetKind::Benchmark, "bench"_str));
+    const auto has_declared_compile_target =
+        member(document, "lib"_str).is_some() || member(document, "bin"_str).is_some() ||
+        member(document, "test"_str).is_some() || member(document, "bench"_str).is_some() ||
+        member(document, "compile-test"_str).is_some();
+    auto language = rstd_try(parse_package_language(package_value, has_declared_compile_target));
+    auto target_language = language.is_some() ? language->language : PackageLanguage::Cpp;
+    auto library = rstd_try(parse_library_target(member(document, "lib"_str), target_language));
+    auto bins    = rstd_try(parse_runnable_targets(member(document, "bin"_str),
+                                                   lito::package::PackageTargetKind::Binary,
+                                                   "bin"_str,
+                                                   target_language));
+    auto tests   = rstd_try(parse_runnable_targets(member(document, "test"_str),
+                                                   lito::package::PackageTargetKind::Test,
+                                                   "test"_str,
+                                                   target_language));
+    auto benches = rstd_try(parse_runnable_targets(member(document, "bench"_str),
+                                                   lito::package::PackageTargetKind::Benchmark,
+                                                   "bench"_str,
+                                                   target_language));
 
     auto compile_tests      = Vec<CompileTestCase>::make();
     auto compile_test_value = member(document, "compile-test"_str);
@@ -164,6 +179,14 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
     if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
     for (auto& target : *conventional) targets.push(rstd::move(target));
+    if (language.is_none() && ! targets.is_empty()) {
+        language = Some(PackageLanguageRequirement::cpp_language());
+    }
+    if (language.is_some() && language->language == PackageLanguage::C &&
+        ! compile_tests.is_empty()) {
+        return manifest_schema_failure<ManifestDocument>(
+            "compile-test is currently only supported by C++ packages"_str);
+    }
     if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none()) {
         return manifest_schema_failure<ManifestDocument>(
             "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
@@ -191,8 +214,11 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     auto dev_dependencies = parse_dependencies(member(document, "dev-dependencies"_str), true);
     auto runtime_dependencies =
         parse_runtime_dependencies(member(document, "runtime-dependencies"_str));
-    auto build_tools = parse_build_tools(member(document, "build-tools"_str));
-    auto external    = parse_external_dependencies(member(document, "external-dependencies"_str));
+    auto build_tools   = parse_build_tools(member(document, "build-tools"_str));
+    auto source_groups = parse_source_groups(member(document, "source-groups"_str));
+    auto external_sources =
+        parse_package_external_sources(member(document, "external-sources"_str), root.as_path());
+    auto external = parse_external_dependencies(member(document, "external-dependencies"_str));
     auto target = parse_target_predicate(member(package_value, "target"_str), "package.target"_str);
     if (usage.is_err()) return Err(rstd::move(usage).unwrap_err());
     if (conditions.is_err()) return Err(rstd::move(conditions).unwrap_err());
@@ -203,10 +229,13 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         return Err(rstd::move(runtime_dependencies).unwrap_err());
     }
     if (build_tools.is_err()) return Err(rstd::move(build_tools).unwrap_err());
+    if (source_groups.is_err()) return Err(rstd::move(source_groups).unwrap_err());
+    if (external_sources.is_err()) return Err(rstd::move(external_sources).unwrap_err());
     if (external.is_err()) return Err(rstd::move(external).unwrap_err());
     if (target.is_err()) return Err(rstd::move(target).unwrap_err());
     auto parsed_usage = rstd::move(usage).unwrap();
     if (! has_library && (! parsed_usage.public_include_directories.is_empty() ||
+                          ! parsed_usage.public_include_directory_requirements.is_empty() ||
                           ! parsed_usage.public_definitions.is_empty())) {
         return manifest_schema_failure<ManifestDocument>(
             "usage.public-* requires a library target"_str);
@@ -228,29 +257,128 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
                 dependency.name.as_str()));
         }
     }
-    auto external_dependencies = rstd::move(external).unwrap();
-    auto profile               = rstd_try(parse_project_profile(member(document, "profile"_str)));
+    auto       external_dependencies   = rstd::move(external).unwrap();
+    auto       parsed_external_sources = rstd::move(external_sources).unwrap();
+    auto       parsed_source_groups    = rstd::move(source_groups).unwrap();
+    const auto has_external_source     = [&](ref<str> name) {
+        for (const auto& source : parsed_external_sources.explicit_sources) {
+            if (source.name == name) return true;
+        }
+        for (const auto& source : parsed_external_sources.workspace_sources) {
+            if (source.name == name) return true;
+        }
+        return false;
+    };
+    const auto validate_include_sources =
+        [&](const Vec<lito::dependency::IncludeDirectoryRequirement>& requirements,
+            ref<str> owner) -> ManifestSchemaResult<empty> {
+        for (const auto& requirement : requirements) {
+            if (requirement.root != lito::dependency::IncludeDirectoryRoot::ExternalSource)
+                continue;
+            if (requirement.external_source.is_none() ||
+                ! has_external_source(requirement.external_source->as_str())) {
+                return manifest_schema_failure<empty>(rstd::format(
+                    "{} references unknown external source '{}'",
+                    owner,
+                    requirement.external_source.is_some() ? requirement.external_source->as_str()
+                                                          : "<none>"_str));
+            }
+        }
+        return Ok(empty {});
+    };
+    rstd_try(validate_include_sources(parsed_usage.public_include_directory_requirements,
+                                      "usage.public-include-directories"_str));
+    rstd_try(validate_include_sources(parsed_usage.private_include_directory_requirements,
+                                      "usage.private-include-directories"_str));
+    for (const auto& conditional : *conditions) {
+        rstd_try(
+            validate_include_sources(conditional.usage.values.public_include_directory_requirements,
+                                     "conditional usage.public-include-directories"_str));
+        rstd_try(validate_include_sources(
+            conditional.usage.values.private_include_directory_requirements,
+            "conditional usage.private-include-directories"_str));
+    }
+    for (const auto& group : parsed_source_groups) {
+        if (group.external_source.is_some() &&
+            ! has_external_source(group.external_source->as_str())) {
+            return manifest_schema_failure<ManifestDocument>(
+                rstd::format("source group '{}' references unknown external source '{}'",
+                             group.name.as_str(),
+                             group.external_source->as_str()));
+        }
+    }
+    const auto has_source_group = [&](ref<str> name) {
+        for (const auto& group : parsed_source_groups) {
+            if (group.name == name) return true;
+        }
+        return false;
+    };
+    for (const auto& manifest_target : targets) {
+        const auto& target_source = package_target_source(manifest_target);
+        for (const auto& group : target_source.source_groups) {
+            if (! has_source_group(group.as_str())) {
+                return manifest_schema_failure<ManifestDocument>(
+                    rstd::format("target '{}::{}' references unknown source group '{}'",
+                                 name->as_str(),
+                                 package_target_name(manifest_target),
+                                 group.as_str()));
+            }
+        }
+        for (const auto& conditional : target_source.conditions) {
+            for (const auto& group : conditional.source_groups) {
+                if (! has_source_group(group.as_str())) {
+                    return manifest_schema_failure<ManifestDocument>(rstd::format(
+                        "target '{}::{}' condition '{}' references unknown source group '{}'",
+                        name->as_str(),
+                        package_target_name(manifest_target),
+                        conditional.source.as_str(),
+                        group.as_str()));
+                }
+            }
+        }
+    }
+    for (const auto& dependency : external_dependencies.cmake) {
+        if (dependency.source.is_none()) continue;
+        auto found = false;
+        for (const auto& source : parsed_external_sources.explicit_sources) {
+            if (source.name == dependency.source->as_str()) found = true;
+        }
+        for (const auto& source : parsed_external_sources.workspace_sources) {
+            if (source.name == dependency.source->as_str()) found = true;
+        }
+        if (! found) {
+            return manifest_schema_failure<ManifestDocument>(rstd::format(
+                "CMake external dependency '{}' references unknown external source '{}'",
+                dependency.alias.as_str(),
+                dependency.source->as_str()));
+        }
+    }
+    auto profile = rstd_try(parse_project_profile(member(document, "profile"_str)));
 
     return Ok(ManifestDocument {
         .kind    = ManifestKind::Package,
         .package = Some(PackageManifest {
-            .name                   = rstd::move(name).unwrap(),
-            .version                = rstd::move(version).unwrap(),
-            .license                = rstd::move(license).unwrap(),
-            .root                   = root.clone(),
-            .source_root            = rstd::move(source_root).unwrap(),
-            .manifest_path          = rstd::move(path),
-            .install_script         = rstd::move(install_script).unwrap(),
-            .profile                = rstd::move(profile),
-            .build_tools            = rstd::move(build_tools).unwrap(),
-            .targets                = rstd::move(targets),
-            .target                 = rstd::move(target).unwrap(),
-            .compile_tests          = rstd::move(compile_tests),
-            .usage                  = rstd::move(parsed_usage),
-            .conditions             = rstd::move(conditions).unwrap(),
-            .features               = rstd::move(features).unwrap(),
-            .dependencies           = rstd::move(parsed_dependencies.explicit_dependencies),
-            .dev_dependencies       = rstd::move(parsed_dev_dependencies.explicit_dependencies),
+            .name                       = rstd::move(name).unwrap(),
+            .version                    = rstd::move(version).unwrap(),
+            .license                    = rstd::move(license).unwrap(),
+            .language                   = rstd::move(language),
+            .root                       = root.clone(),
+            .source_root                = rstd::move(source_root).unwrap(),
+            .manifest_path              = rstd::move(path),
+            .install_script             = rstd::move(install_script).unwrap(),
+            .profile                    = rstd::move(profile),
+            .build_tools                = rstd::move(build_tools).unwrap(),
+            .external_sources           = rstd::move(parsed_external_sources.explicit_sources),
+            .workspace_external_sources = rstd::move(parsed_external_sources.workspace_sources),
+            .source_groups              = rstd::move(parsed_source_groups),
+            .targets                    = rstd::move(targets),
+            .target                     = rstd::move(target).unwrap(),
+            .compile_tests              = rstd::move(compile_tests),
+            .usage                      = rstd::move(parsed_usage),
+            .conditions                 = rstd::move(conditions).unwrap(),
+            .features                   = rstd::move(features).unwrap(),
+            .dependencies               = rstd::move(parsed_dependencies.explicit_dependencies),
+            .dev_dependencies           = rstd::move(parsed_dev_dependencies.explicit_dependencies),
             .runtime_dependencies   = rstd::move(parsed_runtime_dependencies.explicit_dependencies),
             .workspace_dependencies = rstd::move(parsed_dependencies.workspace_dependencies),
             .workspace_dev_dependencies =

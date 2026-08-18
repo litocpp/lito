@@ -25,6 +25,7 @@ target_sources(
          src/preprocessor/directive.cppm
          src/preprocessor/mod.cppm
          src/parser/module_dependency.cppm
+         src/parser/header_dependency.cppm
          src/parser/mod.cppm
          src/service.cppm
          src/lib.cppm)

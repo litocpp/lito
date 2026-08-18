@@ -20,6 +20,7 @@ export namespace lito::toolchain
 auto query_clang_builtin_environment_snapshot(const Vec<String>&                base_command,
                                               ref<str>                          key,
                                               const BuiltinSemanticContext&     semantic_context,
+                                              PreprocessorLanguage              language,
                                               ref<rstd::path::Path>             working_directory,
                                               const ResolvedProcessEnvironment& environment)
     -> ToolchainResult<SharedClangBuiltinEnvironmentSnapshot> {
@@ -27,7 +28,9 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
     command::push_option(macro_command, clang_options::DUMP_MACROS);
     command::push_option(macro_command, clang_options::PREPROCESS);
     command::push_option(macro_command, clang_options::LANGUAGE);
-    command::push_option(macro_command, clang_options::CXX_SOURCE);
+    command::push_option(macro_command,
+                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
+                                                             : clang_options::CXX_SOURCE);
     command::push_option(macro_command, clang_options::STANDARD_INPUT);
     auto macro_output =
         run_command_with_input(macro_command, ""_str, environment, Some(working_directory));
@@ -45,8 +48,8 @@ auto query_clang_builtin_environment_snapshot(const Vec<String>&                
     auto clang_macros = clang_owned_macro_seeds(*macros);
     auto parsed       = parse_macro_seeds(clang_macros, "<built-in>"_str);
     if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-    auto capabilities =
-        query_clang_capabilities(base_command, semantic_context, working_directory, environment);
+    auto capabilities = query_clang_capabilities(
+        base_command, semantic_context, language, working_directory, environment);
     if (capabilities.is_err()) return Err(rstd::move(capabilities).unwrap_err());
     auto values            = rstd::move(parsed).unwrap();
     auto capability_values = rstd::move(capabilities).unwrap();
@@ -74,6 +77,7 @@ struct TextBuiltinValues {
 };
 
 auto query_text_builtins(const Vec<String>&                base_command,
+                         PreprocessorLanguage              language,
                          ref<rstd::path::Path>             working_directory,
                          const ResolvedProcessEnvironment& environment)
     -> ToolchainResult<TextBuiltinValues> {
@@ -81,7 +85,9 @@ auto query_text_builtins(const Vec<String>&                base_command,
     command::push_option(command_line, clang_options::PREPROCESS);
     command::push_option(command_line, clang_options::NO_LINE_MARKERS);
     command::push_option(command_line, clang_options::LANGUAGE);
-    command::push_option(command_line, clang_options::CXX_SOURCE);
+    command::push_option(command_line,
+                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
+                                                             : clang_options::CXX_SOURCE);
     command::push_option(command_line, clang_options::STANDARD_INPUT);
     auto output =
         run_command_with_input(command_line,
@@ -139,12 +145,13 @@ auto query_text_builtins(const Vec<String>&                base_command,
     });
 }
 
-auto query_preprocessor_environment(const Vec<String>&                    base_command,
-                                    PreprocessorEnvironmentKey            key,
-                                    SharedClangBuiltinEnvironmentSnapshot builtin_environment,
-                                    BuiltinSemanticContext                semantic_context,
-                                    const Vec<cpp::CppMacroDirective>&    macros,
-                                    const ResolvedProcessEnvironment&     environment)
+auto query_preprocessor_environment(const Vec<String>&                     base_command,
+                                    PreprocessorEnvironmentKey             key,
+                                    SharedClangBuiltinEnvironmentSnapshot  builtin_environment,
+                                    BuiltinSemanticContext                 semantic_context,
+                                    PreprocessorLanguage                   language,
+                                    const Vec<PreprocessorMacroDirective>& macros,
+                                    const ResolvedProcessEnvironment&      environment)
     -> ToolchainResult<PreprocessorEnvironment> {
     auto working_directory = key.working_directory.as_path();
     auto native_macros =
@@ -159,7 +166,9 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     command::push_option(include_command, clang_options::PREPROCESS);
     command::push_option(include_command, clang_options::VERBOSE);
     command::push_option(include_command, clang_options::LANGUAGE);
-    command::push_option(include_command, clang_options::CXX_SOURCE);
+    command::push_option(include_command,
+                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
+                                                             : clang_options::CXX_SOURCE);
     command::push_option(include_command, clang_options::STANDARD_INPUT);
     auto include_output =
         run_command_with_input(include_command, ""_str, environment, Some(working_directory));
@@ -174,10 +183,11 @@ auto query_preprocessor_environment(const Vec<String>&                    base_c
     }
     auto includes = parse_include_search(include_output->standard_error.as_str());
     if (includes.is_err()) return Err(rstd::move(includes).unwrap_err());
-    auto text_builtins = query_text_builtins(base_command, working_directory, environment);
+    auto text_builtins =
+        query_text_builtins(base_command, language, working_directory, environment);
     if (text_builtins.is_err()) return Err(rstd::move(text_builtins).unwrap_err());
     auto identity = environment_identity(
-        builtin_environment->identity.as_str(), *includes, key.context_id.as_str());
+        builtin_environment->identity.as_str(), *includes, key.context_id.as_str(), language);
     if (identity.is_err()) return Err(rstd::move(identity).unwrap_err());
     return Ok(PreprocessorEnvironment {
         .key                 = rstd::move(key),

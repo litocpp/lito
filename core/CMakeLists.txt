@@ -20,6 +20,7 @@ target_sources(
          src/config/project.cppm
          src/config/schema.cppm
          src/config/toolchain.cppm
+         src/compiler.cppm
          src/condition/mod.cppm
          src/lib.cppm
          src/dependency/cmake.cppm
@@ -43,6 +44,7 @@ target_sources(
          src/manifest/key_schema.cppm
          src/manifest/error.cppm
          src/manifest/locator.cppm
+         src/manifest/language.cppm
          src/manifest/mod.cppm
          src/manifest/dependency.cppm
          src/manifest/document.cppm
@@ -58,6 +60,7 @@ target_sources(
          src/package/features.cppm
          src/package/graph.cppm
          src/package/identity.cppm
+         src/package/language.cppm
          src/package/mod.cppm
          src/package/resolver.cppm
          src/package/runtime.cppm

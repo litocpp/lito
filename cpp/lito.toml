@@ -11,6 +11,10 @@ archive = "lito.cpp"
 workspace = true
 visibility = "public"
 
+[dependencies.lito-c]
+workspace = true
+visibility = "public"
+
 [dependencies.lito-frontend]
 workspace = true
 visibility = "public"

@@ -27,6 +27,12 @@ struct AcquiredExternalDependencySource {
 
 struct AcquiredExternalDependencySources {
     Vec<AcquiredExternalDependencySource> dependencies;
+    struct AcquiredPackageExternalSource {
+        usize                                package {};
+        usize                                declaration {};
+        Option<lito::source::AcquiredSource> acquired;
+    };
+    Vec<AcquiredPackageExternalSource> sources;
 };
 
 auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
@@ -47,12 +53,13 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     -> lito::dependency::DependencyResult<AcquiredExternalDependencySources>;
 
 struct ExternalSourceTask {
-    usize                                        package {};
-    usize                                        declaration {};
-    lito::dependency::CMakeDependencyRequirement requirement;
-    PathBuf                                      source_root;
-    bool                                         installed_override { false };
-    Option<lito::source::AcquiredSource>         acquired;
+    usize                                               package {};
+    usize                                               declaration {};
+    lito::dependency::CMakeDependencyRequirement        requirement;
+    Option<lito::dependency::ExternalSourceRequirement> source;
+    PathBuf                                             source_root;
+    bool                                                installed_override { false };
+    Option<lito::source::AcquiredSource>                acquired;
 };
 
 struct PreparedExternalSourceTask {
@@ -66,23 +73,24 @@ auto prepare_external_source_task(ExternalSourceTask task)
     -> lito::dependency::DependencyResult<PreparedExternalSourceTask> {
     auto        source      = PreparedCMakeDependencySource::Find();
     const auto& declaration = task.requirement;
-    if (! task.installed_override) {
-        if (declaration.source.is_Archive()) {
+    if (! task.installed_override && task.source.is_some()) {
+        const auto& source_declaration = *task.source;
+        if (source_declaration.is_Archive()) {
             source = PreparedCMakeDependencySource::Archive(
-                declaration.source.as_Archive().url.clone(),
-                declaration.source.as_Archive().sha256.clone());
-        } else if (declaration.source.is_ArchitectureArchives()) {
-            auto variants = Vec<lito::dependency::CMakeArchiveVariant>::with_capacity(
-                declaration.source.as_ArchitectureArchives().variants.len());
-            for (const auto& variant : declaration.source.as_ArchitectureArchives().variants) {
-                variants.push(lito::dependency::CMakeArchiveVariant {
+                source_declaration.as_Archive().url.clone(),
+                source_declaration.as_Archive().sha256.clone());
+        } else if (source_declaration.is_ArchitectureArchives()) {
+            auto variants = Vec<lito::dependency::ExternalArchiveVariant>::with_capacity(
+                source_declaration.as_ArchitectureArchives().variants.len());
+            for (const auto& variant : source_declaration.as_ArchitectureArchives().variants) {
+                variants.push(lito::dependency::ExternalArchiveVariant {
                     .architecture = variant.architecture.clone(),
                     .url          = variant.url.clone(),
                     .sha256       = variant.sha256.clone(),
                 });
             }
             source = PreparedCMakeDependencySource::ArchitectureArchives(rstd::move(variants));
-        } else if (! declaration.source.is_Find()) {
+        } else {
             if (task.acquired.is_none()) {
                 return lito::dependency::dependency_failure<PreparedExternalSourceTask>(
                     rstd::format("external source for CMake dependency '{}' was not fetched",
@@ -152,6 +160,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
             PreparedCMakeDependencyRequirement {
                 .alias            = declaration.alias.clone(),
                 .package          = declaration.package.clone(),
+                .source_name      = as<Clone>(declaration.source).clone(),
                 .source           = rstd::move(source),
                 .adapter          = rstd::move(adapter),
                 .adapter_identity = rstd::move(adapter_identity),
@@ -213,12 +222,32 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             .package            = source.package,
             .declaration        = source.declaration,
             .requirement        = declaration.clone(),
+            .source             = {},
             .source_root        = package.manifest.source_root.clone(),
             .installed_override = source.installed_override,
             .acquired           = rstd::move(source.acquired),
         });
+        if (declaration.source.is_some()) {
+            for (const auto& external : package.manifest.external_sources) {
+                if (external.name == declaration.source->as_str()) {
+                    tasks[tasks.len() - usize(1)].source = Some(external.source.clone());
+                    break;
+                }
+            }
+        }
     }
     auto result = PreparedExternalDependencySources {};
+    result.sources.reserve(acquired->sources.len());
+    for (auto& source : acquired->sources) {
+        const auto& declaration =
+            graph.packages[source.package].manifest.external_sources[source.declaration];
+        result.sources.push(PreparedPackageExternalSource {
+            .package  = source.package,
+            .name     = declaration.name.clone(),
+            .source   = declaration.source.clone(),
+            .acquired = rstd::move(source.acquired),
+        });
+    }
     if (tasks.is_empty()) return Ok(rstd::move(result));
 
     auto worker_count = jobs < tasks.len() ? jobs : tasks.len();
@@ -333,8 +362,8 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
             SelectedCMakeDependencySource::Archive(requirement.source.as_Archive().url.clone(),
                                                    requirement.source.as_Archive().sha256.clone());
     } else if (requirement.source.is_ArchitectureArchives()) {
-        const lito::dependency::CMakeArchiveVariant* selected  = nullptr;
-        auto                                         available = String::make();
+        const lito::dependency::ExternalArchiveVariant* selected  = nullptr;
+        auto                                            available = String::make();
         for (const auto& variant : requirement.source.as_ArchitectureArchives().variants) {
             if (! available.is_empty()) available.push_str(", "_str);
             available.push_str(variant.architecture.as_str());

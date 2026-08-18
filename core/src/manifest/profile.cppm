@@ -13,7 +13,7 @@ using namespace rstd::literals;
 export namespace lito::manifest
 {
 
-enum class CppOptimization
+enum class Optimization
 {
     Default,
     None,
@@ -27,7 +27,7 @@ enum class CppOptimization
     Fast,
 };
 
-enum class CppDebugInfo
+enum class DebugInfo
 {
     None,
     LineDirectivesOnly,
@@ -36,7 +36,7 @@ enum class CppDebugInfo
     Full,
 };
 
-enum class CppLto
+enum class Lto
 {
     Off,
     Thin,
@@ -78,10 +78,10 @@ enum class StripMode
 struct BuildProfileDefinition {
     BuildProfileName         name;
     Option<BuildProfileName> inherits;
-    Option<CppOptimization>  optimization;
-    Option<CppDebugInfo>     debug_info;
+    Option<Optimization>     optimization;
+    Option<DebugInfo>        debug_info;
     Option<StripMode>        strip;
-    Option<CppLto>           lto;
+    Option<Lto>              lto;
 
     auto clone() const -> BuildProfileDefinition {
         auto result = BuildProfileDefinition {
@@ -99,10 +99,10 @@ struct BuildProfileDefinition {
 struct ResolvedBuildProfile {
     BuildProfileName   name;
     BuildProfileFamily family { BuildProfileFamily::Debug };
-    CppOptimization    optimization { CppOptimization::None };
-    CppDebugInfo       debug_info { CppDebugInfo::Full };
+    Optimization       optimization { Optimization::None };
+    DebugInfo          debug_info { DebugInfo::Full };
     StripMode          strip { StripMode::None };
-    CppLto             lto { CppLto::Off };
+    Lto                lto { Lto::Off };
     bool               ndebug { false };
 };
 
@@ -133,8 +133,8 @@ struct Impl<fmt::Display, lito::manifest::BuildProfileError>
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Options()) {
-            return formatter.write_raw("build profile C++ options are invalid",
-                                       sizeof("build profile C++ options are invalid") - 1);
+            return formatter.write_raw("build profile options are invalid",
+                                       sizeof("build profile options are invalid") - 1);
         }
         return formatter.write_str(error.as_Message().message.as_str());
     }
@@ -236,10 +236,10 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                                      .value = String::make("debug"_str),
                                  },
                                  .family       = BuildProfileFamily::Debug,
-                                 .optimization = CppOptimization::None,
-                                 .debug_info   = CppDebugInfo::Full,
+                                 .optimization = Optimization::None,
+                                 .debug_info   = DebugInfo::Full,
                                  .strip        = StripMode::None,
-                                 .lto          = CppLto::Off,
+                                 .lto          = Lto::Off,
                                  .ndebug       = false,
                              }
                            : ResolvedBuildProfile {
@@ -247,10 +247,10 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                                      .value = String::make("release"_str),
                                  },
                                  .family       = BuildProfileFamily::Release,
-                                 .optimization = CppOptimization::Level3,
-                                 .debug_info   = CppDebugInfo::None,
+                                 .optimization = Optimization::Level3,
+                                 .debug_info   = DebugInfo::None,
                                  .strip        = StripMode::None,
-                                 .lto          = CppLto::Off,
+                                 .lto          = Lto::Off,
                                  .ndebug       = true,
                              };
         if (declared.is_some()) profile = apply_definition(rstd::move(profile), **declared);

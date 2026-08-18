@@ -40,5 +40,5 @@ target_sources(
          src/lib.cppm)
 target_link_libraries(
   lito.toolchain
-  PUBLIC lito.core lito.cpp lito.frontend rstd.std
+  PUBLIC lito.core lito.c lito.cpp lito.frontend rstd.std
   PRIVATE rstd.json)

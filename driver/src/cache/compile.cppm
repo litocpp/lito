@@ -133,6 +133,7 @@ public:
         cache::add_text(artifact_hash, context_key.as_str());
         cache::add_text(artifact_hash, command_key.as_str());
         cache::add_text(artifact_hash, scan_receipt);
+        cache::add_text(artifact_hash, unit.unit.source_origin_identity.as_str());
 
         auto direct = JsonArray::make();
         for (const auto& dependency : dependencies) {
@@ -184,6 +185,8 @@ public:
         complete.insert(String::make("scan-receipt"_str), cache_string(scan_receipt));
         complete.insert(String::make("source"_str), cache_string(relative->as_str()));
         complete.insert(String::make("source-path"_str), cache_string(source->as_str()));
+        complete.insert(String::make("source-origin"_str),
+                        cache_string(unit.unit.source_origin_identity.as_str()));
         complete.insert(String::make("state"_str), cache_string("complete"_str));
         complete.insert(String::make("target"_str), cache_string(target));
         complete.insert(String::make("version"_str), cache_u64(CACHE_VERSION));
@@ -194,6 +197,8 @@ public:
         building.insert(String::make("command"_str), cache_string(command_key.as_str()));
         building.insert(String::make("environment"_str), cache_string(environment_.as_str()));
         building.insert(String::make("source"_str), cache_string(relative->as_str()));
+        building.insert(String::make("source-origin"_str),
+                        cache_string(unit.unit.source_origin_identity.as_str()));
         building.insert(String::make("state"_str), cache_string("building"_str));
         building.insert(String::make("target"_str), cache_string(target));
         building.insert(String::make("version"_str), cache_u64(CACHE_VERSION));

@@ -38,9 +38,11 @@ archive = "cmake_valid"
 [external-dependencies.cmake.vulkan]
 package = "Vulkan"
 targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
+[external-sources.fixture]
+path = "package"
 [external-dependencies.cmake.fixture]
 package = "LitoFixture"
-path = "package"
+source = "fixture"
 config-directory = "lib/cmake/LitoFixture"
 cache = { LITO_FIXTURE_OPTION = true }
 targets = [
@@ -66,7 +68,7 @@ targets = [
     EXPECT_EQ(installed_requirement.package.as_str(), "Vulkan"_str);
     ASSERT_EQ(installed_requirement.targets.len(), usize(1));
     EXPECT_EQ(installed_requirement.targets[usize {}].name.as_str(), "Vulkan::Vulkan"_str);
-    EXPECT_TRUE(installed_requirement.source.is_Find());
+    EXPECT_TRUE(installed_requirement.source.is_none());
 
     const auto& source_requirement = loaded->cmake_external_dependencies[source_index];
     EXPECT_EQ(source_requirement.package.as_str(), "LitoFixture"_str);
@@ -74,13 +76,17 @@ targets = [
     EXPECT_EQ(source_requirement.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
     EXPECT_EQ(source_requirement.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
     EXPECT_EQ(source_requirement.targets[usize(2)].name.as_str(), "LitoFixture::order"_str);
-    EXPECT_TRUE(source_requirement.source.is_Path());
+    ASSERT_TRUE(source_requirement.source.is_some());
+    EXPECT_EQ(source_requirement.source->as_str(), "fixture"_str);
     ASSERT_EQ(source_requirement.cache.len(), usize(1));
     EXPECT_EQ(source_requirement.cache[usize {}].name.as_str(), "LITO_FIXTURE_OPTION"_str);
     EXPECT_EQ(source_requirement.cache[usize {}].value.as_str(), "ON"_str);
     ASSERT_TRUE(source_requirement.config_directory.is_some());
     EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
               "lib/cmake/LitoFixture"_str);
+    ASSERT_EQ(loaded->external_sources.len(), usize(1));
+    EXPECT_EQ(loaded->external_sources[usize {}].name.as_str(), "fixture"_str);
+    EXPECT_TRUE(loaded->external_sources[usize {}].source.is_Path());
 
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
@@ -106,9 +112,11 @@ version = "0.1.0"
 name = "cmake-source-adapter"
 module = "cmake_source_adapter"
 archive = "cmake_source_adapter"
+[external-sources.fixture]
+path = "project"
 [external-dependencies.cmake.fixture]
 package = "LitoSourceAdapter"
-path = "project"
+source = "fixture"
 adapter = "adapter.cmake"
 targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
 )"_str },
@@ -122,7 +130,10 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
     const auto& declared = loaded->cmake_external_dependencies[usize {}];
-    ASSERT_TRUE(declared.source.is_Path());
+    ASSERT_TRUE(declared.source.is_some());
+    EXPECT_EQ(declared.source->as_str(), "fixture"_str);
+    ASSERT_EQ(loaded->external_sources.len(), usize(1));
+    ASSERT_TRUE(loaded->external_sources[usize {}].source.is_Path());
     ASSERT_TRUE(declared.adapter.is_some());
     EXPECT_EQ(declared.adapter->as_path().to_str().unwrap(), "adapter.cmake"_str);
 
@@ -146,9 +157,11 @@ version = "0.1.0"
 name = "cmake-package-owned"
 module = "cmake.package_owned"
 archive = "cmake.package_owned"
+[external-sources.shaders]
+path = "shaders"
 [external-dependencies.cmake.shader]
 package = "FixtureShader"
-path = "shaders"
+source = "shaders"
 targets = [{ name = "FixtureShader::shader", visibility = "private" }]
 )"_str },
         { "shaders/CMakeLists.txt"_str,
@@ -163,8 +176,8 @@ targets = [{ name = "FixtureShader::shader", visibility = "private" }]
 
     auto prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(prepared_sources.is_ok());
-    ASSERT_EQ(graph->externals.len(), usize(1));
-    const auto& external = graph->externals[usize {}];
+    ASSERT_EQ(graph->packages[usize {}].externals.len(), usize(1));
+    const auto& external = graph->packages[usize {}].externals[usize {}];
     ASSERT_TRUE(external.source.is_Package());
     EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "shaders"_str);
 
@@ -203,9 +216,9 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
     auto declared = lito::resolve_external_dependency_sources(
         graph, rstd::move(options), resolver, *environment);
     ASSERT_TRUE(declared.is_ok());
-    ASSERT_EQ(graph.externals.len(), usize(1));
-    ASSERT_TRUE(graph.externals[usize {}].source.is_Git());
-    EXPECT_EQ(graph.externals[usize {}].source.as_Git().commit.as_str(),
+    ASSERT_EQ(graph.packages[usize {}].externals.len(), usize(1));
+    ASSERT_TRUE(graph.packages[usize {}].externals[usize {}].source.is_Git());
+    EXPECT_EQ(graph.packages[usize {}].externals[usize {}].source.as_Git().commit.as_str(),
               "0123456789abcdef0123456789abcdef01234567"_str);
 
     auto selected  = strings("fixture-root"_str);
@@ -229,9 +242,11 @@ version = "0.1.0"
 name = "cmake-override-source-adapter"
 module = "cmake.override_source_adapter"
 archive = "cmake.override_source_adapter"
+[external-sources.fixture]
+path = "project"
 [external-dependencies.cmake.fixture]
 package = "LitoSourceAdapter"
-path = "project"
+source = "fixture"
 adapter = "adapter.cmake"
 targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
 )"_str },
@@ -394,21 +409,24 @@ version = "0.1.0"
 name = "cmake-architecture-archives"
 module = "cmake_architecture_archives"
 archive = "cmake_architecture_archives"
-[external-dependencies.cmake.fixture]
-package = "Fixture"
-targets = [{ name = "Fixture::fixture", visibility = "private" }]
-[external-dependencies.cmake.fixture.archives.x86_64]
+[external-sources.fixture]
+[external-sources.fixture.archives.x86_64]
 archive = "https://example.com/fixture-linux64.tar.gz"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-[external-dependencies.cmake.fixture.archives.aarch64]
+[external-sources.fixture.archives.aarch64]
 archive = "https://example.com/fixture-linuxarm64.tar.gz"
 sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+[external-dependencies.cmake.fixture]
+package = "Fixture"
+source = "fixture"
+targets = [{ name = "Fixture::fixture", visibility = "private" }]
 )"_str);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->cmake_external_dependencies.len(), usize(1));
-    const auto& source = loaded->cmake_external_dependencies[usize {}].source;
+    ASSERT_EQ(loaded->external_sources.len(), usize(1));
+    const auto& source = loaded->external_sources[usize {}].source;
     ASSERT_TRUE(source.is_ArchitectureArchives());
     const auto& variants = source.as_ArchitectureArchives().variants;
     ASSERT_EQ(variants.len(), usize(2));
@@ -453,9 +471,11 @@ archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", 
     for (const auto& manifest : manifests) {
         auto contents =
             rstd::format("[package]\nname = \"cmake-{}\"\nversion = \"0.1.0\"\n"
+                         "[external-sources.fixture]\n{}\n"
                          "[external-dependencies.cmake.fixture]\npackage = \"Fixture\"\n"
+                         "source = \"fixture\"\n"
                          "targets = [{{ name = \"Fixture::fixture\", "
-                         "visibility = \"private\" }}]\n{}\n",
+                         "visibility = \"private\" }}]\n",
                          manifest.name,
                          manifest.source);
         auto project = manifest_project(manifest.name, contents.as_str());
@@ -466,14 +486,14 @@ archives = { x86_64 = { archive = "https://example.com/fixture-linux64.tar.gz", 
 }
 
 TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
-    auto variants = Vec<lito::dependency::CMakeArchiveVariant>::make();
-    variants.push(lito::dependency::CMakeArchiveVariant {
+    auto variants = Vec<lito::dependency::ExternalArchiveVariant>::make();
+    variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
         .url          = String::make("https://example.com/arm64.tar.gz"_str),
         .sha256 =
             String::make("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str),
     });
-    variants.push(lito::dependency::CMakeArchiveVariant {
+    variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
         .url          = String::make("https://example.com/x64.tar.gz"_str),
         .sha256 =
@@ -538,14 +558,16 @@ members = ["app"]
 default-members = ["app"]
 [workspace.package]
 version = "0.1.0"
-[workspace.external-dependencies.cmake.fixture]
-package = "Fixture"
-[workspace.external-dependencies.cmake.fixture.archives.x86_64]
+[workspace.external-sources.fixture]
+[workspace.external-sources.fixture.archives.x86_64]
 archive = "https://example.com/fixture-linux64.tar.gz"
 sha256 = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-[workspace.external-dependencies.cmake.fixture.archives.aarch64]
+[workspace.external-sources.fixture.archives.aarch64]
 archive = "https://example.com/fixture-linuxarm64.tar.gz"
 sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+[workspace.external-dependencies.cmake.fixture]
+package = "Fixture"
+source = "fixture"
 )"_str },
         { "app/lito.toml"_str, R"([package]
 name = "fixture-workspace-architecture-archives-app"
@@ -554,6 +576,8 @@ version.workspace = true
 link-stdlib = false
 name = "fixture-workspace-architecture-archives-app"
 sources = ["main.cpp"]
+[external-sources.fixture]
+workspace = true
 [external-dependencies.cmake.fixture]
 workspace = true
 targets = [{ name = "Fixture::fixture", visibility = "private" }]
@@ -566,8 +590,8 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     auto document  = lito::manifest::load_manifest_document(directory.as_path());
     ASSERT_TRUE(document.is_ok());
     ASSERT_TRUE(document->workspace.is_some());
-    ASSERT_EQ(document->workspace->cmake_external_dependencies.len(), usize(1));
-    const auto& declared = document->workspace->cmake_external_dependencies[usize {}];
+    ASSERT_EQ(document->workspace->external_sources.len(), usize(1));
+    const auto& declared = document->workspace->external_sources[usize {}];
     ASSERT_TRUE(declared.source.is_ArchitectureArchives());
     ASSERT_EQ(declared.source.as_ArchitectureArchives().variants.len(), usize(2));
 
@@ -577,10 +601,14 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     ASSERT_EQ(graph->packages[usize {}].manifest.cmake_external_dependencies.len(), usize(1));
     const auto& inherited =
         graph->packages[usize {}].manifest.cmake_external_dependencies[usize {}];
-    ASSERT_TRUE(inherited.source.is_ArchitectureArchives());
-    ASSERT_EQ(inherited.source.as_ArchitectureArchives().variants.len(), usize(2));
+    ASSERT_TRUE(inherited.source.is_some());
+    EXPECT_EQ(inherited.source->as_str(), "fixture"_str);
     ASSERT_EQ(inherited.targets.len(), usize(1));
     EXPECT_EQ(inherited.targets[usize {}].name.as_str(), "Fixture::fixture"_str);
+    ASSERT_EQ(graph->packages[usize {}].manifest.external_sources.len(), usize(1));
+    const auto& inherited_source = graph->packages[usize {}].manifest.external_sources[usize {}];
+    ASSERT_TRUE(inherited_source.source.is_ArchitectureArchives());
+    ASSERT_EQ(inherited_source.source.as_ArchitectureArchives().variants.len(), usize(2));
 
     const auto source_count     = graph->sources.len();
     auto       prepared_sources = lito::prepare_external_dependency_sources(*graph, {});

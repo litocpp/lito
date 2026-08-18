@@ -64,9 +64,10 @@ struct PackageOwnedExternalSourceResolution {
     lito::source::AcquiredSource acquired;
 };
 
-auto resolve_package_owned_external(const lito::package::ResolvedPackage&               package,
-                                    const lito::dependency::CMakeDependencyRequirement& declaration,
-                                    ref<rstd::path::Path> declaring_root)
+auto resolve_package_owned_external(
+    const lito::package::ResolvedPackage&                   package,
+    const lito::manifest::PackageExternalSourceDeclaration& declaration,
+    ref<rstd::path::Path>                                   declaring_root)
     -> lito::dependency::DependencyResult<Option<PackageOwnedExternalSourceResolution>> {
     auto requested =
         PathBuf::from(declaring_root).join(declaration.source.as_Path().path.as_path());
@@ -86,7 +87,7 @@ auto resolve_package_owned_external(const lito::package::ResolvedPackage&       
         return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
             rstd::format("CMake external dependency '{}:{}' has unsafe package source path '{}'",
                          package.manifest.name.as_str(),
-                         declaration.alias.as_str(),
+                         declaration.name.as_str(),
                          normalized.as_path()));
     }
     auto metadata = rstd::fs::metadata(physical.as_path());
@@ -100,7 +101,7 @@ auto resolve_package_owned_external(const lito::package::ResolvedPackage&       
         return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
             rstd::format("CMake external dependency '{}:{}' source '{}' is not a directory",
                          package.manifest.name.as_str(),
-                         declaration.alias.as_str(),
+                         declaration.name.as_str(),
                          physical.as_path()));
     }
     auto identity = rstd::format(
@@ -122,7 +123,6 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                                                   const ResolvedProcessEnvironment&     environment,
                                                   lito::source::SourceEventSink         observer)
     -> lito::dependency::DependencyResult<DeclaredExternalDependencySources> {
-    graph.externals.clear();
     auto package_owned = rstd::collections::BTreeMap<String, lito::source::AcquiredSource>::make();
     for (const auto& package : graph.packages) {
         if (package.source.kind != lito::source::PackageSourceKind::Git ||
@@ -148,35 +148,26 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
         git_indices.insert(rstd::move(key), git_sources.len());
         git_sources.push(clone_resolved_package_source(package.source));
     }
-    for (const auto& package : graph.packages) {
+    for (auto& package : graph.packages) {
+        package.externals.clear();
         for (const auto& tool : package.manifest.build_tools) {
             for (const auto& archive : tool.archives) {
                 auto architectures = Vec<Architecture>::make();
                 architectures.push(archive.host.architecture.clone());
-                graph.externals.push(lito::dependency::ResolvedExternalSourceRecord {
-                    .package       = package.manifest.name.clone(),
-                    .alias         = tool.alias.clone(),
-                    .provider      = rstd::format("build-tool:{}", archive.host.os.as_str()),
+                package.externals.push(lito::dependency::ResolvedExternalSourceRecord {
+                    .name = rstd::format(
+                        "build-tool:{}:{}", tool.alias.as_str(), archive.host.os.as_str()),
                     .architectures = rstd::move(architectures),
-                    .build_tool    = Some(lito::dependency::ResolvedBuildToolSourceMetadata {
-                        .version          = tool.version.clone(),
-                        .executable       = tool.executable.clone(),
-                        .operating_system = archive.host.os.clone(),
-                    }),
                     .source        = lito::dependency::ResolvedExternalSource::Archive(
                         archive.url.clone(), archive.sha256.clone()),
                 });
             }
         }
-        for (const auto& declaration : package.manifest.cmake_external_dependencies) {
-            if (declaration.source.is_Find()) continue;
-
+        for (const auto& declaration : package.manifest.external_sources) {
             auto make_record = [&](lito::dependency::ResolvedExternalSource source,
                                    Vec<Architecture>                        architectures) -> void {
-                graph.externals.push(lito::dependency::ResolvedExternalSourceRecord {
-                    .package       = package.manifest.name.clone(),
-                    .alias         = declaration.alias.clone(),
-                    .provider      = String::make("cmake"_str),
+                package.externals.push(lito::dependency::ResolvedExternalSourceRecord {
+                    .name          = declaration.name.clone(),
                     .architectures = rstd::move(architectures),
                     .source        = rstd::move(source),
                 });
@@ -211,13 +202,13 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                 if (owned->is_some()) {
                     auto resolved = rstd::move(owned).unwrap().unwrap();
                     auto key      = external_relation_key(package.manifest.name.as_str(),
-                                                          declaration.alias.as_str());
+                                                          declaration.name.as_str());
                     if (package_owned.contains_key(key.as_str())) {
                         return lito::dependency::dependency_failure<
                             DeclaredExternalDependencySources>(
-                            rstd::format("package '{}' repeats CMake external dependency '{}'",
+                            rstd::format("package '{}' repeats external source '{}'",
                                          package.manifest.name.as_str(),
-                                         declaration.alias.as_str()));
+                                         declaration.name.as_str()));
                     }
                     make_record(lito::dependency::ResolvedExternalSource::Package(
                                     resolved.relative_path.clone()),
@@ -290,12 +281,27 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
 }
 
 struct ExternalAcquisitionTask {
+    usize         package {};
+    usize         declaration {};
+    bool          installed_override { false };
+    Option<usize> active_source;
+};
+
+struct ActiveExternalSourceTask {
     usize                                package {};
     usize                                declaration {};
-    bool                                 installed_override { false };
     Option<usize>                        source_fetch;
     Option<lito::source::AcquiredSource> acquired;
 };
+
+auto clone_acquired_source(const lito::source::AcquiredSource& source)
+    -> lito::source::AcquiredSource {
+    return lito::source::AcquiredSource {
+        .root      = source.root.clone(),
+        .identity  = source.identity.clone(),
+        .cacheable = source.cacheable,
+    };
+}
 
 auto package_selected(const Vec<String>& selected, ref<str> package) -> bool {
     for (const auto& name : selected) {
@@ -344,10 +350,74 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             "source fetch jobs must be greater than zero"_str);
     }
     rstd_try(validate_cmake_build_overrides(graph, overrides));
-    auto options        = rstd::move(declared.options);
-    auto package_owned  = rstd::move(declared.package_owned);
-    auto tasks          = Vec<ExternalAcquisitionTask>::make();
-    auto fetch_requests = Vec<lito::source::PackageSourceFetchRequest>::make();
+    auto       options         = rstd::move(declared.options);
+    auto       package_owned   = rstd::move(declared.package_owned);
+    auto       tasks           = Vec<ExternalAcquisitionTask>::make();
+    auto       active_sources  = Vec<ActiveExternalSourceTask>::make();
+    auto       active_indices  = rstd::collections::BTreeMap<String, usize>::make();
+    auto       fetch_requests  = Vec<lito::source::PackageSourceFetchRequest>::make();
+    auto       fetch_indices   = rstd::collections::BTreeMap<String, usize>::make();
+    const auto activate_source = [&](usize    package_index,
+                                     ref<str> name) -> lito::dependency::DependencyResult<usize> {
+        const auto& package = graph.packages[package_index];
+        auto        key     = external_relation_key(package.manifest.name.as_str(), name);
+        auto        active  = active_indices.get(key.as_str());
+        if (active.is_some()) return Ok(usize(**active));
+        auto declaration_index = Option<usize> {};
+        for (usize index {}; index < package.manifest.external_sources.len(); ++index) {
+            if (package.manifest.external_sources[index].name == name) {
+                declaration_index = Some(usize(index));
+                break;
+            }
+        }
+        if (declaration_index.is_none()) {
+            return lito::dependency::dependency_failure<usize>(
+                rstd::format("package '{}' references unknown external source '{}'",
+                             package.manifest.name.as_str(),
+                             name));
+        }
+        const auto& external     = package.manifest.external_sources[*declaration_index];
+        auto        source_fetch = Option<usize> {};
+        auto        acquired     = Option<lito::source::AcquiredSource> {};
+        if (external.source.is_Git() || external.source.is_Path()) {
+            if (external.source.is_Path()) {
+                auto owned = package_owned.get(key.as_str());
+                if (owned.is_some()) acquired = Some(clone_acquired_source(**owned));
+            }
+            if (acquired.is_none()) {
+                auto existing = fetch_indices.get(key.as_str());
+                if (existing.is_some()) {
+                    source_fetch = Some(usize(**existing));
+                } else {
+                    auto acquisition    = external.source.is_Git()
+                                              ? lito::source::PackageSourceRequirement::Git(
+                                                    external.source.as_Git().url.clone(),
+                                                    external.source.as_Git().reference.clone())
+                                              : lito::source::PackageSourceRequirement::Path(
+                                                    external.source.as_Path().path.clone());
+                    auto declaring_root = package.manifest.root.clone();
+                    if (external.declaration_root.is_some()) {
+                        declaring_root = external.declaration_root->clone();
+                    }
+                    source_fetch = Some(fetch_requests.len());
+                    fetch_indices.insert(key.clone(), fetch_requests.len());
+                    fetch_requests.push(lito::source::PackageSourceFetchRequest {
+                        .source         = rstd::move(acquisition),
+                        .declaring_root = rstd::move(declaring_root),
+                    });
+                }
+            }
+        }
+        auto index = active_sources.len();
+        active_indices.insert(rstd::move(key), index);
+        active_sources.push(ActiveExternalSourceTask {
+            .package      = package_index,
+            .declaration  = *declaration_index,
+            .source_fetch = rstd::move(source_fetch),
+            .acquired     = rstd::move(acquired),
+        });
+        return Ok(index);
+    };
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         const auto& package = graph.packages[package_index];
         if (! package_selected(selected_packages, package.manifest.name.as_str())) continue;
@@ -357,41 +427,42 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             const auto& declaration =
                 package.manifest.cmake_external_dependencies[declaration_index];
             const auto installed_override = overrides.contains(declaration.package.as_str());
-            auto       source_fetch       = Option<usize> {};
-            auto       acquired           = Option<lito::source::AcquiredSource> {};
-            if (! installed_override &&
-                (declaration.source.is_Git() || declaration.source.is_Path())) {
-                if (declaration.source.is_Path()) {
-                    auto key = external_relation_key(package.manifest.name.as_str(),
-                                                     declaration.alias.as_str());
-                    acquired = package_owned.remove(key.as_str());
-                }
-                if (acquired.is_none()) {
-                    auto acquisition    = declaration.source.is_Git()
-                                              ? lito::source::PackageSourceRequirement::Git(
-                                                    declaration.source.as_Git().url.clone(),
-                                                    declaration.source.as_Git().reference.clone())
-                                              : lito::source::PackageSourceRequirement::Path(
-                                                    declaration.source.as_Path().path.clone());
-                    auto declaring_root = package.manifest.root.clone();
-                    if (declaration.declaration_root.is_some()) {
-                        declaring_root = declaration.declaration_root->clone();
-                    }
-                    source_fetch = Some(fetch_requests.len());
-                    fetch_requests.push(lito::source::PackageSourceFetchRequest {
-                        .source         = rstd::move(acquisition),
-                        .declaring_root = rstd::move(declaring_root),
-                    });
-                }
+            auto       active_source      = Option<usize> {};
+            if (! installed_override && declaration.source.is_some()) {
+                active_source =
+                    Some(rstd_try(activate_source(package_index, declaration.source->as_str())));
             }
             tasks.push(ExternalAcquisitionTask {
                 .package            = package_index,
                 .declaration        = declaration_index,
                 .installed_override = installed_override,
-                .source_fetch       = rstd::move(source_fetch),
-                .acquired           = rstd::move(acquired),
+                .active_source      = rstd::move(active_source),
             });
         }
+        for (const auto& target : package.manifest.targets) {
+            for (const auto& group_name :
+                 lito::manifest::package_target_source(target).source_groups) {
+                for (const auto& group : package.manifest.source_groups) {
+                    if (group.name != group_name.as_str() || group.external_source.is_none())
+                        continue;
+                    rstd_try(activate_source(package_index, group.external_source->as_str()));
+                }
+            }
+        }
+        const auto activate_includes =
+            [&](const Vec<lito::dependency::IncludeDirectoryRequirement>& requirements)
+            -> lito::dependency::DependencyResult<empty> {
+            for (const auto& requirement : requirements) {
+                if (requirement.root != lito::dependency::IncludeDirectoryRoot::ExternalSource ||
+                    requirement.external_source.is_none()) {
+                    continue;
+                }
+                rstd_try(activate_source(package_index, requirement.external_source->as_str()));
+            }
+            return Ok(empty {});
+        };
+        rstd_try(activate_includes(package.manifest.usage.public_include_directory_requirements));
+        rstd_try(activate_includes(package.manifest.usage.private_include_directory_requirements));
     }
 
     auto source_manager = lito::source::SourceManager(
@@ -403,9 +474,9 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
             rstd::into<lito::dependency::DependencyError>(rstd::move(fetched_result).unwrap_err()));
     }
     auto fetched = rstd::move(fetched_result).unwrap();
-    for (auto& task : tasks) {
-        if (task.source_fetch.is_none()) continue;
-        task.acquired = Some(rstd::move(fetched[*task.source_fetch].acquired));
+    for (auto& source : active_sources) {
+        if (source.source_fetch.is_none()) continue;
+        source.acquired = Some(clone_acquired_source(fetched[*source.source_fetch].acquired));
     }
     for (auto& outcome : fetched) {
         for (auto& source : outcome.sources) {
@@ -428,11 +499,24 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
     auto result = AcquiredExternalDependencySources {};
     result.dependencies.reserve(tasks.len());
     for (auto& task : tasks) {
+        auto acquired = Option<lito::source::AcquiredSource> {};
+        if (task.active_source.is_some() &&
+            active_sources[*task.active_source].acquired.is_some()) {
+            acquired = Some(clone_acquired_source(*active_sources[*task.active_source].acquired));
+        }
         result.dependencies.push(AcquiredExternalDependencySource {
             .package            = task.package,
             .declaration        = task.declaration,
             .installed_override = task.installed_override,
-            .acquired           = rstd::move(task.acquired),
+            .acquired           = rstd::move(acquired),
+        });
+    }
+    result.sources.reserve(active_sources.len());
+    for (auto& source : active_sources) {
+        result.sources.push(AcquiredExternalDependencySources::AcquiredPackageExternalSource {
+            .package     = source.package,
+            .declaration = source.declaration,
+            .acquired    = rstd::move(source.acquired),
         });
     }
     return Ok(rstd::move(result));

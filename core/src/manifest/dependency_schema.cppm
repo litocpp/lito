@@ -11,6 +11,7 @@ import :package.identity;
 import :dependency.visibility;
 import :dependency.cmake;
 import :dependency.pkg_config;
+import :dependency.source;
 import :source.git;
 import :source.requirement;
 import lito.system;
@@ -217,17 +218,17 @@ auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaRes
     return Ok(empty {});
 }
 
-auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
-    -> ManifestSchemaResult<Option<Vec<lito::dependency::CMakeArchiveVariant>>> {
-    if (value.is_none()) return Ok(Option<Vec<lito::dependency::CMakeArchiveVariant>> {});
+auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Option<Vec<lito::dependency::ExternalArchiveVariant>>> {
+    if (value.is_none()) return Ok(Option<Vec<lito::dependency::ExternalArchiveVariant>> {});
     auto variant_context = rstd::format("{}.archives", context);
     auto table           = table_value(**value, variant_context.as_str());
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     if ((**table).is_empty()) {
-        return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
+        return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
             rstd::format("{}.archives must not be empty", context));
     }
-    auto variants = Vec<lito::dependency::CMakeArchiveVariant>::with_capacity((**table).len());
+    auto variants = Vec<lito::dependency::ExternalArchiveVariant>::with_capacity((**table).len());
     auto keys     = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& name          = **key;
@@ -242,34 +243,151 @@ auto parse_cmake_archive_variants(Option<ref<Toml>> value, ref<str> context)
         if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
         rstd_try(validate_archive_url(archive->as_str(), entry_context.as_str()));
         if (! sha256_is_valid(sha256->as_str())) {
-            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
                 rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest",
                              entry_context.as_str()));
         }
         auto architecture = canonical_architecture(name.as_str());
         if (architecture.is_err()) {
-            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is invalid", context, name.as_str()));
         }
         if (architecture->as_str() != name.as_str()) {
-            return manifest_schema_failure<Option<Vec<lito::dependency::CMakeArchiveVariant>>>(
+            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
                 rstd::format("{}.archives architecture '{}' is not canonical; use '{}'",
                              context,
                              name.as_str(),
                              architecture->as_str()));
         }
-        variants.push(lito::dependency::CMakeArchiveVariant {
+        variants.push(lito::dependency::ExternalArchiveVariant {
             .architecture = rstd::move(architecture).unwrap(),
             .url          = rstd::move(archive).unwrap(),
             .sha256       = rstd::move(sha256).unwrap(),
         });
     }
     rstd::slice_::sort_unstable_by(variants.as_mut_slice().as_mut_ref(),
-                                   [](const lito::dependency::CMakeArchiveVariant& left,
-                                      const lito::dependency::CMakeArchiveVariant& right) {
+                                   [](const lito::dependency::ExternalArchiveVariant& left,
+                                      const lito::dependency::ExternalArchiveVariant& right) {
                                        return left.architecture.name < right.architecture.name;
                                    });
     return Ok(Some(rstd::move(variants)));
+}
+
+auto parse_external_source_requirement(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<lito::dependency::ExternalSourceRequirement> {
+    auto path    = rstd_try(optional_string(specification, "path"_str, context));
+    auto git     = rstd_try(optional_string(specification, "git"_str, context));
+    auto archive = rstd_try(optional_string(specification, "archive"_str, context));
+    auto sha256  = rstd_try(optional_string(specification, "sha256"_str, context));
+    auto archives =
+        rstd_try(parse_external_archive_variants(member(specification, "archives"_str), context));
+    const auto source_count = usize(path.is_some()) + usize(git.is_some()) +
+                              usize(archive.is_some()) + usize(archives.is_some());
+    if (source_count != usize(1)) {
+        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(rstd::format(
+            "{} must contain exactly one of 'path', 'git', 'archive', or 'archives'", context));
+    }
+    auto reference = rstd_try(parse_git_reference(specification, context));
+    if (git.is_none() && reference.kind != lito::source::GitReferenceKind::DefaultBranch) {
+        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
+            rstd::format("{} Git selector requires 'git'", context));
+    }
+    if (archive.is_some() != sha256.is_some()) {
+        return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
+            rstd::format("{}.archive and .sha256 must be specified together", context));
+    }
+    if (path.is_some()) {
+        auto parsed = rstd_try(
+            relative_path(rstd::move(path).unwrap(), rstd::format("{}.path", context).as_str()));
+        return Ok(lito::dependency::ExternalSourceRequirement::Path(rstd::move(parsed)));
+    }
+    if (git.is_some()) {
+        auto url = rstd::move(git).unwrap();
+        rstd_try(validate_git_url(url.as_str(), context));
+        return Ok(lito::dependency::ExternalSourceRequirement::Git(rstd::move(url),
+                                                                   rstd::move(reference)));
+    }
+    if (archive.is_some()) {
+        auto url  = rstd::move(archive).unwrap();
+        auto hash = rstd::move(sha256).unwrap();
+        rstd_try(validate_archive_url(url.as_str(), context));
+        if (! sha256_is_valid(hash.as_str())) {
+            return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
+                rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
+        }
+        return Ok(lito::dependency::ExternalSourceRequirement::Archive(rstd::move(url),
+                                                                       rstd::move(hash)));
+    }
+    return Ok(lito::dependency::ExternalSourceRequirement::ArchitectureArchives(
+        rstd::move(archives).unwrap()));
+}
+
+auto workspace_reference_enabled(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<bool>;
+
+struct ParsedExternalSources {
+    Vec<PackageExternalSourceDeclaration> explicit_sources;
+    Vec<WorkspaceExternalSourceReference> workspace_sources;
+};
+
+auto parse_package_external_sources(Option<ref<Toml>> value, ref<rstd::path::Path> root)
+    -> ManifestSchemaResult<ParsedExternalSources> {
+    auto result = ParsedExternalSources {};
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = rstd_try(table_value(**value, "manifest.external-sources"_str));
+    auto keys  = table->keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name    = **key;
+        const auto  context = rstd::format("external source '{}'", name.as_str());
+        if (! package_name_is_valid(name.as_str())) {
+            return manifest_schema_failure<ParsedExternalSources>(
+                rstd::format("external source name '{}' is invalid", name.as_str()));
+        }
+        const auto& specification = **table->get(name.as_str());
+        auto        fields        = rstd_try(table_value(specification, context.as_str()));
+        rstd_try(reject_unknown(*fields, context.as_str(), external_source_key));
+        const auto inherited =
+            rstd_try(workspace_reference_enabled(specification, context.as_str()));
+        if (inherited) {
+            rstd_try(
+                reject_unknown(*fields, context.as_str(), workspace_external_source_reference_key));
+            result.workspace_sources.push(
+                WorkspaceExternalSourceReference { .name = name.clone() });
+            continue;
+        }
+        auto source = rstd_try(parse_external_source_requirement(specification, context.as_str()));
+        result.explicit_sources.push(PackageExternalSourceDeclaration {
+            .name             = name.clone(),
+            .source           = rstd::move(source),
+            .declaration_root = Some(PathBuf::from(root)),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto parse_workspace_external_sources(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<Vec<WorkspaceExternalSourceDefinition>> {
+    auto result = Vec<WorkspaceExternalSourceDefinition>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = rstd_try(table_value(**value, "workspace.external-sources"_str));
+    auto keys  = table->keys();
+    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+        const auto& name    = **key;
+        const auto  context = rstd::format("workspace external source '{}'", name.as_str());
+        if (! package_name_is_valid(name.as_str())) {
+            return manifest_schema_failure<Vec<WorkspaceExternalSourceDefinition>>(
+                rstd::format("workspace external source name '{}' is invalid", name.as_str()));
+        }
+        const auto& specification = **table->get(name.as_str());
+        auto        fields        = rstd_try(table_value(specification, context.as_str()));
+        rstd_try(reject_unknown(*fields, context.as_str(), workspace_external_source_key));
+        auto source = rstd_try(parse_external_source_requirement(specification, context.as_str()));
+        result.push(WorkspaceExternalSourceDefinition {
+            .name   = name.clone(),
+            .source = rstd::move(source),
+        });
+    }
+    return Ok(rstd::move(result));
 }
 
 auto workspace_reference_enabled(const Toml& specification, ref<str> context)
@@ -641,47 +759,27 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
                                                 String      alias,
                                                 ref<str>    context)
     -> ManifestSchemaResult<WorkspaceCMakeExternalDependencyDefinition> {
-    auto package  = required_string(specification, "package"_str, context);
-    auto path     = optional_string(specification, "path"_str, context);
-    auto git      = optional_string(specification, "git"_str, context);
-    auto archive  = optional_string(specification, "archive"_str, context);
-    auto archives = parse_cmake_archive_variants(member(specification, "archives"_str), context);
-    auto sha256   = optional_string(specification, "sha256"_str, context);
-    auto adapter  = optional_string(specification, "adapter"_str, context);
+    auto package          = required_string(specification, "package"_str, context);
+    auto source           = optional_string(specification, "source"_str, context);
+    auto adapter          = optional_string(specification, "adapter"_str, context);
     auto config_directory = optional_string(specification, "config-directory"_str, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
-    if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-    if (git.is_err()) return Err(rstd::move(git).unwrap_err());
-    if (archive.is_err()) return Err(rstd::move(archive).unwrap_err());
-    if (archives.is_err()) return Err(rstd::move(archives).unwrap_err());
-    if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
+    if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
     if (! lito::dependency::cmake_package_name_is_valid(package->as_str())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.package is unsafe", context));
     }
-    auto path_value     = rstd::move(path).unwrap();
-    auto git_value      = rstd::move(git).unwrap();
-    auto archive_value  = rstd::move(archive).unwrap();
-    auto archives_value = rstd::move(archives).unwrap();
-    auto source_count   = usize(path_value.is_some()) + usize(git_value.is_some()) +
-                          usize(archive_value.is_some()) + usize(archives_value.is_some());
-    if (source_count > usize(1)) {
+    auto source_value = rstd::move(source).unwrap();
+    if (source_value.is_some() && ! package_name_is_valid(source_value->as_str())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} cannot combine 'path', 'git', 'archive', and 'archives'", context));
-    }
-    auto reference = parse_git_reference(specification, context);
-    if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
-    if (git_value.is_none() && reference->kind != lito::source::GitReferenceKind::DefaultBranch) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{} Git selector requires 'git'", context));
+            rstd::format("{}.source must name a package external source", context));
     }
     auto cache = parse_cmake_cache(member(specification, "cache"_str),
                                    "CMake external dependency cache"_str);
     if (cache.is_err()) return Err(rstd::move(cache).unwrap_err());
-    auto sourced = source_count == usize(1);
-    if (! sourced && (! cache->is_empty() || config_directory->is_some())) {
+    if (source_value.is_none() && (! cache->is_empty() || config_directory->is_some())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{} cache and config-directory require a source", context));
     }
@@ -689,35 +787,6 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     if (adapter_value.is_some() && config_directory->is_some()) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.config-directory cannot be combined with adapter", context));
-    }
-    auto hash_value = rstd::move(sha256).unwrap();
-    if (archive_value.is_some() != hash_value.is_some()) {
-        return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-            rstd::format("{}.archive and .sha256 must be specified together", context));
-    }
-    auto source = lito::dependency::CMakeDependencySource::Find();
-    if (path_value.is_some()) {
-        auto parsed =
-            relative_path(rstd::move(path_value).unwrap(), "CMake external dependency path"_str);
-        if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-        source = lito::dependency::CMakeDependencySource::Path(rstd::move(parsed).unwrap());
-    } else if (git_value.is_some()) {
-        auto url = rstd::move(git_value).unwrap();
-        rstd_try(validate_git_url(url.as_str(), context));
-        source = lito::dependency::CMakeDependencySource::Git(rstd::move(url),
-                                                              rstd::move(reference).unwrap());
-    } else if (archive_value.is_some()) {
-        auto url = rstd::move(archive_value).unwrap();
-        rstd_try(validate_archive_url(url.as_str(), context));
-        if (! sha256_is_valid(hash_value->as_str())) {
-            return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
-                rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
-        }
-        source = lito::dependency::CMakeDependencySource::Archive(rstd::move(url),
-                                                                  rstd::move(hash_value).unwrap());
-    } else if (archives_value.is_some()) {
-        source = lito::dependency::CMakeDependencySource::ArchitectureArchives(
-            rstd::move(archives_value).unwrap());
     }
     auto adapter_path = Option<PathBuf> {};
     if (adapter_value.is_some()) {
@@ -736,7 +805,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     return Ok(WorkspaceCMakeExternalDependencyDefinition {
         .alias            = rstd::move(alias),
         .package          = rstd::move(package).unwrap(),
-        .source           = rstd::move(source),
+        .source           = rstd::move(source_value),
         .adapter          = rstd::move(adapter_path),
         .config_directory = rstd::move(directory),
         .cache            = rstd::move(cache).unwrap(),

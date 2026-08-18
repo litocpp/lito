@@ -19,48 +19,47 @@ auto build_profile_key(ref<str> key) -> bool {
 }
 
 auto parse_profile_optimization(const Toml& value, ref<str> context)
-    -> ManifestSchemaResult<CppOptimization> {
+    -> ManifestSchemaResult<Optimization> {
     auto integer = value.as_integer();
     if (integer.is_some()) {
         switch (integer->to_primitive()) {
-        case 0: return Ok(CppOptimization::None);
-        case 1: return Ok(CppOptimization::Level1);
-        case 2: return Ok(CppOptimization::Level2);
-        case 3: return Ok(CppOptimization::Level3);
+        case 0: return Ok(Optimization::None);
+        case 1: return Ok(Optimization::Level1);
+        case 2: return Ok(Optimization::Level2);
+        case 3: return Ok(Optimization::Level3);
         default: break;
         }
     }
     auto text = value.as_str();
-    if (text.is_some() && *text == "s"_str) return Ok(CppOptimization::Size);
-    if (text.is_some() && *text == "z"_str) return Ok(CppOptimization::SizeMin);
-    return manifest_schema_failure<CppOptimization>(
+    if (text.is_some() && *text == "s"_str) return Ok(Optimization::Size);
+    if (text.is_some() && *text == "z"_str) return Ok(Optimization::SizeMin);
+    return manifest_schema_failure<Optimization>(
         rstd::format("{} must be 0, 1, 2, 3, 's', or 'z'", context));
 }
 
-auto parse_profile_debug(const Toml& value, ref<str> context)
-    -> ManifestSchemaResult<CppDebugInfo> {
+auto parse_profile_debug(const Toml& value, ref<str> context) -> ManifestSchemaResult<DebugInfo> {
     auto boolean = value.as_bool();
-    if (boolean.is_some()) return Ok(*boolean ? CppDebugInfo::Full : CppDebugInfo::None);
+    if (boolean.is_some()) return Ok(*boolean ? DebugInfo::Full : DebugInfo::None);
     auto integer = value.as_integer();
     if (integer.is_some()) {
         switch (integer->to_primitive()) {
-        case 0: return Ok(CppDebugInfo::None);
-        case 1: return Ok(CppDebugInfo::Limited);
-        case 2: return Ok(CppDebugInfo::Full);
+        case 0: return Ok(DebugInfo::None);
+        case 1: return Ok(DebugInfo::Limited);
+        case 2: return Ok(DebugInfo::Full);
         default: break;
         }
     }
     auto text = value.as_str();
-    if (text.is_some() && *text == "none"_str) return Ok(CppDebugInfo::None);
+    if (text.is_some() && *text == "none"_str) return Ok(DebugInfo::None);
     if (text.is_some() && *text == "line-directives-only"_str) {
-        return Ok(CppDebugInfo::LineDirectivesOnly);
+        return Ok(DebugInfo::LineDirectivesOnly);
     }
     if (text.is_some() && *text == "line-tables-only"_str) {
-        return Ok(CppDebugInfo::LineTablesOnly);
+        return Ok(DebugInfo::LineTablesOnly);
     }
-    if (text.is_some() && *text == "limited"_str) return Ok(CppDebugInfo::Limited);
-    if (text.is_some() && *text == "full"_str) return Ok(CppDebugInfo::Full);
-    return manifest_schema_failure<CppDebugInfo>(
+    if (text.is_some() && *text == "limited"_str) return Ok(DebugInfo::Limited);
+    if (text.is_some() && *text == "full"_str) return Ok(DebugInfo::Full);
+    return manifest_schema_failure<DebugInfo>(
         rstd::format("{} must be false, true, 0, 1, 2, 'none', 'line-directives-only', "
                      "'line-tables-only', 'limited', or 'full'",
                      context));
@@ -77,14 +76,14 @@ auto parse_profile_strip(const Toml& value, ref<str> context) -> ManifestSchemaR
         rstd::format("{} must be false, true, 'none', 'debuginfo', or 'symbols'", context));
 }
 
-auto parse_profile_lto(const Toml& value, ref<str> context) -> ManifestSchemaResult<CppLto> {
+auto parse_profile_lto(const Toml& value, ref<str> context) -> ManifestSchemaResult<Lto> {
     auto boolean = value.as_bool();
-    if (boolean.is_some()) return Ok(*boolean ? CppLto::Fat : CppLto::Off);
+    if (boolean.is_some()) return Ok(*boolean ? Lto::Fat : Lto::Off);
     auto text = value.as_str();
-    if (text.is_some() && *text == "off"_str) return Ok(CppLto::Off);
-    if (text.is_some() && *text == "thin"_str) return Ok(CppLto::Thin);
-    if (text.is_some() && *text == "fat"_str) return Ok(CppLto::Fat);
-    return manifest_schema_failure<CppLto>(
+    if (text.is_some() && *text == "off"_str) return Ok(Lto::Off);
+    if (text.is_some() && *text == "thin"_str) return Ok(Lto::Thin);
+    if (text.is_some() && *text == "fat"_str) return Ok(Lto::Fat);
+    return manifest_schema_failure<Lto>(
         rstd::format("{} must be false, true, 'off', 'thin', or 'fat'", context));
 }
 

@@ -22,6 +22,14 @@
         "type": "string"
       }
     },
+    "nonEmptyStringArray": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/definitions/nonEmptyString"
+      }
+    },
     "relativePath": {
       "description": "A non-empty path relative to the manifest directory. Lito validates platform-specific path semantics.",
       "type": "string",
@@ -81,6 +89,12 @@
           "additionalProperties": false
         }
       ]
+    },
+    "packageLanguage": {
+      "enum": ["c", "cpp"]
+    },
+    "languageStandard": {
+      "enum": ["c99", "c11", "c17", "c23", "c++20", "c++23", "c++26"]
     },
     "packageLicense": {
       "oneOf": [
@@ -189,6 +203,12 @@
         },
         "target": {
           "$ref": "#/definitions/targetPredicate"
+        },
+        "language": {
+          "$ref": "#/definitions/packageLanguage"
+        },
+        "minimum-standard": {
+          "$ref": "#/definitions/languageStandard"
         }
       },
       "additionalProperties": false
@@ -213,12 +233,53 @@
         }
       ]
     },
+    "targetSourceCondition": {
+      "type": "object",
+      "required": ["condition", "source-groups"],
+      "properties": {
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "targetSourceConditions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/definitions/targetSourceCondition"
+      }
+    },
+    "sourceGroup": {
+      "type": "object",
+      "required": ["sources"],
+      "properties": {
+        "external-source": {
+          "$ref": "#/definitions/packageName"
+        },
+        "sources": {
+          "$ref": "#/definitions/nonEmptyPathArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "sourceGroups": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/sourceGroup"
+        }
+      },
+      "additionalProperties": false
+    },
     "libraryTarget": {
       "type": "object",
       "required": [
         "name",
-        "archive",
-        "module"
+        "archive"
       ],
       "properties": {
         "name": {
@@ -232,6 +293,12 @@
         },
         "sources": {
           "$ref": "#/definitions/nonEmptyPathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
         }
       },
       "allOf": [
@@ -255,6 +322,12 @@
         },
         "sources": {
           "$ref": "#/definitions/pathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
         },
         "link-stdlib": {
           "type": "boolean",
@@ -305,6 +378,12 @@
         "sources": {
           "$ref": "#/definitions/pathArray"
         },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
+        },
         "link-stdlib": {
           "type": "boolean",
           "default": true
@@ -351,6 +430,12 @@
         },
         "sources": {
           "$ref": "#/definitions/pathArray"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        "when": {
+          "$ref": "#/definitions/targetSourceConditions"
         },
         "link-stdlib": {
           "type": "boolean",
@@ -459,14 +544,53 @@
       },
       "additionalProperties": false
     },
+    "includeDirectory": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/relativePath"
+        },
+        {
+          "type": "object",
+          "required": ["path", "external-source"],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/relativePath"
+            },
+            "external-source": {
+              "$ref": "#/definitions/packageName"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["path", "root"],
+          "properties": {
+            "path": {
+              "$ref": "#/definitions/relativePath"
+            },
+            "root": {
+              "enum": ["package", "generated"]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "includeDirectories": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/includeDirectory"
+      }
+    },
     "usage": {
       "type": "object",
       "properties": {
         "public-include-directories": {
-          "$ref": "#/definitions/pathArray"
+          "$ref": "#/definitions/includeDirectories"
         },
         "private-include-directories": {
-          "$ref": "#/definitions/pathArray"
+          "$ref": "#/definitions/includeDirectories"
         },
         "public-definitions": {
           "$ref": "#/definitions/stringArray"
@@ -630,6 +754,98 @@
       "patternProperties": {
         "^(?!(amd64|x64|arm64)$)[a-z0-9_-]+$": {
           "$ref": "#/definitions/cmakeArchiveVariant"
+        }
+      },
+      "additionalProperties": false
+    },
+    "externalSourceRecipe": {
+      "type": "object",
+      "properties": {
+        "path": {
+          "$ref": "#/definitions/relativePath"
+        },
+        "git": {
+          "$ref": "#/definitions/gitUrl"
+        },
+        "branch": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "tag": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "rev": {
+          "$ref": "#/definitions/gitSelector"
+        },
+        "commit": {
+          "$ref": "#/definitions/gitCommit"
+        },
+        "archive": {
+          "$ref": "#/definitions/archiveUrl"
+        },
+        "sha256": {
+          "$ref": "#/definitions/sha256"
+        },
+        "archives": {
+          "$ref": "#/definitions/cmakeArchitectureArchives"
+        }
+      },
+      "allOf": [
+        {
+          "$ref": "#/definitions/gitSelectors"
+        },
+        {
+          "oneOf": [
+            {
+              "required": ["path"]
+            },
+            {
+              "required": ["git"]
+            },
+            {
+              "required": ["archive", "sha256"]
+            },
+            {
+              "required": ["archives"]
+            }
+          ]
+        }
+      ],
+      "additionalProperties": false
+    },
+    "workspaceExternalSourceReference": {
+      "type": "object",
+      "required": ["workspace"],
+      "properties": {
+        "workspace": {
+          "enum": [true]
+        }
+      },
+      "additionalProperties": false
+    },
+    "packageExternalSource": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/externalSourceRecipe"
+        },
+        {
+          "$ref": "#/definitions/workspaceExternalSourceReference"
+        }
+      ]
+    },
+    "packageExternalSources": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/packageExternalSource"
+        }
+      },
+      "additionalProperties": false
+    },
+    "workspaceExternalSources": {
+      "type": "object",
+      "patternProperties": {
+        "^[A-Za-z0-9_-]+$": {
+          "$ref": "#/definitions/externalSourceRecipe"
         }
       },
       "additionalProperties": false
@@ -1085,32 +1301,8 @@
         "package": {
           "$ref": "#/definitions/cmakePackage"
         },
-        "path": {
-          "$ref": "#/definitions/relativePath"
-        },
-        "git": {
-          "$ref": "#/definitions/gitUrl"
-        },
-        "branch": {
-          "$ref": "#/definitions/gitSelector"
-        },
-        "tag": {
-          "$ref": "#/definitions/gitSelector"
-        },
-        "rev": {
-          "$ref": "#/definitions/gitSelector"
-        },
-        "commit": {
-          "$ref": "#/definitions/gitCommit"
-        },
-        "archive": {
-          "$ref": "#/definitions/archiveUrl"
-        },
-        "sha256": {
-          "$ref": "#/definitions/sha256"
-        },
-        "archives": {
-          "$ref": "#/definitions/cmakeArchitectureArchives"
+        "source": {
+          "$ref": "#/definitions/packageName"
         },
         "adapter": {
           "$ref": "#/definitions/relativePath"
@@ -1130,236 +1322,12 @@
           }
         }
       },
-      "allOf": [
-        {
-          "$ref": "#/definitions/gitSelectors"
-        },
-        {
-          "oneOf": [
-            {
-              "required": [
-                "path"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archive"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "sha256"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archives"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "git"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archive"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "sha256"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archives"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "archives"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archive"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "sha256"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "required": [
-                "archive",
-                "sha256"
-              ],
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archives"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  }
-                ]
-              }
-            },
-            {
-              "not": {
-                "anyOf": [
-                  {
-                    "required": [
-                      "path"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "git"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archive"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "sha256"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "archives"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "branch"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "tag"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "rev"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "cache"
-                    ]
-                  },
-                  {
-                    "required": [
-                      "config-directory"
-                    ]
-                  }
-                ]
-              }
-            }
-          ]
-        },
-        {
-          "not": {
-            "required": [
-              "adapter",
-              "config-directory"
-            ]
-          }
-        }
-      ],
+      "not": {
+        "required": [
+          "adapter",
+          "config-directory"
+        ]
+      },
       "additionalProperties": false
     },
     "explicitCmakeExternalDependency": {
@@ -1589,6 +1557,9 @@
         },
         "external-dependencies": {
           "$ref": "#/definitions/workspaceExternalDependencies"
+        },
+        "external-sources": {
+          "$ref": "#/definitions/workspaceExternalSources"
         }
       },
       "additionalProperties": false
@@ -1667,6 +1638,12 @@
         },
         "external-dependencies": {
           "$ref": "#/definitions/externalDependencies"
+        },
+        "external-sources": {
+          "$ref": "#/definitions/packageExternalSources"
+        },
+        "source-groups": {
+          "$ref": "#/definitions/sourceGroups"
         },
         "build-tools": {
           "$ref": "#/definitions/hostBuildTools"

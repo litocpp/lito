@@ -156,6 +156,14 @@ TEST_F(BuildProfile, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossB
     EXPECT_FALSE(debug->cpp.language.rtti);
     EXPECT_FALSE(release->cpp.language.exceptions);
     EXPECT_FALSE(release->cpp.language.rtti);
+    EXPECT_EQ(debug->c.codegen.optimization, debug->cpp.codegen.common.optimization);
+    EXPECT_EQ(debug->c.codegen.debug_info, debug->cpp.codegen.common.debug_info);
+    EXPECT_EQ(debug->c.codegen.lto, debug->cpp.codegen.common.lto);
+    EXPECT_EQ(debug->c.codegen.position_independent_code,
+              debug->cpp.codegen.common.position_independent_code);
+    EXPECT_EQ(release->c.codegen.optimization, release->cpp.codegen.common.optimization);
+    EXPECT_EQ(release->c.codegen.debug_info, release->cpp.codegen.common.debug_info);
+    EXPECT_EQ(release->c.codegen.lto, release->cpp.codegen.common.lto);
 }
 
 TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
@@ -183,19 +191,19 @@ TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     auto perf = lito::manifest::resolve_build_profile(graph->profile, build_profile("perf"_str));
     ASSERT_TRUE(perf.is_ok());
     EXPECT_EQ(perf->family, lito::manifest::BuildProfileFamily::Release);
-    EXPECT_EQ(perf->optimization, lito::manifest::CppOptimization::Level2);
-    EXPECT_EQ(perf->debug_info, lito::manifest::CppDebugInfo::LineTablesOnly);
+    EXPECT_EQ(perf->optimization, lito::manifest::Optimization::Level2);
+    EXPECT_EQ(perf->debug_info, lito::manifest::DebugInfo::LineTablesOnly);
     EXPECT_EQ(perf->strip, lito::manifest::StripMode::None);
-    EXPECT_EQ(perf->lto, lito::manifest::CppLto::Off);
+    EXPECT_EQ(perf->lto, lito::manifest::Lto::Off);
     EXPECT_TRUE(perf->ndebug);
 
     auto aliases =
         lito::manifest::resolve_build_profile(graph->profile, build_profile("aliases"_str));
     ASSERT_TRUE(aliases.is_ok());
-    EXPECT_EQ(aliases->optimization, lito::manifest::CppOptimization::SizeMin);
-    EXPECT_EQ(aliases->debug_info, lito::manifest::CppDebugInfo::Limited);
+    EXPECT_EQ(aliases->optimization, lito::manifest::Optimization::SizeMin);
+    EXPECT_EQ(aliases->debug_info, lito::manifest::DebugInfo::Limited);
     EXPECT_EQ(aliases->strip, lito::manifest::StripMode::Symbols);
-    EXPECT_EQ(aliases->lto, lito::manifest::CppLto::Fat);
+    EXPECT_EQ(aliases->lto, lito::manifest::Lto::Fat);
 }
 
 TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
@@ -227,19 +235,17 @@ TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
 }
 
 TEST_F(BuildProfile, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentities) {
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::Level2),
-              "-O2"_str);
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::Size), "-Os"_str);
-    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::CppOptimization::SizeMin),
-              "-Oz"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::LineDirectivesOnly),
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::Optimization::Level2), "-O2"_str);
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::Optimization::Size), "-Os"_str);
+    EXPECT_EQ(lito::cpp::cpp_optimization_option(lito::manifest::Optimization::SizeMin), "-Oz"_str);
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::DebugInfo::LineDirectivesOnly),
               "-gline-directives-only"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::LineTablesOnly),
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::DebugInfo::LineTablesOnly),
               "-gline-tables-only"_str);
-    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::CppDebugInfo::Limited), "-g1"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Off), "-fno-lto"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Thin), "-flto=thin"_str);
-    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::CppLto::Fat), "-flto=full"_str);
+    EXPECT_EQ(lito::cpp::cpp_debug_option(lito::manifest::DebugInfo::Limited), "-g1"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::Lto::Off), "-fno-lto"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::Lto::Thin), "-flto=thin"_str);
+    EXPECT_EQ(lito::cpp::cpp_lto_option(lito::manifest::Lto::Fat), "-flto=full"_str);
 
     auto project = profile_project("profile-codegen"_str);
     ASSERT_TRUE(project.is_ok());
@@ -359,6 +365,7 @@ options = ["-O2"]
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
                                                             rstd::move(external_usage),
+                                                            lito::cpp::ExternalSourceRootCatalog {},
                                                             *parser);
     ASSERT_TRUE(metadata.is_ok());
 
@@ -471,14 +478,16 @@ options = ["-ULITO_FEAT_API"]
         external_usage.packages.push(lito::cpp::ExternalPackageUsage {
             .package = String::make(item.package),
         });
-        auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
-                                                                packages,
-                                                                targets,
-                                                                build_configuration,
-                                                                rstd::move(profile).unwrap(),
-                                                                native_platform(),
-                                                                rstd::move(external_usage),
-                                                                *parser);
+        auto metadata =
+            lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
+                                                    packages,
+                                                    targets,
+                                                    build_configuration,
+                                                    rstd::move(profile).unwrap(),
+                                                    native_platform(),
+                                                    rstd::move(external_usage),
+                                                    lito::cpp::ExternalSourceRootCatalog {},
+                                                    *parser);
         ASSERT_TRUE(metadata.is_err());
         auto error = rstd::move(metadata).unwrap_err();
         ASSERT_TRUE(error.is_Message());

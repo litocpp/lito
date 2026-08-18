@@ -39,12 +39,33 @@ struct PackageCompileMetadata {
     }
 };
 
+struct ExternalSourceRoot {
+    usize   package {};
+    String  name;
+    PathBuf root;
+    String  identity;
+};
+
+struct ExternalSourceRootCatalog {
+    Vec<ExternalSourceRoot> sources;
+};
+
+struct ResolvedSourceGroup {
+    String       name;
+    PathBuf      root;
+    String       identity;
+    Vec<PathBuf> sources;
+    bool         external { false };
+};
+
 struct ResolvedTarget {
     lito::package::PackageTargetId               id;
     ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
+    lito::manifest::PackageLanguage              language { lito::manifest::PackageLanguage::Cpp };
     String                                       artifact_name;
     bool                                         link_stdlib { true };
     lito::manifest::TargetSourceManifest         source;
+    Vec<ResolvedSourceGroup>                     source_groups;
     PathBuf                                      root;
     PathBuf                                      source_root;
     UsageRequirements                            usage;

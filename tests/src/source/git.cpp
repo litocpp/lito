@@ -41,9 +41,12 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
             "archive = \"owned.fixture\"\n"
             "sources = [\"source.cppm\"]\n"
             "\n"
+            "[external-sources.shaders]\n"
+            "path = \"shaders\"\n"
+            "\n"
             "[external-dependencies.cmake.shader]\n"
             "package = \"FixtureShader\"\n"
-            "path = \"shaders\"\n"
+            "source = \"shaders\"\n"
             "targets = [{ name = \"FixtureShader::shader\", visibility = \"private\" }]\n"_str
                 .as_bytes())
             .is_ok());
@@ -116,9 +119,14 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
 
     auto locked = lito::lock::load_locked_project(project.as_path());
     ASSERT_TRUE(locked.is_ok());
-    ASSERT_EQ(locked->externals.len(), usize(1));
-    const auto& external = locked->externals[usize {}];
-    EXPECT_EQ(external.package.as_str(), "owned-fixture"_str);
+    const lito::lock::LockedPackage* owner = nullptr;
+    for (const auto& package : locked->packages) {
+        if (package.name.as_str() == "owned-fixture"_str) owner = rstd::addressof(package);
+    }
+    ASSERT_NE(owner, nullptr);
+    ASSERT_EQ(owner->externals.len(), usize(1));
+    const auto& external = owner->externals[usize {}];
+    EXPECT_EQ(external.name.as_str(), "shaders"_str);
     ASSERT_TRUE(external.source.is_Package());
     EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "pkg/shaders"_str);
     auto lock_text =
@@ -225,10 +233,13 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
 
     auto changed_manifest = rstd::format(
         "{}\n"
-        "[external-dependencies.cmake.changed]\n"
-        "package = \"Changed\"\n"
+        "[external-sources.changed]\n"
         "archive = \"https://example.invalid/changed.tar.gz\"\n"
         "sha256 = \"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\"\n"
+        "\n"
+        "[external-dependencies.cmake.changed]\n"
+        "package = \"Changed\"\n"
+        "source = \"changed\"\n"
         "targets = [{{ name = \"Changed::changed\", visibility = \"private\" }}]\n",
         manifest);
     ASSERT_TRUE(
@@ -279,11 +290,15 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
     auto locked = lito::lock::load_locked_project(
         project.as_path(), lito::lock::LockConfig { .path = configured_lock.clone() });
     ASSERT_TRUE(locked.is_ok());
-    ASSERT_EQ(locked->externals.len(), usize(1));
-    EXPECT_EQ(locked->externals[usize {}].package.as_str(), "patch-fixture"_str);
-    EXPECT_EQ(locked->externals[usize {}].alias.as_str(), "changed"_str);
-    ASSERT_TRUE(locked->externals[usize {}].source.is_Archive());
-    EXPECT_EQ(locked->externals[usize {}].source.as_Archive().url.as_str(),
+    const lito::lock::LockedPackage* owner = nullptr;
+    for (const auto& package : locked->packages) {
+        if (package.name.as_str() == "patch-fixture"_str) owner = rstd::addressof(package);
+    }
+    ASSERT_NE(owner, nullptr);
+    ASSERT_EQ(owner->externals.len(), usize(1));
+    EXPECT_EQ(owner->externals[usize {}].name.as_str(), "changed"_str);
+    ASSERT_TRUE(owner->externals[usize {}].source.is_Archive());
+    EXPECT_EQ(owner->externals[usize {}].source.as_Archive().url.as_str(),
               "https://example.invalid/changed.tar.gz"_str);
     auto default_lock = project.join(PathBuf::from("lito.lock"_str).as_path());
     auto exists       = rstd::fs::exists(default_lock.as_path());
@@ -294,9 +309,9 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
 TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
     constexpr ProjectFile update_files[] = {
         { "lito.lock"_str, R"({
-  "externals": [],
   "packages": [{
     "dependencies": [],
+    "externals": [],
     "manifest": "lito.toml",
     "name": "fixture-git-update",
     "runtime-dependencies": [],
@@ -307,7 +322,7 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
       "url": "https://example.invalid/repository.git"
     }
   }],
-  "version": 1
+  "version": 2
 })"_str },
     };
     auto update_project = materialize("git-update-lock"_str, update_files);
@@ -341,9 +356,9 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
 
     constexpr ProjectFile pinned_files[] = {
         { "lito.lock"_str, R"({
-  "externals": [],
   "packages": [{
     "dependencies": [],
+    "externals": [],
     "manifest": "lito.toml",
     "name": "fixture-git-commit",
     "runtime-dependencies": [],
@@ -357,7 +372,7 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
       "url": "https://example.invalid/repository.git"
     }
   }],
-  "version": 1
+  "version": 2
 })"_str },
     };
     auto pinned_project = materialize("git-pinned-lock"_str, pinned_files);
@@ -420,8 +435,7 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
         lito::dependency::CMakeDependencyRequirement {
             .alias   = String::make("fixture-reuse"_str),
             .package = String::make("Fixture"_str),
-            .source  = lito::dependency::CMakeDependencySource::Git(String::make(*url),
-                                                                    lito::source::GitReference {}),
+            .source  = Some(String::make("fixture"_str)),
         });
     auto reused =
         lito::prepare_external_dependency_sources(reuse_graph,
@@ -430,7 +444,7 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                                                   },
                                                   usize(2));
     ASSERT_TRUE(reused.is_ok());
-    ASSERT_EQ(reuse_graph.sources.len(), usize(1));
+    ASSERT_EQ(reuse_graph.packages[usize {}].externals.len(), usize(1));
     ASSERT_EQ(reused->dependencies.len(), usize(2));
     EXPECT_EQ(reused->dependencies[usize {}].requirement.source.as_Directory().identity,
               reused->dependencies[usize(1)].requirement.source.as_Directory().identity);

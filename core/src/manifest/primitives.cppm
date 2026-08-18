@@ -134,6 +134,7 @@ auto package_root_key(ref<str> key) -> bool {
            key == "bench"_str || key == "compile-test"_str || key == "usage"_str ||
            key == "dependencies"_str || key == "dev-dependencies"_str ||
            key == "runtime-dependencies"_str || key == "external-dependencies"_str ||
+           key == "external-sources"_str || key == "source-groups"_str ||
            key == "build-tools"_str || key == "profile"_str || key == "when"_str ||
            key == "features"_str;
 }

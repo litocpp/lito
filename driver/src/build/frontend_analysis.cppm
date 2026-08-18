@@ -121,6 +121,7 @@ public:
 
     auto prepare(const lito::package::PackageTargetId& target,
                  ref<rstd::path::Path>                 relative_source,
+                 ref<str>                              source_origin_identity,
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
                  const cpp::PackageCompileMetadata&    compile_metadata,
@@ -150,6 +151,7 @@ public:
             .record                   = rstd::move(record).unwrap(),
             .target                   = target_identity.clone(),
             .relative_source          = PathBuf::from(relative_source),
+            .source_origin_identity   = String::make(source_origin_identity),
             .source                   = PathBuf::from(source),
             .context_identity         = context.scan_id.clone(),
             .working_directory        = PathBuf::from(working_directory),
@@ -176,6 +178,7 @@ public:
 
     auto analyze(const lito::package::PackageTargetId& target,
                  ref<rstd::path::Path>                 relative_source,
+                 ref<str>                              source_origin_identity,
                  ref<rstd::path::Path>                 source,
                  const cpp::CompileContext&            context,
                  const cpp::PackageCompileMetadata&    compile_metadata,
@@ -183,6 +186,7 @@ public:
         -> BuildResult<frontend::FrontendAnalysis> {
         auto task = prepare(target,
                             relative_source,
+                            source_origin_identity,
                             source,
                             context,
                             compile_metadata,

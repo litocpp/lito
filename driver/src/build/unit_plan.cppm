@@ -77,15 +77,16 @@ auto prepare_build_units(const cpp::PackageSpec& package,
             auto id       = result.units.len();
             auto prepared = toolchain.prepare(
                 cpp::UnitSpec {
-                    .id                  = id,
-                    .target              = target,
-                    .relative_source     = source.relative_path.clone(),
-                    .source              = source.path.clone(),
-                    .object              = rstd::move(object).unwrap(),
-                    .cache_record        = rstd::move(cache_record).unwrap(),
-                    .compile_test_record = rstd::move(compile_test_record),
-                    .context             = context,
-                    .compile_test        = compile_test,
+                    .id                     = id,
+                    .target                 = target,
+                    .relative_source        = source.relative_path.clone(),
+                    .source_origin_identity = source.origin_identity.clone(),
+                    .source                 = source.path.clone(),
+                    .object                 = rstd::move(object).unwrap(),
+                    .cache_record           = rstd::move(cache_record).unwrap(),
+                    .compile_test_record    = rstd::move(compile_test_record),
+                    .context                = context,
+                    .compile_test           = compile_test,
                 },
                 target_spec.source_root.as_path());
             if (prepared.is_err()) {

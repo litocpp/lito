@@ -141,8 +141,8 @@ TEST(CompilerArguments, CarriesTypedNativePreprocessorEffects) {
                                          lito::config::StandardLibrary::Libcxx,
                                          false,
                                          false,
-                                         lito::manifest::CppOptimization::None,
-                                         lito::manifest::CppDebugInfo::None,
+                                         lito::manifest::Optimization::None,
+                                         lito::manifest::DebugInfo::None,
                                          cpp::CppOptionLayer {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });
@@ -163,8 +163,8 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
                                          lito::config::StandardLibrary::Libcxx,
                                          false,
                                          false,
-                                         lito::manifest::CppOptimization::None,
-                                         lito::manifest::CppDebugInfo::None,
+                                         lito::manifest::Optimization::None,
+                                         lito::manifest::DebugInfo::None,
                                          cpp::CppOptionLayer {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });

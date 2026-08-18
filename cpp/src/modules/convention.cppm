@@ -131,6 +131,8 @@ auto canonical_candidate(ref<rstd::path::Path> package_source_root,
     return Ok(ResolvedSource {
         .relative_path   = PathBuf::from(*package_relative),
         .canonical_path  = rstd::move(resolved),
+        .source_root     = PathBuf::from(package_source_root),
+        .origin_identity = rstd::format("path:{}", package_source_root),
         .origin          = SourceOrigin::Convention,
         .expected_module = rstd::move(expected),
     });

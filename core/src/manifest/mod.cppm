@@ -3,6 +3,7 @@ export module lito.core:manifest;
 export import :manifest.profile;
 export import :manifest.conditional;
 export import :manifest.source_convention;
+export import :manifest.language;
 export import :manifest.target;
 export import :manifest.dependency;
 export import :manifest.build_tool;

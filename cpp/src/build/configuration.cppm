@@ -15,8 +15,9 @@ struct BuildConfiguration {
     BmiMode                       bmi_mode { BmiMode::Reduced };
     BmiSourceEmbeddingPolicy bmi_source_embedding { BmiSourceEmbeddingPolicy::ExternalSources };
     String                   language_standard;
-    Vec<String>              options;
-    Vec<String>              linker_options;
+    Option<lito::manifest::CStandard> c_standard;
+    Vec<String>                       options;
+    Vec<String>                       linker_options;
 
     auto clone() const -> BuildConfiguration {
         return BuildConfiguration {
@@ -25,6 +26,7 @@ struct BuildConfiguration {
             .bmi_mode             = bmi_mode,
             .bmi_source_embedding = bmi_source_embedding,
             .language_standard    = language_standard.clone(),
+            .c_standard           = c_standard,
             .options              = options.clone(),
             .linker_options       = linker_options.clone(),
         };

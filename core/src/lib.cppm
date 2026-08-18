@@ -3,6 +3,7 @@ export module lito.core;
 import rstd;
 
 export import lito.system;
+export import :compiler;
 export import :config;
 export import :condition;
 export import :template_;

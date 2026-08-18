@@ -2,6 +2,7 @@ export module lito.toolchain.clang:preprocessor_probe;
 
 import rstd;
 import lito.cpp;
+import lito.c;
 import lito.core;
 import lito.toolchain.common;
 import lito.system;
@@ -155,7 +156,7 @@ auto command_line_macro_seed(ref<str> definition) -> preprocessor::MacroSeed {
     return preprocessor::MacroSeed { .definition = rstd::move(value) };
 }
 
-auto command_line_macro_states(const Vec<cpp::CppMacroDirective>& macros)
+auto command_line_macro_states(const Vec<PreprocessorMacroDirective>& macros)
     -> rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>> {
     auto values = rstd::collections::BTreeMap<String, Option<preprocessor::MacroSeed>>::make();
     auto apply_define = [&values](ref<str> definition) {
@@ -168,7 +169,7 @@ auto command_line_macro_states(const Vec<cpp::CppMacroDirective>& macros)
         if (! name.is_empty()) values.insert(String::make(name), None());
     };
     for (const auto& macro : macros) {
-        if (macro.action == cpp::CppMacroAction::Define) {
+        if (macro.defined) {
             apply_define(macro.value.as_str());
         } else {
             apply_undefine(macro.value.as_str());
@@ -187,7 +188,7 @@ struct ParsedCommandLineMacros {
     Vec<preprocessor::PredefinedMacroOperation> operations;
 };
 
-auto parse_command_line_macros(const Vec<cpp::CppMacroDirective>& macros)
+auto parse_command_line_macros(const Vec<PreprocessorMacroDirective>& macros)
     -> ToolchainResult<ParsedCommandLineMacros> {
     auto states  = command_line_macro_states(macros);
     auto seeds   = Vec<preprocessor::MacroSeed>::make();
@@ -359,7 +360,8 @@ auto builtin_snapshot_identity(const Vec<preprocessor::MacroSeed>& macros, ref<s
 
 auto environment_identity(ref<str>                       builtin_identity,
                           const Vec<IncludeSearchEntry>& includes,
-                          ref<str>                       context_id) -> ToolchainResult<String> {
+                          ref<str>                       context_id,
+                          PreprocessorLanguage           language) -> ToolchainResult<String> {
     constexpr uint64_t offset = 14695981039346656037ull;
     constexpr uint64_t prime  = 1099511628211ull;
     auto               hash   = offset;
@@ -374,7 +376,8 @@ auto environment_identity(ref<str>                       builtin_identity,
     add("lito-clang-preprocessor-environment-v2"_str);
     add(context_id);
     add(builtin_identity);
-    add(cpp::CPP_IDENTIFIER_RULE_ID);
+    add(language == PreprocessorLanguage::C ? lito::c::C_IDENTIFIER_RULE_ID
+                                            : cpp::CPP_IDENTIFIER_RULE_ID);
     for (const auto& include : includes) {
         auto text = include.directory.as_path().to_str();
         if (text.is_none()) {
@@ -591,10 +594,13 @@ auto parse_capability_value(ref<str> raw) -> ToolchainResult<i64> {
 
 auto query_clang_capabilities(const Vec<String>&                base_command,
                               const BuiltinSemanticContext&     semantic_context,
+                              PreprocessorLanguage              language,
                               ref<rstd::path::Path>             working_directory,
                               const ResolvedProcessEnvironment& environment)
     -> ToolchainResult<QueriedCapabilities> {
-    auto catalog      = standard_library_capabilities();
+    auto catalog      = language == PreprocessorLanguage::Cpp
+                            ? standard_library_capabilities()
+                            : Vec<preprocessor::BuiltinQueryKey>::make();
     auto pending      = Vec<preprocessor::BuiltinQueryKey>::make();
     auto source       = String::make();
     auto native_count = usize {};
@@ -630,7 +636,9 @@ auto query_clang_capabilities(const Vec<String>&                base_command,
     command::push_option(command_line, clang_options::PREPROCESS);
     command::push_option(command_line, clang_options::NO_LINE_MARKERS);
     command::push_option(command_line, clang_options::LANGUAGE);
-    command::push_option(command_line, clang_options::CXX_SOURCE);
+    command::push_option(command_line,
+                         language == PreprocessorLanguage::C ? clang_options::C_SOURCE
+                                                             : clang_options::CXX_SOURCE);
     command::push_option(command_line, clang_options::STANDARD_INPUT);
     auto output =
         run_command_with_input(command_line, source.as_str(), environment, Some(working_directory));

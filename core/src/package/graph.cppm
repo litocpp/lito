@@ -43,14 +43,15 @@ struct ResolvedFeature {
 };
 
 struct ResolvedPackage {
-    String                              source_identity;
-    lito::source::ResolvedPackageSource source;
-    PathBuf                             source_manifest;
-    lito::manifest::PackageManifest     manifest;
-    Vec<ResolvedDependency>             dependencies;
-    Vec<ResolvedDependency>             dev_dependencies;
-    Vec<ResolvedRuntimeDependency>      runtime_dependencies;
-    Vec<ResolvedFeature>                features;
+    String                                              source_identity;
+    lito::source::ResolvedPackageSource                 source;
+    PathBuf                                             source_manifest;
+    lito::manifest::PackageManifest                     manifest;
+    Vec<ResolvedDependency>                             dependencies;
+    Vec<ResolvedDependency>                             dev_dependencies;
+    Vec<ResolvedRuntimeDependency>                      runtime_dependencies;
+    Vec<ResolvedFeature>                                features;
+    Vec<lito::dependency::ResolvedExternalSourceRecord> externals;
 };
 
 struct ResolvedProjectRoot {
@@ -60,15 +61,14 @@ struct ResolvedProjectRoot {
 };
 
 struct ResolvedPackageGraph {
-    String                                              name;
-    Vec<ResolvedProjectRoot>                            roots;
-    PathBuf                                             root_directory;
-    PathBuf                                             manifest_path;
-    bool                                                root_is_workspace { false };
-    lito::manifest::ProjectProfile                      profile;
-    Vec<lito::source::ResolvedPackageSource>            sources;
-    Vec<ResolvedPackage>                                packages;
-    Vec<lito::dependency::ResolvedExternalSourceRecord> externals;
+    String                                   name;
+    Vec<ResolvedProjectRoot>                 roots;
+    PathBuf                                  root_directory;
+    PathBuf                                  manifest_path;
+    bool                                     root_is_workspace { false };
+    lito::manifest::ProjectProfile           profile;
+    Vec<lito::source::ResolvedPackageSource> sources;
+    Vec<ResolvedPackage>                     packages;
 };
 
 } // namespace lito::package

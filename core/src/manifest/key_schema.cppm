@@ -7,6 +7,7 @@ import rstd;
 import rstd.toml;
 import :manifest.error;
 import :manifest.package;
+import :manifest.language;
 import :package.identity;
 import :manifest.primitives;
 
@@ -17,16 +18,26 @@ using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
-           key == "target"_str || key == "license"_str;
+           key == "target"_str || key == "license"_str || key == "language"_str ||
+           key == "minimum-standard"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "archive"_str || key == "module"_str || key == "sources"_str;
+    return key == "name"_str || key == "archive"_str || key == "module"_str ||
+           key == "sources"_str || key == "source-groups"_str || key == "when"_str;
 }
 
 auto runnable_key(ref<str> key) -> bool {
     return key == "name"_str || key == "module"_str || key == "sources"_str ||
-           key == "link-stdlib"_str;
+           key == "source-groups"_str || key == "when"_str || key == "link-stdlib"_str;
+}
+
+auto source_group_key(ref<str> key) -> bool {
+    return key == "external-source"_str || key == "sources"_str;
+}
+
+auto target_when_key(ref<str> key) -> bool {
+    return key == "condition"_str || key == "source-groups"_str;
 }
 
 auto binary_key(ref<str> key) -> bool {
@@ -83,7 +94,7 @@ auto feature_key(ref<str> key) -> bool {
 }
 
 auto include_directory_key(ref<str> key) -> bool {
-    return key == "path"_str || key == "root"_str;
+    return key == "path"_str || key == "root"_str || key == "external-source"_str;
 }
 
 auto dependency_key(ref<str> key) -> bool {
@@ -123,9 +134,7 @@ auto external_dependencies_key(ref<str> key) -> bool {
 }
 
 auto cmake_external_key(ref<str> key) -> bool {
-    return key == "package"_str || key == "path"_str || key == "git"_str || key == "branch"_str ||
-           key == "tag"_str || key == "rev"_str || key == "commit"_str || key == "archive"_str ||
-           key == "archives"_str || key == "sha256"_str || key == "adapter"_str ||
+    return key == "package"_str || key == "source"_str || key == "adapter"_str ||
            key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
            key == "workspace"_str;
 }
@@ -136,6 +145,20 @@ auto cmake_archive_variant_key(ref<str> key) -> bool {
 
 auto workspace_cmake_external_key(ref<str> key) -> bool {
     return cmake_external_key(key) && key != "targets"_str && key != "workspace"_str;
+}
+
+auto external_source_key(ref<str> key) -> bool {
+    return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
+           key == "rev"_str || key == "commit"_str || key == "archive"_str ||
+           key == "archives"_str || key == "sha256"_str || key == "workspace"_str;
+}
+
+auto workspace_external_source_key(ref<str> key) -> bool {
+    return external_source_key(key) && key != "workspace"_str;
+}
+
+auto workspace_external_source_reference_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
 }
 
 auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
@@ -161,7 +184,8 @@ auto workspace_pkg_config_external_reference_key(ref<str> key) -> bool {
 
 auto workspace_key(ref<str> key) -> bool {
     return key == "name"_str || key == "members"_str || key == "default-members"_str ||
-           key == "package"_str || key == "dependencies"_str || key == "external-dependencies"_str;
+           key == "package"_str || key == "dependencies"_str ||
+           key == "external-dependencies"_str || key == "external-sources"_str;
 }
 
 auto package_version_key(ref<str> key) -> bool {
@@ -174,6 +198,51 @@ auto workspace_package_key(ref<str> key) -> bool {
 
 auto package_license_key(ref<str> key) -> bool {
     return key == "workspace"_str;
+}
+
+auto parse_package_language(const Toml& package, bool has_compile_target)
+    -> ManifestSchemaResult<Option<PackageLanguageRequirement>> {
+    auto language_value = member(package, "language"_str);
+    auto standard_value = member(package, "minimum-standard"_str);
+    if (language_value.is_none() && standard_value.is_some()) {
+        return manifest_schema_failure<Option<PackageLanguageRequirement>>(
+            "package.minimum-standard requires package.language"_str);
+    }
+    if (language_value.is_none()) {
+        if (! has_compile_target) return Ok(None());
+        return Ok(Some(PackageLanguageRequirement::cpp_language()));
+    }
+
+    auto language = rstd_try(string_value(**language_value, "package.language"_str));
+    if (language.as_str() != "c"_str && language.as_str() != "cpp"_str) {
+        return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
+            "package.language '{}' is unsupported; expected 'c' or 'cpp'", language.as_str()));
+    }
+    if (language.as_str() == "c"_str) {
+        auto standard = CStandard::C99;
+        if (standard_value.is_some()) {
+            auto text   = rstd_try(string_value(**standard_value, "package.minimum-standard"_str));
+            auto parsed = parse_c_standard(text.as_str());
+            if (parsed.is_none()) {
+                return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
+                    "package.minimum-standard '{}' is not a supported C standard", text.as_str()));
+            }
+            standard = *parsed;
+        }
+        return Ok(Some(PackageLanguageRequirement::c_language(standard)));
+    }
+
+    auto standard = CppStandard::Cpp20;
+    if (standard_value.is_some()) {
+        auto text   = rstd_try(string_value(**standard_value, "package.minimum-standard"_str));
+        auto parsed = parse_cpp_standard(text.as_str());
+        if (parsed.is_none()) {
+            return manifest_schema_failure<Option<PackageLanguageRequirement>>(rstd::format(
+                "package.minimum-standard '{}' is not a supported C++ standard", text.as_str()));
+        }
+        standard = *parsed;
+    }
+    return Ok(Some(PackageLanguageRequirement::cpp_language(standard)));
 }
 
 auto parse_package_version(const Toml& package, bool optional)

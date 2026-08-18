@@ -25,7 +25,8 @@ namespace lito
 struct ProjectResolution {
     lito::package::ResolvedPackageSelection selection;
     lito::lock::LockStatus                  lock;
-    PreparedExternalDependencySources       external_sources;
+    DeclaredExternalDependencySources       external_sources;
+    lito::dependency::CMakeBuildOverrideSet cmake_build_overrides;
 };
 
 } // namespace lito
@@ -111,19 +112,11 @@ auto resolve_project(const lito::package::PackageSelection&         selection,
                                                      environment,
                                                      observer));
     auto lock = rstd_try(lito::lock::sync_lock(started.selection.graph, rstd::move(started.lock)));
-    auto external_sources =
-        rstd_try(prepare_external_dependency_sources(started.selection.graph,
-                                                     started.selection.selected_package_names,
-                                                     rstd::move(declared_sources),
-                                                     cmake_build_overrides,
-                                                     tool_resolver,
-                                                     environment,
-                                                     jobs,
-                                                     observer));
     return Ok(ProjectResolution {
-        .selection        = rstd::move(started.selection),
-        .lock             = lock,
-        .external_sources = rstd::move(external_sources),
+        .selection             = rstd::move(started.selection),
+        .lock                  = lock,
+        .external_sources      = rstd::move(declared_sources),
+        .cmake_build_overrides = cmake_build_overrides.clone(),
     });
 }
 
@@ -230,9 +223,15 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               usize                                            jobs,
                               const Option<BuildEventSink>&                    observer = None())
     -> ProjectResult<ResolvedProjectMetadata> {
-    auto external_sources                = rstd::move(session.project.external_sources);
-    auto project                         = rstd::move(session.project.selection);
-    auto resolved_configuration          = configuration.clone();
+    auto external_sources       = rstd::move(session.project.external_sources);
+    auto cmake_build_overrides  = rstd::move(session.project.cmake_build_overrides);
+    auto project                = rstd::move(session.project.selection);
+    auto resolved_configuration = configuration.clone();
+    if (project.standards.cpp.is_some()) {
+        resolved_configuration.language_standard =
+            String::make(lito::manifest::cpp_standard_name(*project.standards.cpp));
+    }
+    resolved_configuration.c_standard    = project.standards.c;
     resolved_configuration.toolchain.cc  = PathBuf::from(toolchain.cc_path());
     resolved_configuration.toolchain.cxx = PathBuf::from(toolchain.cxx_path());
     resolved_configuration.toolchain.ld  = PathBuf::from(toolchain.ld_path());
@@ -241,21 +240,67 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                             project.graph.profile,
                                                             profile,
                                                             rstd::move(session.build_arguments)));
-    auto standard_library =
-        toolchain.resolve_standard_library(resolved_profile.cpp, session.platform.effective_target);
-    if (standard_library.is_err()) {
-        return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
+    if (project.standards.cpp.is_some()) {
+        auto standard_library = toolchain.resolve_standard_library(
+            resolved_profile.cpp, session.platform.effective_target);
+        if (standard_library.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
+        }
+        resolved_profile.cpp.abi.resolved_standard_library =
+            Some(rstd::move(standard_library).unwrap());
     }
-    resolved_profile.cpp.abi.resolved_standard_library =
-        Some(rstd::move(standard_library).unwrap());
     auto layout = BuildLayout::create(
         project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());
     if (layout.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));
     }
+    for (auto& package : project.graph.packages) {
+        auto selected = false;
+        for (const auto& name : project.selected_package_names) {
+            if (name == package.manifest.name.as_str()) selected = true;
+        }
+        if (! selected) continue;
+        for (auto& target : package.manifest.targets) {
+            auto id = lito::package::PackageTargetId {
+                .package = package.manifest.name.clone(),
+                .kind    = lito::manifest::package_target_kind(target),
+                .name    = String::make(lito::manifest::package_target_name(target)),
+            };
+            auto target_selected = false;
+            for (const auto& selected_target : project.effective_targets) {
+                if (selected_target == id) target_selected = true;
+            }
+            if (! target_selected) {
+                auto& source = lito::manifest::package_target_source(target);
+                source.source_groups.clear();
+                source.conditions.clear();
+            }
+        }
+        auto has_library = false;
+        for (const auto& target : package.manifest.targets) {
+            if (target.is_Library()) has_library = true;
+        }
+        auto resolved = cpp::apply_package_configuration(
+            package, resolved_configuration, resolved_profile, session.platform, has_library);
+        if (resolved.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(resolved).unwrap_err()));
+        }
+    }
+    auto prepared_external_sources =
+        prepare_external_dependency_sources(project.graph,
+                                            project.selected_package_names,
+                                            rstd::move(external_sources),
+                                            cmake_build_overrides,
+                                            tool_resolver,
+                                            environment,
+                                            jobs,
+                                            observer_value(observer));
+    if (prepared_external_sources.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(prepared_external_sources).unwrap_err()));
+    }
     auto external_usage = rstd_try(resolve_external_usage_catalog(project.graph,
                                                                   project.selected_package_names,
-                                                                  external_sources,
+                                                                  *prepared_external_sources,
                                                                   pkg_config,
                                                                   cmake,
                                                                   resolved_configuration,
@@ -276,6 +321,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                             rstd::move(resolved_profile),
                                                             session.platform,
                                                             rstd::move(external_usage.usage),
+                                                            rstd::move(external_usage.sources),
                                                             toolchain.argument_parser());
     if (metadata.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));

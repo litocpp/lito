@@ -12,6 +12,7 @@ import :package.identity;
 import :package.resolver;
 import :package.runtime;
 import :package.features;
+import :package.language;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -41,11 +42,13 @@ struct PackageSelection {
 };
 
 struct ResolvedPackageSelection {
-    ResolvedPackageGraph graph;
-    Vec<String>          selected_root_names;
-    Vec<String>          install_package_names;
-    Vec<String>          selected_package_names;
-    Vec<PackageTargetId> selected_targets;
+    ResolvedPackageGraph       graph;
+    Vec<String>                selected_root_names;
+    Vec<String>                install_package_names;
+    Vec<String>                selected_package_names;
+    Vec<PackageTargetId>       selected_targets;
+    Vec<PackageTargetId>       effective_targets;
+    EffectiveLanguageStandards standards;
 };
 
 } // namespace lito::package
@@ -197,6 +200,41 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         }
     }
     return Ok(rstd::move(result));
+}
+
+auto effective_compile_targets(const ResolvedPackageGraph& graph,
+                               const Vec<String>&          selected_packages,
+                               const Vec<PackageTargetId>& selected_targets)
+    -> Vec<PackageTargetId> {
+    auto result =
+        Vec<PackageTargetId>::with_capacity(selected_targets.len() + selected_packages.len());
+    const auto append = [&](PackageTargetId target) -> void {
+        for (const auto& existing : result) {
+            if (existing == target) return;
+        }
+        result.push(rstd::move(target));
+    };
+    for (const auto& target : selected_targets) append(target.clone());
+    for (const auto& package : graph.packages) {
+        auto selected = false;
+        for (const auto& name : selected_packages) {
+            if (name == package.manifest.name.as_str()) {
+                selected = true;
+                break;
+            }
+        }
+        if (! selected) continue;
+        for (const auto& target : package.manifest.targets) {
+            if (! target.is_Library()) continue;
+            append(PackageTargetId {
+                .package = package.manifest.name.clone(),
+                .kind    = PackageTargetKind::Library,
+                .name    = String::make(lito::manifest::package_target_name(target)),
+            });
+            break;
+        }
+    }
+    return result;
 }
 
 export namespace lito::package
@@ -362,12 +400,19 @@ auto resolve_package_selection_with_environment(
     if (resolved_features.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(resolved_features).unwrap_err()));
     }
+    auto standards = resolve_effective_language_standards(graph, *selected_packages);
+    if (standards.is_err()) {
+        return Err(rstd::into<PackageSelectionError>(rstd::move(standards).unwrap_err()));
+    }
+    auto effective_targets = effective_compile_targets(graph, *selected_packages, selected_targets);
     return Ok(ResolvedPackageSelection {
         .graph                  = rstd::move(graph),
         .selected_root_names    = rstd::move(selected_roots),
         .install_package_names  = rstd::move(install_packages),
         .selected_package_names = rstd::move(selected_packages).unwrap(),
         .selected_targets       = rstd::move(selected_targets),
+        .effective_targets      = rstd::move(effective_targets),
+        .standards              = rstd::move(standards).unwrap(),
     });
 }
 
