@@ -124,10 +124,13 @@ link-stdlib = false
 name = "fixture-cmake-installed-override"
 sources = ["main.cpp"]
 
-[external-dependencies.cmake.fixture]
-package = "LitoOverrideFixture"
+[external-sources.fixture]
 git = "https://example.invalid/lito-override-fixture.git"
 commit = "0123456789abcdef0123456789abcdef01234567"
+
+[external-dependencies.cmake.fixture]
+package = "LitoOverrideFixture"
+source = "fixture"
 targets = [{ name = "LitoOverrideFixture::fixture", visibility = "private" }]
 )toml"_str },
         { "main.cpp"_str, R"cpp(#ifndef LITO_SYSTEM_OVERRIDE_FIXTURE

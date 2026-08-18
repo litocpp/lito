@@ -170,9 +170,6 @@ visibility = "private"
 workspace = true
 visibility = "public"
 
-[external-sources.fixture]
-workspace = true
-
 [external-dependencies.cmake.fixture]
 workspace = true
 targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
@@ -203,6 +200,7 @@ set(LitoFixture_VERSION "1.2.3")
     ASSERT_EQ(member->workspace_dependencies.len(), usize(1));
     ASSERT_EQ(member->workspace_pkg_config_external_dependencies.len(), usize(1));
     ASSERT_EQ(member->workspace_cmake_external_dependencies.len(), usize(1));
+    EXPECT_TRUE(member->workspace_external_sources.is_empty());
 
     auto document = lito::manifest::load_manifest_document(directory.as_path());
     ASSERT_TRUE(document.is_ok());

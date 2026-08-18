@@ -124,6 +124,10 @@ auto prepare_external_source_task(ExternalSourceTask task)
     if (! task.installed_override && declaration.config_directory.is_some()) {
         config_directory = Some(declaration.config_directory->clone());
     }
+    auto source_name = Option<String> {};
+    if (! task.installed_override) {
+        source_name = as<Clone>(declaration.source).clone();
+    }
     auto adapter          = Option<PathBuf> {};
     auto adapter_identity = String::make();
     if (declaration.adapter.is_some()) {
@@ -160,7 +164,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
             PreparedCMakeDependencyRequirement {
                 .alias            = declaration.alias.clone(),
                 .package          = declaration.package.clone(),
-                .source_name      = as<Clone>(declaration.source).clone(),
+                .source_name      = rstd::move(source_name),
                 .source           = rstd::move(source),
                 .adapter          = rstd::move(adapter),
                 .adapter_identity = rstd::move(adapter_identity),

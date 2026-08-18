@@ -231,6 +231,7 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
     ASSERT_TRUE(prepared.is_ok());
     ASSERT_EQ(prepared->dependencies.len(), usize(1));
     EXPECT_TRUE(prepared->dependencies[usize {}].requirement.source.is_Find());
+    EXPECT_TRUE(prepared->dependencies[usize {}].requirement.source_name.is_none());
 }
 
 TEST_F(CMakeManifest, InstalledOverrideRejectsMissesAndRetainsAdapter) {
@@ -297,6 +298,7 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     const auto& overridden = override_result->dependencies[usize {}];
     EXPECT_TRUE(overridden.installed_override);
     EXPECT_TRUE(overridden.requirement.source.is_Find());
+    EXPECT_TRUE(overridden.requirement.source_name.is_none());
     ASSERT_TRUE(overridden.requirement.adapter.is_some());
     EXPECT_TRUE(overridden.requirement.adapter->as_path().starts_with(project->root.as_path()));
 }
@@ -576,8 +578,6 @@ version.workspace = true
 link-stdlib = false
 name = "fixture-workspace-architecture-archives-app"
 sources = ["main.cpp"]
-[external-sources.fixture]
-workspace = true
 [external-dependencies.cmake.fixture]
 workspace = true
 targets = [{ name = "Fixture::fixture", visibility = "private" }]
