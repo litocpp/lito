@@ -185,8 +185,14 @@ if(NOT TARGET LitoFindFixture::raw)
     INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_FIND_USAGE=1
     INTERFACE_INCLUDE_DIRECTORIES "${_LITO_FIND_FIXTURE_PREFIX}/include")
 endif()
+if(COMMAND lito_export_asset_set)
+  lito_export_asset_set(NAME runtime
+    ROOT "${_LITO_FIND_FIXTURE_PREFIX}/share/lito-find-fixture"
+    FILES runtime.bin)
+endif()
 )"_str },
         { "include/lito_find_fixture.hpp"_str, "#pragma once\n"_str },
+        { "share/lito-find-fixture/runtime.bin"_str, "runtime\n"_str },
         { "adapter.cmake"_str,
           R"(if(NOT LITO_CMAKE_DEPENDENCY_MODE STREQUAL "find")
   message(FATAL_ERROR "LitoFindFixture adapter requires find mode")
@@ -198,6 +204,9 @@ if(DEFINED LITO_CMAKE_DEPENDENCY_SOURCE_DIR)
   message(FATAL_ERROR "LitoFindFixture adapter received a source directory in find mode")
 endif()
 find_package(${LITO_CMAKE_DEPENDENCY_PACKAGE} REQUIRED CONFIG)
+if(COMMAND lito_export_asset_set)
+  lito_export_asset_set(NAME runtime PROVIDED)
+endif()
 if(NOT TARGET LitoFindFixture::fixture)
   add_library(LitoFindFixture::fixture INTERFACE IMPORTED)
   set_target_properties(LitoFindFixture::fixture PROPERTIES

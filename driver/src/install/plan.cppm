@@ -114,24 +114,6 @@ auto artifact_for(const BuildSummary&                   summary,
     return Ok(result);
 }
 
-auto asset_set_for(const ExternalAssetCatalog& catalog, ref<str> dependency, ref<str> name)
-    -> InstallMaterializeResult<const ExternalAssetSet*> {
-    const ExternalAssetSet* result = nullptr;
-    for (const auto& set : catalog.sets) {
-        if (set.alias != dependency || set.name != name) continue;
-        if (result != nullptr) {
-            return materialize_failure<const ExternalAssetSet*>(
-                rstd::format("external asset set '{}:{}' is ambiguous", dependency, name));
-        }
-        result = rstd::addressof(set);
-    }
-    if (result == nullptr) {
-        return materialize_failure<const ExternalAssetSet*>(
-            rstd::format("external asset set '{}:{}' is unavailable", dependency, name));
-    }
-    return Ok(result);
-}
-
 auto relative_text(ref<rstd::path::Path> destination, ref<rstd::path::Path> base) -> String {
     if (base.is_empty()) return destination.to_string_lossy();
     auto relative = rstd::path::lexically_relative(base, destination);
@@ -195,8 +177,13 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                 }));
         }
         for (const auto& requested : recipe.external_assets) {
-            auto set           = rstd_try(asset_set_for(
-                build.external_assets, requested.dependency.as_str(), requested.set.as_str()));
+            auto set = build.external_assets.resolve(
+                requested.dependency.as_str(), requested.set.as_str());
+            if (set.is_err()) {
+                return materialize_failure<InstallPlan>(rstd::move(set).unwrap_err());
+            }
+            const auto* resolved_set = *set;
+            if (resolved_set->disposition == ExternalAssetDisposition::Provided) continue;
             auto strip_matches = Vec<usize>::make();
             if (requested.strip.is_some()) {
                 strip_matches.reserve(requested.strip->files.len());
@@ -204,7 +191,7 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                     strip_matches.push(usize {});
                 }
             }
-            for (const auto& asset : set->entries) {
+            for (const auto& asset : resolved_set->entries) {
                 auto destination = requested.destination.join(asset.logical_path.as_path());
                 auto transforms  = Vec<InstallEntryTransform>::make();
                 if (requested.strip.is_some()) {

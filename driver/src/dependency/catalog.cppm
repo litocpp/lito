@@ -323,7 +323,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             auto duplicate = false;
             for (const auto& prior : assets.sets) {
                 if (prior.alias == copied.alias.as_str() && prior.name == copied.name.as_str()) {
-                    if (prior.entries.len() != copied.entries.len()) {
+                    if (prior.disposition != copied.disposition ||
+                        prior.entries.len() != copied.entries.len()) {
                         return lito::dependency::dependency_failure<PreparedExternalCatalog>(
                             rstd::format("external asset set '{}:{}' has conflicting definitions",
                                          copied.alias.as_str(),

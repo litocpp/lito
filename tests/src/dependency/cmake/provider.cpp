@@ -261,12 +261,15 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         .source  = lito::PreparedCMakeDependencySource::Find(),
         .targets = rstd::move(targets),
     });
+    auto assets   = Vec<lito::ExternalAssetSet>::make();
     auto resolved =
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),
                                              native_platform(),
                                              build_root("cmake-find-generic-work"_str).as_path(),
-                                             rstd::move(provider));
+                                             rstd::move(provider),
+                                             usize(1),
+                                             rstd::addressof(assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error);
@@ -288,6 +291,14 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         }
     }
     EXPECT_TRUE(has_macro);
+    ASSERT_EQ(assets.len(), usize(1));
+    EXPECT_EQ(assets[usize {}].alias.as_str(), "fixture"_str);
+    EXPECT_EQ(assets[usize {}].name.as_str(), "runtime"_str);
+    ASSERT_EQ(assets[usize {}].entries.len(), usize(1));
+    EXPECT_EQ(assets[usize {}].entries[usize {}].logical_path.as_path(),
+              PathBuf::from("runtime.bin"_str).as_path());
+    EXPECT_TRUE(assets[usize {}].entries[usize {}].source.as_path().starts_with(
+        project->root.as_path()));
 }
 
 TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
@@ -312,12 +323,15 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
         .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
         .targets = rstd::move(targets),
     });
+    auto assets   = Vec<lito::ExternalAssetSet>::make();
     auto resolved =
         resolve_cmake_fixtures_with_provider(declarations,
                                              default_profile(*parser),
                                              native_platform(),
                                              build_root("cmake-find-adapter-work"_str).as_path(),
-                                             rstd::move(provider));
+                                             rstd::move(provider),
+                                             usize(1),
+                                             rstd::addressof(assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
         rstd::io::eprintln("{}", error);
@@ -339,6 +353,11 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
         }
     }
     EXPECT_TRUE(has_macro);
+    ASSERT_EQ(assets.len(), usize(1));
+    EXPECT_EQ(assets[usize {}].alias.as_str(), "fixture"_str);
+    EXPECT_EQ(assets[usize {}].name.as_str(), "runtime"_str);
+    EXPECT_EQ(assets[usize {}].disposition, lito::ExternalAssetDisposition::Provided);
+    EXPECT_TRUE(assets[usize {}].entries.is_empty());
 }
 
 TEST_F(CMakeProvider, CMakeProviderReportsFindAdapterTargetContractFailure) {

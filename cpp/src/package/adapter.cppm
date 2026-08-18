@@ -800,6 +800,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         if (! selected.contains_key(graph.packages[index].manifest.name.as_str())) continue;
         auto unresolved =
             rstd_try(external_usage.take(graph.packages[index].manifest.name.as_str()));
+        if (unresolved.is_empty()) continue;
         if (graph.packages[index].manifest.standard.is_none()) {
             return adapter_failure<PackageMetadata>(
                 rstd::format("selected package '{}' has external usage but no language contract",
@@ -841,11 +842,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
     for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
         auto& package = graph.packages[package_index];
         if (! selected.contains_key(package.manifest.name.as_str())) continue;
-        if (package.manifest.standard.is_none()) {
-            return adapter_failure<PackageMetadata>(
-                rstd::format("selected package '{}' has compile targets but no language contract",
-                             package.manifest.name.as_str()));
+        for (auto& requirement : package.manifest.build_tools) {
+            build_tools.push(PackageBuildToolRequirement {
+                .package     = package.manifest.name.clone(),
+                .root        = package.manifest.root.clone(),
+                .requirement = rstd::move(requirement),
+            });
         }
+        if (package.manifest.standard.is_none()) continue;
         const auto package_language =
             lito::manifest::package_standard_language(*package.manifest.standard);
         auto has_link_action = false;
@@ -864,13 +868,6 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         rstd_try(materialize_external_include_requirements(
             package_index, package.manifest, external_sources));
         rstd_try(validate_usage(package.manifest, has_link_action));
-        for (auto& requirement : package.manifest.build_tools) {
-            build_tools.push(PackageBuildToolRequirement {
-                .package     = package.manifest.name.clone(),
-                .root        = package.manifest.root.clone(),
-                .requirement = rstd::move(requirement),
-            });
-        }
         auto arguments = rstd_try(parse_options(argument_parser,
                                                 package.manifest.usage.options,
                                                 usage_source(package.manifest, "usage.options"_str),

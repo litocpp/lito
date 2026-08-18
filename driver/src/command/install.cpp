@@ -179,9 +179,6 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     for (const auto& target : requirements.targets) {
         request.build.exact_targets.push(target.clone());
     }
-    for (const auto& variant : requirements.artifact_link_variants) {
-        request.build.artifact_link_variants.push(variant.clone());
-    }
     auto profile_name = request.build.profile->clone();
     auto prepared     = rstd_try(
         install_project_failure(prepare_resolved_build_project(rstd::move(session),
@@ -196,6 +193,10 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                                *environment,
                                                                jobs,
                                                                request.build.observer)));
+    rstd_try(resolve_install_artifact_link_variants(requirements, prepared.external_assets));
+    for (const auto& variant : requirements.artifact_link_variants) {
+        request.build.artifact_link_variants.push(variant.clone());
+    }
     auto summary =
         rstd_try(build_prepared_project(request.build, *environment, rstd::move(prepared)));
     auto plan        = rstd_try(materialize_install_plan(rstd::move(recipes),

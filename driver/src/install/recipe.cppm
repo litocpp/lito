@@ -85,9 +85,22 @@ struct InstallRecipe {
     Vec<InstallRuntimeDependency>       runtime_dependencies;
 };
 
+struct InstallRuntimeSearchAsset {
+    String  dependency;
+    String  set;
+    PathBuf destination;
+};
+
+struct InstallArtifactRuntimeSearchRequirement {
+    lito::package::PackageTargetId target;
+    PathBuf                        destination;
+    Vec<InstallRuntimeSearchAsset> assets;
+};
+
 struct InstallBuildRequirements {
-    Vec<lito::package::PackageTargetId> targets;
-    Vec<RequestedArtifactLinkVariant>   artifact_link_variants;
+    Vec<lito::package::PackageTargetId>          targets;
+    Vec<InstallArtifactRuntimeSearchRequirement> runtime_search;
+    Vec<RequestedArtifactLinkVariant>            artifact_link_variants;
 };
 
 struct InstallScriptContext {

@@ -76,6 +76,24 @@ struct DeclaredExternalDependencySources {
 struct ExternalAssetCatalog {
     Vec<ExternalAssetSet> sets;
 
+    auto resolve(ref<str> dependency, ref<str> name) const
+        -> Result<const ExternalAssetSet*, String> {
+        const ExternalAssetSet* result = nullptr;
+        for (const auto& set : sets) {
+            if (set.alias != dependency || set.name != name) continue;
+            if (result != nullptr) {
+                return Err(rstd::format(
+                    "external asset set '{}:{}' is ambiguous", dependency, name));
+            }
+            result = rstd::addressof(set);
+        }
+        if (result == nullptr) {
+            return Err(rstd::format(
+                "external asset set '{}:{}' is unavailable", dependency, name));
+        }
+        return Ok(result);
+    }
+
     auto clone() const -> ExternalAssetCatalog {
         auto copied = Vec<ExternalAssetSet>::with_capacity(sets.len());
         for (const auto& set : sets) copied.push(set.clone());

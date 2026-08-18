@@ -40,18 +40,26 @@ struct ExternalAssetEntry {
     }
 };
 
+enum class ExternalAssetDisposition
+{
+    Materialized,
+    Provided,
+};
+
 struct ExternalAssetSet {
-    String                  alias;
-    String                  name;
-    Vec<ExternalAssetEntry> entries;
+    String                   alias;
+    String                   name;
+    ExternalAssetDisposition disposition { ExternalAssetDisposition::Materialized };
+    Vec<ExternalAssetEntry>  entries;
 
     auto clone() const -> ExternalAssetSet {
         auto copied = Vec<ExternalAssetEntry>::with_capacity(entries.len());
         for (const auto& entry : entries) copied.push(entry.clone());
         return ExternalAssetSet {
-            .alias   = alias.clone(),
-            .name    = name.clone(),
-            .entries = rstd::move(copied),
+            .alias       = alias.clone(),
+            .name        = name.clone(),
+            .disposition = disposition,
+            .entries     = rstd::move(copied),
         };
     }
 };
