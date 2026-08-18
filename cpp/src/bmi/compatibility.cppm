@@ -173,8 +173,8 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
                    cpp_sized_deallocation_name(provider.language.sized_deallocation),
                    cpp_sized_deallocation_name(consumer.language.sized_deallocation));
     add_difference(BmiCompatibilityField::Threading,
-                   bool_text(provider.threading.posix),
-                   bool_text(consumer.threading.posix));
+                   bool_text(provider.common.posix_threads),
+                   bool_text(consumer.common.posix_threads));
     auto provider_language = family_identity("language"_str, provider.language.modes);
     auto consumer_language = family_identity("language"_str, consumer.language.modes);
     add_difference(BmiCompatibilityField::LanguageModes,
@@ -183,14 +183,14 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     auto provider_abi = family_identity("abi"_str, provider.abi.modes);
     auto consumer_abi = family_identity("abi"_str, consumer.abi.modes);
     add_difference(BmiCompatibilityField::AbiModes, provider_abi.as_str(), consumer_abi.as_str());
-    auto provider_target = option_text(provider.target.common.target);
-    auto consumer_target = option_text(consumer.target.common.target);
-    if (provider.target.common.target.is_none()) provider_target = provider_format.target.clone();
-    if (consumer.target.common.target.is_none()) consumer_target = consumer_format.target.clone();
+    auto provider_target = option_text(provider.common.target.target);
+    auto consumer_target = option_text(consumer.common.target.target);
+    if (provider.common.target.target.is_none()) provider_target = provider_format.target.clone();
+    if (consumer.common.target.target.is_none()) consumer_target = consumer_format.target.clone();
     add_difference(
         BmiCompatibilityField::Target, provider_target.as_str(), consumer_target.as_str());
-    auto provider_sysroot = option_text(provider.target.common.sysroot);
-    auto consumer_sysroot = option_text(consumer.target.common.sysroot);
+    auto provider_sysroot = option_text(provider.common.target.sysroot);
+    auto consumer_sysroot = option_text(consumer.common.target.sysroot);
     add_difference(
         BmiCompatibilityField::Sysroot, provider_sysroot.as_str(), consumer_sysroot.as_str());
     auto provider_features = family_identity("target"_str, provider.target.features);

@@ -270,14 +270,14 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto scan_span = profiler.span(ScanProbe::Total);
 
     auto resolved = profiler.measure(ScanProbe::Plan, [&] {
-        return cpp::resolve_source_discovery(metadata, rstd::move(selected).unwrap());
+        return cpp::resolve_native_targets(metadata, rstd::move(selected).unwrap());
     });
     if (resolved.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
     }
-    auto discovery_plan = rstd::move(resolved).unwrap();
-    auto stripper       = Option<PathBuf> {};
-    if (metadata.profiles[discovery_plan.profile].strip != lito::manifest::StripMode::None) {
+    auto native_target_plan = rstd::move(resolved).unwrap();
+    auto stripper           = Option<PathBuf> {};
+    if (metadata.profiles[native_target_plan.profile].strip != lito::manifest::StripMode::None) {
         auto resolved_stripper = tool_resolver.resolve(
             request.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
         if (resolved_stripper.is_err()) {
@@ -293,7 +293,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto created_environment =
         CacheEnvironment::create(layout,
                                  metadata.root.as_path(),
-                                 metadata.profiles[discovery_plan.profile].name.as_str(),
+                                 metadata.profiles[native_target_plan.profile].name.as_str(),
                                  toolchain.compiler_identity());
     if (created_environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(created_environment).unwrap_err()));
@@ -305,7 +305,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto discovered = profiler.measure(ScanProbe::Discovery, [&] {
         return discover_package_sources(metadata,
-                                        discovery_plan,
+                                        native_target_plan,
                                         analysis_service,
                                         request.observer,
                                         execution->jobs,
@@ -318,7 +318,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(finalized).unwrap_err()));
     }
     auto package          = rstd::move(finalized).unwrap();
-    auto resolved_package = cpp::finalize_package_plan(package, rstd::move(discovery_plan));
+    auto resolved_package = cpp::finalize_package_plan(package, rstd::move(native_target_plan));
     if (resolved_package.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved_package).unwrap_err()));
     }
@@ -363,13 +363,13 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(convention_valid).unwrap_err()));
     }
 
-    auto resolved_modules = profiler.measure(ScanProbe::ModuleGraph, [&] {
-        return cpp::resolve_modules(package_plan, units, scans, toolchain.bmi_format());
+    auto resolved_semantics = profiler.measure(ScanProbe::ModuleGraph, [&] {
+        return cpp::resolve_semantic_build(package_plan, units, scans, toolchain.bmi_format());
     });
-    if (resolved_modules.is_err()) {
-        return Err(rstd::into<BuildError>(rstd::move(resolved_modules).unwrap_err()));
+    if (resolved_semantics.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(resolved_semantics).unwrap_err()));
     }
-    auto module_plan    = rstd::move(resolved_modules).unwrap();
+    auto semantic_graph = rstd::move(resolved_semantics).unwrap();
     auto completed_scan = profiler.complete(scan_span);
     if (completed_scan.is_err()) {
         return build_failure<BuildSummary>(rstd::move(completed_scan).unwrap_err_unchecked());
@@ -407,7 +407,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
 
     auto cache = CompileCacheSession::create(cache_environment, layout.output());
     auto materialized =
-        materialize_compile_plan(package, layout, toolchain, units, scans, module_plan);
+        materialize_compile_plan(package, layout, toolchain, units, scans, semantic_graph);
     if (materialized.is_err()) {
         return Err(rstd::move(materialized).unwrap_err());
     }
@@ -554,7 +554,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                 package_plan.profile->cpp.abi.standard_library,
                                                 project.platform.effective_target,
                                                 target_spec.link_stdlib,
-                                                package_plan.profile->cpp.codegen.common.lto,
+                                                package_plan.profile->cpp.common.codegen.lto,
                                                 package_plan.link_requirements[target],
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());

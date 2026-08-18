@@ -11,7 +11,7 @@ import :compiler.option;
 import :compiler.parser;
 import :compiler.policy;
 import :usage;
-import lito.c;
+import :c.compiler;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -24,7 +24,7 @@ struct ProfileSpec {
     lito::manifest::BuildProfileFamily family { lito::manifest::BuildProfileFamily::Debug };
     BmiRequest                         bmi;
     CppCompileOptions                  cpp;
-    lito::c::CCompileOptions           c;
+    lito::manifest::CStandard          c_standard { lito::manifest::CStandard::C99 };
     CppLinkRequirements                link_requirements;
     lito::manifest::StripMode          strip { lito::manifest::StripMode::None };
     Vec<String>                        linker_options;
@@ -173,21 +173,15 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             erase_error(rstd::move(cpp_result).unwrap_err())));
     }
     auto cpp               = rstd::move(cpp_result).unwrap();
-    cpp.codegen.common.lto = selected.lto;
-    auto c_options         = lito::c::CCompileOptions {
-        .standard      = configuration.c_standard.is_some() ? *configuration.c_standard
-                                                            : lito::manifest::CStandard::C99,
-        .target        = cpp.target.common.clone(),
-        .codegen       = cpp.codegen.common,
-        .posix_threads = cpp.threading.posix,
-    };
+    cpp.common.codegen.lto = selected.lto;
     return Ok(ProfileSpec {
         .name              = selected.name.value.clone(),
         .family            = selected.family,
         .bmi               = BmiRequest { .representation   = configuration.bmi_mode,
                                           .source_embedding = configuration.bmi_source_embedding },
         .cpp               = rstd::move(cpp),
-        .c                 = rstd::move(c_options),
+        .c_standard        = configuration.c_standard.is_some() ? *configuration.c_standard
+                                                                : lito::manifest::CStandard::C99,
         .link_requirements = rstd::move(link_requirements),
         .strip             = selected.strip,
         .linker_options    = configuration.linker_options.clone(),

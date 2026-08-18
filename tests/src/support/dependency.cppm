@@ -22,7 +22,8 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito_test
 {
 auto has_external_macro(const lito::cpp::CompileContext& context) -> bool {
-    for (const auto& macro : context.cpp.preprocessor.macros) {
+    if (! context.language.is_Cpp()) return false;
+    for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros) {
         if (macro.value.as_str() == "LITO_EXTERNAL_USAGE=1"_str) return true;
     }
     return false;

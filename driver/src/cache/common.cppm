@@ -19,9 +19,9 @@ using JsonArray = rstd::json::Array;
 namespace lito
 {
 
-inline constexpr auto CACHE_VERSION  = u64(4);
-inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v8"_str;
-inline constexpr auto COMPILE_RECIPE = "clang-compile-v5"_str;
+inline constexpr auto CACHE_VERSION  = u64(5);
+inline constexpr auto SCAN_RECIPE    = "lito-native-frontend-v9"_str;
+inline constexpr auto COMPILE_RECIPE = "clang-compile-v6"_str;
 
 template<typename T>
 auto cache_failure(String message) -> CacheResult<T> {
@@ -258,11 +258,13 @@ public:
                        ref<rstd::path::Path>   owner_root,
                        ref<str>                profile,
                        const CompilerIdentity& compiler) -> CacheResult<CacheEnvironment> {
-        auto owner         = path_string(owner_root);
-        auto compiler_path = path_string(compiler.path.as_path());
-        auto resource      = path_string(compiler.resource_directory.as_path());
+        auto owner           = path_string(owner_root);
+        auto compiler_path   = path_string(compiler.path.as_path());
+        auto c_compiler_path = path_string(compiler.c_path.as_path());
+        auto resource        = path_string(compiler.resource_directory.as_path());
         if (owner.is_err()) return Err(rstd::move(owner).unwrap_err());
         if (compiler_path.is_err()) return Err(rstd::move(compiler_path).unwrap_err());
+        if (c_compiler_path.is_err()) return Err(rstd::move(c_compiler_path).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
 
         auto identity = String::make("lito-cache-environment-v2\n"_str);
@@ -278,6 +280,10 @@ public:
         identity.push_ascii('\n');
         identity.push_str(compiler.version.as_str());
         identity.push_ascii('\n');
+        identity.push_str(c_compiler_path->as_str());
+        identity.push_ascii('\n');
+        identity.push_str(compiler.c_version.as_str());
+        identity.push_ascii('\n');
         identity.push_str(compiler.target.as_str());
         identity.push_ascii('\n');
         identity.push_str(compiler.build_identity.as_str());
@@ -288,6 +294,12 @@ public:
                                        compiler.size,
                                        compiler.modified_seconds,
                                        compiler.modified_nanoseconds)
+                              .as_str());
+        identity.push_ascii('\n');
+        identity.push_str(rstd::format("{}\n{}\n{}",
+                                       compiler.c_size,
+                                       compiler.c_modified_seconds,
+                                       compiler.c_modified_nanoseconds)
                               .as_str());
         auto key = cache::text_identity("lito-cache-environment-key-v2"_str, identity.as_str());
 
@@ -300,6 +312,10 @@ public:
         scan_identity.push_ascii('\n');
         scan_identity.push_str(compiler.version.as_str());
         scan_identity.push_ascii('\n');
+        scan_identity.push_str(c_compiler_path->as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(compiler.c_version.as_str());
+        scan_identity.push_ascii('\n');
         scan_identity.push_str(compiler.target.as_str());
         scan_identity.push_ascii('\n');
         scan_identity.push_str(compiler.build_identity.as_str());
@@ -310,6 +326,12 @@ public:
                                             compiler.size,
                                             compiler.modified_seconds,
                                             compiler.modified_nanoseconds)
+                                   .as_str());
+        scan_identity.push_ascii('\n');
+        scan_identity.push_str(rstd::format("{}\n{}\n{}",
+                                            compiler.c_size,
+                                            compiler.c_modified_seconds,
+                                            compiler.c_modified_nanoseconds)
                                    .as_str());
         auto scan_key =
             cache::text_identity("lito-scan-cache-environment-key-v1"_str, scan_identity.as_str());
@@ -327,6 +349,14 @@ public:
         compiler_json.insert(String::make("size"_str), cache_u64(compiler.size));
         compiler_json.insert(String::make("target"_str), cache_string(compiler.target.as_str()));
         compiler_json.insert(String::make("version"_str), cache_string(compiler.version.as_str()));
+        compiler_json.insert(String::make("c-path"_str), cache_string(c_compiler_path->as_str()));
+        compiler_json.insert(String::make("c-version"_str),
+                             cache_string(compiler.c_version.as_str()));
+        compiler_json.insert(String::make("c-size"_str), cache_u64(compiler.c_size));
+        compiler_json.insert(String::make("c-modified-seconds"_str),
+                             cache_i64(compiler.c_modified_seconds));
+        compiler_json.insert(String::make("c-modified-nanoseconds"_str),
+                             cache_u64(as_cast<u64>(compiler.c_modified_nanoseconds)));
 
         auto root = JsonMap::make();
         root.insert(String::make("compile-recipe"_str), cache_string(COMPILE_RECIPE));

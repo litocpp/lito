@@ -113,6 +113,61 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
     }
 }
 
+TEST_F(BuildCommand, CArchiveFeedsCppExecutableWithoutEnteringModuleResolution) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([workspace]
+name = "c-cpp-build"
+members = ["c-lib", "app"]
+
+[workspace.package]
+version = "0.1.0"
+)toml"_str },
+        { "c-lib/lito.toml"_str, R"toml([package]
+name = "fixture-c-lib"
+version.workspace = true
+language = "c"
+minimum-standard = "c17"
+
+[lib]
+name = "fixture-c-lib"
+archive = "fixture_c_lib"
+sources = ["src/value.c"]
+)toml"_str },
+        { "c-lib/src/value.c"_str, "int fixture_c_value(void) { return 42; }\n"_str },
+        { "app/lito.toml"_str, R"toml([package]
+name = "fixture-cpp-consumer"
+version.workspace = true
+
+[[bin]]
+name = "fixture-cpp-consumer"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[dependencies.fixture-c-lib]
+path = "../c-lib"
+visibility = "private"
+)toml"_str },
+        { "app/src/main.cpp"_str, R"cpp(extern "C" int fixture_c_value(void);
+
+int main() {
+    return fixture_c_value() == 42 ? 0 : 1;
+}
+)cpp"_str },
+    };
+    auto project = materialize("c-cpp-build"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        "c-cpp-build"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
+    auto result = lito::build(request);
+    if (result.is_err()) {
+        auto message = error_chain_text(result.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
+    EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(1));
+}
+
 TEST_F(BuildCommand, DependencyPackageBuildScriptGeneratesSourceBeforeDiscovery) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]

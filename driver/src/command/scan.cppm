@@ -6,8 +6,6 @@ export import :command.error;
 import :build.event;
 import :build.setup_report;
 import lito.cpp;
-import lito.toolchain;
-import lito.frontend;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -34,10 +32,10 @@ struct ScanRequest {
 };
 
 struct ScanReport {
-    String                   target;
-    String                   profile;
-    PathBuf                  primary_output;
-    frontend::FrontendResult result;
+    String          target;
+    String          profile;
+    PathBuf         primary_output;
+    cpp::ScanResult result;
 };
 
 enum class ScanOutputFormat

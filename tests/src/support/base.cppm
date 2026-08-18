@@ -89,8 +89,9 @@ auto artifact_count(const lito::BuildSummary& summary, lito::cpp::ArtifactKind k
 }
 
 auto has_import(const lito::ScanReport& report, ref<str> logical_name) -> bool {
-    for (const auto& imported : report.result.imports) {
-        if (imported.logical_name.as_str() == logical_name) return true;
+    if (! report.result.language.is_Cpp()) return false;
+    for (const auto& imported : report.result.language.as_Cpp().facts.required_modules) {
+        if (imported.imported && imported.logical_name.as_str() == logical_name) return true;
     }
     return false;
 }

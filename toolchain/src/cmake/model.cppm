@@ -261,9 +261,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     append_identity(recipe,
                     profile.cpp.language.exceptions ? "exceptions"_str : "no-exceptions"_str);
     append_identity(recipe, profile.cpp.language.rtti ? "rtti"_str : "no-rtti"_str);
-    append_identity(recipe, cpp::cpp_optimization_option(profile.cpp.codegen.common.optimization));
-    append_identity(recipe, cpp::cpp_debug_option(profile.cpp.codegen.common.debug_info));
-    append_identity(recipe, cpp::cpp_lto_option(profile.cpp.codegen.common.lto));
+    append_identity(recipe, cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
+    append_identity(recipe, cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
+    append_identity(recipe, cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
     for (const auto& entry : requirement.cache) {
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());

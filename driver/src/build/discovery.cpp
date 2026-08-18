@@ -230,10 +230,10 @@ struct ImportOwnerCandidate {
     cpp::ResolvedSource source;
 };
 
-auto discovery_compile_context(const cpp::PackageMetadata&     package,
-                               const cpp::SourceDiscoveryPlan& plan,
-                               cpp::TargetId                   target,
-                               ref<rstd::path::Path>           relative_source)
+auto discovery_compile_context(const cpp::PackageMetadata&          package,
+                               const cpp::ResolvedNativeTargetPlan& plan,
+                               cpp::TargetId                        target,
+                               ref<rstd::path::Path>                relative_source)
     -> BuildResult<Option<cpp::CompileContext>> {
     const auto& resolved_target = package.targets[target];
     if (resolved_target.artifact_kind != cpp::ArtifactKind::CompileTest) return Ok(None());
@@ -255,11 +255,11 @@ auto discovery_compile_context(const cpp::PackageMetadata&     package,
     return Ok(Some(rstd::move(context).unwrap()));
 }
 
-auto convention_import_owner(const cpp::PackageMetadata&     package,
-                             const cpp::SourceDiscoveryPlan& plan,
-                             cpp::TargetId                   importer,
-                             ref<str>                        logical_name,
-                             FrontendAnalysisService&        analysis_service)
+auto convention_import_owner(const cpp::PackageMetadata&          package,
+                             const cpp::ResolvedNativeTargetPlan& plan,
+                             cpp::TargetId                        importer,
+                             ref<str>                             logical_name,
+                             FrontendAnalysisService&             analysis_service)
     -> BuildResult<Option<ImportOwner>> {
     auto candidates       = Vec<ImportOwnerCandidate>::make();
     auto highest_priority = usize {};
@@ -318,9 +318,16 @@ auto convention_import_owner(const cpp::PackageMetadata&     package,
                                                  package.targets[candidate.target].compile_metadata,
                                                  candidate.source.source_root.as_path());
         if (analysis.is_err()) return Err(rstd::move(analysis).unwrap_err());
-        auto value = rstd::move(analysis).unwrap();
-        if (value.result.provided.is_none() ||
-            value.result.provided->logical_name.as_str() != logical_name) {
+        auto value     = rstd::move(analysis).unwrap();
+        auto projected = cpp::scan_from_frontend(
+            value.result, cpp::UnitId {}, package.targets[candidate.target].language);
+        if (projected.is_err()) {
+            return Err(BuildError::Discovery(
+                cpp::SourceDiscoveryError::Message(rstd::move(projected).unwrap_err())));
+        }
+        if (! projected->language.is_Cpp() ||
+            projected->language.as_Cpp().facts.provided.is_none() ||
+            projected->language.as_Cpp().facts.provided->logical_name.as_str() != logical_name) {
             continue;
         }
         if (selected.is_some()) {
@@ -507,9 +514,9 @@ auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     return Ok(cpp::ResolvedSourceSet { .sources = rstd::move(sources) });
 }
 
-auto resolve_source_target(const cpp::PackageMetadata&     package,
-                           const cpp::SourceDiscoveryPlan& discovery,
-                           ref<rstd::path::Path>           source)
+auto resolve_source_target(const cpp::PackageMetadata&          package,
+                           const cpp::ResolvedNativeTargetPlan& discovery,
+                           ref<rstd::path::Path>                source)
     -> cpp::SourceDiscoveryResult<cpp::TargetId> {
     auto exact = Option<cpp::TargetId> {};
     for (auto target : discovery.target_order) {
@@ -564,11 +571,11 @@ auto resolve_source_target(const cpp::PackageMetadata&     package,
 namespace lito
 {
 
-auto discover_sources(const cpp::PackageMetadata&     package,
-                      const cpp::SourceDiscoveryPlan& plan,
-                      FrontendAnalysisService&        analysis_service,
-                      const Option<BuildEventSink>&   observer,
-                      usize                           jobs,
+auto discover_sources(const cpp::PackageMetadata&          package,
+                      const cpp::ResolvedNativeTargetPlan& plan,
+                      FrontendAnalysisService&             analysis_service,
+                      const Option<BuildEventSink>&        observer,
+                      usize                                jobs,
                       usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
     auto discovered = Vec<Vec<cpp::ResolvedSource>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
@@ -726,13 +733,22 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                                               target_identity.as_str(),
                                               candidate.source.canonical_path.as_path() });
             }
-            const auto& frontend_result = frontend_analysis.result;
+            auto projected =
+                cpp::scan_from_frontend(frontend_analysis.result, cpp::UnitId {}, target.language);
+            if (projected.is_err()) {
+                auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
+                    rstd::move(projected).unwrap_err());
+                return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
+            }
+            const auto* cpp_facts = projected->language.is_Cpp()
+                                        ? rstd::addressof(projected->language.as_Cpp().facts)
+                                        : nullptr;
             if (candidate.source.expected_module.is_some()) {
-                if (frontend_result.provided.is_none() ||
-                    frontend_result.provided->logical_name.as_str() !=
+                if (cpp_facts == nullptr || cpp_facts->provided.is_none() ||
+                    cpp_facts->provided->logical_name.as_str() !=
                         candidate.source.expected_module->as_str()) {
-                    auto actual = frontend_result.provided.is_some()
-                                      ? frontend_result.provided->logical_name.as_str()
+                    auto actual = cpp_facts != nullptr && cpp_facts->provided.is_some()
+                                      ? cpp_facts->provided->logical_name.as_str()
                                       : "<none>"_str;
                     auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
                         rstd::format("module convention expected '{}' to provide '{}', but "
@@ -743,7 +759,7 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                     return Err(rstd::into<BuildError>(rstd::move(failed).unwrap_err()));
                 }
                 if (candidate.source.expected_module->as_str() == target.source.module->as_str() &&
-                    ! frontend_result.provided->is_interface) {
+                    ! cpp_facts->provided->is_interface) {
                     auto failed = discovery_failure<Vec<cpp::ResolvedTargetSources>>(
                         rstd::format("primary module source '{}' is not an interface",
                                      candidate.source.canonical_path.as_path()));
@@ -751,34 +767,29 @@ auto discover_sources(const cpp::PackageMetadata&     package,
                 }
             }
 
-            if (target.source.discovery == lito::manifest::SourceDiscoveryMode::Module &&
-                candidate.source.origin == cpp::SourceOrigin::Convention &&
-                candidate.source.expected_module.is_none() && ! candidate.source.module_companion &&
-                frontend_result.provided.is_none() &&
-                frontend_result.implementation_module.is_none()) {
-                continue;
-            }
-
-            for (const auto& imported : frontend_result.imports) {
-                auto owner = convention_import_owner(package,
-                                                     plan,
-                                                     candidate.target,
-                                                     imported.logical_name.as_str(),
-                                                     analysis_service);
-                if (owner.is_err()) {
-                    return Err(rstd::move(owner).unwrap_err());
-                }
-                if (owner->is_none()) continue;
-                auto resolved_owner = rstd::move(owner).unwrap().unwrap();
-                auto enqueued       = enqueue_candidate(resolved_owner.target,
-                                                        rstd::move(resolved_owner.source),
-                                                        true,
-                                                        path_names,
-                                                        name_paths,
-                                                        queued,
-                                                        next);
-                if (enqueued.is_err()) {
-                    return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+            if (cpp_facts != nullptr) {
+                for (const auto& imported : cpp_facts->required_modules) {
+                    if (! imported.imported) continue;
+                    auto owner = convention_import_owner(package,
+                                                         plan,
+                                                         candidate.target,
+                                                         imported.logical_name.as_str(),
+                                                         analysis_service);
+                    if (owner.is_err()) {
+                        return Err(rstd::move(owner).unwrap_err());
+                    }
+                    if (owner->is_none()) continue;
+                    auto resolved_owner = rstd::move(owner).unwrap().unwrap();
+                    auto enqueued       = enqueue_candidate(resolved_owner.target,
+                                                            rstd::move(resolved_owner.source),
+                                                            true,
+                                                            path_names,
+                                                            name_paths,
+                                                            queued,
+                                                            next);
+                    if (enqueued.is_err()) {
+                        return Err(rstd::into<BuildError>(rstd::move(enqueued).unwrap_err()));
+                    }
                 }
             }
             if (candidate.discover_companion) {
@@ -826,11 +837,11 @@ auto discover_sources(const cpp::PackageMetadata&     package,
 namespace lito
 {
 
-auto discover_package_sources(const cpp::PackageMetadata&     package,
-                              const cpp::SourceDiscoveryPlan& plan,
-                              FrontendAnalysisService&        analysis_service,
-                              const Option<BuildEventSink>&   observer,
-                              usize                           jobs,
+auto discover_package_sources(const cpp::PackageMetadata&          package,
+                              const cpp::ResolvedNativeTargetPlan& plan,
+                              FrontendAnalysisService&             analysis_service,
+                              const Option<BuildEventSink>&        observer,
+                              usize                                jobs,
                               usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>> {
     return discover_sources(package, plan, analysis_service, observer, jobs, max_in_flight);
 }

@@ -32,7 +32,8 @@ auto context_with(Vec<String>                  options,
                                             });
     if (normalized.is_err()) return cpp::CompileContext {};
     return cpp::CompileContext {
-        .cpp = rstd::move(normalized).unwrap(),
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(normalized).unwrap(), cpp::CppPublicRequirements {}),
     };
 }
 
@@ -45,7 +46,8 @@ auto context_with_standard(ref<str> standard) -> cpp::CompileContext {
                                             lito::manifest::DebugInfo::None);
     if (normalized.is_err()) return cpp::CompileContext {};
     return cpp::CompileContext {
-        .cpp = rstd::move(normalized).unwrap(),
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(normalized).unwrap(), cpp::CppPublicRequirements {}),
     };
 }
 

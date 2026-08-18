@@ -414,19 +414,26 @@ auto validate_module_conventions(const PackageSpec&       package,
                 return convention_failure<empty>(rstd::format(
                     "module convention source '{}' was not scanned", expectation.path.as_path()));
             }
-            if (actual->provided.is_none()) {
+            if (! actual->language.is_Cpp()) {
+                return convention_failure<empty>(
+                    rstd::format("module convention source '{}' was classified as C",
+                                 expectation.path.as_path()));
+            }
+            const auto& actual_cpp = actual->language.as_Cpp().facts;
+            if (actual_cpp.provided.is_none()) {
                 return convention_failure<empty>(
                     rstd::format("module convention expected '{}' to provide module '{}'",
                                  expectation.path.as_path(),
                                  expectation.expected_module->as_str()));
             }
-            if (actual->provided->logical_name.as_str() != expectation.expected_module->as_str()) {
+            if (actual_cpp.provided->logical_name.as_str() !=
+                expectation.expected_module->as_str()) {
                 return convention_failure<empty>(rstd::format(
                     "module convention expected '{}' to provide module '{}', but Clang "
                     "reported '{}'",
                     expectation.path.as_path(),
                     expectation.expected_module->as_str(),
-                    actual->provided->logical_name.as_str()));
+                    actual_cpp.provided->logical_name.as_str()));
             }
         }
     }

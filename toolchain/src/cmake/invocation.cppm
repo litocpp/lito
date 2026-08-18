@@ -115,11 +115,11 @@ auto cmake_cxx_flags(const cpp::ProfileSpec& profile) -> String {
     result.push_str(profile.cpp.language.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
     result.push_str(profile.cpp.language.rtti ? " -frtti"_str : " -fno-rtti"_str);
     result.push_ascii(' ');
-    result.push_str(cpp::cpp_optimization_option(profile.cpp.codegen.common.optimization));
+    result.push_str(cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
     result.push_ascii(' ');
-    result.push_str(cpp::cpp_debug_option(profile.cpp.codegen.common.debug_info));
+    result.push_str(cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
     result.push_ascii(' ');
-    result.push_str(cpp::cpp_lto_option(profile.cpp.codegen.common.lto));
+    result.push_str(cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
     return result;
 }
 

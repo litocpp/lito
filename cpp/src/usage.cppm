@@ -52,10 +52,10 @@ auto merge_cpp_import_requirements(CppCompileOptions& left, CppCompileOptions& r
     static_assert(semantics.domain == CppCompatibilityDomain::ImportClosure);
     static_assert(semantics.merge == CppRequirementMergePolicy::Enable);
 
-    auto enabled          = left.threading.posix || right.threading.posix;
-    auto changed          = left.threading.posix != enabled || right.threading.posix != enabled;
-    left.threading.posix  = enabled;
-    right.threading.posix = enabled;
+    auto enabled = left.common.posix_threads || right.common.posix_threads;
+    auto changed = left.common.posix_threads != enabled || right.common.posix_threads != enabled;
+    left.common.posix_threads  = enabled;
+    right.common.posix_threads = enabled;
     return changed;
 }
 

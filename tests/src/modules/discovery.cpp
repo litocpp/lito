@@ -140,7 +140,6 @@ archive = "fixture.discovery.lib"
         { "lib/src/config.hpp"_str, R"module(#pragma once
 
 #define LITO_DISCOVERY_DETAIL 1
-#define LITO_DISCOVERY_MODULE :detail.deeply.nested.component.value
 )module"_str },
         { "lib/src/detail/deeply/nested/component/value.cpp"_str,
           R"module(module fixture.discovery.lib;
@@ -161,7 +160,7 @@ export auto discovery_detail() -> int {
 export module fixture.discovery.lib;
 
 #if LITO_DISCOVERY_DETAIL
-export import LITO_DISCOVERY_MODULE;
+export import :detail.deeply.nested.component.value;
 #endif
 
 export auto discovery_value() -> int {

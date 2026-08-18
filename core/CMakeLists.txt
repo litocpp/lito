@@ -20,7 +20,6 @@ target_sources(
          src/config/project.cppm
          src/config/schema.cppm
          src/config/toolchain.cppm
-         src/compiler.cppm
          src/condition/mod.cppm
          src/lib.cppm
          src/dependency/cmake.cppm

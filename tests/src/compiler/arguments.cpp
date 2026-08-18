@@ -169,7 +169,7 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
                                              .arguments = rstd::move(arguments).unwrap(),
                                          });
     ASSERT_TRUE(options.is_ok());
-    EXPECT_TRUE(options->threading.posix);
+    EXPECT_TRUE(options->common.posix_threads);
     EXPECT_TRUE(options->language.modes.is_empty());
 
     auto normalized = normalize_clang_link_arguments(cpp::LinkArgumentSequence {

@@ -1,6 +1,6 @@
 [workspace]
 name = "lito"
-members = ["frontend", "core", "c", "cpp", "toolchain", "driver", "cli", "tests"]
+members = ["frontend", "core", "cpp", "toolchain", "driver", "cli", "tests"]
 default-members = ["cli"]
 
 [workspace.package]
@@ -12,9 +12,6 @@ path = "frontend"
 
 [workspace.dependencies.lito-core]
 path = "core"
-
-[workspace.dependencies.lito-c]
-path = "c"
 
 [workspace.dependencies.lito-cpp]
 path = "cpp"

@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.cpp:package.spec;
 
 import rstd;
@@ -8,7 +11,7 @@ import :compiler.option;
 import :package.target;
 import :package.metadata;
 import :usage;
-import lito.c;
+import :c.compiler;
 
 using namespace rstd::prelude;
 
@@ -47,16 +50,54 @@ struct PackageSpec {
     Vec<TargetSpec>                     targets;
 };
 
-struct CompileContext {
-    String                          id;
-    String                          scan_id;
-    BmiRequest                      bmi;
-    lito::manifest::PackageLanguage language { lito::manifest::PackageLanguage::Cpp };
-    CppCompileOptions               cpp;
-    lito::c::CCompileOptions        c;
-    CppPublicRequirements           public_requirements;
-    lito::c::CPublicRequirements    c_public_requirements;
-    Vec<String>                     external_identities;
+class LanguageCompileContext : public DefaultInClass<LanguageCompileContext, Clone> {
+    RSTD_ENUM_DEFAULT(
+        LanguageCompileContext,
+        (Cpp),
+        (C, (lito::c::CCompileOptions options; lito::c::CPublicRequirements public_requirements;)),
+        (Cpp,
+         (BmiRequest bmi; CppCompileOptions options; CppPublicRequirements public_requirements;)))
+
+public:
+    auto clone() const -> LanguageCompileContext {
+        RSTD_MATCH(*this) {
+            RSTD_CASE(C, options, public_requirements) {
+                return C(options.clone(), public_requirements.clone());
+            }
+            RSTD_CASE(Cpp, bmi, options, public_requirements) {
+                return Cpp(bmi, as<Clone>(options).clone(), as<Clone>(public_requirements).clone());
+            }
+        }
+        __builtin_unreachable();
+    }
 };
+
+struct CompileContext {
+    String                 id;
+    String                 scan_id;
+    LanguageCompileContext language;
+    Vec<String>            external_identities;
+
+    auto clone() const -> CompileContext {
+        return CompileContext {
+            .id                  = id.clone(),
+            .scan_id             = scan_id.clone(),
+            .language            = as<Clone>(language).clone(),
+            .external_identities = as<Clone>(external_identities).clone(),
+        };
+    }
+};
+
+constexpr auto compile_language(const CompileContext& context) noexcept
+    -> lito::manifest::PackageLanguage {
+    return context.language.is_C() ? lito::manifest::PackageLanguage::C
+                                   : lito::manifest::PackageLanguage::Cpp;
+}
+
+auto common_compile_options(const CompileContext& context) noexcept
+    -> const lito::compiler::CommonCompileOptions& {
+    return context.language.is_C() ? context.language.as_C().options.common
+                                   : context.language.as_Cpp().options.common;
+}
 
 } // namespace lito::cpp

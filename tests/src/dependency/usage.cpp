@@ -24,7 +24,7 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
         external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
     ASSERT_TRUE(private_metadata.is_ok());
     auto private_plan =
-        lito::cpp::resolve_source_discovery(*private_metadata, "debug"_str, Vec<String>::make());
+        lito::cpp::resolve_native_targets(*private_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(private_plan.is_ok());
     EXPECT_TRUE(has_external_macro(private_plan->contexts[usize {}]));
     EXPECT_FALSE(has_external_macro(private_plan->contexts[usize(1)]));
@@ -36,7 +36,7 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
         external_usage_metadata(lito::dependency::DependencyVisibility::Public, *parser);
     ASSERT_TRUE(public_metadata.is_ok());
     auto public_plan =
-        lito::cpp::resolve_source_discovery(*public_metadata, "debug"_str, Vec<String>::make());
+        lito::cpp::resolve_native_targets(*public_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(public_plan.is_ok());
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize {}]));
     EXPECT_TRUE(has_external_macro(public_plan->contexts[usize(1)]));
@@ -45,7 +45,7 @@ TEST(DependencyUsage, ExternalUsageSeparatesCompileVisibilityFromStaticLinkClosu
         external_usage_metadata(lito::dependency::DependencyVisibility::LinkOnly, *parser);
     ASSERT_TRUE(link_only_metadata.is_ok());
     auto link_only_plan =
-        lito::cpp::resolve_source_discovery(*link_only_metadata, "debug"_str, Vec<String>::make());
+        lito::cpp::resolve_native_targets(*link_only_metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(link_only_plan.is_ok());
     EXPECT_FALSE(has_external_macro(link_only_plan->contexts[usize {}]));
     EXPECT_FALSE(has_external_macro(link_only_plan->contexts[usize(1)]));
@@ -73,10 +73,10 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
             .source = String::make("static library usage"_str),
         });
 
-    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
-    EXPECT_TRUE(planned->contexts[usize {}].cpp.threading.posix);
-    EXPECT_TRUE(planned->contexts[usize(1)].cpp.threading.posix);
+    EXPECT_TRUE(planned->contexts[usize {}].language.as_Cpp().options.common.posix_threads);
+    EXPECT_TRUE(planned->contexts[usize(1)].language.as_Cpp().options.common.posix_threads);
     EXPECT_TRUE(planned->link_requirements[usize(1)].posix_threads);
     ASSERT_EQ(planned->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(planned->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
@@ -84,10 +84,9 @@ TEST(DependencyUsage, StaticLinkRequirementsReachTheFinalLinkClosure) {
 
     metadata->targets[usize(1)].dependencies[usize {}].visibility =
         lito::dependency::DependencyVisibility::LinkOnly;
-    auto link_only =
-        lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto link_only = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(link_only.is_ok());
-    EXPECT_FALSE(link_only->contexts[usize(1)].cpp.threading.posix);
+    EXPECT_FALSE(link_only->contexts[usize(1)].language.as_Cpp().options.common.posix_threads);
     EXPECT_TRUE(link_only->link_requirements[usize(1)].posix_threads);
     ASSERT_EQ(link_only->link_requirements[usize(1)].system_libraries.len(), usize(1));
     EXPECT_EQ(link_only->link_requirements[usize(1)].system_libraries[usize {}].name.as_str(),
@@ -101,12 +100,12 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
         external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
     ASSERT_TRUE(metadata.is_ok());
 
-    metadata->profiles[usize {}].cpp.threading.posix             = true;
+    metadata->profiles[usize {}].cpp.common.posix_threads        = true;
     metadata->profiles[usize {}].link_requirements.posix_threads = true;
     metadata->profiles[usize {}].link_requirements.thread_sources.push(
         String::make("build.options"_str));
 
-    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_ok());
     EXPECT_TRUE(planned->link_requirements[usize(1)].posix_threads);
 }
@@ -122,7 +121,7 @@ TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
     ASSERT_TRUE(parsed.is_ok());
     metadata->targets[usize {}].usage.arguments = rstd::move(parsed).unwrap();
 
-    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_err());
     auto error = rstd::move(planned).unwrap_err();
     ASSERT_TRUE(error.is_Message());

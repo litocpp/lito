@@ -7,11 +7,14 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
+         src/c/compiler.cppm
+         src/c/lexical.cppm
          src/build/mod.cppm
          src/build/plan.cppm
          src/build/scan.cppm
          src/build/unit.cppm
          src/compiler/binding.cppm
+         src/compiler/common.cppm
          src/bmi/artifact.cppm
          src/bmi/compatibility.cppm
          src/bmi/mod.cppm
@@ -42,4 +45,4 @@ target_sources(
          src/package/spec.cppm
          src/package/target.cppm
          src/source/discovery.cppm)
-target_link_libraries(lito.cpp PUBLIC lito.core lito.c lito.frontend rstd.std)
+target_link_libraries(lito.cpp PUBLIC lito.core lito.frontend rstd.std)

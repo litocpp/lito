@@ -38,7 +38,7 @@ TEST(Cpp, MaterializesTypedDefaultWarnings) {
 TEST(Cpp, MaterializesTypedDefaultPositionIndependentCode) {
     auto defaults = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
-    EXPECT_TRUE(defaults.codegen.common.position_independent_code);
+    EXPECT_TRUE(defaults.common.codegen.position_independent_code);
 
     auto parsed = argument_layer(strings("-fno-PIC"_str));
     ASSERT_EQ(parsed.occurrences.len(), usize(1));
@@ -48,7 +48,7 @@ TEST(Cpp, MaterializesTypedDefaultPositionIndependentCode) {
                                 lito::manifest::Optimization::None,
                                 lito::manifest::DebugInfo::None,
                                 strings("-fno-PIC"_str));
-    EXPECT_FALSE(disabled.codegen.common.position_independent_code);
+    EXPECT_FALSE(disabled.common.codegen.position_independent_code);
 }
 
 TEST(Cpp, AppliesTargetLocalVisibilityWithLastValueWins) {

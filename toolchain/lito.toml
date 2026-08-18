@@ -11,10 +11,6 @@ archive = "lito.toolchain"
 workspace = true
 visibility = "public"
 
-[dependencies.lito-c]
-workspace = true
-visibility = "public"
-
 [dependencies.lito-cpp]
 workspace = true
 visibility = "public"

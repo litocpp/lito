@@ -85,8 +85,10 @@ auto prepare_build_units(const cpp::PackageSpec& package,
                     .object                 = rstd::move(object).unwrap(),
                     .cache_record           = rstd::move(cache_record).unwrap(),
                     .compile_test_record    = rstd::move(compile_test_record),
-                    .context                = context,
-                    .compile_test           = compile_test,
+                    .language     = context->language.is_C() ? cpp::LanguageSourceUnit::C()
+                                                             : cpp::LanguageSourceUnit::Cpp(),
+                    .context      = context,
+                    .compile_test = compile_test,
                 },
                 target_spec.source_root.as_path());
             if (prepared.is_err()) {

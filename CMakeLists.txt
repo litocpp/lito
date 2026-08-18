@@ -60,7 +60,6 @@ FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)
 add_subdirectory(core)
-add_subdirectory(c)
 add_subdirectory(cpp)
 add_subdirectory(toolchain)
 add_subdirectory(driver)

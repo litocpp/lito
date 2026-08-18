@@ -112,7 +112,7 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
                       "resolved-stdlib"_str,
                       options.abi.resolved_standard_library->headers_identity.as_str());
     }
-    push_identity(output, "posix-threads"_str, options.threading.posix);
+    push_identity(output, "posix-threads"_str, options.common.posix_threads);
     for (const auto& value : options.language.modes) {
         push_identity(output,
                       rstd::format("language:{}", value.family.as_str()).as_str(),
@@ -122,11 +122,11 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
         push_identity(
             output, rstd::format("abi:{}", value.family.as_str()).as_str(), value.value.as_str());
     }
-    if (options.target.common.target.is_some()) {
-        push_identity(output, "target"_str, options.target.common.target->as_str());
+    if (options.common.target.target.is_some()) {
+        push_identity(output, "target"_str, options.common.target.target->as_str());
     }
-    if (options.target.common.sysroot.is_some()) {
-        push_identity(output, "sysroot"_str, options.target.common.sysroot->as_str());
+    if (options.common.target.sysroot.is_some()) {
+        push_identity(output, "sysroot"_str, options.common.target.sysroot->as_str());
     }
     for (const auto& value : options.target.features) {
         push_identity(output,
@@ -197,8 +197,8 @@ auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String 
         push_identity(
             result, rstd::format("abi:{}", value.family.as_str()).as_str(), value.value.as_str());
     }
-    if (options.target.common.target.is_some()) {
-        push_identity(result, "target"_str, options.target.common.target->as_str());
+    if (options.common.target.target.is_some()) {
+        push_identity(result, "target"_str, options.common.target.target->as_str());
     }
     result.push_str(family_options_identity("target"_str, options.target.features).as_str());
     result.push_str(
@@ -245,11 +245,11 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
     found             = difference(
         CppAbiCompatibilityField::AbiModes, provider_abi.as_str(), consumer_abi.as_str());
     if (found.is_some()) return found;
-    auto provider_target = provider.target.common.target.is_some()
-                               ? provider.target.common.target->as_str()
+    auto provider_target = provider.common.target.target.is_some()
+                               ? provider.common.target.target->as_str()
                                : "<compiler-default>"_str;
-    auto consumer_target = consumer.target.common.target.is_some()
-                               ? consumer.target.common.target->as_str()
+    auto consumer_target = consumer.common.target.target.is_some()
+                               ? consumer.common.target.target->as_str()
                                : "<compiler-default>"_str;
     found = difference(CppAbiCompatibilityField::Target, provider_target, consumer_target);
     if (found.is_some()) return found;
@@ -269,14 +269,14 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
 }
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-compile-context-v3\n"_str);
+    auto result = String::make("lito-cpp-compile-context-v4\n"_str);
     append_semantic_identity(result, options);
     push_identity(
-        result, "optimization"_str, cpp_optimization_option(options.codegen.common.optimization));
-    push_identity(result, "debug-info"_str, cpp_debug_option(options.codegen.common.debug_info));
-    push_identity(result, "lto"_str, cpp_lto_option(options.codegen.common.lto));
+        result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
+    push_identity(result, "debug-info"_str, cpp_debug_option(options.common.codegen.debug_info));
+    push_identity(result, "lto"_str, cpp_lto_option(options.common.codegen.lto));
     push_identity(
-        result, "position-independent-code"_str, options.codegen.common.position_independent_code);
+        result, "position-independent-code"_str, options.common.codegen.position_independent_code);
     push_identity(result,
                   "symbol-visibility"_str,
                   cpp_symbol_visibility_name(options.codegen.visibility.symbols));
@@ -322,12 +322,12 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_scan_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-scan-context-v2\n"_str);
+    auto result = String::make("lito-cpp-scan-context-v3\n"_str);
     append_semantic_identity(result, options);
     push_identity(
-        result, "optimization"_str, cpp_optimization_option(options.codegen.common.optimization));
+        result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
     push_identity(
-        result, "position-independent-code"_str, options.codegen.common.position_independent_code);
+        result, "position-independent-code"_str, options.common.codegen.position_independent_code);
     for (const auto& value : options.codegen.modes) {
         push_identity(result,
                       rstd::format("codegen:{}", value.family.as_str()).as_str(),

@@ -172,17 +172,19 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
         .configuration = configuration(),
     });
     ASSERT_TRUE(native.is_ok());
-    ASSERT_TRUE(native->result.provided.is_some());
-    EXPECT_EQ(native->result.provided->logical_name.as_str(), "fixture.preprocessor.native"_str);
+    ASSERT_TRUE(native->result.language.is_Cpp());
+    const auto& native_facts = native->result.language.as_Cpp().facts;
+    ASSERT_TRUE(native_facts.provided.is_some());
+    EXPECT_EQ(native_facts.provided->logical_name.as_str(), "fixture.preprocessor.native"_str);
     EXPECT_TRUE(has_import(*native, "fixture.preprocessor.native:dependency"_str));
-    ASSERT_EQ(native->result.imports.len(), usize(1));
-    EXPECT_TRUE(native->result.imports[usize {}].exported);
+    ASSERT_EQ(native_facts.required_modules.len(), usize(1));
+    EXPECT_TRUE(native_facts.required_modules[usize {}].exported);
     EXPECT_FALSE(has_import(*native, "fixture.preprocessor.native:native_builtin_failure"_str));
 
     auto native_json = lito::scan_report_json(*native);
     ASSERT_TRUE(native_json.is_ok());
     EXPECT_TRUE(native_json->as_str().contains("\"format\": \"lito-scan\""_str));
-    EXPECT_TRUE(native_json->as_str().contains("\"version\": 3"_str));
+    EXPECT_TRUE(native_json->as_str().contains("\"version\": 4"_str));
     EXPECT_TRUE(native_json->as_str().contains("\"exported\": true"_str));
     EXPECT_TRUE(native_json->as_str().contains("\"external-macros\":"_str));
     EXPECT_TRUE(native_json->as_str().contains("\"name\": \"LITO_PKG_VERSION\""_str));

@@ -6,7 +6,6 @@ export module lito.toolchain.clang:support;
 import rstd;
 import lito.core;
 import lito.cpp;
-import lito.c;
 import lito.toolchain.common;
 import lito.system;
 import lito.frontend;
@@ -151,22 +150,22 @@ auto append_typed_options(Vec<String>&                  command,
                           const cpp::CppCompileOptions& options,
                           TargetFamily                  target_family,
                           bool                          semantic_only) -> void {
-    if (options.target.common.target.is_some()) {
-        command.push(rstd::format("--target={}", options.target.common.target->as_str()));
+    if (options.common.target.target.is_some()) {
+        command.push(rstd::format("--target={}", options.common.target.target->as_str()));
     }
-    if (options.target.common.sysroot.is_some()) {
-        command.push(rstd::format("--sysroot={}", options.target.common.sysroot->as_str()));
+    if (options.common.target.sysroot.is_some()) {
+        command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }
-    auto optimization = cpp::cpp_optimization_option(options.codegen.common.optimization);
+    auto optimization = cpp::cpp_optimization_option(options.common.codegen.optimization);
     if (! optimization.is_empty()) toolchain::command::push_option(command, optimization);
-    auto debug = cpp::cpp_debug_option(options.codegen.common.debug_info);
+    auto debug = cpp::cpp_debug_option(options.common.codegen.debug_info);
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
-    auto lto = cpp::cpp_lto_option(options.codegen.common.lto);
+    auto lto = cpp::cpp_lto_option(options.common.codegen.lto);
     if (! semantic_only) toolchain::command::push_option(command, lto);
     if (target_family != TargetFamily::Windows) {
         toolchain::command::push_option(
             command,
-            options.codegen.common.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
+            options.common.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     }
     if (! semantic_only) {
         command.push(
@@ -192,7 +191,7 @@ auto append_typed_options(Vec<String>&                  command,
     }
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
-    if (options.threading.posix) command.push(String::make("-pthread"_str));
+    if (options.common.posix_threads) command.push(String::make("-pthread"_str));
     for (const auto& option : options.target.features) command.push(option.value.clone());
     for (const auto& option : options.codegen.modes) command.push(option.value.clone());
     for (const auto& option : options.codegen.instrumentation) command.push(option.clone());
@@ -226,24 +225,25 @@ auto append_c_typed_options(Vec<String>&                    command,
                             const lito::c::CCompileOptions& options,
                             TargetFamily                    target_family,
                             bool                            semantic_only) -> void {
-    if (options.target.target.is_some()) {
-        command.push(rstd::format("--target={}", options.target.target->as_str()));
+    if (options.common.target.target.is_some()) {
+        command.push(rstd::format("--target={}", options.common.target.target->as_str()));
     }
-    if (options.target.sysroot.is_some()) {
-        command.push(rstd::format("--sysroot={}", options.target.sysroot->as_str()));
+    if (options.common.target.sysroot.is_some()) {
+        command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
     }
-    auto optimization = cpp::cpp_optimization_option(options.codegen.optimization);
+    auto optimization = cpp::cpp_optimization_option(options.common.codegen.optimization);
     if (! optimization.is_empty()) toolchain::command::push_option(command, optimization);
-    auto debug = cpp::cpp_debug_option(options.codegen.debug_info);
+    auto debug = cpp::cpp_debug_option(options.common.codegen.debug_info);
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     if (! semantic_only) {
-        toolchain::command::push_option(command, cpp::cpp_lto_option(options.codegen.lto));
+        toolchain::command::push_option(command, cpp::cpp_lto_option(options.common.codegen.lto));
     }
     if (target_family != TargetFamily::Windows) {
         toolchain::command::push_option(
-            command, options.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
+            command,
+            options.common.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     }
-    if (options.posix_threads) toolchain::command::push_option(command, "-pthread"_str);
+    if (options.common.posix_threads) toolchain::command::push_option(command, "-pthread"_str);
     if (! semantic_only) {
         toolchain::command::push_option(command, "-Wall"_str);
         toolchain::command::push_option(command, "-Wpedantic"_str);

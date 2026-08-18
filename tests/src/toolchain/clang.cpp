@@ -5,12 +5,30 @@ import rstd.test;
 import lito.test.cpp;
 import lito.core;
 import lito.cpp;
+import lito.frontend.result;
 import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito;
 using namespace lito_test;
+
+TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
+    auto facts = frontend::FrontendResult {};
+    facts.header_inputs.push(PathBuf::from("/tmp/c-header.h"_str));
+    auto c_scan = cpp::scan_from_frontend(facts, usize(7), lito::manifest::PackageLanguage::C);
+    ASSERT_TRUE(c_scan.is_ok());
+    ASSERT_TRUE(c_scan->language.is_C());
+    EXPECT_EQ(c_scan->language.as_C().facts.common.header_inputs.len(), usize(1));
+
+    facts.provided = Some(frontend::ProvidedModule {
+        .logical_name = String::make("invalid.c.module"_str),
+        .is_interface = true,
+    });
+    auto invalid   = cpp::scan_from_frontend(facts, usize(7), lito::manifest::PackageLanguage::C);
+    ASSERT_TRUE(invalid.is_err());
+    EXPECT_TRUE(invalid.unwrap_err().as_str().contains("C++ module facts"_str));
+}
 
 TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto created = ClangToolchain::create(lito::config::ToolchainSpec {
@@ -25,10 +43,12 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     auto cpp = cpp_options(
         "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
     auto context = cpp::CompileContext {
-        .id  = String::make("context"_str),
-        .cpp = rstd::move(cpp),
+        .id       = String::make("context"_str),
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(cpp), cpp::CppPublicRequirements {}),
     };
-    EXPECT_TRUE(toolchain.validate(context.cpp, context.bmi).is_ok());
+    EXPECT_TRUE(toolchain.validate(context.language.as_Cpp().options, context.language.as_Cpp().bmi)
+                    .is_ok());
     auto prepared = cpp::PreparedUnit {
         .unit =
             cpp::UnitSpec {
@@ -61,15 +81,18 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
                              "-fmodule-file=sample.module=/tmp/sample.module.pcm"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-fprebuilt-module-path="_str));
 
-    context.cpp.language.sized_deallocation = cpp::CppSizedDeallocation::Disabled;
+    context.language.as_Cpp().options.language.sized_deallocation =
+        cpp::CppSizedDeallocation::Disabled;
     auto disabled_invocation =
         toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(disabled_invocation.is_ok());
     EXPECT_TRUE(has_argument(disabled_invocation->arguments, "-fno-sized-deallocation"_str));
 
-    context.cpp.codegen.visibility.symbols        = cpp::CppSymbolVisibility::Default;
-    context.cpp.codegen.visibility.types          = Some(cpp::CppSymbolVisibility::Protected);
-    context.cpp.codegen.visibility.inlines_hidden = true;
+    context.language.as_Cpp().options.codegen.visibility.symbols =
+        cpp::CppSymbolVisibility::Default;
+    context.language.as_Cpp().options.codegen.visibility.types =
+        Some(cpp::CppSymbolVisibility::Protected);
+    context.language.as_Cpp().options.codegen.visibility.inlines_hidden = true;
     auto visibility_invocation =
         toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(visibility_invocation.is_ok());
@@ -77,7 +100,7 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-ftype-visibility=protected"_str));
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-fvisibility-inlines-hidden"_str));
 
-    context.cpp.codegen.common.lto = lito::manifest::Lto::Thin;
+    context.language.as_Cpp().options.common.codegen.lto = lito::manifest::Lto::Thin;
     auto lto_invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(lto_invocation.is_ok());
     EXPECT_TRUE(has_argument(lto_invocation->arguments, "-flto=thin"_str));

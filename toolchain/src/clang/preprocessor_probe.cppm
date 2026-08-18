@@ -2,7 +2,6 @@ export module lito.toolchain.clang:preprocessor_probe;
 
 import rstd;
 import lito.cpp;
-import lito.c;
 import lito.core;
 import lito.toolchain.common;
 import lito.system;

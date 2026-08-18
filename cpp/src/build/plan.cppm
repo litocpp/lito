@@ -20,7 +20,7 @@ class PlannedLinkInput {
               (External, (LinkArgumentSequence arguments;)))
 };
 
-struct SourceDiscoveryPlan {
+struct ResolvedNativeTargetPlan {
     usize                               profile {};
     Vec<lito::package::PackageTargetId> target_identities;
     Vec<TargetId>                       target_order;

@@ -13,9 +13,9 @@ auto discover_explicit_sources(const cpp::ResolvedTarget& target)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet>;
 auto discover_format_sources(const lito::manifest::PackageManifest& manifest)
     -> cpp::SourceDiscoveryResult<cpp::ResolvedSourceSet>;
-auto resolve_source_target(const cpp::PackageMetadata&     package,
-                           const cpp::SourceDiscoveryPlan& discovery,
-                           ref<rstd::path::Path>           source)
+auto resolve_source_target(const cpp::PackageMetadata&          package,
+                           const cpp::ResolvedNativeTargetPlan& discovery,
+                           ref<rstd::path::Path>                source)
     -> cpp::SourceDiscoveryResult<cpp::TargetId>;
 
 } // namespace lito

@@ -11,11 +11,11 @@ using namespace rstd::prelude;
 namespace lito
 {
 
-auto discover_package_sources(const cpp::PackageMetadata&     package,
-                              const cpp::SourceDiscoveryPlan& plan,
-                              FrontendAnalysisService&        analysis_service,
-                              const Option<BuildEventSink>&   observer,
-                              usize                           jobs,
+auto discover_package_sources(const cpp::PackageMetadata&          package,
+                              const cpp::ResolvedNativeTargetPlan& plan,
+                              FrontendAnalysisService&             analysis_service,
+                              const Option<BuildEventSink>&        observer,
+                              usize                                jobs,
                               usize max_in_flight) -> BuildResult<Vec<cpp::ResolvedTargetSources>>;
 
 } // namespace lito

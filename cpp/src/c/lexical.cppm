@@ -1,4 +1,4 @@
-export module lito.c:lexical;
+export module lito.cpp:c.lexical;
 
 import rstd;
 import lito.frontend.lexical;

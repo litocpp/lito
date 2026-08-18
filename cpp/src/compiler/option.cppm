@@ -6,6 +6,7 @@ export module lito.cpp:compiler.option;
 
 import rstd;
 import :compiler.argument;
+import :compiler.common;
 export import :compiler.error;
 import lito.core;
 
@@ -192,10 +193,6 @@ struct CppLanguageOptions {
     Vec<CppFamilyOption> modes;
 };
 
-struct CppThreadingOptions {
-    bool posix { false };
-};
-
 struct ResolvedStandardLibrary : DefaultInClass<ResolvedStandardLibrary, Clone> {
     lito::config::StandardLibrary family { lito::config::StandardLibrary::Libstdcxx };
     String                        headers_identity;
@@ -221,8 +218,7 @@ struct CppAbiOptions {
 };
 
 struct CppTargetOptions {
-    lito::compiler::TargetOptions common;
-    Vec<CppFamilyOption>          features;
+    Vec<CppFamilyOption> features;
 };
 
 struct CppPreprocessorOptions {
@@ -237,10 +233,9 @@ struct CppVisibilityOptions {
 };
 
 struct CppCodegenOptions {
-    lito::compiler::CodegenOptions common;
-    CppVisibilityOptions           visibility;
-    Vec<CppFamilyOption>           modes;
-    Vec<String>                    instrumentation;
+    CppVisibilityOptions visibility;
+    Vec<CppFamilyOption> modes;
+    Vec<String>          instrumentation;
 };
 
 struct CppDiagnosticOptions {
@@ -249,14 +244,14 @@ struct CppDiagnosticOptions {
 };
 
 struct CppCompileOptions : DefaultInClass<CppCompileOptions, Clone> {
-    CppLanguageOptions     language;
-    CppThreadingOptions    threading;
-    CppAbiOptions          abi;
-    CppTargetOptions       target;
-    CppPreprocessorOptions preprocessor;
-    CppCodegenOptions      codegen;
-    CppDiagnosticOptions   diagnostics;
-    Vec<CppVendorOption>   vendor;
+    lito::compiler::CommonCompileOptions common;
+    CppLanguageOptions                   language;
+    CppAbiOptions                        abi;
+    CppTargetOptions                     target;
+    CppPreprocessorOptions               preprocessor;
+    CppCodegenOptions                    codegen;
+    CppDiagnosticOptions                 diagnostics;
+    Vec<CppVendorOption>                 vendor;
 
     auto clone() const -> CppCompileOptions;
 };
@@ -430,6 +425,7 @@ inline auto CppArgumentLayer::clone() const -> CppArgumentLayer {
 inline auto CppCompileOptions::clone() const -> CppCompileOptions {
     const auto& input  = *this;
     auto        result = CppCompileOptions {
+        .common = input.common.clone(),
         .language =
             CppLanguageOptions {
                 .standard           = input.language.standard.clone(),
@@ -438,7 +434,6 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
                 .sized_deallocation = input.language.sized_deallocation,
                 .modes              = as<Clone>(input.language.modes).clone(),
             },
-        .threading = input.threading,
         .abi =
             CppAbiOptions {
                 .standard_library = input.abi.standard_library,
@@ -451,7 +446,6 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
             },
         .codegen =
             CppCodegenOptions {
-                .common = input.codegen.common,
                 .visibility =
                     CppVisibilityOptions {
                         .symbols        = input.codegen.visibility.symbols,
@@ -467,7 +461,6 @@ inline auto CppCompileOptions::clone() const -> CppCompileOptions {
             },
         .vendor = as<Clone>(input.vendor).clone(),
     };
-    result.target.common = input.target.common.clone();
     if (input.abi.resolved_standard_library.is_some()) {
         result.abi.resolved_standard_library = Some(input.abi.resolved_standard_library->clone());
     }

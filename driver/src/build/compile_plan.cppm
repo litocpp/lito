@@ -140,14 +140,16 @@ struct CompileExecutionResult {
 };
 
 auto documentation_unit_kind(const cpp::ScanResult& scan) -> DocumentationUnitKind {
-    if (scan.provided.is_some()) {
-        if (scan.provided->logical_name.as_str().contains(":"_str)) {
+    if (! scan.language.is_Cpp()) return DocumentationUnitKind::TranslationUnit;
+    const auto& facts = scan.language.as_Cpp().facts;
+    if (facts.provided.is_some()) {
+        if (facts.provided->logical_name.as_str().contains(":"_str)) {
             return DocumentationUnitKind::ModulePartition;
         }
-        return scan.provided->is_interface ? DocumentationUnitKind::ModuleInterface
-                                           : DocumentationUnitKind::ModulePartition;
+        return facts.provided->is_interface ? DocumentationUnitKind::ModuleInterface
+                                            : DocumentationUnitKind::ModulePartition;
     }
-    if (scan.implementation_module.is_some()) {
+    if (facts.implementation_module.is_some()) {
         return DocumentationUnitKind::ModuleImplementation;
     }
     return DocumentationUnitKind::TranslationUnit;
@@ -179,10 +181,15 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
                 "documentation view received an unmaterialized invocation"_str);
         }
         auto logical_module = Option<String> {};
-        if (scans[unit].provided.is_some()) {
-            logical_module = Some(scans[unit].provided->logical_name.clone());
-        } else if (scans[unit].implementation_module.is_some()) {
-            logical_module = Some(scans[unit].implementation_module->clone());
+        auto is_interface   = false;
+        if (scans[unit].language.is_Cpp()) {
+            const auto& facts = scans[unit].language.as_Cpp().facts;
+            if (facts.provided.is_some()) {
+                logical_module = Some(facts.provided->logical_name.clone());
+                is_interface   = facts.provided->is_interface;
+            } else if (facts.implementation_module.is_some()) {
+                logical_module = Some(facts.implementation_module->clone());
+            }
         }
         auto dependencies =
             Vec<DocumentationBmiDependency>::with_capacity(plan.nodes[unit].dependencies.len());
@@ -194,30 +201,33 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
             });
         }
         result.push(DocumentationBuildUnit {
-            .target          = package.targets[target].id.clone(),
-            .package_root    = package.targets[target].root.clone(),
-            .source          = units[unit].unit.source.clone(),
-            .relative_source = units[unit].unit.relative_source.clone(),
-            .kind            = documentation_unit_kind(scans[unit]),
-            .is_interface    = scans[unit].provided.is_some() && scans[unit].provided->is_interface,
-            .logical_module  = rstd::move(logical_module),
-            .source_identity = units[unit].frontend_analysis->receipt.clone(),
-            .invocation      = plan.nodes[unit].invocation->clone(),
+            .target           = package.targets[target].id.clone(),
+            .package_root     = package.targets[target].root.clone(),
+            .source           = units[unit].unit.source.clone(),
+            .relative_source  = units[unit].unit.relative_source.clone(),
+            .kind             = documentation_unit_kind(scans[unit]),
+            .is_interface     = is_interface,
+            .logical_module   = rstd::move(logical_module),
+            .source_identity  = units[unit].frontend_analysis->receipt.clone(),
+            .invocation       = plan.nodes[unit].invocation->clone(),
             .bmi_dependencies = rstd::move(dependencies),
         });
     }
     return Ok(rstd::move(result));
 }
 
-auto materialize_compile_plan(const cpp::PackageSpec&     package,
-                              const BuildLayout&          layout,
-                              const ClangToolchain&       toolchain,
-                              Vec<cpp::PreparedUnit>&     units,
-                              const Vec<cpp::ScanResult>& scans,
-                              const cpp::ModulePlan&      modules) -> BuildResult<CompilePlan> {
-    if (scans.len() != units.len() || modules.direct_inputs.len() != units.len() ||
-        modules.resolved_inputs.len() != units.len() ||
-        modules.public_inputs.len() != units.len() || modules.compile_order.len() != units.len()) {
+auto materialize_compile_plan(const cpp::PackageSpec&                package,
+                              const BuildLayout&                     layout,
+                              const ClangToolchain&                  toolchain,
+                              Vec<cpp::PreparedUnit>&                units,
+                              const Vec<cpp::ScanResult>&            scans,
+                              const cpp::ResolvedSemanticBuildGraph& semantics)
+    -> BuildResult<CompilePlan> {
+    if (scans.len() != units.len() || semantics.direct_inputs.len() != units.len() ||
+        semantics.resolved_inputs.len() != units.len() ||
+        semantics.public_inputs.len() != units.len() ||
+        semantics.compile_order.len() != units.len() ||
+        semantics.c_units.len() + semantics.cpp_units.len() != units.len()) {
         return compile_failure<CompilePlan>("compile plan inputs have inconsistent lengths"_str);
     }
 
@@ -230,7 +240,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
         dependents.emplace_back();
     }
     for (auto consumer = cpp::UnitId {}; consumer < units.len(); ++consumer) {
-        for (auto provider : modules.direct_inputs[consumer]) {
+        for (auto provider : semantics.direct_inputs[consumer]) {
             if (provider >= units.len()) {
                 return compile_failure<CompilePlan>("compile DAG contains an invalid provider"_str);
             }
@@ -240,19 +250,21 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
 
     auto format_identity = cpp::bmi_format_identity(toolchain.bmi_format());
     auto format_key      = cpp::bmi_format_key(toolchain.bmi_format());
-    for (auto unit : modules.compile_order) {
+    for (auto unit : semantics.compile_order) {
         if (unit >= units.len()) {
             return compile_failure<CompilePlan>("compile order contains an invalid unit"_str);
         }
         auto direct_artifacts    = Vec<DependencyArtifact>::make();
         auto recipe_dependencies = Vec<cpp::BmiRecipeDependency>::make();
-        for (auto input : modules.direct_inputs[unit]) {
-            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
+        for (auto input : semantics.direct_inputs[unit]) {
+            const auto* input_bmi = cpp::unit_bmi(units[input].unit);
+            if (! scans[input].language.is_Cpp() ||
+                scans[input].language.as_Cpp().facts.provided.is_none() || input_bmi == nullptr) {
                 return compile_failure<CompilePlan>(
                     rstd::format("module dependency '{}' has no resolved BMI artifact",
                                  units[input].unit.source.as_path()));
             }
-            const auto& artifact = *units[input].unit.bmi;
+            const auto& artifact = *input_bmi;
             direct_artifacts.push(DependencyArtifact {
                 .logical_name = artifact.logical_name.clone(),
                 .artifact     = artifact.key.value.clone(),
@@ -264,9 +276,16 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
             });
         }
 
-        if (scans[unit].provided.is_some()) {
-            auto source_identity   = units[unit].unit.source.as_path().to_str();
-            auto relative_identity = units[unit].unit.relative_source.as_path().to_str();
+        const auto* scan_cpp = scans[unit].language.is_Cpp()
+                                   ? rstd::addressof(scans[unit].language.as_Cpp().facts)
+                                   : nullptr;
+        if (scan_cpp != nullptr && scan_cpp->provided.is_some()) {
+            if (! units[unit].unit.context->language.is_Cpp()) {
+                return compile_failure<CompilePlan>("C source unexpectedly provided a BMI"_str);
+            }
+            const auto& cpp_context       = units[unit].unit.context->language.as_Cpp();
+            auto        source_identity   = units[unit].unit.source.as_path().to_str();
+            auto        relative_identity = units[unit].unit.relative_source.as_path().to_str();
             if (source_identity.is_none() || relative_identity.is_none()) {
                 return compile_failure<CompilePlan>("BMI provider path is not valid UTF-8"_str);
             }
@@ -277,47 +296,53 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
                 *relative_identity,
                 units[unit].unit.context->id.as_str());
             auto key      = cpp::make_bmi_artifact_key(cpp::BmiRecipe {
-                .request                 = units[unit].unit.context->bmi,
-                .logical_name            = scans[unit].provided->logical_name.clone(),
+                .request                 = cpp_context.bmi,
+                .logical_name            = scan_cpp->provided->logical_name.clone(),
                 .provider_identity       = provider_identity.clone(),
                 .source_identity         = String::make(*source_identity),
                 .source_content_identity = units[unit].frontend_analysis->receipt.clone(),
-                .cpp_context_identity    = cpp::cpp_compile_identity(units[unit].unit.context->cpp),
-                .public_requirements_identity = cpp::cpp_public_requirements_identity(
-                    units[unit].unit.context->public_requirements),
+                .cpp_context_identity    = cpp::cpp_compile_identity(cpp_context.options),
+                .public_requirements_identity =
+                    cpp::cpp_public_requirements_identity(cpp_context.public_requirements),
                 .format_identity     = format_identity.clone(),
                 .direct_dependencies = rstd::move(recipe_dependencies),
             });
-            auto bmi_path = layout.bmi(format_key.as_str(),
-                                       key.value.as_str(),
-                                       scans[unit].provided->logical_name.as_str());
-            auto direct   = Vec<cpp::BmiRecipeDependency>::with_capacity(direct_artifacts.len());
+            auto bmi_path = layout.bmi(
+                format_key.as_str(), key.value.as_str(), scan_cpp->provided->logical_name.as_str());
+            auto direct = Vec<cpp::BmiRecipeDependency>::with_capacity(direct_artifacts.len());
             for (const auto& dependency : direct_artifacts) {
                 direct.push(cpp::BmiRecipeDependency {
                     .logical_name = dependency.logical_name.clone(),
                     .artifact_key = dependency.artifact.clone(),
                 });
             }
-            units[unit].unit.bmi = Some(cpp::BmiArtifact {
-                .logical_name        = scans[unit].provided->logical_name.clone(),
-                .provider_identity   = rstd::move(provider_identity),
-                .key                 = rstd::move(key),
-                .format              = as<Clone>(toolchain.bmi_format()).clone(),
-                .request             = units[unit].unit.context->bmi,
-                .path                = rstd::move(bmi_path),
-                .direct_dependencies = rstd::move(direct),
-                .paired_object       = Some(units[unit].unit.object.clone()),
-            });
+            auto assigned =
+                cpp::assign_unit_bmi(units[unit].unit,
+                                     cpp::BmiArtifact {
+                                         .logical_name = scan_cpp->provided->logical_name.clone(),
+                                         .provider_identity = rstd::move(provider_identity),
+                                         .key               = rstd::move(key),
+                                         .format  = as<Clone>(toolchain.bmi_format()).clone(),
+                                         .request = cpp_context.bmi,
+                                         .path    = rstd::move(bmi_path),
+                                         .direct_dependencies = rstd::move(direct),
+                                         .paired_object = Some(units[unit].unit.object.clone()),
+                                     });
+            if (! assigned) {
+                return compile_failure<CompilePlan>("C source unexpectedly provided a BMI"_str);
+            }
         }
 
         auto module_dependencies = Vec<cpp::ModuleArtifactDependency>::make();
-        for (auto input : modules.resolved_inputs[unit]) {
-            if (scans[input].provided.is_none() || units[input].unit.bmi.is_none()) {
+        for (auto input : semantics.resolved_inputs[unit]) {
+            const auto* input_bmi = cpp::unit_bmi(units[input].unit);
+            if (! scans[input].language.is_Cpp() ||
+                scans[input].language.as_Cpp().facts.provided.is_none() || input_bmi == nullptr) {
                 return compile_failure<CompilePlan>(
                     rstd::format("module dependency '{}' has no resolved BMI artifact",
                                  units[input].unit.source.as_path()));
             }
-            const auto& artifact = *units[input].unit.bmi;
+            const auto& artifact = *input_bmi;
             module_dependencies.push(cpp::ModuleArtifactDependency {
                 .logical_name = artifact.logical_name.clone(),
                 .artifact_key = cpp::BmiArtifactKey { .value = artifact.key.value.clone() },
@@ -350,7 +375,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&     package,
         auto command    = command_text(invocation.arguments);
         nodes.push(CompileNodePlan {
             .unit          = unit,
-            .prerequisites = modules.direct_inputs[unit].clone(),
+            .prerequisites = semantics.direct_inputs[unit].clone(),
             .dependents    = rstd::move(dependents[unit]),
             .dependencies  = rstd::move(dependencies[unit]).unwrap_unchecked(),
             .invocation    = Some(rstd::move(invocation)),

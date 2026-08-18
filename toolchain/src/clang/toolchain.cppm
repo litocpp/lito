@@ -6,7 +6,6 @@ export module lito.toolchain.clang:toolchain;
 import rstd;
 import lito.core;
 import lito.cpp;
-import lito.c;
 import lito.toolchain.common;
 import lito.system;
 import lito.frontend;
@@ -145,30 +144,57 @@ public:
                                           compiler_path.clone(),
                                           rstd::move(modified).unwrap_err()));
         }
-        auto timestamp     = modified->as_unix_time();
-        auto compiler_text = compiler_path.as_path().to_str();
-        auto resource_text = resolved_resource.as_path().to_str();
-        if (compiler_text.is_none() || resource_text.is_none()) {
+        auto c_compiler_metadata = rstd::fs::metadata(c_compiler_path.as_path());
+        if (c_compiler_metadata.is_err()) {
+            return Err(ToolchainError::Io(String::make("inspect C compiler"_str),
+                                          c_compiler_path.clone(),
+                                          rstd::move(c_compiler_metadata).unwrap_err()));
+        }
+        auto c_modified = c_compiler_metadata->modified();
+        if (c_modified.is_err()) {
+            return Err(ToolchainError::Io(String::make("read C compiler modification time"_str),
+                                          c_compiler_path.clone(),
+                                          rstd::move(c_modified).unwrap_err()));
+        }
+        auto timestamp       = modified->as_unix_time();
+        auto c_timestamp     = c_modified->as_unix_time();
+        auto compiler_text   = compiler_path.as_path().to_str();
+        auto c_compiler_text = c_compiler_path.as_path().to_str();
+        auto resource_text   = resolved_resource.as_path().to_str();
+        if (compiler_text.is_none() || c_compiler_text.is_none() || resource_text.is_none()) {
             return failure<ClangToolchain>(
                 "Clang compiler or resource path is not valid UTF-8"_str);
         }
-        auto build_identity = rstd::format("lito-clang-build-v1\n{}\n{}\n{}\n{}\n{}:{}:{}",
+        auto build_identity = rstd::format("lito-clang-build-v2\n"
+                                           "cxx:{}\n{}\n{}:{}:{}\n"
+                                           "cc:{}\n{}\n{}:{}:{}\n"
+                                           "target:{}\nresource:{}",
                                            *compiler_text,
                                            compiler_version->as_str(),
-                                           target->as_str(),
-                                           *resource_text,
                                            compiler_metadata->size(),
                                            timestamp.seconds,
-                                           timestamp.nanoseconds);
+                                           timestamp.nanoseconds,
+                                           *c_compiler_text,
+                                           c_compiler_version->as_str(),
+                                           c_compiler_metadata->size(),
+                                           c_timestamp.seconds,
+                                           c_timestamp.nanoseconds,
+                                           target->as_str(),
+                                           *resource_text);
         auto identity       = CompilerIdentity {
-            .path                 = compiler_path.clone(),
-            .version              = rstd::move(compiler_version).unwrap(),
-            .target               = rstd::move(target).unwrap(),
-            .resource_directory   = resolved_resource.clone(),
-            .build_identity       = build_identity.clone(),
-            .size                 = compiler_metadata->size(),
-            .modified_seconds     = timestamp.seconds,
-            .modified_nanoseconds = timestamp.nanoseconds,
+            .path                   = compiler_path.clone(),
+            .version                = rstd::move(compiler_version).unwrap(),
+            .c_path                 = c_compiler_path.clone(),
+            .c_version              = rstd::move(c_compiler_version).unwrap(),
+            .target                 = rstd::move(target).unwrap(),
+            .resource_directory     = resolved_resource.clone(),
+            .build_identity         = build_identity.clone(),
+            .size                   = compiler_metadata->size(),
+            .modified_seconds       = timestamp.seconds,
+            .modified_nanoseconds   = timestamp.nanoseconds,
+            .c_size                 = c_compiler_metadata->size(),
+            .c_modified_seconds     = c_timestamp.seconds,
+            .c_modified_nanoseconds = c_timestamp.nanoseconds,
         };
         auto capabilities = cpp::CppToolchainCapabilities {
             .one_phase_bmi          = help->as_str().contains("-fmodule-output"_str),
@@ -233,11 +259,11 @@ public:
             "{}{}", toolchain::clang_options::STANDARD, options.language.standard.as_str()));
         toolchain::command::push_option(
             command, toolchain::clang_options::standard_library(options.abi.standard_library));
-        if (options.target.common.target.is_some()) {
-            command.push(rstd::format("--target={}", options.target.common.target->as_str()));
+        if (options.common.target.target.is_some()) {
+            command.push(rstd::format("--target={}", options.common.target.target->as_str()));
         }
-        if (options.target.common.sysroot.is_some()) {
-            command.push(rstd::format("--sysroot={}", options.target.common.sysroot->as_str()));
+        if (options.common.target.sysroot.is_some()) {
+            command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
         }
         toolchain::command::push_option(command, "-dM"_str);
         toolchain::command::push_option(command, "-E"_str);
@@ -273,13 +299,13 @@ public:
         toolchain::command::push_option(
             library_command,
             toolchain::clang_options::standard_library(options.abi.standard_library));
-        if (options.target.common.target.is_some()) {
+        if (options.common.target.target.is_some()) {
             library_command.push(
-                rstd::format("--target={}", options.target.common.target->as_str()));
+                rstd::format("--target={}", options.common.target.target->as_str()));
         }
-        if (options.target.common.sysroot.is_some()) {
+        if (options.common.target.sysroot.is_some()) {
             library_command.push(
-                rstd::format("--sysroot={}", options.target.common.sysroot->as_str()));
+                rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
         }
         library_command.push(rstd::format("-print-file-name={}", library_name));
         auto library = run_command(library_command, environment_);
@@ -368,6 +394,13 @@ public:
 
     auto prepare(cpp::UnitSpec unit, ref<rstd::path::Path> working_directory) const
         -> ToolchainResult<cpp::PreparedUnit> {
+        if (unit.context == nullptr) {
+            return failure<cpp::PreparedUnit>("source unit has no compile context"_str);
+        }
+        if (cpp::source_language(unit) != cpp::compile_language(*unit.context)) {
+            return failure<cpp::PreparedUnit>(rstd::format(
+                "source '{}' does not match its compile context language", unit.source.as_path()));
+        }
         auto object_parent = create_parent(unit.object.as_path());
         if (object_parent.is_err()) return Err(rstd::move(object_parent).unwrap_err());
         return Ok(cpp::PreparedUnit {
@@ -381,7 +414,13 @@ public:
             return failure<cpp::ScanResult>(rstd::format("source '{}' has no frontend analysis",
                                                          prepared.unit.source.as_path()));
         }
-        return Ok(cpp::scan_from_frontend(prepared.frontend_analysis->result, prepared.unit.id));
+        auto projected = cpp::scan_from_frontend(prepared.frontend_analysis->result,
+                                                 prepared.unit.id,
+                                                 cpp::source_language(prepared.unit));
+        if (projected.is_err()) {
+            return failure<cpp::ScanResult>(rstd::move(projected).unwrap_err());
+        }
+        return Ok(rstd::move(projected).unwrap());
     }
 
     auto preprocessor_environment_identity(const cpp::CompileContext& compile_context,
@@ -396,8 +435,8 @@ public:
                             const cpp::PackageCompileMetadata& compile_metadata,
                             ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
-        if (compile_context.language == lito::manifest::PackageLanguage::Cpp) {
-            for (const auto& option : compile_context.cpp.vendor) {
+        if (compile_context.language.is_Cpp()) {
+            for (const auto& option : compile_context.language.as_Cpp().options.vendor) {
                 if (option.native_preprocessor_unsupported) {
                     return failure<toolchain::PreparedScanInput>(rstd::format(
                         "compiler option '{}' is not supported by the native preprocessor",
@@ -411,9 +450,8 @@ public:
             .environment     = rstd::move(environment).unwrap(),
             .external_macros = toolchain::SharedPackageMacroCatalog::make(
                 toolchain::PackageMacroCatalog::make(compile_metadata)),
-            .language = compile_context.language == lito::manifest::PackageLanguage::C
-                            ? toolchain::PreprocessorLanguage::C
-                            : toolchain::PreprocessorLanguage::Cpp,
+            .language = compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                        : toolchain::PreprocessorLanguage::Cpp,
         });
     }
 
@@ -512,20 +550,20 @@ public:
                          const cpp::ScanResult&                    scan_result,
                          const Vec<cpp::ModuleArtifactDependency>& module_dependencies) const
         -> ToolchainResult<CompileInvocation> {
-        if (prepared.unit.context->language == lito::manifest::PackageLanguage::C) {
-            if (scan_result.provided.is_some() || scan_result.implementation_module.is_some() ||
-                ! scan_result.required_modules.is_empty() || ! module_dependencies.is_empty() ||
-                prepared.unit.bmi.is_some()) {
+        if (prepared.unit.context->language.is_C()) {
+            if (! scan_result.language.is_C() || ! module_dependencies.is_empty() ||
+                ! prepared.unit.language.is_C()) {
                 return failure<CompileInvocation>(
                     rstd::format("C source '{}' unexpectedly participates in the C++ module graph",
                                  prepared.unit.source.as_path()));
             }
-            auto staged_object = staging_path(prepared.unit.object.as_path());
+            const auto& scan          = scan_result.language.as_C().facts.common;
+            auto        staged_object = staging_path(prepared.unit.object.as_path());
             if (staged_object.is_err()) return Err(rstd::move(staged_object).unwrap_err());
             auto command = Vec<String>::make();
             auto context = append_compile_context(command, *prepared.unit.context, false);
             if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-            for (const auto& macro : scan_result.external_macros) {
+            for (const auto& macro : scan.external_macros) {
                 if (macro.state == frontend::ExternalMacroState::Undefined) continue;
                 if (macro.compiler_definition.is_none()) {
                     return failure<CompileInvocation>(
@@ -549,7 +587,14 @@ public:
                 .final_object      = prepared.unit.object.clone(),
             });
         }
-        auto valid = validate(prepared.unit.context->cpp, prepared.unit.context->bmi);
+        if (! scan_result.language.is_Cpp() || ! prepared.unit.language.is_Cpp()) {
+            return failure<CompileInvocation>(rstd::format("C++ source '{}' received C scan facts",
+                                                           prepared.unit.source.as_path()));
+        }
+        const auto& cpp_context = prepared.unit.context->language.as_Cpp();
+        const auto& source_unit = prepared.unit.language.as_Cpp();
+        const auto& scan        = scan_result.language.as_Cpp().facts;
+        auto        valid       = validate(cpp_context.options, cpp_context.bmi);
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
         auto staged_object = staging_path(prepared.unit.object.as_path());
         if (staged_object.is_err()) return Err(rstd::move(staged_object).unwrap_err());
@@ -557,7 +602,7 @@ public:
         auto command    = Vec<String>::make();
         auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
-        for (const auto& macro : scan_result.external_macros) {
+        for (const auto& macro : scan.common.external_macros) {
             if (macro.state == frontend::ExternalMacroState::Undefined) {
                 if (macro.compiler_definition.is_some()) {
                     return failure<CompileInvocation>(
@@ -571,14 +616,14 @@ public:
             }
             command.push(rstd::format("-D{}", macro.compiler_definition->as_str()));
         }
-        if (scan_result.provided.is_some()) {
-            if (prepared.unit.bmi.is_none()) {
+        if (scan.provided.is_some()) {
+            if (source_unit.bmi.is_none()) {
                 return failure<CompileInvocation>(rstd::format("module unit has no BMI output: {}",
                                                                prepared.unit.source.as_path()));
             }
-            auto parent = create_parent(prepared.unit.bmi->path.as_path());
+            auto parent = create_parent(source_unit.bmi->path.as_path());
             if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
-            auto output = staging_path(prepared.unit.bmi->path.as_path());
+            auto output = staging_path(source_unit.bmi->path.as_path());
             if (output.is_err()) return Err(rstd::move(output).unwrap_err());
             staged_bmi = Some(rstd::move(output).unwrap());
             toolchain::command::push_option(command, toolchain::clang_options::LANGUAGE);
@@ -586,8 +631,7 @@ public:
             auto pushed = toolchain::command::push_path_option(
                 command, toolchain::clang_options::MODULE_OUTPUT, staged_bmi->as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-            if (prepared.unit.context->bmi.source_embedding ==
-                cpp::BmiSourceEmbeddingPolicy::EmbedAll) {
+            if (cpp_context.bmi.source_embedding == cpp::BmiSourceEmbeddingPolicy::EmbedAll) {
                 toolchain::command::push_option(command, toolchain::clang_options::EMBED_ALL_FILES);
             }
         } else {
@@ -621,8 +665,8 @@ public:
             .staged_object     = rstd::move(staged_object).unwrap(),
             .final_object      = prepared.unit.object.clone(),
             .staged_bmi        = rstd::move(staged_bmi),
-            .final_bmi         = prepared.unit.bmi.is_some() ? Some(prepared.unit.bmi->path.clone())
-                                                             : Option<PathBuf> {},
+            .final_bmi         = source_unit.bmi.is_some() ? Some(source_unit.bmi->path.clone())
+                                                           : Option<PathBuf> {},
         });
     }
 
@@ -942,15 +986,16 @@ private:
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
         ++toolchain_statistics_.preprocessor_environment_queries;
         auto macros = Vec<toolchain::PreprocessorMacroDirective>::make();
-        if (compile_context.language == lito::manifest::PackageLanguage::C) {
-            for (const auto& macro : compile_context.c.macros) {
+        if (compile_context.language.is_C()) {
+            for (const auto& macro : compile_context.language.as_C().options.macros) {
                 macros.push(toolchain::PreprocessorMacroDirective {
                     .defined = macro.action == lito::c::CMacroAction::Define,
                     .value   = macro.value.clone(),
                 });
             }
         } else {
-            for (const auto& macro : compile_context.cpp.preprocessor.macros) {
+            for (const auto& macro :
+                 compile_context.language.as_Cpp().options.preprocessor.macros) {
                 macros.push(toolchain::PreprocessorMacroDirective {
                     .defined = macro.action == cpp::CppMacroAction::Define,
                     .value   = macro.value.clone(),
@@ -975,36 +1020,44 @@ private:
 
     auto make_builtin_context(const cpp::CompileContext& context) const
         -> ToolchainResult<ClangBuiltinContext> {
-        if (context.language == lito::manifest::PackageLanguage::C) {
-            auto command = Vec<String>::make();
-            auto pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
+        if (context.language.is_C()) {
+            const auto& c       = context.language.as_C().options;
+            auto        command = Vec<String>::make();
+            auto        pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
             pushed = toolchain::command::push_path(command, resource_dir_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
-                                      lito::manifest::c_standard_name(context.c.standard)));
-            append_c_typed_options(command, context.c, target_info_.family, true);
+                                      lito::manifest::c_standard_name(c.standard)));
+            append_c_typed_options(command, c, target_info_.family, true);
             auto key = argument_identity("lito-clang-c-builtin-context-v1"_str, command);
             key.push_ascii('\n');
-            key.push_str(compiler_identity_.version.as_str());
+            key.push_str(compiler_identity_.c_version.as_str());
+            key.push_ascii('\n');
+            key.push_str(rstd::format("{}:{}:{}",
+                                      compiler_identity_.c_size,
+                                      compiler_identity_.c_modified_seconds,
+                                      compiler_identity_.c_modified_nanoseconds)
+                             .as_str());
             return Ok(ClangBuiltinContext {
                 .query_command = rstd::move(command),
                 .semantic =
                     toolchain::BuiltinSemanticContext {
                         .language_standard =
-                            String::make(lito::manifest::c_standard_name(context.c.standard)),
+                            String::make(lito::manifest::c_standard_name(c.standard)),
                     },
                 .key             = rstd::move(key),
                 .language        = toolchain::PreprocessorLanguage::C,
                 .ignored_options = usize(3),
             });
         }
-        if (! cpp::is_supported_cpp_standard(context.cpp.language.standard.as_str())) {
+        const auto& cpp_options = context.language.as_Cpp().options;
+        if (! cpp::is_supported_cpp_standard(cpp_options.language.standard.as_str())) {
             return failure<ClangBuiltinContext>(
                 rstd::format("unsupported C++ language standard '{}'; expected C++20 or later",
-                             context.cpp.language.standard.as_str()));
+                             cpp_options.language.standard.as_str()));
         }
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
@@ -1017,10 +1070,10 @@ private:
             return Err(rstd::move(pushed).unwrap_err());
         }
         command.push(rstd::format(
-            "{}{}", toolchain::clang_options::STANDARD, context.cpp.language.standard.as_str()));
+            "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
         toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
-        append_typed_options(command, context.cpp, target_info_.family, true);
+            command, toolchain::clang_options::standard_library(cpp_options.abi.standard_library));
+        append_typed_options(command, cpp_options, target_info_.family, true);
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
@@ -1035,38 +1088,39 @@ private:
             .query_command = rstd::move(command),
             .semantic =
                 toolchain::BuiltinSemanticContext {
-                    .language_standard = context.cpp.language.standard.clone(),
-                    .rtti              = context.cpp.language.rtti,
-                    .exceptions        = context.cpp.language.exceptions,
+                    .language_standard = cpp_options.language.standard.clone(),
+                    .rtti              = cpp_options.language.rtti,
+                    .exceptions        = cpp_options.language.exceptions,
                 },
             .key             = rstd::move(key),
             .language        = toolchain::PreprocessorLanguage::Cpp,
-            .ignored_options = context.cpp.diagnostics.warnings.len() +
-                               context.cpp.diagnostics.options.len() +
-                               context.cpp.preprocessor.macros.len(),
+            .ignored_options = cpp_options.diagnostics.warnings.len() +
+                               cpp_options.diagnostics.options.len() +
+                               cpp_options.preprocessor.macros.len(),
         });
     }
 
     auto append_compile_context(Vec<String>&               command,
                                 const cpp::CompileContext& context,
                                 bool semantic_only) const -> ToolchainResult<empty> {
-        if (context.language == lito::manifest::PackageLanguage::C) {
-            auto pushed = toolchain::command::push_path(command, c_compiler_.as_path());
+        if (context.language.is_C()) {
+            const auto& c      = context.language.as_C().options;
+            auto        pushed = toolchain::command::push_path(command, c_compiler_.as_path());
             if (pushed.is_err()) return pushed;
             toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
             pushed = toolchain::command::push_path(command, resource_dir_.as_path());
             if (pushed.is_err()) return pushed;
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
-                                      lito::manifest::c_standard_name(context.c.standard)));
-            append_c_typed_options(command, context.c, target_info_.family, semantic_only);
-            for (const auto& macro : context.c.macros) {
+                                      lito::manifest::c_standard_name(c.standard)));
+            append_c_typed_options(command, c, target_info_.family, semantic_only);
+            for (const auto& macro : c.macros) {
                 command.push(rstd::format("{}{}",
                                           macro.action == lito::c::CMacroAction::Define ? "-D"_str
                                                                                         : "-U"_str,
                                           macro.value.as_str()));
             }
-            for (const auto& include : context.c.include_directories) {
+            for (const auto& include : c.include_directories) {
                 toolchain::command::push_option(command,
                                                 include.kind ==
                                                         lito::c::CIncludeDirectoryKind::System
@@ -1077,25 +1131,27 @@ private:
             }
             return Ok(empty {});
         }
-        auto pushed = toolchain::command::push_path(command, compiler_.as_path());
+        const auto& cpp_context = context.language.as_Cpp();
+        const auto& cpp_options = cpp_context.options;
+        auto        pushed      = toolchain::command::push_path(command, compiler_.as_path());
         if (pushed.is_err()) return pushed;
         toolchain::command::push_option(command, toolchain::clang_options::RESOURCE_DIR);
         pushed = toolchain::command::push_path(command, resource_dir_.as_path());
         if (pushed.is_err()) return pushed;
         command.push(rstd::format(
-            "{}{}", toolchain::clang_options::STANDARD, context.cpp.language.standard.as_str()));
+            "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
         toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(context.cpp.abi.standard_library));
-        toolchain::command::push_option(command,
-                                        toolchain::clang_options::bmi(context.bmi.representation));
-        append_typed_options(command, context.cpp, target_info_.family, semantic_only);
-        for (const auto& macro : context.cpp.preprocessor.macros) {
+            command, toolchain::clang_options::standard_library(cpp_options.abi.standard_library));
+        toolchain::command::push_option(
+            command, toolchain::clang_options::bmi(cpp_context.bmi.representation));
+        append_typed_options(command, cpp_options, target_info_.family, semantic_only);
+        for (const auto& macro : cpp_options.preprocessor.macros) {
             command.push(
                 rstd::format("{}{}",
                              macro.action == cpp::CppMacroAction::Define ? "-D"_str : "-U"_str,
                              macro.value.as_str()));
         }
-        for (const auto& include : context.cpp.preprocessor.include_directories) {
+        for (const auto& include : cpp_options.preprocessor.include_directories) {
             toolchain::command::push_option(command,
                                             include.kind == cpp::CppIncludeDirectoryKind::System
                                                 ? "-isystem"_str

@@ -139,7 +139,7 @@ rtti = false
     EXPECT_TRUE(dependency->profile.rtti);
 }
 
-TEST_F(BuildProfile, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossBuildModes) {
+TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto project = lito::manifest::ProjectProfile {
@@ -156,14 +156,11 @@ TEST_F(BuildProfile, ProjectProfileMaterializesIdenticalLanguageSemanticsAcrossB
     EXPECT_FALSE(debug->cpp.language.rtti);
     EXPECT_FALSE(release->cpp.language.exceptions);
     EXPECT_FALSE(release->cpp.language.rtti);
-    EXPECT_EQ(debug->c.codegen.optimization, debug->cpp.codegen.common.optimization);
-    EXPECT_EQ(debug->c.codegen.debug_info, debug->cpp.codegen.common.debug_info);
-    EXPECT_EQ(debug->c.codegen.lto, debug->cpp.codegen.common.lto);
-    EXPECT_EQ(debug->c.codegen.position_independent_code,
-              debug->cpp.codegen.common.position_independent_code);
-    EXPECT_EQ(release->c.codegen.optimization, release->cpp.codegen.common.optimization);
-    EXPECT_EQ(release->c.codegen.debug_info, release->cpp.codegen.common.debug_info);
-    EXPECT_EQ(release->c.codegen.lto, release->cpp.codegen.common.lto);
+    EXPECT_EQ(debug->c_standard, lito::manifest::CStandard::C99);
+    EXPECT_EQ(release->c_standard, lito::manifest::CStandard::C99);
+    EXPECT_NE(debug->cpp.common.codegen.optimization, release->cpp.common.codegen.optimization);
+    EXPECT_TRUE(debug->cpp.common.codegen.position_independent_code);
+    EXPECT_TRUE(release->cpp.common.codegen.position_independent_code);
 }
 
 TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
@@ -176,7 +173,7 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
                                                 build_profile("debug"_str),
                                                 *parser);
     ASSERT_TRUE(profile.is_ok());
-    EXPECT_TRUE(profile->cpp.threading.posix);
+    EXPECT_TRUE(profile->cpp.common.posix_threads);
     EXPECT_TRUE(profile->link_requirements.posix_threads);
     ASSERT_EQ(profile->link_requirements.thread_sources.len(), usize(1));
     EXPECT_EQ(profile->link_requirements.thread_sources[usize {}].as_str(), "build.options"_str);
@@ -369,7 +366,7 @@ options = ["-O2"]
                                                             *parser);
     ASSERT_TRUE(metadata.is_ok());
 
-    auto planned = lito::cpp::resolve_source_discovery(*metadata, "debug"_str, Vec<String>::make());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
     ASSERT_TRUE(planned.is_err());
     auto planned_error = rstd::move(planned).unwrap_err();
     ASSERT_TRUE(planned_error.is_Configuration());

@@ -1,7 +1,8 @@
-export module lito.c:compiler;
+export module lito.cpp:c.compiler;
 
 import rstd;
 import lito.core;
+import :compiler.common;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -40,12 +41,10 @@ struct CIncludeDirectory {
 };
 
 struct CCompileOptions {
-    lito::manifest::CStandard      standard { lito::manifest::CStandard::C99 };
-    lito::compiler::TargetOptions  target;
-    lito::compiler::CodegenOptions codegen;
-    Vec<CIncludeDirectory>         include_directories;
-    Vec<CMacroDirective>           macros;
-    bool                           posix_threads { false };
+    lito::compiler::CommonCompileOptions common;
+    lito::manifest::CStandard            standard { lito::manifest::CStandard::C99 };
+    Vec<CIncludeDirectory>               include_directories;
+    Vec<CMacroDirective>                 macros;
 
     auto clone() const -> CCompileOptions {
         auto includes = Vec<CIncludeDirectory>::with_capacity(include_directories.len());
@@ -53,12 +52,10 @@ struct CCompileOptions {
         auto copied_macros = Vec<CMacroDirective>::with_capacity(macros.len());
         for (const auto& macro : macros) copied_macros.push(macro.clone());
         return CCompileOptions {
+            .common              = common.clone(),
             .standard            = standard,
-            .target              = target.clone(),
-            .codegen             = codegen,
             .include_directories = rstd::move(includes),
             .macros              = rstd::move(copied_macros),
-            .posix_threads       = posix_threads,
         };
     }
 };
@@ -126,20 +123,22 @@ auto c_public_requirements(const CCompileOptions& options) -> CPublicRequirement
 }
 
 auto c_compile_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-compile-options-v1\n"_str);
+    auto result = String::make("lito-c-compile-options-v2\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
-    if (options.target.target.is_some()) {
-        result.push_str(rstd::format("target:{}\n", options.target.target->as_str()).as_str());
+    if (options.common.target.target.is_some()) {
+        result.push_str(
+            rstd::format("target:{}\n", options.common.target.target->as_str()).as_str());
     }
-    if (options.target.sysroot.is_some()) {
-        result.push_str(rstd::format("sysroot:{}\n", options.target.sysroot->as_str()).as_str());
+    if (options.common.target.sysroot.is_some()) {
+        result.push_str(
+            rstd::format("sysroot:{}\n", options.common.target.sysroot->as_str()).as_str());
     }
     result.push_str(rstd::format("optimization:{}\ndebug:{}\nlto:{}\npic:{}\n",
-                                 static_cast<int>(options.codegen.optimization),
-                                 static_cast<int>(options.codegen.debug_info),
-                                 static_cast<int>(options.codegen.lto),
-                                 options.codegen.position_independent_code)
+                                 static_cast<int>(options.common.codegen.optimization),
+                                 static_cast<int>(options.common.codegen.debug_info),
+                                 static_cast<int>(options.common.codegen.lto),
+                                 options.common.codegen.position_independent_code)
                         .as_str());
     for (const auto& include : options.include_directories) {
         result.push_str(
@@ -155,19 +154,21 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
                          macro.value.as_str())
                 .as_str());
     }
-    result.push_str(options.posix_threads ? "threads:posix\n"_str : "threads:none\n"_str);
+    result.push_str(options.common.posix_threads ? "threads:posix\n"_str : "threads:none\n"_str);
     return result;
 }
 
 auto c_scan_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-scan-options-v1\n"_str);
+    auto result = String::make("lito-c-scan-options-v2\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
-    if (options.target.target.is_some()) {
-        result.push_str(rstd::format("target:{}\n", options.target.target->as_str()).as_str());
+    if (options.common.target.target.is_some()) {
+        result.push_str(
+            rstd::format("target:{}\n", options.common.target.target->as_str()).as_str());
     }
-    if (options.target.sysroot.is_some()) {
-        result.push_str(rstd::format("sysroot:{}\n", options.target.sysroot->as_str()).as_str());
+    if (options.common.target.sysroot.is_some()) {
+        result.push_str(
+            rstd::format("sysroot:{}\n", options.common.target.sysroot->as_str()).as_str());
     }
     for (const auto& include : options.include_directories) {
         result.push_str(

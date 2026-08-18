@@ -1,7 +1,7 @@
-export module lito.core:compiler;
+export module lito.cpp:compiler.common;
 
 import rstd;
-import :manifest;
+import lito.core;
 
 using namespace rstd::prelude;
 
@@ -25,6 +25,20 @@ struct CodegenOptions {
     manifest::DebugInfo    debug_info { manifest::DebugInfo::None };
     manifest::Lto          lto { manifest::Lto::Off };
     bool                   position_independent_code { true };
+};
+
+struct CommonCompileOptions {
+    TargetOptions  target;
+    CodegenOptions codegen;
+    bool           posix_threads { false };
+
+    auto clone() const -> CommonCompileOptions {
+        return CommonCompileOptions {
+            .target        = target.clone(),
+            .codegen       = codegen,
+            .posix_threads = posix_threads,
+        };
+    }
 };
 
 } // namespace lito::compiler

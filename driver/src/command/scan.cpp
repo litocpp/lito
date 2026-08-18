@@ -131,7 +131,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     auto& toolchain = project.toolchain;
     auto& metadata  = project.metadata;
     auto  resolved =
-        cpp::resolve_source_discovery(metadata, metadata.default_profile.as_str(), request.targets);
+        cpp::resolve_native_targets(metadata, metadata.default_profile.as_str(), request.targets);
     if (resolved.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(resolved).unwrap_err()));
     }
@@ -164,52 +164,69 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (facts.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(facts).unwrap_err()));
     }
+    auto projected = cpp::scan_from_frontend(
+        facts->result, cpp::UnitId {}, metadata.targets[source_target].language);
+    if (projected.is_err()) {
+        return scan_failure<ScanReport>(rstd::move(projected).unwrap_err());
+    }
 
     return Ok(ScanReport {
         .target         = lito::package::package_target_id_text(target.id),
         .profile        = metadata.profiles[discovery.profile].name.clone(),
         .primary_output = rstd::move(primary_output).unwrap(),
-        .result         = rstd::move(facts).unwrap().result,
+        .result         = rstd::move(projected).unwrap(),
     });
 }
 
 auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
-    auto source = scan_path(report.result.source.as_path());
+    const auto& common    = cpp::scan_common(report.result);
+    const auto* cpp_facts = report.result.language.is_Cpp()
+                                ? rstd::addressof(report.result.language.as_Cpp().facts)
+                                : nullptr;
+    auto        source    = scan_path(common.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
 
     auto provides = JsonArray::make();
-    if (report.result.provided.is_some()) {
+    if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
         provided.insert(String::make("logical-name"_str),
-                        scan_json_string(report.result.provided->logical_name.as_str()));
+                        scan_json_string(cpp_facts->provided->logical_name.as_str()));
         provided.insert(String::make("is-interface"_str),
-                        Json::Bool(report.result.provided->is_interface));
+                        Json::Bool(cpp_facts->provided->is_interface));
         provided.insert(String::make("source-path"_str), scan_json_string(source->as_str()));
         provides.push(Json::Object(rstd::move(provided)));
     }
 
     auto required_modules = JsonArray::make();
-    for (const auto& imported : report.result.imports) {
-        auto required = JsonMap::make();
-        required.insert(String::make("logical-name"_str),
-                        scan_json_string(imported.logical_name.as_str()));
-        required.insert(String::make("exported"_str), Json::Bool(imported.exported));
-        auto path = json_path(imported.location.path.as_path());
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        required.insert(String::make("source-path"_str), rstd::move(path).unwrap());
-        required.insert(String::make("line"_str), json_usize(imported.location.line));
-        required_modules.push(Json::Object(rstd::move(required)));
+    if (cpp_facts != nullptr) {
+        for (const auto& imported : cpp_facts->required_modules) {
+            if (! imported.imported) continue;
+            if (imported.import_locations.is_empty()) {
+                return scan_failure<String>("typed import has no source location"_str);
+            }
+            for (const auto& location : imported.import_locations) {
+                auto required = JsonMap::make();
+                required.insert(String::make("logical-name"_str),
+                                scan_json_string(imported.logical_name.as_str()));
+                required.insert(String::make("exported"_str), Json::Bool(imported.exported));
+                auto path = json_path(location.path.as_path());
+                if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+                required.insert(String::make("source-path"_str), rstd::move(path).unwrap());
+                required.insert(String::make("line"_str), json_usize(location.line));
+                required_modules.push(Json::Object(rstd::move(required)));
+            }
+        }
     }
 
     auto headers = JsonArray::make();
-    for (const auto& header : report.result.header_inputs) {
+    for (const auto& header : common.header_inputs) {
         auto path = json_path(header.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         headers.push(rstd::move(path).unwrap());
     }
 
     auto embedded = JsonArray::make();
-    for (const auto& input : report.result.embedded_inputs) {
+    for (const auto& input : common.embedded_inputs) {
         auto path = json_path(input.path.as_path());
         if (path.is_err()) return Err(rstd::move(path).unwrap_err());
         auto value = JsonMap::make();
@@ -223,12 +240,12 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     }
 
     auto implementation = Json::Null();
-    if (report.result.implementation_module.is_some()) {
-        implementation = scan_json_string(report.result.implementation_module->as_str());
+    if (cpp_facts != nullptr && cpp_facts->implementation_module.is_some()) {
+        implementation = scan_json_string(cpp_facts->implementation_module->as_str());
     }
 
-    auto external_macros = JsonArray::with_capacity(report.result.external_macros.len());
-    for (const auto& macro : report.result.external_macros) {
+    auto external_macros = JsonArray::with_capacity(common.external_macros.len());
+    for (const auto& macro : common.external_macros) {
         auto value      = JsonMap::make();
         auto definition = Json::Null();
         if (macro.compiler_definition.is_some()) {
@@ -261,8 +278,8 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     document.insert(String::make("embedded-resources"_str), Json::Array(rstd::move(embedded)));
     document.insert(String::make("external-macros"_str), Json::Array(rstd::move(external_macros)));
     document.insert(String::make("preprocessor-environment"_str),
-                    scan_json_string(report.result.preprocessor_environment.as_str()));
-    document.insert(String::make("input-bytes"_str), json_usize(report.result.input_bytes));
+                    scan_json_string(common.preprocessor_environment.as_str()));
+    document.insert(String::make("input-bytes"_str), json_usize(common.input_bytes));
     return Ok(
         rstd::json::to_string(Json::Object(rstd::move(document)),
                               rstd::json::FormatOptions { .pretty = true, .indent = usize(2) }));
@@ -271,37 +288,40 @@ auto lito_scan_report_json(const ScanReport& report) -> CommandResult<String> {
 auto p1689_scan_report_json(const ScanReport& report) -> CommandResult<String> {
     auto primary_output = json_path(report.primary_output.as_path());
     if (primary_output.is_err()) return Err(rstd::move(primary_output).unwrap_err());
-    auto source = json_path(report.result.source.as_path());
+    const auto& common    = cpp::scan_common(report.result);
+    const auto* cpp_facts = report.result.language.is_Cpp()
+                                ? rstd::addressof(report.result.language.as_Cpp().facts)
+                                : nullptr;
+    auto        source    = json_path(common.source.as_path());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
 
     auto rule = JsonMap::make();
     rule.insert(String::make("primary-output"_str), rstd::move(primary_output).unwrap());
 
-    if (report.result.provided.is_some()) {
+    if (cpp_facts != nullptr && cpp_facts->provided.is_some()) {
         auto provided = JsonMap::make();
         provided.insert(String::make("logical-name"_str),
-                        scan_json_string(report.result.provided->logical_name.as_str()));
+                        scan_json_string(cpp_facts->provided->logical_name.as_str()));
         provided.insert(String::make("source-path"_str), rstd::move(source).unwrap());
         provided.insert(String::make("is-interface"_str),
-                        Json::Bool(report.result.provided->is_interface));
+                        Json::Bool(cpp_facts->provided->is_interface));
         auto provides = JsonArray::make();
         provides.push(Json::Object(rstd::move(provided)));
         rule.insert(String::make("provides"_str), Json::Array(rstd::move(provides)));
     }
 
     auto required_names = Vec<String>::make();
-    if (report.result.implementation_module.is_some()) {
-        required_names.push(report.result.implementation_module->clone());
-    }
-    for (const auto& imported : report.result.imports) {
-        auto exists = false;
-        for (const auto& required : required_names) {
-            if (required.as_str() == imported.logical_name.as_str()) {
-                exists = true;
-                break;
+    if (cpp_facts != nullptr) {
+        for (const auto& imported : cpp_facts->required_modules) {
+            auto exists = false;
+            for (const auto& required : required_names) {
+                if (required.as_str() == imported.logical_name.as_str()) {
+                    exists = true;
+                    break;
+                }
             }
+            if (! exists) required_names.push(imported.logical_name.clone());
         }
-        if (! exists) required_names.push(imported.logical_name.clone());
     }
     if (! required_names.is_empty()) {
         auto required_modules = JsonArray::with_capacity(required_names.len());
