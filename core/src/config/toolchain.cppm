@@ -9,6 +9,23 @@ using namespace rstd::literals;
 export namespace lito::config
 {
 
+enum class ToolchainEnvironmentVariable
+{
+    CFlags,
+    CxxFlags,
+    LdFlags,
+};
+
+constexpr auto toolchain_environment_variable_name(ToolchainEnvironmentVariable value) noexcept
+    -> ref<str> {
+    switch (value) {
+    case ToolchainEnvironmentVariable::CFlags: return "CFLAGS"_str;
+    case ToolchainEnvironmentVariable::CxxFlags: return "CXXFLAGS"_str;
+    case ToolchainEnvironmentVariable::LdFlags: return "LDFLAGS"_str;
+    }
+    return ""_str;
+}
+
 enum class StandardLibrary
 {
     Libstdcxx,

@@ -19,7 +19,10 @@ using PathBuf = rstd::path::PathBuf;
 class CMakeProvider : public ProjectFixture {};
 
 TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
-    auto parser = lito::make_clang_cpp_argument_parser();
+    auto c_flags   = EnvironmentVariableGuard("CFLAGS"_str, "-DLITO_C_FLAGS_LEAK=1"_str);
+    auto cxx_flags = EnvironmentVariableGuard("CXXFLAGS"_str, "-DLITO_CXX_FLAGS_LEAK=1"_str);
+    auto ld_flags  = EnvironmentVariableGuard("LDFLAGS"_str, "-Wl,--lito-ld-flags-leak"_str);
+    auto parser    = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto tree = cmake_package_project_tree();
     ASSERT_TRUE(tree.is_ok());

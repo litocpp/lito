@@ -16,22 +16,46 @@ using namespace rstd::literals;
 export namespace lito
 {
 
+auto cmake_process_environment() -> CommandEnvironment {
+    constexpr lito::config::ToolchainEnvironmentVariable variables[] = {
+        lito::config::ToolchainEnvironmentVariable::CFlags,
+        lito::config::ToolchainEnvironmentVariable::CxxFlags,
+        lito::config::ToolchainEnvironmentVariable::LdFlags,
+    };
+    auto result = CommandEnvironment {};
+    for (auto variable : variables) {
+        result.entries.push(CommandEnvironmentEntry {
+            .key = String::make(lito::config::toolchain_environment_variable_name(variable)),
+        });
+    }
+    return result;
+}
+
+auto invoke_cmake(const Vec<String>&                arguments,
+                  const ResolvedProcessEnvironment& environment,
+                  Option<ref<rstd::path::Path>>     working_directory = None(),
+                  bool stream_output = true) -> SystemResult<CommandOutput> {
+    auto overrides    = cmake_process_environment();
+    auto override_ref = Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides)));
+    if (! stream_output) {
+        return run_command(arguments, environment, working_directory, override_ref);
+    }
+    auto observer = rstd::process::OutputObserver {
+        .notify =
+            +[](void*, rstd::process::OutputStream, slice<u8> chunk) noexcept {
+                auto output = rstd::io::stderr();
+                (void)rstd::io::write_all(output, chunk);
+            },
+    };
+    return run_command_observed(arguments, environment, observer, working_directory, override_ref);
+}
+
 auto run_cmake(Vec<String>                       arguments,
                ref<str>                          operation,
                const ResolvedProcessEnvironment& environment,
                Option<ref<rstd::path::Path>>     working_directory = None(),
                bool stream_output = true) -> lito::dependency::DependencyResult<empty> {
-    auto output = [&]() -> SystemResult<CommandOutput> {
-        if (! stream_output) return run_command(arguments, environment, working_directory);
-        auto observer = rstd::process::OutputObserver {
-            .notify =
-                +[](void*, rstd::process::OutputStream, slice<u8> chunk) noexcept {
-                    auto output = rstd::io::stderr();
-                    (void)rstd::io::write_all(output, chunk);
-                },
-        };
-        return run_command_observed(arguments, environment, observer, working_directory);
-    }();
+    auto output = invoke_cmake(arguments, environment, working_directory, stream_output);
     if (output.is_err()) {
         return Err(lito::dependency::DependencyError::Operation(String::make(operation),
                                                                 rstd::move(output).unwrap_err()));

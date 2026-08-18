@@ -72,7 +72,7 @@ auto identify_cmake_provider(lito::dependency::CMakeProviderConfig provider,
     auto arguments = Vec<String>::make();
     arguments.push(rstd::move(executable).unwrap());
     arguments.push(String::make("--version"_str));
-    auto output = run_command(arguments, environment);
+    auto output = invoke_cmake(arguments, environment, None(), false);
     if (output.is_err()) {
         return Err(lito::dependency::DependencyError::Operation(
             String::make("CMake provider identity"_str), rstd::move(output).unwrap_err()));

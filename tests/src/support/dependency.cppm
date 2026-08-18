@@ -81,6 +81,9 @@ auto fixture_cmake() -> lito::dependency::CMakeProviderConfig {
 auto cmake_package_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
     constexpr ProjectFile files[] = {
         { "CMakeLists.txt"_str, R"(cmake_minimum_required(VERSION 3.28)
+if(DEFINED ENV{CFLAGS} OR DEFINED ENV{CXXFLAGS} OR DEFINED ENV{LDFLAGS})
+  message(FATAL_ERROR "compiler flags environment leaked into CMake")
+endif()
 project(LitoFixture VERSION 1.2.3 LANGUAGES CXX)
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
