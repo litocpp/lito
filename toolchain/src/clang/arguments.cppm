@@ -81,38 +81,11 @@ auto add_visibility(cpp::CppArgumentSchema&      schema,
 export namespace lito
 {
 
-struct NormalizedClangLinkArguments {
-    cpp::LinkArgumentSequence arguments;
-    cpp::CppLinkRequirements  requirements;
-};
+using NormalizedClangLinkArguments = cpp::NormalizedLinkArguments;
 
 auto normalize_clang_link_arguments(cpp::LinkArgumentSequence input)
     -> NormalizedClangLinkArguments {
-    auto tokens       = Vec<String>::make();
-    auto requirements = cpp::CppLinkRequirements {};
-    for (auto index = usize {}; index < input.tokens.len(); ++index) {
-        auto token = input.tokens[index].as_str();
-        if (token == "-pthread"_str) {
-            requirements.posix_threads = true;
-            requirements.thread_sources.push(input.source.clone());
-            continue;
-        }
-        if (token == "-ldl"_str || (token == "-l"_str && index + usize(1) < input.tokens.len() &&
-                                    input.tokens[index + usize(1)].as_str() == "dl"_str)) {
-            requirements.system_libraries.push(cpp::CppSystemLibraryRequirement {
-                .name   = String::make("dl"_str),
-                .source = input.source.clone(),
-            });
-            if (token == "-l"_str) ++index;
-            continue;
-        }
-        tokens.push(input.tokens[index].clone());
-    }
-    input.tokens = rstd::move(tokens);
-    return NormalizedClangLinkArguments {
-        .arguments    = rstd::move(input),
-        .requirements = rstd::move(requirements),
-    };
+    return cpp::normalize_link_arguments(rstd::move(input));
 }
 
 auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentParser> {

@@ -5,6 +5,7 @@ export module lito.core:config.error;
 
 import rstd;
 import rstd.toml;
+import lito.system;
 
 using namespace rstd::prelude;
 
@@ -14,6 +15,7 @@ export namespace lito::config
 class ConfigError {
     RSTD_ENUM(ConfigError,
               (Schema, (String message;)),
+              (EnvironmentFlags, (String variable; lito::system::SystemError source;)),
               (Input, (String context; rstd::toml::Error source;)),
               (MissingKey, (String key;)),
               (KeyConflict, (String key;)),
@@ -35,6 +37,10 @@ struct Impl<fmt::Display, lito::config::ConfigError> : ImplBase<lito::config::Co
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
+        if (error.is_EnvironmentFlags()) {
+            return formatter.write_fmt(fmt::Arguments::make("cannot read compiler flags from {}",
+                                                            error.as_EnvironmentFlags().variable));
+        }
         if (error.is_Input()) {
             return formatter.write_fmt(
                 fmt::Arguments::make("cannot parse {}", error.as_Input().context));
@@ -73,6 +79,9 @@ template<>
 struct Impl<error::Error, lito::config::ConfigError> : ImplBase<lito::config::ConfigError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
+        if (error.is_EnvironmentFlags()) {
+            return Some(dyn<error::Error>::from_ref(error.as_EnvironmentFlags().source));
+        }
         if (error.is_Input()) return Some(dyn<error::Error>::from_ref(error.as_Input().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));

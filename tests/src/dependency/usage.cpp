@@ -106,8 +106,8 @@ TEST(DependencyUsage, ProfileThreadRequirementReachesTheFinalLink) {
     ASSERT_TRUE(metadata.is_ok());
 
     metadata->profiles[usize {}].cpp.common.threading = lito::compiler::ThreadingModel::Posix;
-    metadata->profiles[usize {}].link_requirements.posix_threads = true;
-    metadata->profiles[usize {}].link_requirements.thread_sources.push(
+    metadata->profiles[usize {}].cpp_link_requirements.posix_threads = true;
+    metadata->profiles[usize {}].cpp_link_requirements.thread_sources.push(
         String::make("build.options"_str));
 
     auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());

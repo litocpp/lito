@@ -25,9 +25,16 @@ struct ProfileSpec {
     BmiRequest                         bmi;
     lito::c::CCompileOptions           c;
     CppCompileOptions                  cpp;
-    CppLinkRequirements                link_requirements;
+    CppLinkRequirements                c_link_requirements;
+    CppLinkRequirements                cpp_link_requirements;
     lito::manifest::StripMode          strip { lito::manifest::StripMode::None };
     Vec<String>                        linker_options;
+};
+
+struct ParsedGlobalBuildOptions {
+    CppArgumentLayer                    cpp;
+    lito::c::CArgumentLayer             c;
+    Vec<lito::config::BuildOptionInput> linker;
 };
 
 } // namespace lito::cpp
@@ -65,34 +72,77 @@ export namespace lito::cpp
 {
 
 auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
-    -> lito::manifest::BuildProfileResult<CppArgumentLayer> {
-    return parser.parse(configuration.options, "build.options"_str)
-        .map_err([](CppOptionError error) {
-            return lito::manifest::BuildProfileError::Options(erase_error(rstd::move(error)));
-        });
+    -> lito::manifest::BuildProfileResult<ParsedGlobalBuildOptions> {
+    auto result = ParsedGlobalBuildOptions {};
+    for (const auto& input : configuration.global_options.cpp) {
+        auto parsed = parser.parse(input.arguments, input.source.as_str());
+        if (parsed.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(parsed).unwrap_err())));
+        }
+        for (auto& occurrence : parsed->occurrences) {
+            result.cpp.occurrences.push(rstd::move(occurrence));
+        }
+    }
+    for (const auto& input : configuration.global_options.c) {
+        auto parsed = parser.parse_c(input.arguments, input.source.as_str());
+        if (parsed.is_err()) {
+            return Err(lito::manifest::BuildProfileError::Options(
+                erase_error(rstd::move(parsed).unwrap_err())));
+        }
+        for (auto& occurrence : parsed->occurrences) {
+            result.c.occurrences.push(rstd::move(occurrence));
+        }
+    }
+    for (const auto& input : configuration.global_options.linker) {
+        result.linker.push(input.clone());
+    }
+    return Ok(rstd::move(result));
+}
+
+auto append_link_requirements(CppLinkRequirements& output, const CppLinkRequirements& input)
+    -> void {
+    if (input.posix_threads) {
+        output.posix_threads = true;
+        for (const auto& source : input.thread_sources) output.thread_sources.push(source.clone());
+    }
+    for (const auto& requirement : input.system_libraries) {
+        auto present = false;
+        for (const auto& existing : output.system_libraries) {
+            if (existing.name == requirement.name.as_str()) {
+                present = true;
+                break;
+            }
+        }
+        if (! present) output.system_libraries.push(requirement.clone());
+    }
 }
 
 auto make_profile_spec(const BuildConfiguration&               configuration,
                        const lito::manifest::ProjectProfile&   project_profile,
                        const lito::manifest::BuildProfileName& selected_profile,
-                       CppArgumentLayer                        arguments)
+                       ParsedGlobalBuildOptions                arguments)
     -> lito::manifest::BuildProfileResult<ProfileSpec> {
     auto selected =
         rstd_try(lito::manifest::resolve_build_profile(project_profile, selected_profile));
-    auto link_requirements = CppLinkRequirements {};
-    for (const auto& occurrence : arguments.occurrences) {
+    auto cpp_link_requirements = CppLinkRequirements {};
+    for (const auto& occurrence : arguments.cpp.occurrences) {
         auto option = occurrence.raw_tokens[usize {}].as_str();
         RSTD_MATCH(occurrence.argument) {
             RSTD_CASE(Macro, directive) {
                 if (is_profile_owned_definition(directive.value.as_str()))
                     return profile_failure(
-                        rstd::format("build option '{}' overrides the selected profile", option));
+                        rstd::format("compiler option '{}' from {} overrides the selected profile",
+                                     option,
+                                     occurrence.source.as_str()));
             }
             RSTD_CASE(OwnedSetting, setting) {
                 if (setting == CppOwnedSetting::Optimization ||
                     setting == CppOwnedSetting::DebugInfo || setting == CppOwnedSetting::Lto)
                     return profile_failure(
-                        rstd::format("build option '{}' overrides the selected profile", option));
+                        rstd::format("compiler option '{}' from {} overrides the selected profile",
+                                     option,
+                                     occurrence.source.as_str()));
             }
             RSTD_CASE(IncludeDirectory, value) {
                 static_cast<void>(value);
@@ -100,8 +150,8 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             RSTD_CASE(Common, value) {
                 if (value.is_Threading() &&
                     value.as_Threading().model == lito::compiler::ThreadingModel::Posix) {
-                    link_requirements.posix_threads = true;
-                    link_requirements.thread_sources.push(occurrence.source.clone());
+                    cpp_link_requirements.posix_threads = true;
+                    cpp_link_requirements.thread_sources.push(occurrence.source.clone());
                 }
             }
             RSTD_CASE(Family, domain, family, value) {
@@ -132,33 +182,46 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
             }
         }
     }
-    for (const auto& option : configuration.linker_options) {
-        if (option.as_str() == "-pthread"_str) {
-            return profile_failure(String::make(
-                "build linker option '-pthread' must be declared in build.options"_str));
+    auto c_link_requirements = CppLinkRequirements {};
+    for (const auto& occurrence : arguments.c.occurrences) {
+        if (! occurrence.argument.is_Common()) continue;
+        const auto& common = occurrence.argument.as_Common().argument;
+        if (common.is_Threading() &&
+            common.as_Threading().model == lito::compiler::ThreadingModel::Posix) {
+            c_link_requirements.posix_threads = true;
+            c_link_requirements.thread_sources.push(occurrence.source.clone());
         }
-        if (option.as_str() == "-ldl"_str) {
-            return profile_failure(String::make(
-                "build linker option '-ldl' must be declared as usage.system-libraries"_str));
+    }
+    auto linker_options = Vec<String>::make();
+    for (const auto& input : arguments.linker) {
+        auto normalized = normalize_link_arguments(LinkArgumentSequence {
+            .tokens   = input.arguments.clone(),
+            .source   = input.source.clone(),
+            .identity = input.source.clone(),
+        });
+        append_link_requirements(c_link_requirements, normalized.requirements);
+        append_link_requirements(cpp_link_requirements, normalized.requirements);
+        for (auto& option : normalized.arguments.tokens) {
+            if (option.as_str() == "-nostdlib++"_str ||
+                option.as_str().starts_with("-stdlib="_str)) {
+                return profile_failure(
+                    rstd::format("linker option '{}' from {} overrides a Lito-owned setting",
+                                 option.as_str(),
+                                 input.source.as_str()));
+            }
+            if (is_profile_owned_linker_option(option.as_str())) {
+                return profile_failure(
+                    rstd::format("linker option '{}' from {} overrides the selected profile",
+                                 option.as_str(),
+                                 input.source.as_str()));
+            }
+            linker_options.push(rstd::move(option));
         }
-        if (option.as_str() == "-nostdlib++"_str || option.as_str().starts_with("-stdlib="_str))
-            return profile_failure(rstd::format(
-                "build linker option '{}' overrides a Lito-owned setting", option.as_str()));
-        if (is_profile_owned_linker_option(option.as_str()))
-            return profile_failure(rstd::format(
-                "build linker option '{}' overrides the selected profile", option.as_str()));
     }
     auto c_layer = lito::c::CArgumentLayer {};
     if (selected.ndebug) c_layer.definitions.push(String::make("NDEBUG"_str));
-    for (const auto& occurrence : arguments.occurrences) {
-        if (! occurrence.argument.is_Common()) continue;
-        c_layer.occurrences.push(lito::c::CCompilerArgumentOccurrence {
-            .argument = lito::c::CCompilerArgument::Common(
-                as<Clone>(occurrence.argument.as_Common().argument).clone()),
-            .raw_tokens = as<Clone>(occurrence.raw_tokens).clone(),
-            .range      = occurrence.range,
-            .source     = occurrence.source.clone(),
-        });
+    for (auto& occurrence : arguments.c.occurrences) {
+        c_layer.occurrences.push(rstd::move(occurrence));
     }
     auto c_common = lito::compiler::CommonCompileOptions {
         .codegen =
@@ -177,7 +240,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
 
     auto cpp_layer = CppOptionLayer {};
     if (selected.ndebug) cpp_layer.definitions.push(String::make("NDEBUG"_str));
-    cpp_layer.arguments = rstd::move(arguments);
+    cpp_layer.arguments = rstd::move(arguments.cpp);
     auto cpp_result     = make_cpp_options(configuration.language_standard.as_str(),
                                            configuration.standard_library,
                                            project_profile.exceptions,
@@ -192,15 +255,16 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     auto cpp               = rstd::move(cpp_result).unwrap();
     cpp.common.codegen.lto = selected.lto;
     return Ok(ProfileSpec {
-        .name              = selected.name.value.clone(),
-        .family            = selected.family,
-        .bmi               = BmiRequest { .representation   = configuration.bmi_mode,
-                                          .source_embedding = configuration.bmi_source_embedding },
-        .c                 = rstd::move(c),
-        .cpp               = rstd::move(cpp),
-        .link_requirements = rstd::move(link_requirements),
-        .strip             = selected.strip,
-        .linker_options    = configuration.linker_options.clone(),
+        .name   = selected.name.value.clone(),
+        .family = selected.family,
+        .bmi    = BmiRequest { .representation   = configuration.bmi_mode,
+                               .source_embedding = configuration.bmi_source_embedding },
+        .c      = rstd::move(c),
+        .cpp    = rstd::move(cpp),
+        .c_link_requirements   = rstd::move(c_link_requirements),
+        .cpp_link_requirements = rstd::move(cpp_link_requirements),
+        .strip                 = selected.strip,
+        .linker_options        = rstd::move(linker_options),
     });
 }
 

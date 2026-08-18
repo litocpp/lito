@@ -131,6 +131,11 @@ public:
         rstd::env::set_var(key, value);
     }
 
+    EnvironmentVariableGuard(ref<str> key, ref<rstd::ffi::OsStr> value)
+        : key_(String::make(key)), previous_(rstd::env::var_os(key)) {
+        rstd::env::set_var(key, value);
+    }
+
     ~EnvironmentVariableGuard() {
         if (previous_.is_some()) {
             rstd::env::set_var(key_.as_str(), previous_->as_os_str());

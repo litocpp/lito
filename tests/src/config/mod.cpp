@@ -350,6 +350,8 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     overrides.push(String::make("toolchain.cc=generic-cc"_str));
     overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
     overrides.push(String::make("build.options=[\"-pthread\"]"_str));
+    overrides.push(String::make("build.c.options=[\"-Wstrict-prototypes\"]"_str));
+    overrides.push(String::make("build.linker-options=[\"-Wl,--as-needed\"]"_str));
     auto loaded = lito::config::load_project_config(
         directory.as_path(),
         lito::config::ProjectConfigRequest {
@@ -364,8 +366,15 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("dedicated-cxx"_str).as_path());
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libcxx);
-    ASSERT_EQ(loaded->build_options.len(), usize(1));
-    EXPECT_EQ(loaded->build_options[usize {}].as_str(), "-pthread"_str);
+    ASSERT_EQ(loaded->build_options.cpp.len(), usize(1));
+    EXPECT_EQ(loaded->build_options.cpp[usize {}].source.as_str(), "config.build.options"_str);
+    EXPECT_EQ(loaded->build_options.cpp[usize {}].arguments[usize {}].as_str(), "-pthread"_str);
+    ASSERT_EQ(loaded->build_options.c.len(), usize(1));
+    EXPECT_EQ(loaded->build_options.c[usize {}].arguments[usize {}].as_str(),
+              "-Wstrict-prototypes"_str);
+    ASSERT_EQ(loaded->build_options.linker.len(), usize(1));
+    EXPECT_EQ(loaded->build_options.linker[usize {}].arguments[usize {}].as_str(),
+              "-Wl,--as-needed"_str);
 
     auto disabled_overrides = Vec<String>::make();
     disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));
@@ -406,6 +415,90 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(patched->sources.patches[usize {}].git.as_str(),
               "https://example.com/source?a=b"_str);
     EXPECT_EQ(patched->sources.patches[usize {}].path.as_path(), patch_directory.as_path());
+}
+
+TEST_F(Config, EnvironmentFlagsAppendToTheirLanguageAndLinkDomains) {
+    auto c_flags   = EnvironmentVariableGuard("CFLAGS"_str, "-DC_ENV=1"_str);
+    auto cxx_flags = EnvironmentVariableGuard("CXXFLAGS"_str, "-DCPP_ENV='two words'"_str);
+    auto ld_flags  = EnvironmentVariableGuard("LDFLAGS"_str, "-Wl,--gc-sections"_str);
+    auto project   = config("environment-build-flags"_str, R"toml([build]
+options = ["-DCPP_CONFIG=1"]
+linker-options = ["-Wl,--as-needed"]
+
+[build.c]
+options = ["-DC_CONFIG=1"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+
+    auto ignored = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(ignored.is_ok());
+    EXPECT_EQ(ignored->build_options.cpp.len(), usize(1));
+    EXPECT_EQ(ignored->build_options.c.len(), usize(1));
+    EXPECT_EQ(ignored->build_options.linker.len(), usize(1));
+
+    auto appended = lito::config::load_project_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .environment_flags = lito::config::EnvironmentFlagPolicy::Append,
+        });
+    ASSERT_TRUE(appended.is_ok());
+    ASSERT_EQ(appended->build_options.cpp.len(), usize(2));
+    EXPECT_EQ(appended->build_options.cpp[usize(1)].source.as_str(), "CXXFLAGS"_str);
+    ASSERT_EQ(appended->build_options.cpp[usize(1)].arguments.len(), usize(1));
+    EXPECT_EQ(appended->build_options.cpp[usize(1)].arguments[usize {}].as_str(),
+              "-DCPP_ENV=two words"_str);
+    ASSERT_EQ(appended->build_options.c.len(), usize(2));
+    EXPECT_EQ(appended->build_options.c[usize(1)].source.as_str(), "CFLAGS"_str);
+    ASSERT_EQ(appended->build_options.linker.len(), usize(2));
+    EXPECT_EQ(appended->build_options.linker[usize(1)].source.as_str(), "LDFLAGS"_str);
+}
+
+TEST_F(Config, InvalidBuildOptionConfigurationAndEnvironmentAreSourceAware) {
+    auto unknown = config("build-options-unknown"_str, "[build.c]\nunknown = true\n"_str);
+    ASSERT_TRUE(unknown.is_ok());
+    auto unknown_result = lito::config::load_project_config(unknown->root.as_path());
+    ASSERT_TRUE(unknown_result.is_err());
+    EXPECT_TRUE(error_chain_text(unknown_result.unwrap_err())
+                    .as_str()
+                    .contains("config.build.c contains unknown field 'unknown'"_str));
+
+    auto invalid = config("build-options-invalid"_str, "[build]\noptions = [\"\"]\n"_str);
+    ASSERT_TRUE(invalid.is_ok());
+    auto invalid_result = lito::config::load_project_config(invalid->root.as_path());
+    ASSERT_TRUE(invalid_result.is_err());
+    EXPECT_TRUE(error_chain_text(invalid_result.unwrap_err())
+                    .as_str()
+                    .contains("config.build.options entries must be non-empty strings"_str));
+
+    auto cxx_flags   = EnvironmentVariableGuard("CXXFLAGS"_str, "-DVALUE='unterminated"_str);
+    auto environment = lito::config::load_project_config(
+        invalid->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .mode              = lito::config::ConfigLoadMode::LocalDisabled,
+            .environment_flags = lito::config::EnvironmentFlagPolicy::Append,
+        });
+    ASSERT_TRUE(environment.is_err());
+    auto message = error_chain_text(environment.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("CXXFLAGS"_str));
+    EXPECT_TRUE(message.as_str().contains("unclosed quote"_str));
+}
+
+TEST_F(Config, NonUtf8EnvironmentFlagsAreRejectedWithTheirVariableName) {
+    auto bytes = Vec<u8>::make();
+    bytes.push(u8(0xff));
+    auto value   = rstd::ffi::OsString::from_encoded_bytes_unchecked(rstd::move(bytes));
+    auto c_flags = EnvironmentVariableGuard("CFLAGS"_str, value.as_os_str());
+    auto project = empty_project("non-utf8-environment-build-flags"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .environment_flags = lito::config::EnvironmentFlagPolicy::Append,
+        });
+    ASSERT_TRUE(loaded.is_err());
+    auto message = error_chain_text(loaded.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("CFLAGS"_str));
+    EXPECT_TRUE(message.as_str().contains("not valid UTF-8"_str));
 }
 
 TEST_F(Config, RuntimeOverridesRejectKeyStructureConflicts) {

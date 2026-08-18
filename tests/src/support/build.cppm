@@ -280,10 +280,13 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 }
 
 struct CompileProgressCapture {
-    Vec<lito::BuildProgress> values;
-    Vec<PathBuf>             requested_tools;
-    Vec<PathBuf>             resolved_tools;
-    bool                     missing {};
+    Vec<lito::BuildProgress>           values;
+    Vec<PathBuf>                       requested_tools;
+    Vec<PathBuf>                       resolved_tools;
+    Vec<lito::BuildOptionReportDomain> option_domains;
+    Vec<String>                        option_sources;
+    Vec<Vec<String>>                   option_arguments;
+    bool                               missing {};
 };
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
@@ -310,6 +313,11 @@ void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report
     for (const auto* tool : tools) {
         capture.requested_tools.push(tool->requested.clone());
         capture.resolved_tools.push(tool->executable.clone());
+    }
+    for (const auto& input : report.options) {
+        capture.option_domains.push(lito::BuildOptionReportDomain(input.domain));
+        capture.option_sources.push(input.source.clone());
+        capture.option_arguments.push(input.arguments.clone());
     }
 }
 

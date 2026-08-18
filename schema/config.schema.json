@@ -21,6 +21,9 @@
     "toolchain": {
       "$ref": "#/definitions/toolchain"
     },
+    "build": {
+      "$ref": "#/definitions/build"
+    },
     "pkg-config": {
       "$ref": "#/definitions/pkgConfig"
     },
@@ -89,6 +92,36 @@
     "tool": {
       "description": "An executable name resolved from the effective PATH or an absolute executable path.",
       "$ref": "#/definitions/nonEmptyString"
+    },
+    "build": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "linker-options": {
+          "$ref": "#/definitions/stringArray"
+        },
+        "c": {
+          "$ref": "#/definitions/cBuild"
+        }
+      },
+      "additionalProperties": false
+    },
+    "cBuild": {
+      "type": "object",
+      "properties": {
+        "options": {
+          "$ref": "#/definitions/stringArray"
+        }
+      },
+      "additionalProperties": false
+    },
+    "stringArray": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/nonEmptyString"
+      }
     },
     "pkgConfig": {
       "type": "object",

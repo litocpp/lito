@@ -167,9 +167,9 @@ struct ResolvedProjectMetadata {
 };
 
 struct ResolvedProjectSession {
-    ProjectResolution     project;
-    cpp::CppArgumentLayer build_arguments;
-    BuildPlatform         platform;
+    ProjectResolution             project;
+    cpp::ParsedGlobalBuildOptions build_arguments;
+    BuildPlatform                 platform;
 };
 
 auto resolve_project_session(const lito::package::PackageSelection&         selection,
@@ -183,27 +183,39 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              bool                                           locked,
                              lito::package::PackageSelectionPurpose         purpose,
                              usize                                          jobs,
-                             const Option<BuildEventSink>&                  observer = None(),
-                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
+                             const Option<BuildEventSink>&                  observer       = None(),
+                             const Option<BuildSetupReportSink>&            setup_reporter = None(),
+                             Option<lito::workspace::WorkspaceCatalog>      catalog        = None())
     -> ProjectResult<ResolvedProjectSession> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
     auto host     = rstd_try(detect_host_info());
     auto platform = rstd_try(resolve_build_platform(
-        host, toolchain.target_info(), cpp::explicit_cpp_target(build_arguments)));
-    auto project  = rstd_try(resolve_project(selection,
-                                             purpose,
-                                             sources,
-                                             lock,
-                                             locked,
-                                             lito::source::GitResolutionMode::ReuseLocked,
-                                             rstd::addressof(platform.effective_target),
-                                             tool_resolver,
-                                             environment,
-                                             cmake_build_overrides,
-                                             jobs,
-                                             observer_value(observer),
-                                             rstd::move(catalog)));
+        host, toolchain.target_info(), cpp::explicit_cpp_target(build_arguments.cpp)));
+    auto c_target = cpp::explicit_c_target(build_arguments.c);
+    if (c_target.is_some() && c_target->value != platform.effective_target.triple.as_str()) {
+        return Err(ProjectError::Message(rstd::format(
+            "C build target '{}' from {} conflicts with the C++-owned effective target '{}'; "
+            "configure the project target through build.options",
+            c_target->value,
+            c_target->source,
+            platform.effective_target.triple.as_str())));
+    }
+    emit_build_setup_report(
+        setup_reporter, configuration.toolchain, toolchain, configuration.global_options);
+    auto project = rstd_try(resolve_project(selection,
+                                            purpose,
+                                            sources,
+                                            lock,
+                                            locked,
+                                            lito::source::GitResolutionMode::ReuseLocked,
+                                            rstd::addressof(platform.effective_target),
+                                            tool_resolver,
+                                            environment,
+                                            cmake_build_overrides,
+                                            jobs,
+                                            observer_value(observer),
+                                            rstd::move(catalog)));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
         .build_arguments = rstd::move(build_arguments),
@@ -386,8 +398,9 @@ auto resolve_project_metadata(
     bool                                             locked,
     lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
     usize                                     jobs    = usize(1),
-    const Option<BuildEventSink>&             observer = None(),
-    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    const Option<BuildEventSink>&             observer       = None(),
+    const Option<BuildSetupReportSink>&       setup_reporter = None(),
+    Option<lito::workspace::WorkspaceCatalog> catalog        = None())
     -> ProjectResult<ResolvedProjectMetadata> {
     auto session = rstd_try(resolve_project_session(selection,
                                                     configuration,
@@ -401,6 +414,7 @@ auto resolve_project_metadata(
                                                     purpose,
                                                     jobs,
                                                     observer,
+                                                    setup_reporter,
                                                     rstd::move(catalog)));
     return resolve_project_metadata(rstd::move(session),
                                     configuration,
@@ -440,24 +454,24 @@ auto prepare_build_project(
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
     auto toolchain = rstd::move(created).unwrap();
-    emit_build_setup_report(setup_reporter, configuration.toolchain, toolchain);
-    auto metadata = resolve_project_metadata(selection,
-                                             configuration,
-                                             profile,
-                                             requested_output,
-                                             sources,
-                                             lock,
-                                             pkg_config,
-                                             cmake,
-                                             cmake_build_overrides,
-                                             toolchain,
-                                             tool_resolver,
-                                             environment,
-                                             locked,
-                                             purpose,
-                                             jobs,
-                                             observer,
-                                             rstd::move(catalog));
+    auto metadata  = resolve_project_metadata(selection,
+                                              configuration,
+                                              profile,
+                                              requested_output,
+                                              sources,
+                                              lock,
+                                              pkg_config,
+                                              cmake,
+                                              cmake_build_overrides,
+                                              toolchain,
+                                              tool_resolver,
+                                              environment,
+                                              locked,
+                                              purpose,
+                                              jobs,
+                                              observer,
+                                              setup_reporter,
+                                              rstd::move(catalog));
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {

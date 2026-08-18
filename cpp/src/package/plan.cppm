@@ -50,6 +50,10 @@ auto append_unique(Vec<String>& output, ref<str> input) -> void {
     output.push(String::make(input));
 }
 
+auto append_all(Vec<String>& output, const Vec<String>& input) -> void {
+    for (const auto& value : input) output.push(value.clone());
+}
+
 auto append_unique(Vec<PathBuf>& output, const Vec<PathBuf>& input) -> void {
     for (const auto& value : input) {
         auto present = false;
@@ -768,8 +772,8 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         }
         contexts[target]        = rstd::move(context);
         visible_targets[target] = rstd::move(visible);
-        append_unique(linker_options[target], selected_profile.linker_options);
-        append_unique(linker_options[target], spec.usage.linker_options);
+        append_all(linker_options[target], selected_profile.linker_options);
+        append_all(linker_options[target], spec.usage.linker_options);
     }
 
     auto import_requirements = resolve_import_requirements(package, target_order, contexts);
@@ -827,7 +831,10 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         requirements.posix_threads = lito::compiler::uses_posix_threads(
             contexts[target].language.is_C() ? contexts[target].language.as_C().options.common
                                              : contexts[target].language.as_Cpp().options.common);
-        append_unique(requirements, package.profiles[profile].link_requirements);
+        append_unique(requirements,
+                      contexts[target].language.is_C()
+                          ? package.profiles[profile].c_link_requirements
+                          : package.profiles[profile].cpp_link_requirements);
         append_unique(requirements, package.targets[target].usage.link_requirements);
         for (auto index = dependency_order.len(); index > usize {}; --index) {
             const auto candidate = dependency_order[index - usize(1)];

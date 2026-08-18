@@ -2,6 +2,7 @@ export module lito.executable;
 
 import rstd;
 import lito.driver;
+import lito.system;
 import :cli;
 
 using namespace rstd::prelude;
@@ -64,17 +65,45 @@ auto tool_resolution_text(const lito::BuildToolResolution& tool) -> String {
     return rstd::format("{} -> {}", tool.requested.as_path(), tool.executable.as_path());
 }
 
+auto build_option_domain_text(lito::BuildOptionReportDomain domain) -> ref<str> {
+    if (domain == lito::BuildOptionReportDomain::Cpp) return "C++"_str;
+    if (domain == lito::BuildOptionReportDomain::C) return "C"_str;
+    return "Link"_str;
+}
+
 auto render_build_setup(const lito::BuildSetupReport& report) -> String {
-    return rstd::format("Build setup\n"
-                        "  Toolchain\n"
-                        "    C compiler    {}\n"
-                        "    C++ compiler  {}\n"
-                        "    linker        {}\n"
-                        "    archiver      {}\n\n",
-                        tool_resolution_text(report.toolchain.cc).as_str(),
-                        tool_resolution_text(report.toolchain.cxx).as_str(),
-                        tool_resolution_text(report.toolchain.ld).as_str(),
-                        tool_resolution_text(report.toolchain.ar).as_str());
+    auto result = rstd::format("Build setup\n"
+                               "  Toolchain\n"
+                               "    C compiler    {}\n"
+                               "    C++ compiler  {}\n"
+                               "    linker        {}\n"
+                               "    archiver      {}\n",
+                               tool_resolution_text(report.toolchain.cc).as_str(),
+                               tool_resolution_text(report.toolchain.cxx).as_str(),
+                               tool_resolution_text(report.toolchain.ld).as_str(),
+                               tool_resolution_text(report.toolchain.ar).as_str());
+    if (! report.options.is_empty()) {
+        result.push_str("  Build options\n"_str);
+        auto label_width = usize {};
+        for (const auto& input : report.options) {
+            auto domain = build_option_domain_text(input.domain);
+            auto width  = domain.len() + usize(1) + input.source.len();
+            if (width > label_width) label_width = width;
+        }
+        for (const auto& input : report.options) {
+            auto domain = build_option_domain_text(input.domain);
+            auto label  = rstd::format("{} {}", domain, input.source.as_str());
+            result.push_str("    "_str);
+            result.push_str(label.as_str());
+            for (auto padding = label.len(); padding < label_width + usize(2); ++padding) {
+                result.push_ascii(' ');
+            }
+            result.push_str(lito::system::command_text(input.arguments).as_str());
+            result.push_ascii('\n');
+        }
+    }
+    result.push_ascii('\n');
+    return result;
 }
 
 void report_build_setup(void* raw_context, const lito::BuildSetupReport& report) noexcept {
@@ -134,15 +163,16 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
                                         : rstd::path::PathBuf::from(root).join(path.as_path());
 }
 
-auto build_configuration(lito::config::ToolchainSpec   toolchain,
-                         lito::config::StandardLibrary standard_library,
-                         Vec<String>                   options) -> lito::cpp::BuildConfiguration {
+auto build_configuration(lito::config::ToolchainSpec       toolchain,
+                         lito::config::StandardLibrary     standard_library,
+                         lito::config::ProjectBuildOptions options)
+    -> lito::cpp::BuildConfiguration {
     return lito::cpp::BuildConfiguration {
         .toolchain         = rstd::move(toolchain),
         .standard_library  = standard_library,
         .bmi_mode          = lito::cpp::BmiMode::Reduced,
         .language_standard = String::make("c++20"_str),
-        .options           = rstd::move(options),
+        .global_options    = rstd::move(options),
     };
 }
 
@@ -320,6 +350,9 @@ extern "C++" int main() {
             .overrides = rstd::move(invocation.config_overrides),
             .toolchain = rstd::move(invocation.toolchain),
             .toolchain_standard_library = rstd::move(invocation.toolchain_standard_library),
+            .environment_flags          = invocation.use_env_flags
+                                              ? lito::config::EnvironmentFlagPolicy::Append
+                                              : lito::config::EnvironmentFlagPolicy::Ignore,
         });
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();

@@ -21,8 +21,22 @@ struct BuildToolchainReport {
     BuildToolResolution ar;
 };
 
+enum class BuildOptionReportDomain
+{
+    Cpp,
+    C,
+    Link,
+};
+
+struct BuildOptionReport {
+    BuildOptionReportDomain domain { BuildOptionReportDomain::Cpp };
+    String                  source;
+    Vec<String>             arguments;
+};
+
 struct BuildSetupReport {
-    BuildToolchainReport toolchain;
+    BuildToolchainReport   toolchain;
+    Vec<BuildOptionReport> options;
 };
 
 struct BuildSetupReportSink {
@@ -35,9 +49,10 @@ struct BuildSetupReportSink {
 namespace lito
 {
 
-auto emit_build_setup_report(const Option<BuildSetupReportSink>& reporter,
-                             const lito::config::ToolchainSpec&  requested,
-                             const ClangToolchain&               resolved) noexcept -> void {
+auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
+                             const lito::config::ToolchainSpec&       requested,
+                             const ClangToolchain&                    resolved,
+                             const lito::config::ProjectBuildOptions& options) noexcept -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
         .toolchain =
@@ -52,6 +67,19 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>& reporter,
                                              .executable = PathBuf::from(resolved.ar_path()) },
             },
     };
+    const auto append = [&report](BuildOptionReportDomain                    domain,
+                                  const Vec<lito::config::BuildOptionInput>& inputs) {
+        for (const auto& input : inputs) {
+            report.options.push(BuildOptionReport {
+                .domain    = domain,
+                .source    = input.source.clone(),
+                .arguments = input.arguments.clone(),
+            });
+        }
+    };
+    append(BuildOptionReportDomain::Cpp, options.cpp);
+    append(BuildOptionReportDomain::C, options.c);
+    append(BuildOptionReportDomain::Link, options.linker);
     reporter->notify(reporter->context, report);
 }
 

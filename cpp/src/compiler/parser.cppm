@@ -139,4 +139,24 @@ auto explicit_cpp_target(const CppArgumentLayer& arguments) -> Option<ref<str>> 
     return result;
 }
 
+struct ExplicitCTarget {
+    ref<str> value;
+    ref<str> source;
+};
+
+auto explicit_c_target(const lito::c::CArgumentLayer& arguments) -> Option<ExplicitCTarget> {
+    auto result = Option<ExplicitCTarget> {};
+    for (const auto& occurrence : arguments.occurrences) {
+        if (! occurrence.argument.is_Common()) continue;
+        const auto& common = occurrence.argument.as_Common().argument;
+        if (common.is_Target()) {
+            result = Some(ExplicitCTarget {
+                .value  = common.as_Target().value.as_str(),
+                .source = occurrence.source.as_str(),
+            });
+        }
+    }
+    return result;
+}
+
 } // namespace lito::cpp

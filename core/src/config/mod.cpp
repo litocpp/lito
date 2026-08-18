@@ -401,7 +401,8 @@ auto lito::config::load_project_config(ref<rstd::path::Path> root, ProjectConfig
     }
     rstd_try(apply_toolchain_values(
         document, rstd::move(request.toolchain), rstd::move(request.toolchain_standard_library)));
-    return decode_project_config(document.location.root.clone(), document.value);
+    return decode_project_config(
+        document.location.root.clone(), document.value, request.environment_flags);
 }
 
 auto lito::config::load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode)

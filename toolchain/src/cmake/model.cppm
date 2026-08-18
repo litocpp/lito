@@ -215,13 +215,15 @@ auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requireme
 
 auto clone_profile(const cpp::ProfileSpec& profile) -> cpp::ProfileSpec {
     return cpp::ProfileSpec {
-        .name           = profile.name.clone(),
-        .family         = profile.family,
-        .bmi            = profile.bmi,
-        .c              = profile.c.clone(),
-        .cpp            = profile.cpp.clone(),
-        .strip          = profile.strip,
-        .linker_options = as<Clone>(profile.linker_options).clone(),
+        .name                  = profile.name.clone(),
+        .family                = profile.family,
+        .bmi                   = profile.bmi,
+        .c                     = profile.c.clone(),
+        .cpp                   = profile.cpp.clone(),
+        .c_link_requirements   = profile.c_link_requirements.clone(),
+        .cpp_link_requirements = profile.cpp_link_requirements.clone(),
+        .strip                 = profile.strip,
+        .linker_options        = as<Clone>(profile.linker_options).clone(),
     };
 }
 

@@ -55,6 +55,18 @@ extern "C" auto fixture_environment_two() -> int {
     auto output = build_root("environment"_str);
     auto request =
         build_request(root.as_path(), output.as_path(), strings("fixture-environment-cache"_str));
+    request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DFIXTURE_CPP=1"_str),
+        .source    = String::make("config.build.options"_str),
+    });
+    request.configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DFIXTURE_C=1"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    request.configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--as-needed"_str),
+        .source    = String::make("config.build.linker-options"_str),
+    });
     request.execution.scan.jobs    = Some(usize(2));
     request.execution.compile.jobs = Some(usize(2));
     auto progress                  = CompileProgressCapture {};
@@ -72,6 +84,13 @@ extern "C" auto fixture_environment_two() -> int {
     ASSERT_EQ(progress.resolved_tools.len(), usize(4));
     for (const auto& path : progress.requested_tools) EXPECT_FALSE(path.is_empty());
     for (const auto& path : progress.resolved_tools) EXPECT_TRUE(path.as_path().is_absolute());
+    ASSERT_EQ(progress.option_domains.len(), usize(3));
+    EXPECT_EQ(progress.option_domains[usize {}], lito::BuildOptionReportDomain::Cpp);
+    EXPECT_EQ(progress.option_domains[usize(1)], lito::BuildOptionReportDomain::C);
+    EXPECT_EQ(progress.option_domains[usize(2)], lito::BuildOptionReportDomain::Link);
+    EXPECT_EQ(progress.option_sources[usize {}].as_str(), "config.build.options"_str);
+    EXPECT_EQ(progress.option_sources[usize(1)].as_str(), "CFLAGS"_str);
+    EXPECT_EQ(progress.option_sources[usize(2)].as_str(), "config.build.linker-options"_str);
     EXPECT_FALSE(progress.missing);
     ASSERT_EQ(progress.values.len(), usize(2));
     EXPECT_EQ(progress.values[usize {}].current, usize(1));

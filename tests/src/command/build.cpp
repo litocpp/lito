@@ -135,7 +135,15 @@ sources = ["src/value.c"]
 [usage]
 options = ["-fno-builtin"]
 )toml"_str },
-        { "c-lib/src/value.c"_str, "int fixture_c_value(void) { return 42; }\n"_str },
+        { "c-lib/src/value.c"_str, R"c(#ifndef LITO_C_GLOBAL
+#error LITO_C_GLOBAL must be provided by the C option domain
+#endif
+#ifdef LITO_CPP_GLOBAL
+#error C++ options must not enter C compilation
+#endif
+
+int fixture_c_value(void) { return 42; }
+)c"_str },
         { "app/lito.toml"_str, R"toml([package]
 name = "fixture-cpp-consumer"
 version.workspace = true
@@ -149,7 +157,14 @@ sources = ["src/main.cpp"]
 path = "../c-lib"
 visibility = "private"
 )toml"_str },
-        { "app/src/main.cpp"_str, R"cpp(extern "C" int fixture_c_value(void);
+        { "app/src/main.cpp"_str, R"cpp(#ifndef LITO_CPP_GLOBAL
+#error LITO_CPP_GLOBAL must be provided by the C++ option domain
+#endif
+#ifdef LITO_C_GLOBAL
+#error C options must not enter C++ compilation
+#endif
+
+extern "C" int fixture_c_value(void);
 
 int main() {
     return fixture_c_value() == 42 ? 0 : 1;
@@ -160,6 +175,18 @@ int main() {
     ASSERT_TRUE(project.is_ok());
     auto request = project_build_request(
         "c-cpp-build"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
+    request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DLITO_CPP_GLOBAL=1"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    request.configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DLITO_C_GLOBAL=1"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    request.configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--as-needed"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
     auto result = lito::build(request);
     if (result.is_err()) {
         auto message = error_chain_text(result.unwrap_err());
@@ -168,6 +195,18 @@ int main() {
     }
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::StaticLibrary), usize(1));
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(1));
+
+    auto conflicting = project_build_request(
+        "c-cpp-target-conflict"_str, project->root.as_path(), strings("fixture-cpp-consumer"_str));
+    conflicting.configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("--target=wasm32-unknown-unknown"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto rejected = lito::build(conflicting);
+    ASSERT_TRUE(rejected.is_err());
+    auto message = error_chain_text(rejected.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("CFLAGS"_str));
+    EXPECT_TRUE(message.as_str().contains("C++-owned effective target"_str));
 }
 
 TEST_F(BuildCommand, DependencyPackageBuildScriptGeneratesSourceBeforeDiscovery) {

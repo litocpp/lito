@@ -102,6 +102,39 @@ auto cpp_link_requirements_identity(const CppLinkRequirements& requirements) -> 
     return result;
 }
 
+struct NormalizedLinkArguments {
+    LinkArgumentSequence arguments;
+    CppLinkRequirements  requirements;
+};
+
+auto normalize_link_arguments(LinkArgumentSequence input) -> NormalizedLinkArguments {
+    auto tokens       = Vec<String>::make();
+    auto requirements = CppLinkRequirements {};
+    for (auto index = usize {}; index < input.tokens.len(); ++index) {
+        auto token = input.tokens[index].as_str();
+        if (token == "-pthread"_str) {
+            requirements.posix_threads = true;
+            requirements.thread_sources.push(input.source.clone());
+            continue;
+        }
+        if (token == "-ldl"_str || (token == "-l"_str && index + usize(1) < input.tokens.len() &&
+                                    input.tokens[index + usize(1)].as_str() == "dl"_str)) {
+            requirements.system_libraries.push(CppSystemLibraryRequirement {
+                .name   = String::make("dl"_str),
+                .source = input.source.clone(),
+            });
+            if (token == "-l"_str) ++index;
+            continue;
+        }
+        tokens.push(input.tokens[index].clone());
+    }
+    input.tokens = rstd::move(tokens);
+    return NormalizedLinkArguments {
+        .arguments    = rstd::move(input),
+        .requirements = rstd::move(requirements),
+    };
+}
+
 class LanguageArgumentLayer : public DefaultInClass<LanguageArgumentLayer, Clone> {
     RSTD_ENUM_DEFAULT(LanguageArgumentLayer,
                       (Cpp),

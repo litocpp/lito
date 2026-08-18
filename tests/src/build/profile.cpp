@@ -170,24 +170,32 @@ TEST_F(BuildProfile, PthreadBuildOptionOwnsCompileAndLinkRequirements) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
-    build_configuration.options.push(String::make("-pthread"_str));
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-pthread"_str),
+        .source    = String::make("config.build.options"_str),
+    });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
                                                 build_profile("debug"_str),
                                                 *parser);
     ASSERT_TRUE(profile.is_ok());
     EXPECT_TRUE(lito::compiler::uses_posix_threads(profile->cpp.common));
-    EXPECT_TRUE(lito::compiler::uses_posix_threads(profile->c.common));
-    EXPECT_TRUE(profile->link_requirements.posix_threads);
-    ASSERT_EQ(profile->link_requirements.thread_sources.len(), usize(1));
-    EXPECT_EQ(profile->link_requirements.thread_sources[usize {}].as_str(), "build.options"_str);
+    EXPECT_FALSE(lito::compiler::uses_posix_threads(profile->c.common));
+    EXPECT_TRUE(profile->cpp_link_requirements.posix_threads);
+    EXPECT_FALSE(profile->c_link_requirements.posix_threads);
+    ASSERT_EQ(profile->cpp_link_requirements.thread_sources.len(), usize(1));
+    EXPECT_EQ(profile->cpp_link_requirements.thread_sources[usize {}].as_str(),
+              "config.build.options"_str);
 }
 
 TEST_F(BuildProfile, GlobalVendorOptionsRemainInTheCppLanguageDomain) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
-    build_configuration.options.push(String::make("-fno-builtin"_str));
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fno-builtin"_str),
+        .source    = String::make("config.build.options"_str),
+    });
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 lito::manifest::ProjectProfile {},
                                                 build_profile("debug"_str),
@@ -196,6 +204,78 @@ TEST_F(BuildProfile, GlobalVendorOptionsRemainInTheCppLanguageDomain) {
     ASSERT_EQ(profile->cpp.vendor.len(), usize(1));
     EXPECT_EQ(profile->cpp.vendor[usize {}].value.as_str(), "-fno-builtin"_str);
     EXPECT_TRUE(profile->c.vendor.is_empty());
+}
+
+TEST_F(BuildProfile, GlobalCOptionsRemainInTheCLanguageDomain) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-pthread"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    EXPECT_TRUE(lito::compiler::uses_posix_threads(profile->c.common));
+    EXPECT_FALSE(lito::compiler::uses_posix_threads(profile->cpp.common));
+    EXPECT_TRUE(profile->c_link_requirements.posix_threads);
+    EXPECT_FALSE(profile->cpp_link_requirements.posix_threads);
+    ASSERT_EQ(profile->c_link_requirements.thread_sources.len(), usize(1));
+    EXPECT_EQ(profile->c_link_requirements.thread_sources[usize {}].as_str(), "CFLAGS"_str);
+}
+
+TEST_F(BuildProfile, GlobalLanguageAndLinkOptionsHaveIndependentIdentities) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto baseline = lito::cpp::make_profile_spec(
+        configuration(), lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(baseline.is_ok());
+
+    auto cpp_configuration = configuration();
+    cpp_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DCPP_IDENTITY=1"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto cpp = lito::cpp::make_profile_spec(
+        cpp_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(cpp.is_ok());
+    EXPECT_NE(lito::cpp::cpp_compile_identity(cpp->cpp).as_str(),
+              lito::cpp::cpp_compile_identity(baseline->cpp).as_str());
+    EXPECT_NE(lito::cpp::cpp_scan_identity(cpp->cpp).as_str(),
+              lito::cpp::cpp_scan_identity(baseline->cpp).as_str());
+    EXPECT_EQ(lito::c::c_compile_identity(cpp->c).as_str(),
+              lito::c::c_compile_identity(baseline->c).as_str());
+
+    auto c_configuration = configuration();
+    c_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-DC_IDENTITY=1"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto c = lito::cpp::make_profile_spec(
+        c_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(c.is_ok());
+    EXPECT_NE(lito::c::c_compile_identity(c->c).as_str(),
+              lito::c::c_compile_identity(baseline->c).as_str());
+    EXPECT_NE(lito::c::c_scan_identity(c->c).as_str(),
+              lito::c::c_scan_identity(baseline->c).as_str());
+    EXPECT_EQ(lito::cpp::cpp_compile_identity(c->cpp).as_str(),
+              lito::cpp::cpp_compile_identity(baseline->cpp).as_str());
+
+    auto link_configuration = configuration();
+    link_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--as-needed"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+    auto link = lito::cpp::make_profile_spec(
+        link_configuration, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(link.is_ok());
+    EXPECT_EQ(lito::cpp::cpp_compile_identity(link->cpp).as_str(),
+              lito::cpp::cpp_compile_identity(baseline->cpp).as_str());
+    EXPECT_EQ(lito::c::c_compile_identity(link->c).as_str(),
+              lito::c::c_compile_identity(baseline->c).as_str());
 }
 
 TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
@@ -294,7 +374,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     ASSERT_TRUE(parser.is_ok());
 
     auto compiler_configuration = configuration();
-    compiler_configuration.options.push(String::make("-flto=auto"_str));
+    compiler_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=auto"_str),
+        .source    = String::make("config.build.options"_str),
+    });
     auto compiler = lito::cpp::make_profile_spec(compiler_configuration,
                                                  lito::manifest::ProjectProfile {},
                                                  build_profile("debug"_str),
@@ -305,7 +388,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     EXPECT_TRUE(compiler_error.as_Message().message.as_str().contains("selected profile"_str));
 
     auto linker_configuration = configuration();
-    linker_configuration.linker_options.push(String::make("-Wl,--strip-debug"_str));
+    linker_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--strip-debug"_str),
+        .source    = String::make("config.build.linker-options"_str),
+    });
     auto linker = lito::cpp::make_profile_spec(linker_configuration,
                                                lito::manifest::ProjectProfile {},
                                                build_profile("debug"_str),
@@ -316,7 +402,10 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     EXPECT_TRUE(linker_error.as_Message().message.as_str().contains("selected profile"_str));
 
     auto stdlib_configuration = configuration();
-    stdlib_configuration.linker_options.push(String::make("-nostdlib++"_str));
+    stdlib_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-nostdlib++"_str),
+        .source    = String::make("config.build.linker-options"_str),
+    });
     auto stdlib = lito::cpp::make_profile_spec(stdlib_configuration,
                                                lito::manifest::ProjectProfile {},
                                                build_profile("debug"_str),
@@ -327,13 +416,79 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     EXPECT_TRUE(stdlib_error.as_Message().message.as_str().contains("Lito-owned setting"_str));
 
     auto pthread_configuration = configuration();
-    pthread_configuration.linker_options.push(String::make("-pthread"_str));
+    pthread_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-pthread"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
     auto pthread = lito::cpp::make_profile_spec(pthread_configuration,
                                                 lito::manifest::ProjectProfile {},
                                                 build_profile("debug"_str),
                                                 *parser);
-    ASSERT_TRUE(pthread.is_err());
-    EXPECT_TRUE(rstd::format("{}", pthread.unwrap_err()).as_str().contains("build.options"_str));
+    ASSERT_TRUE(pthread.is_ok());
+    EXPECT_TRUE(pthread->c_link_requirements.posix_threads);
+    EXPECT_TRUE(pthread->cpp_link_requirements.posix_threads);
+    EXPECT_TRUE(pthread->linker_options.is_empty());
+}
+
+TEST_F(BuildProfile, GlobalAndPackageLinkerOptionsPreserveOrderAndDuplicates) {
+    auto project = manifest_project("linker-option-order"_str, R"toml([package]
+name = "fixture-linker-option-order"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "linker-option-order"
+sources = ["main.cpp"]
+
+[usage]
+linker-options = ["-Wl,--pop-state"]
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--push-state"_str, "-Wl,--as-needed"_str),
+        .source    = String::make("config.build.linker-options"_str),
+    });
+    build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-Wl,--as-needed"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(
+        build_configuration, graph->profile, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(profile.is_ok());
+    auto packages = strings("fixture-linker-option-order"_str);
+    auto targets  = Vec<lito::package::PackageTargetId>::make();
+    targets.push(lito::package::PackageTargetId {
+        .package = String::make("fixture-linker-option-order"_str),
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = String::make("linker-option-order"_str),
+    });
+    auto external_usage = lito::cpp::ExternalUsageCatalog {};
+    external_usage.packages.push(lito::cpp::ExternalPackageUsage {
+        .package = String::make("fixture-linker-option-order"_str),
+    });
+    auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
+                                                            packages,
+                                                            targets,
+                                                            build_configuration,
+                                                            rstd::move(profile).unwrap(),
+                                                            native_platform(),
+                                                            rstd::move(external_usage),
+                                                            lito::cpp::ExternalSourceRootCatalog {},
+                                                            *parser);
+    ASSERT_TRUE(metadata.is_ok());
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_ok());
+    ASSERT_EQ(planned->linker_options.len(), usize(1));
+    ASSERT_EQ(planned->linker_options[usize {}].len(), usize(4));
+    EXPECT_EQ(planned->linker_options[usize {}][usize {}].as_str(), "-Wl,--push-state"_str);
+    EXPECT_EQ(planned->linker_options[usize {}][usize(1)].as_str(), "-Wl,--as-needed"_str);
+    EXPECT_EQ(planned->linker_options[usize {}][usize(2)].as_str(), "-Wl,--as-needed"_str);
+    EXPECT_EQ(planned->linker_options[usize {}][usize(3)].as_str(), "-Wl,--pop-state"_str);
 }
 
 TEST_F(BuildProfile, CompilerOptionsAreValidatedAfterToolchainParsing) {

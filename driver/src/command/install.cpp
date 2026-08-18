@@ -70,8 +70,6 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
             rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
     }
     auto resolved_toolchain = rstd::move(toolchain).unwrap();
-    emit_build_setup_report(
-        request.build.setup_reporter, request.build.configuration.toolchain, resolved_toolchain);
     auto jobs =
         request.build.execution.scan.jobs.is_some() ? *request.build.execution.scan.jobs : usize(1);
     if (request.build.execution.scan.jobs.is_none()) {
@@ -91,6 +89,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 lito::package::PackageSelectionPurpose::Install,
                                 jobs,
                                 request.build.observer,
+                                request.build.setup_reporter,
                                 Some(rstd::move(request.source.project.catalog)))));
     auto effective_target = session.platform.effective_target.clone();
     auto selected_owners =
