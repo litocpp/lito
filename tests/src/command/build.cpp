@@ -114,6 +114,9 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
 }
 
 TEST_F(BuildCommand, InstallLinkVariantReusesObjectsAndHasAnIndependentReceipt) {
+#if RSTD_OS_WINDOWS
+    GTEST_SKIP() << "ELF runpath link variants are not available for PE/COFF targets";
+#endif
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]
 name = "fixture-install-link"
@@ -553,7 +556,7 @@ condition = "true"
 private-definitions = ["FIXTURE_CONFLICT=1"]
 
 [[when]]
-condition = 'target.family == "unix"'
+condition = "target.os == host.os"
 
 [when.usage]
 private-definitions = ["FIXTURE_CONFLICT=2"]
@@ -570,7 +573,7 @@ private-definitions = ["FIXTURE_CONFLICT=2"]
     ASSERT_TRUE(definition_result.is_err());
     auto definition_error = error_chain_text(definition_result.unwrap_err());
     EXPECT_TRUE(definition_error.as_str().contains("condition 'true'"_str));
-    EXPECT_TRUE(definition_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
+    EXPECT_TRUE(definition_error.as_str().contains("condition 'target.os == host.os'"_str));
 
     const ProjectFile scalar_files[] = {
         { "lito.toml"_str, R"toml([package]
@@ -589,7 +592,7 @@ condition = "true"
 threads = true
 
 [[when]]
-condition = 'target.family == "unix"'
+condition = "target.os == host.os"
 
 [when.usage]
 threads = false
@@ -605,7 +608,7 @@ threads = false
     ASSERT_TRUE(scalar_result.is_err());
     auto scalar_error = error_chain_text(scalar_result.unwrap_err());
     EXPECT_TRUE(scalar_error.as_str().contains("condition 'true'"_str));
-    EXPECT_TRUE(scalar_error.as_str().contains(R"(condition 'target.family == "unix"')"_str));
+    EXPECT_TRUE(scalar_error.as_str().contains("condition 'target.os == host.os'"_str));
 }
 
 TEST_F(BuildCommand, PackageFeatureMacrosRemainOwnedByTheirPackage) {

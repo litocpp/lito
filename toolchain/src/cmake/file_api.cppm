@@ -189,7 +189,11 @@ auto probe_target_paths(const CMakeWorkArea&                      area,
 
 auto append_fragment_tokens(Vec<String>& output, ref<str> fragment, ref<str> context)
     -> lito::dependency::DependencyResult<empty> {
+#if defined(_WIN32)
+    auto tokens = tokenize_windows_command_fragments(fragment, context);
+#else
     auto tokens = tokenize_command_fragments(fragment, context);
+#endif
     if (tokens.is_err()) {
         return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tokens).unwrap_err()));
     }
@@ -420,9 +424,11 @@ auto read_asset_snapshot(const CMakeWorkArea&                      area,
         return cmake_io_failure<Vec<ExternalAssetSet>>(
             "read CMake asset receipt"_str, path.as_path(), rstd::move(contents).unwrap_err());
     }
-    auto remaining = contents->as_str();
-    auto header    = remaining.split_once("\n"_str);
-    if (header.is_none() || header->get<0>() != "lito-cmake-assets-v2"_str) {
+    auto remaining   = contents->as_str();
+    auto header      = remaining.split_once("\n"_str);
+    auto header_line = header.is_some() ? header->get<0>() : ref<str> {};
+    if (auto line = header_line.strip_suffix("\r"_str); line.is_some()) header_line = *line;
+    if (header.is_none() || header_line != "lito-cmake-assets-v2"_str) {
         return cmake_failure<Vec<ExternalAssetSet>>(
             rstd::format("CMake asset receipt '{}' has an unsupported schema", path.as_path()));
     }
@@ -432,6 +438,9 @@ auto read_asset_snapshot(const CMakeWorkArea&                      area,
         auto next = remaining.split_once("\n"_str);
         auto line = next.is_some() ? next->get<0>() : remaining;
         remaining = next.is_some() ? next->get<1>() : ""_str;
+        if (auto normalized = line.strip_suffix("\r"_str); normalized.is_some()) {
+            line = *normalized;
+        }
         if (line.is_empty()) continue;
         auto kind = line.split_once("\t"_str);
         if (kind.is_none()) {

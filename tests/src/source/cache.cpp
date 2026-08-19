@@ -37,7 +37,6 @@ TEST_F(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
         auto parent_tag = expected.join(PathBuf::from("CACHEDIR.TAG"_str).as_path());
         auto files      = expected.join(PathBuf::from("files"_str).as_path());
         ASSERT_TRUE(rstd::fs::exists(lock.as_path()).unwrap());
-        EXPECT_EQ(rstd::fs::read_to_string(lock.as_path()).unwrap().as_str(), "preserve\n"_str);
         auto probe = rstd::fs::FileLock::try_acquire(rstd::fs::File::open(lock.as_path()).unwrap(),
                                                      rstd::fs::FileLockMode::Exclusive);
         ASSERT_TRUE(probe.is_ok());
@@ -74,6 +73,7 @@ TEST_F(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
             PathBuf::from(file_cache->root()).join(PathBuf::from("CACHEDIR.TAG"_str).as_path());
         EXPECT_TRUE(rstd::fs::exists(file_tag.as_path()).unwrap());
     }
+    EXPECT_EQ(rstd::fs::read_to_string(lock.as_path()).unwrap().as_str(), "preserve\n"_str);
     ASSERT_TRUE(rstd::fs::remove_file(lock.as_path()).is_ok());
     ASSERT_TRUE(rstd::fs::create_dir(lock.as_path()).is_ok());
     EXPECT_TRUE(root->acquire_source_cache().is_err());

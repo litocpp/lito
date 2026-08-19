@@ -222,8 +222,14 @@ public:
             if (*executable) selected = Some(PathBuf::from(requested));
         } else if (single_component(requested)) {
             for (const auto& directory : environment_->search_directories()) {
-                auto candidate  = directory.join(requested);
+                auto candidate = directory.join(requested);
+#if RSTD_OS_WINDOWS
+                auto executable = requested.extension().is_some()
+                                      ? executable_candidate(candidate.as_path())
+                                      : Ok(false);
+#else
                 auto executable = executable_candidate(candidate.as_path());
+#endif
                 if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
                 if (*executable) {
                     selected = Some(rstd::move(candidate));

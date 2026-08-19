@@ -83,7 +83,11 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     ASSERT_TRUE(invocation.is_ok());
     EXPECT_TRUE(has_argument(invocation->arguments, "-std=c23"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-pthread"_str));
+#if defined(_WIN32)
+    EXPECT_FALSE(has_argument(invocation->arguments, "-fno-PIC"_str));
+#else
     EXPECT_TRUE(has_argument(invocation->arguments, "-fno-PIC"_str));
+#endif
     EXPECT_TRUE(has_argument(invocation->arguments, "-fno-builtin"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wall"_str));
     EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-pedantic"_str));
@@ -126,7 +130,11 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     });
     auto invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(invocation.is_ok());
+#if defined(_WIN32)
+    EXPECT_FALSE(has_argument(invocation->arguments, "-fPIC"_str));
+#else
     EXPECT_TRUE(has_argument(invocation->arguments, "-fPIC"_str));
+#endif
     EXPECT_TRUE(has_argument(invocation->arguments, "-fvisibility=hidden"_str));
     EXPECT_FALSE(has_prefix(invocation->arguments, "-ftype-visibility="_str));
     EXPECT_FALSE(has_argument(invocation->arguments, "-fvisibility-inlines-hidden"_str));
@@ -179,7 +187,7 @@ TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
 TEST(ClangToolchain, RejectsNonLldLinkers) {
     auto created = ClangToolchain::create(lito::config::ToolchainSpec {
         .cxx = PathBuf::from("clang++"_str),
-        .ld  = PathBuf::from("ld"_str),
+        .ld  = PathBuf::from("clang++"_str),
         .ar  = PathBuf::from("llvm-ar"_str),
     });
     ASSERT_TRUE(created.is_err());

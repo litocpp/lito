@@ -314,4 +314,71 @@ auto tokenize_command_fragments(ref<str> input, ref<str> context) -> SystemResul
     return Ok(rstd::move(result));
 }
 
+auto tokenize_windows_command_fragments(ref<str> input, ref<str> context)
+    -> SystemResult<Vec<String>> {
+    auto result      = Vec<String>::make();
+    auto current     = Vec<u8>::make();
+    auto quoted      = false;
+    auto word_active = false;
+    auto bytes       = input.as_bytes();
+    auto index       = usize {};
+    while (index < bytes.len()) {
+        auto value = bytes[index];
+        if (value == u8()) {
+            return Err(
+                SystemError::Fragment(String::make(context), String::make("contains NUL"_str)));
+        }
+        if (value == u8('\\')) {
+            auto slashes = usize {};
+            while (index < bytes.len() && bytes[index] == u8('\\')) {
+                ++slashes;
+                ++index;
+            }
+            if (index < bytes.len() && bytes[index] == u8('"')) {
+                for (usize slash {}; slash < slashes / usize(2); ++slash) {
+                    current.emplace_back(u8('\\'));
+                }
+                if (slashes % usize(2) == usize {})
+                    quoted = ! quoted;
+                else
+                    current.emplace_back(u8('"'));
+                word_active = true;
+                ++index;
+                continue;
+            }
+            for (usize slash {}; slash < slashes; ++slash) current.emplace_back(u8('\\'));
+            word_active = true;
+            continue;
+        }
+        if (value == u8('"')) {
+            quoted      = ! quoted;
+            word_active = true;
+            ++index;
+            continue;
+        }
+        if (! quoted &&
+            (value == u8(' ') || value == u8('\t') || value == u8('\n') || value == u8('\r'))) {
+            if (word_active) {
+                auto pushed = push_fragment_word(result, current, context);
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+                word_active = false;
+            }
+            ++index;
+            continue;
+        }
+        current.emplace_back(value);
+        word_active = true;
+        ++index;
+    }
+    if (quoted) {
+        return Err(SystemError::Fragment(String::make(context),
+                                         String::make("contains an unclosed quote"_str)));
+    }
+    if (word_active) {
+        auto pushed = push_fragment_word(result, current, context);
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+    }
+    return Ok(rstd::move(result));
+}
+
 } // namespace lito::system

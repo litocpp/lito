@@ -75,17 +75,66 @@ strip = "debuginfo"
 }
 
 auto environment_tool_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {
-    const ProjectFile files[] = {
-        {
-            "append-path/.lito/config.toml"_str,
-            R"toml([environment]
+#if RSTD_OS_WINDOWS
+    constexpr auto append_config = R"toml([environment]
+append-path = ["tools"]
+
+[toolchain]
+cxx = "clang++"
+ar = "llvm-ar"
+format = "clang-format"
+)toml"_str;
+    constexpr auto test_config   = R"toml([environment]
+append-path = ["../append-path/tools"]
+
+[toolchain]
+cxx = "clang++"
+ar = "llvm-ar"
+format = "clang-format"
+)toml"_str;
+    constexpr auto test_manifest = R"toml([package]
+name = "fixture-environment-test"
+version = "0.1.0"
+
+[[test]]
+link-stdlib = false
+name = "fixture-environment-test"
+sources = ["test/path.cpp"]
+)toml"_str;
+#else
+    constexpr auto append_config = R"toml([environment]
 append-path = ["tools"]
 
 [toolchain]
 cxx = "lito-fixture-clang++"
 ar = "lito-fixture-llvm-ar"
 format = "lito-fixture-clang-format"
-)toml"_str,
+)toml"_str;
+    constexpr auto test_config   = R"toml([environment]
+append-path = ["../append-path/tools"]
+
+[toolchain]
+cxx = "lito-fixture-clang++"
+ar = "lito-fixture-llvm-ar"
+format = "lito-fixture-clang-format"
+)toml"_str;
+    constexpr auto test_manifest = R"toml([package]
+name = "fixture-environment-test"
+version = "0.1.0"
+
+[[test]]
+link-stdlib = false
+name = "fixture-environment-test"
+sources = ["test/path.cpp"]
+
+[usage]
+linker-options = ["-Wl,-rpath,/nix/opt/llvm/22/lib/x86_64-unknown-linux-gnu"]
+)toml"_str;
+#endif
+    const ProjectFile files[] = {
+        {
+            "append-path/.lito/config.toml"_str,
+            append_config,
         },
         {
             "append-path/lito.toml"_str,
@@ -100,6 +149,7 @@ sources = ["src/main.cpp"]
 )toml"_str,
         },
         { "append-path/src/main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+#if RSTD_OS_UNIX
         { "append-path/tools/ld"_str,
           "#!/bin/sh\nexec /usr/bin/ld \"$@\"\n"_str,
           lito::source::SourceFileMode::Executable },
@@ -112,31 +162,14 @@ sources = ["src/main.cpp"]
         { "append-path/tools/lito-fixture-llvm-ar"_str,
           "#!/bin/sh\nexec /nix/opt/llvm/22/bin/llvm-ar \"$@\"\n"_str,
           lito::source::SourceFileMode::Executable },
+#endif
         {
             "test-path/.lito/config.toml"_str,
-            R"toml([environment]
-append-path = ["../append-path/tools"]
-
-[toolchain]
-cxx = "lito-fixture-clang++"
-ar = "lito-fixture-llvm-ar"
-format = "lito-fixture-clang-format"
-)toml"_str,
+            test_config,
         },
         {
             "test-path/lito.toml"_str,
-            R"toml([package]
-name = "fixture-environment-test"
-version = "0.1.0"
-
-[[test]]
-link-stdlib = false
-name = "fixture-environment-test"
-sources = ["test/path.cpp"]
-
-[usage]
-linker-options = ["-Wl,-rpath,/nix/opt/llvm/22/lib/x86_64-unknown-linux-gnu"]
-)toml"_str,
+            test_manifest,
         },
         {
             "test-path/test/path.cpp"_str,
@@ -145,12 +178,26 @@ linker-options = ["-Wl,-rpath,/nix/opt/llvm/22/lib/x86_64-unknown-linux-gnu"]
 
 auto main() -> int {
     const auto* path = std::getenv("PATH");
+#if defined(_WIN32)
+    return path != nullptr && std::strstr(path, "append-path\\tools") != nullptr ? 0 : 1;
+#else
     return path != nullptr && std::strstr(path, "append-path/tools") != nullptr ? 0 : 1;
+#endif
 }
 )cpp"_str,
         },
     };
     return source_tree(files);
+}
+
+auto prepare_environment_tool_project(ref<rstd::path::Path> root) -> bool {
+#if RSTD_OS_WINDOWS
+    auto directory = PathBuf::from(root).join(PathBuf::from("append-path/tools"_str).as_path());
+    return rstd::fs::create_dir_all(directory.as_path()).is_ok();
+#else
+    (void)root;
+#endif
+    return true;
 }
 
 auto install_selection_project_tree() -> lito::source::SourceTreeResult<lito::source::SourceTree> {

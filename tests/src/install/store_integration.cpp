@@ -474,11 +474,16 @@ TEST_F(InstallStore, InstallStoreStripsOnlyTransactionStagingCopies) {
     EXPECT_EQ(
         rstd::fs::read_to_string(first->entries[usize {}].destination.as_path()).unwrap().as_str(),
         "stripped"_str);
+#if defined(_WIN32)
+    constexpr auto installed_mode = u32(0666);
+#else
+    constexpr auto installed_mode = u32(0755);
+#endif
     EXPECT_EQ(rstd::fs::metadata(first->entries[usize {}].destination.as_path())
                   .unwrap()
                   .permissions()
                   .mode(),
-              u32(0755));
+              installed_mode);
     auto catalog = lito::load_managed_install_catalog(*first->managed_layout);
     ASSERT_TRUE(catalog.is_ok());
     ASSERT_EQ(catalog->packages[usize {}].entries[usize {}].transforms.len(), usize(1));
@@ -511,7 +516,7 @@ TEST_F(InstallStore, InstallStoreStripsOnlyTransactionStagingCopies) {
                   .unwrap()
                   .permissions()
                   .mode(),
-              u32(0755));
+              installed_mode);
     EXPECT_EQ(rstd::fs::read_to_string(source.as_path()).unwrap().as_str(), "unstripped"_str);
 }
 

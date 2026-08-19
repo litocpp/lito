@@ -18,6 +18,16 @@ using PathBuf = rstd::path::PathBuf;
 
 class SystemProcess : public ProjectFixture {};
 
+TEST_F(SystemProcess, WindowsCommandFragmentsPreservePathSeparators) {
+    auto parsed = tokenize_windows_command_fragments(
+        "fixture-source\\lito_source_adapter.lib \"directory with spaces\\fixture.lib\""_str,
+        "test Windows command fragment"_str);
+    ASSERT_TRUE(parsed.is_ok());
+    ASSERT_EQ(parsed->len(), usize(2));
+    EXPECT_EQ((*parsed)[usize {}].as_str(), "fixture-source\\lito_source_adapter.lib"_str);
+    EXPECT_EQ((*parsed)[usize(1)].as_str(), "directory with spaces\\fixture.lib"_str);
+}
+
 TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
     auto directory = source_root("tool-resolver"_str);
     auto inherited = directory.join(rstd::path::PathBuf::from("inherited"_str).as_path());
@@ -29,11 +39,20 @@ TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
     ASSERT_TRUE(rstd::fs::create_dir_all(second.as_path()).is_ok());
     ASSERT_TRUE(rstd::fs::create_dir_all(relative.as_path()).is_ok());
 
-    auto inherited_tool  = inherited.join(rstd::path::PathBuf::from("lito-tool"_str).as_path());
-    auto appended_tool   = first.join(rstd::path::PathBuf::from("lito-tool"_str).as_path());
-    auto first_fallback  = first.join(rstd::path::PathBuf::from("lito-fallback"_str).as_path());
-    auto second_fallback = second.join(rstd::path::PathBuf::from("lito-fallback"_str).as_path());
-    auto absolute_tool   = second.join(rstd::path::PathBuf::from("lito-absolute"_str).as_path());
+#if RSTD_OS_WINDOWS
+    constexpr auto tool_name     = "lito-tool.EXE"_str;
+    constexpr auto fallback_name = "lito-fallback.EXE"_str;
+    constexpr auto absolute_name = "lito-absolute.EXE"_str;
+#else
+    constexpr auto tool_name     = "lito-tool"_str;
+    constexpr auto fallback_name = "lito-fallback"_str;
+    constexpr auto absolute_name = "lito-absolute"_str;
+#endif
+    auto inherited_tool  = inherited.join(rstd::path::PathBuf::from(tool_name).as_path());
+    auto appended_tool   = first.join(rstd::path::PathBuf::from(tool_name).as_path());
+    auto first_fallback  = first.join(rstd::path::PathBuf::from(fallback_name).as_path());
+    auto second_fallback = second.join(rstd::path::PathBuf::from(fallback_name).as_path());
+    auto absolute_tool   = second.join(rstd::path::PathBuf::from(absolute_name).as_path());
     auto non_executable =
         first.join(rstd::path::PathBuf::from("lito-non-executable"_str).as_path());
     ASSERT_TRUE(write_executable(inherited_tool.as_path()));
@@ -142,6 +161,7 @@ TEST_F(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     ASSERT_TRUE(tree.is_ok());
     auto materialized = materialize("environment-build"_str, *tree);
     ASSERT_TRUE(materialized.is_ok());
+    ASSERT_TRUE(prepare_environment_tool_project(materialized->root.as_path()));
     auto project = materialized->root.join(PathBuf::from("append-path"_str).as_path());
     auto config  = lito::config::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());
@@ -160,6 +180,7 @@ TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     ASSERT_TRUE(tree.is_ok());
     auto materialized = materialize("environment-test"_str, *tree);
     ASSERT_TRUE(materialized.is_ok());
+    ASSERT_TRUE(prepare_environment_tool_project(materialized->root.as_path()));
     auto project = materialized->root.join(PathBuf::from("test-path"_str).as_path());
     auto config  = lito::config::load_project_config(project.as_path());
     ASSERT_TRUE(config.is_ok());

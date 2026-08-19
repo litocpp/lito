@@ -29,6 +29,14 @@ auto git_revision(ref<rstd::path::Path> repository, ref<str> revision) -> Option
     return Some(String::make(text->as_str().trim_ascii()));
 }
 
+auto git_url(ref<rstd::path::Path> repository) -> Option<String> {
+    auto text = repository.to_str();
+    if (text.is_none()) return None();
+    auto result = String::make();
+    for (auto byte : text->as_bytes()) result.push_ascii(byte == u8('\\') ? u8('/') : byte);
+    return Some(rstd::move(result));
+}
+
 template<typename... Arguments>
 auto git_succeeds(ref<rstd::path::Path> repository, Arguments... arguments) -> bool {
     auto command = rstd::process::Command::make("git"_str);

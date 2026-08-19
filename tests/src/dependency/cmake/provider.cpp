@@ -97,7 +97,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 
     auto has_archive = false;
     for (const auto& token : dependency.link_arguments.tokens) {
+#if defined(_WIN32)
+        if (token.as_str().contains("lito_fixture.lib"_str)) has_archive = true;
+#else
         if (token.as_str().contains("liblito_fixture.a"_str)) has_archive = true;
+#endif
     }
     EXPECT_TRUE(has_archive);
     EXPECT_EQ(dependency.targets[usize(1)].name.as_str(), "LitoFixture::headers"_str);
@@ -118,7 +122,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 
     auto first_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(first_count.is_ok());
+#if defined(_WIN32)
+    EXPECT_EQ(first_count->as_str(), "configure\r\n"_str);
+#else
     EXPECT_EQ(first_count->as_str(), "configure\n"_str);
+#endif
     auto warm_assets = Vec<lito::ExternalAssetSet>::make();
     auto warm        = resolve_cmake_fixtures(declarations,
                                               default_profile(*parser),
@@ -137,7 +145,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     }
     auto warm_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(warm_count.is_ok());
+#if defined(_WIN32)
+    EXPECT_EQ(warm_count->as_str(), "configure\r\n"_str);
+#else
     EXPECT_EQ(warm_count->as_str(), "configure\n"_str);
+#endif
     declarations[usize {}].targets[usize {}].name = String::make("LitoFixture::headers"_str);
     declarations[usize {}].targets[usize(1)].name = String::make("LitoFixture::fixture"_str);
     auto queried_again = resolve_cmake_fixtures(declarations,
@@ -147,7 +159,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(queried_again.is_ok());
     auto second_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(second_count.is_ok());
+#if defined(_WIN32)
+    EXPECT_EQ(second_count->as_str(), "configure\r\n"_str);
+#else
     EXPECT_EQ(second_count->as_str(), "configure\n"_str);
+#endif
 
     declarations[usize {}].cache.push(lito::dependency::CMakeCacheEntry {
         .name  = String::make("LITO_FIXTURE_VARIANT"_str),
@@ -160,7 +176,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(installed_again.is_ok());
     auto third_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(third_count.is_ok());
+#if defined(_WIN32)
+    EXPECT_EQ(third_count->as_str(), "configure\r\nconfigure\r\n"_str);
+#else
     EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
+#endif
 
     auto disabled_profile = lito::cpp::make_profile_spec(configuration(),
                                                          lito::manifest::ProjectProfile {
@@ -177,7 +197,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     ASSERT_TRUE(profile_variant.is_ok());
     auto fourth_count = rstd::fs::read_to_string(count_path.as_path());
     ASSERT_TRUE(fourth_count.is_ok());
+#if defined(_WIN32)
+    EXPECT_EQ(fourth_count->as_str(), "configure\r\nconfigure\r\nconfigure\r\n"_str);
+#else
     EXPECT_EQ(fourth_count->as_str(), "configure\nconfigure\nconfigure\n"_str);
+#endif
 }
 
 TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
@@ -207,7 +231,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
                                            build_root("cmake-source-adapter-work"_str).as_path());
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
-        rstd::io::eprintln("{}", error);
+        rstd::io::eprintln("{}", error_chain_text(error));
         EXPECT_TRUE(false);
         return;
     }
@@ -233,7 +257,11 @@ TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {
 
     auto has_archive = false;
     for (const auto& token : dependency.link_arguments.tokens) {
+#if defined(_WIN32)
+        if (token.as_str().contains("lito_source_adapter.lib"_str)) {
+#else
         if (token.as_str().contains("liblito_source_adapter.a"_str)) {
+#endif
             has_archive = rstd::path::PathBuf::from(token.as_str()).as_path().is_absolute();
         }
     }
@@ -272,7 +300,7 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
                                              rstd::addressof(assets));
     if (resolved.is_err()) {
         auto error = rstd::move(resolved).unwrap_err();
-        rstd::io::eprintln("{}", error);
+        rstd::io::eprintln("{}", error_chain_text(error));
         EXPECT_TRUE(false);
         return;
     }

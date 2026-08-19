@@ -296,10 +296,7 @@ export constexpr auto fixture_compile_value() -> int { return 42; }
 
 static_assert(fixture_compile_value() == 42);
 )test"_str },
-        { "compile-lib/src/windows.cpp"_str, R"test(#if defined(_WIN32)
-#error Windows source guard must be inactive for this target
-#endif
-)test"_str },
+        { "compile-lib/src/windows.cpp"_str, "module fixture.compile.lib;\n"_str },
     };
     return source_tree(files);
 }
@@ -430,7 +427,11 @@ TEST_F(TestCommand, CompileTestsReportOutcomesAndReuse) {
 
     auto unsupported = lito::build(
         build_request(root.as_path(), output.as_path(), strings("fixture-windows-only"_str)));
+#if defined(_WIN32)
+    EXPECT_TRUE(unsupported.is_ok());
+#else
     EXPECT_TRUE(unsupported.is_err());
+#endif
 }
 
 TEST_F(TestCommand, InvalidArtifactsAndDependenciesAreRejected) {

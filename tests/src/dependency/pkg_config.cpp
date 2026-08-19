@@ -438,6 +438,9 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
 }
 
 TEST_F(PkgConfig, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {
+#if defined(_WIN32)
+    GTEST_SKIP() << "the counting provider fixture is a POSIX shell executable";
+#endif
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto directory = cache_root("pkg-config-counting-provider"_str);

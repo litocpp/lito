@@ -86,7 +86,7 @@ lito.install({
         },
     }},
     inventories = {{ destination = "share/fixture/files.txt",
-                     relative_to = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") }},
+                     relative_to = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") or "" }},
 })
 )lua"_str },
     };
@@ -127,7 +127,11 @@ lito.install({
     EXPECT_EQ((**environment_value).string(), "fixture-environment"_str);
     auto environment_empty = recipe->templates[usize {}].values.get("ENVIRONMENT_EMPTY"_str);
     ASSERT_TRUE(environment_empty.is_some());
+#if defined(_WIN32)
+    EXPECT_FALSE((**environment_empty).boolean());
+#else
     EXPECT_TRUE((**environment_empty).boolean());
+#endif
     auto environment_unset = recipe->templates[usize {}].values.get("ENVIRONMENT_UNSET"_str);
     ASSERT_TRUE(environment_unset.is_some());
     EXPECT_TRUE((**environment_unset).boolean());

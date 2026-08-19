@@ -233,6 +233,10 @@ class SourceManager {
         auto arguments = Vec<String>::make();
         auto pushed    = push_path(arguments, git_->as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+#if defined(_WIN32)
+        arguments.push(String::make("-c"_str));
+        arguments.push(String::make("core.longPaths=true"_str));
+#endif
         return Ok(rstd::move(arguments));
     }
 

@@ -99,6 +99,14 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
     metadata = rstd::fs::symlink_metadata(public_tool.as_path());
     ASSERT_TRUE(metadata.is_ok());
     EXPECT_TRUE(metadata->is_symlink());
+#if defined(_WIN32)
+    auto target          = rstd::fs::canonicalize(public_tool.as_path());
+    auto expected_target = rstd::fs::canonicalize(
+        private_root.join(PathBuf::from("bin/nested/tool"_str).as_path()).as_path());
+    ASSERT_TRUE(target.is_ok());
+    ASSERT_TRUE(expected_target.is_ok());
+    EXPECT_EQ(target->as_path(), expected_target->as_path());
+#else
     auto target = rstd::fs::read_link(public_tool.as_path());
     ASSERT_TRUE(target.is_ok());
     EXPECT_EQ(target->as_path(),
@@ -106,6 +114,7 @@ TEST_F(InstallLayout, ManagedInstallMigratesBetweenDirectAndIsolatedLayouts) {
                   .join(PathBuf::from(package_id->as_str()).as_path())
                   .join(PathBuf::from("bin/nested/tool"_str).as_path())
                   .as_path());
+#endif
     EXPECT_EQ(
         rstd::fs::read_to_string(
             private_root.join(PathBuf::from("share/fixture/resource.txt"_str).as_path()).as_path())

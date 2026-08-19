@@ -71,7 +71,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
                              "-m"_str,
                              "upstream"_str));
     auto commit = git_revision(upstream.as_path(), "HEAD"_str);
-    auto url    = upstream.as_path().to_str();
+    auto url    = git_url(upstream.as_path());
     ASSERT_TRUE(commit.is_some());
     ASSERT_TRUE(url.is_some());
 
@@ -128,7 +128,8 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     const auto& external = owner->externals[usize {}];
     EXPECT_EQ(external.name.as_str(), "shaders"_str);
     ASSERT_TRUE(external.source.is_Package());
-    EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "pkg/shaders"_str);
+    EXPECT_EQ(external.source.as_Package().path.as_path(),
+              PathBuf::from("pkg/shaders"_str).as_path());
     auto lock_text =
         rstd::fs::read_to_string(project.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
     ASSERT_TRUE(lock_text.is_ok());
@@ -228,7 +229,7 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
                              "upstream"_str));
     auto commit = git_revision(upstream.as_path(), "HEAD"_str);
     ASSERT_TRUE(commit.is_some());
-    auto url = upstream.as_path().to_str();
+    auto url = git_url(upstream.as_path());
     ASSERT_TRUE(url.is_some());
 
     auto changed_manifest = rstd::format(
@@ -417,7 +418,7 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                              "commit"_str,
                              "-m"_str,
                              "second"_str));
-    auto url = repository.as_path().to_str();
+    auto url = git_url(repository.as_path());
     ASSERT_TRUE(url.is_some());
     auto current = git_revision(repository.as_path(), "HEAD"_str);
     ASSERT_TRUE(current.is_some());

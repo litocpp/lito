@@ -274,20 +274,23 @@ private:
         auto bytes  = token.text.as_str().as_bytes();
         auto base   = uint32_t(10);
         auto cursor = usize {};
+        auto value  = i64 {};
+        auto digits = false;
         if (bytes.len() > usize(1) && bytes[usize {}] == u8('0')) {
             base   = 8;
             cursor = usize(1);
+            digits = true;
             if (cursor < bytes.len() && (bytes[cursor] == u8('x') || bytes[cursor] == u8('X'))) {
-                base = 16;
+                base   = 16;
+                digits = false;
                 ++cursor;
             } else if (cursor < bytes.len() &&
                        (bytes[cursor] == u8('b') || bytes[cursor] == u8('B'))) {
-                base = 2;
+                base   = 2;
+                digits = false;
                 ++cursor;
             }
         }
-        auto value  = i64 {};
-        auto digits = false;
         while (cursor < bytes.len()) {
             auto byte = bytes[cursor];
             if (byte == u8('\'')) {
@@ -306,8 +309,10 @@ private:
             digits = true;
             ++cursor;
         }
-        if (! digits && token.text.as_str() != "0"_str)
-            return failure("invalid integer constant"_str);
+        if (! digits && token.text.as_str() != "0"_str) {
+            return Err(Error::at(rstd::format("invalid integer constant '{}'", token.text.as_str()),
+                                 token.expansion));
+        }
         return Ok(value);
     }
 

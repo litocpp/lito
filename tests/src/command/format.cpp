@@ -19,6 +19,7 @@ TEST_F(FormatCommand, FormatCheckReportsWithoutChangingSources) {
     ASSERT_TRUE(tree.is_ok());
     auto materialized = materialize("format-check"_str, *tree);
     ASSERT_TRUE(materialized.is_ok());
+    ASSERT_TRUE(prepare_environment_tool_project(materialized->root.as_path()));
     auto fixture = materialized->root.join(PathBuf::from("append-path"_str).as_path());
 
     auto           source      = fixture.join(PathBuf::from("src/main.cpp"_str).as_path());

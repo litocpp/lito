@@ -96,6 +96,10 @@ auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration&
                                 "-DCMAKE_CXX_COMPILER="_str,
                                 configuration.toolchain.cxx.as_path(),
                                 "C++ compiler"_str));
+#if defined(_WIN32)
+    arguments.push(String::make("-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld=lld"_str));
+    arguments.push(String::make("-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld=lld"_str));
+#else
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld="_str,
                                 configuration.toolchain.ld.as_path(),
@@ -104,6 +108,7 @@ auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration&
                                 "-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld="_str,
                                 configuration.toolchain.ld.as_path(),
                                 "LLD linker"_str));
+#endif
     arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_lld"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, configuration.toolchain.ar.as_path(), "archiver"_str));
@@ -273,47 +278,48 @@ auto install_source(const ResolvedCMakeDependencyRequirement&    requirement,
 
 auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
     -> lito::dependency::DependencyResult<String> {
-    auto result = String::make(
-        "cmake_minimum_required(VERSION 3.29)\n"
-        "project(lito_cmake_probe LANGUAGES C CXX)\n"
-        "set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)\n"
-        "set(_LITO_ASSET_RECEIPT \"${CMAKE_BINARY_DIR}/lito-assets-v2.txt\")\n"
-        "file(WRITE \"${_LITO_ASSET_RECEIPT}\" \"lito-cmake-assets-v2\\n\")\n"
-        "function(lito_export_asset_set)\n"
-        "  cmake_parse_arguments(LITO_ASSET \"PROVIDED\" \"NAME;ROOT\" \"FILES\" ${ARGN})\n"
-        "  if(NOT LITO_ASSET_NAME)\n"
-        "    message(FATAL_ERROR \"lito_export_asset_set requires NAME\")\n"
-        "  endif()\n"
-        "  if(LITO_ASSET_NAME MATCHES \"[\\t\\r\\n]\")\n"
-        "    message(FATAL_ERROR \"Lito asset set name contains control characters\")\n"
-        "  endif()\n"
-        "  if(LITO_ASSET_PROVIDED)\n"
-        "    if(LITO_ASSET_ROOT OR LITO_ASSET_FILES)\n"
-        "      message(FATAL_ERROR \"provided Lito asset set cannot declare ROOT or FILES\")\n"
-        "    endif()\n"
-        "    file(APPEND \"${_LITO_ASSET_RECEIPT}\" \"set\\t${LITO_ASSET_NAME}\\tprovided\\n\")\n"
-        "    return()\n"
-        "  endif()\n"
-        "  if(NOT LITO_ASSET_ROOT OR NOT LITO_ASSET_FILES)\n"
-        "    message(FATAL_ERROR \"materialized Lito asset set requires ROOT and FILES\")\n"
-        "  endif()\n"
-        "  file(APPEND \"${_LITO_ASSET_RECEIPT}\" \"set\\t${LITO_ASSET_NAME}\\tmaterialized\\n\")\n"
-        "  foreach(_lito_asset_file IN LISTS LITO_ASSET_FILES)\n"
-        "    if(IS_ABSOLUTE \"${_lito_asset_file}\" OR "
-        "_lito_asset_file MATCHES \"(^|/)\\.\\.?(/|$)\" OR "
-        "_lito_asset_file MATCHES \"[\\t\\r\\n]\")\n"
-        "      message(FATAL_ERROR \"Lito asset path is not a normal relative path: "
-        "${_lito_asset_file}\")\n"
-        "    endif()\n"
-        "    cmake_path(ABSOLUTE_PATH _lito_asset_file BASE_DIRECTORY \"${LITO_ASSET_ROOT}\" "
-        "NORMALIZE OUTPUT_VARIABLE _lito_asset_source)\n"
-        "    if(NOT EXISTS \"${_lito_asset_source}\" OR IS_DIRECTORY \"${_lito_asset_source}\")\n"
-        "      message(FATAL_ERROR \"Lito asset source is not a file: ${_lito_asset_source}\")\n"
-        "    endif()\n"
-        "    file(APPEND \"${_LITO_ASSET_RECEIPT}\" "
-        "\"entry\\t${LITO_ASSET_NAME}\\t${_lito_asset_file}\\t${_lito_asset_source}\\n\")\n"
-        "  endforeach()\n"
-        "endfunction()\n"_str);
+    auto result = String::make(R"cmake(cmake_minimum_required(VERSION 3.29)
+project(lito_cmake_probe LANGUAGES C CXX)
+set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
+set(_LITO_ASSET_RECEIPT "${CMAKE_BINARY_DIR}/lito-assets-v2.txt")
+file(WRITE "${_LITO_ASSET_RECEIPT}" "lito-cmake-assets-v2\n")
+function(lito_export_asset_set)
+  cmake_parse_arguments(LITO_ASSET "PROVIDED" "NAME;ROOT" "FILES" ${ARGN})
+  if(NOT LITO_ASSET_NAME)
+    message(FATAL_ERROR "lito_export_asset_set requires NAME")
+  endif()
+  if(LITO_ASSET_NAME MATCHES "[\t\r\n]")
+    message(FATAL_ERROR "Lito asset set name contains control characters")
+  endif()
+  if(LITO_ASSET_PROVIDED)
+    if(LITO_ASSET_ROOT OR LITO_ASSET_FILES)
+      message(FATAL_ERROR "provided Lito asset set cannot declare ROOT or FILES")
+    endif()
+    file(APPEND "${_LITO_ASSET_RECEIPT}" "set\t${LITO_ASSET_NAME}\tprovided\n")
+    return()
+  endif()
+  if(NOT LITO_ASSET_ROOT OR NOT LITO_ASSET_FILES)
+    message(FATAL_ERROR "materialized Lito asset set requires ROOT and FILES")
+  endif()
+  file(APPEND "${_LITO_ASSET_RECEIPT}" "set\t${LITO_ASSET_NAME}\tmaterialized\n")
+  foreach(_lito_asset_file IN LISTS LITO_ASSET_FILES)
+    if(IS_ABSOLUTE "${_lito_asset_file}" OR
+       _lito_asset_file MATCHES "(^|/)\.\.?(/|$)" OR
+       _lito_asset_file MATCHES "[\t\r\n]")
+      message(FATAL_ERROR "Lito asset path is not a normal relative path: ${_lito_asset_file}")
+    endif()
+    cmake_path(ABSOLUTE_PATH _lito_asset_file
+               BASE_DIRECTORY "${LITO_ASSET_ROOT}"
+               NORMALIZE
+               OUTPUT_VARIABLE _lito_asset_source)
+    if(NOT EXISTS "${_lito_asset_source}" OR IS_DIRECTORY "${_lito_asset_source}")
+      message(FATAL_ERROR "Lito asset source is not a file: ${_lito_asset_source}")
+    endif()
+    file(APPEND "${_LITO_ASSET_RECEIPT}"
+         "entry\t${LITO_ASSET_NAME}\t${_lito_asset_file}\t${_lito_asset_source}\n")
+  endforeach()
+endfunction()
+)cmake"_str);
     if (requirement.adapter.is_some()) {
         result.push_str("set(LITO_CMAKE_DEPENDENCY_MODE \""_str);
         result.push_str(requirement.source.is_Find() ? "find"_str : "source"_str);

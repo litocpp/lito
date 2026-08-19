@@ -118,11 +118,24 @@ auto source_identity(const ResolvedCMakeDependencyRequirement& requirement) -> S
 }
 
 auto cmake_quoted(ref<str> value, ref<str> context) -> lito::dependency::DependencyResult<String> {
-    if (value.contains("\""_str) || value.contains("\\"_str) || value.contains(";"_str) ||
-        value.contains("\n"_str) || value.contains("\r"_str)) {
+    if (value.contains("\""_str) || value.contains(";"_str) || value.contains("\n"_str) ||
+        value.contains("\r"_str)
+#if ! defined(_WIN32)
+        || value.contains("\\"_str)
+#endif
+    ) {
         return cmake_failure<String>(rstd::format("{} contains CMake syntax", context));
     }
-    return Ok(rstd::format("\"{}\"", value));
+    auto quoted = String::make("\""_str);
+    for (auto byte : value.as_bytes()) {
+#if defined(_WIN32)
+        quoted.push_ascii(byte == u8('\\') ? u8('/') : byte);
+#else
+        quoted.push_ascii(byte);
+#endif
+    }
+    quoted.push_ascii(u8('\"'));
+    return Ok(rstd::move(quoted));
 }
 
 struct CMakeWorkArea {
