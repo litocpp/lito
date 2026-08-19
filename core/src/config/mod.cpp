@@ -170,14 +170,21 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     auto shared   = rstd_try(
         read_config_value(location.shared_path.as_path(), "project configuration"_str, false));
     if (shared.is_some()) {
-        auto cmake = shared->get("cmake"_str);
-        if (cmake.is_some()) {
-            auto table = (**cmake).as_table();
-            if (table.is_some() && (**table).contains_key("overrides"_str)) {
-                return document_failure<ConfigDocument>(
-                    rstd::format("project configuration '{}' cannot contain cmake.overrides; use "
-                                 ".lito/config.toml or --config",
-                                 location.shared_path.as_path()));
+        normalize_host_tool_provider_shorthand(*shared);
+        auto tools = shared->get("tools"_str);
+        if (tools.is_some()) {
+            auto tools_table = (**tools).as_table();
+            if (tools_table.is_some()) {
+                auto cmake = (**tools_table).get("cmake"_str);
+                if (cmake.is_some()) {
+                    auto cmake_table = (**cmake).as_table();
+                    if (cmake_table.is_some() && (**cmake_table).contains_key("overrides"_str)) {
+                        return document_failure<ConfigDocument>(
+                            rstd::format("project configuration '{}' cannot contain "
+                                         "tools.cmake.overrides; use .lito/config.toml or --config",
+                                         location.shared_path.as_path()));
+                    }
+                }
             }
         }
     }
@@ -186,7 +193,10 @@ auto open_config_document(ref<rstd::path::Path> root, ConfigLoadMode mode)
     if (mode == ConfigLoadMode::LocalDisabled) return Ok(rstd::move(document));
     auto local =
         rstd_try(read_config_value(document.location.path.as_path(), "configuration"_str, false));
-    if (local.is_some()) merge_config_value(document.value, *local);
+    if (local.is_some()) {
+        normalize_host_tool_provider_shorthand(*local);
+        merge_config_value(document.value, *local);
+    }
     return Ok(rstd::move(document));
 }
 
@@ -217,6 +227,51 @@ auto set_config_value(Toml& document, const rstd::toml::KeyPath& key, Toml value
     }
     current->insert(key[key.len() - usize(1)].clone(), rstd::move(value));
     return Ok(empty {});
+}
+
+auto merge_config_value_at(Toml& document, const rstd::toml::KeyPath& key, Toml value)
+    -> ConfigResult<empty> {
+    auto normalized = rstd::toml::to_key_string(key);
+    auto current    = document.as_table_mut().unwrap();
+    for (usize index {}; index + usize(1) < key.len(); ++index) {
+        auto next = current->get_mut(key[index].as_str());
+        if (next.is_none()) {
+            current->insert(key[index].clone(), Toml::Table(Table::make()));
+            next = current->get_mut(key[index].as_str());
+        }
+        if (! (**next).is_table()) {
+            return Err(ConfigError::KeyConflict(rstd::move(normalized)));
+        }
+        current = (**next).as_table_mut().unwrap();
+    }
+    auto existing = current->get_mut(key[key.len() - usize(1)].as_str());
+    if (existing.is_none()) {
+        current->insert(key[key.len() - usize(1)].clone(), rstd::move(value));
+    } else {
+        merge_config_value(**existing, value);
+    }
+    return Ok(empty {});
+}
+
+auto is_host_tool_provider_key(const rstd::toml::KeyPath& key) -> bool {
+    if (key.len() != usize(2) || key[usize {}] != "tools"_str) return false;
+    return key[usize(1)] == "cmake"_str || key[usize(1)] == "pkg-config"_str;
+}
+
+auto set_config_assignment_value(Toml& document, const rstd::toml::KeyPath& key, Toml value)
+    -> ConfigResult<empty> {
+    if (! is_host_tool_provider_key(key)) {
+        return set_config_value(document, key, rstd::move(value));
+    }
+    if (value.as_str().is_some()) {
+        auto executable = key.clone();
+        executable.push(String::make("executable"_str));
+        return set_config_value(document, executable, rstd::move(value));
+    }
+    if (value.is_table()) {
+        return merge_config_value_at(document, key, rstd::move(value));
+    }
+    return set_config_value(document, key, rstd::move(value));
 }
 
 auto unset_config_value_at(Table&                     table,
@@ -267,7 +322,8 @@ auto apply_config_override(ConfigDocument& document, ref<str> text, usize index)
     auto strict  = rstd::toml::parse_assignment(text);
     if (strict.is_ok()) {
         auto assignment = rstd::move(strict).unwrap();
-        return set_config_value(document.value, assignment.key, rstd::move(assignment.value));
+        return set_config_assignment_value(
+            document.value, assignment.key, rstd::move(assignment.value));
     }
     auto raw = rstd::toml::parse_assignment_text(text);
     if (raw.is_err()) {
@@ -277,7 +333,7 @@ auto apply_config_override(ConfigDocument& document, ref<str> text, usize index)
         return Err(ConfigError::Input(rstd::move(context), rstd::move(strict).unwrap_err()));
     }
     auto assignment = rstd::move(raw).unwrap();
-    return set_config_value(
+    return set_config_assignment_value(
         document.value, assignment.key, Toml::String(rstd::move(assignment.value)));
 }
 
@@ -334,9 +390,11 @@ auto open_mutation_session(ref<rstd::path::Path> root) -> ConfigResult<ConfigMut
     }
     auto document = read_config_document(rstd::move(location), true);
     if (document.is_err()) return Err(rstd::move(document).unwrap_err());
+    auto normalized = rstd::move(document).unwrap();
+    normalize_host_tool_provider_shorthand(normalized.value);
     return Ok(ConfigMutationSession {
         .lock     = rstd::move(locked).unwrap(),
-        .document = rstd::move(document).unwrap(),
+        .document = rstd::move(normalized),
     });
 }
 
@@ -417,7 +475,8 @@ auto lito::config::set_persisted_config(ref<rstd::path::Path> root, ref<str> key
     auto parsed_value = rstd_try(parse_config_value(value));
     auto normalized   = rstd::toml::to_key_string(parsed_key);
     auto session      = rstd_try(open_mutation_session(root));
-    rstd_try(set_config_value(session.document.value, parsed_key, rstd::move(parsed_value)));
+    rstd_try(
+        set_config_assignment_value(session.document.value, parsed_key, rstd::move(parsed_value)));
     (void)rstd_try(
         decode_project_config(session.document.location.root.clone(), session.document.value));
     rstd_try(write_config_document(session.document));

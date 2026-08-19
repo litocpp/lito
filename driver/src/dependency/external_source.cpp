@@ -323,8 +323,8 @@ auto validate_cmake_build_overrides(const lito::package::ResolvedPackageGraph&  
         }
         if (! matched) {
             return lito::dependency::dependency_failure<empty>(rstd::format(
-                "cmake.overrides.{}.source = 'installed' does not match any CMake package in the "
-                "active package graph",
+                "tools.cmake.overrides.{}.source = 'installed' does not match any CMake package "
+                "in the active package graph",
                 entry.package.as_str()));
         }
     }

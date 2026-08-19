@@ -27,12 +27,6 @@
     "build": {
       "$ref": "#/definitions/build"
     },
-    "pkg-config": {
-      "$ref": "#/definitions/pkgConfig"
-    },
-    "cmake": {
-      "$ref": "#/definitions/cmake"
-    },
     "patch": {
       "$ref": "#/definitions/patches"
     },
@@ -90,7 +84,14 @@
       "type": "object",
       "properties": {
         "cmake": {
-          "$ref": "#/definitions/tool"
+          "oneOf": [
+            {
+              "$ref": "#/definitions/tool"
+            },
+            {
+              "$ref": "#/definitions/cmake"
+            }
+          ]
         },
         "tar": {
           "$ref": "#/definitions/tool"
@@ -108,7 +109,14 @@
           "$ref": "#/definitions/tool"
         },
         "pkg-config": {
-          "$ref": "#/definitions/tool"
+          "oneOf": [
+            {
+              "$ref": "#/definitions/tool"
+            },
+            {
+              "$ref": "#/definitions/pkgConfig"
+            }
+          ]
         },
         "strip": {
           "$ref": "#/definitions/tool"
@@ -153,6 +161,9 @@
     "pkgConfig": {
       "type": "object",
       "properties": {
+        "executable": {
+          "$ref": "#/definitions/tool"
+        },
         "search-path": {
           "$ref": "#/definitions/directoryArray"
         },
@@ -169,6 +180,9 @@
     "cmake": {
       "type": "object",
       "properties": {
+        "executable": {
+          "$ref": "#/definitions/tool"
+        },
         "generator": {
           "$ref": "#/definitions/nonEmptyString"
         },

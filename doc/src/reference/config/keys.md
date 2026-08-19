@@ -29,32 +29,85 @@ stdlib = "libstdc++"
 
 ## `[tools]`
 
-Host tool fields accept a searchable name or an absolute path:
+Simple host tool fields accept a searchable name or an absolute path:
 
-- `cmake`, default `cmake`;
 - `tar`, default `tar`;
 - `bsdtar`, default `bsdtar`;
 - `clang-format`, default `clang-format`;
 - `curl`, default `curl`;
 - `git`, default `git`;
-- `pkg-config`, default `pkg-config`;
 - `strip`, default `llvm-strip`.
 
 ```toml
 [tools]
-cmake = "/opt/cmake/bin/cmake"
 clang-format = "clang-format"
+git = "/opt/git/bin/git"
 ```
 
-This table maps tool roles to executable requests; it does not make every tool a prerequisite.
-Lito resolves a role only when the selected command, package, external input, profile, or install
-entry produces an action that needs it. A configured executable may therefore be absent when the
-current invocation does not use its capability.
+Tools with provider configuration use nested tables. Their `executable` field also accepts a
+searchable name or an absolute path:
+
+```toml
+[tools.cmake]
+executable = "/opt/cmake/bin/cmake"
+generator = "Ninja"
+search-path = ["../install/lib/cmake"]
+
+[tools.pkg-config]
+executable = "pkg-config"
+search-path = []
+library-path = []
+sysroot = "target/sysroot"
+```
+
+When only the executable is configured, CMake and pkg-config also accept a scalar shorthand:
+
+```toml
+[tools]
+cmake = "/opt/cmake/bin/cmake"
+pkg-config = "pkg-config"
+```
+
+Each shorthand is exactly an alias for the corresponding `executable` field. Lito normalizes it to
+the provider table before merging shared, local, and invocation configuration, so it never removes
+generator, search path, sysroot, or override fields supplied elsewhere. Repeated `-c` assignments
+also merge provider fields from left to right.
+
+The tools namespace declares executable requests and provider settings; it does not make every tool
+a prerequisite. Lito resolves a role only when the selected command, package, external input,
+profile, or install entry produces an action that needs it. A configured executable may therefore
+be absent when the current invocation does not use its capability.
 
 Archive extraction selects the first available provider. An explicitly configured `bsdtar` or
 `tar` is considered first, followed by the other archive tool and `cmake -E tar`. A valid
 materialization needs none of them, and a fetch-seed or verified file-cache hit does not require
 `curl`.
+
+### `[tools.pkg-config]`
+
+- `executable` defaults to `pkg-config`;
+- `search-path` is an array of existing directories used to find package metadata;
+- `library-path` is an array of existing directories used for target library metadata;
+- `sysroot` is an existing path, canonicalized relative to the project root.
+
+Setting `executable`, `library-path`, or `sysroot` marks pkg-config as explicitly target-configured.
+Setting only `search-path` does not.
+
+### `[tools.cmake]`
+
+- `executable` defaults to `cmake`;
+- `generator` is a non-empty string and defaults to `Ninja`;
+- `search-path` is an array of existing directories;
+- `overrides` is a table of local installed-package substitutions.
+
+An override currently supports only `source = "installed"`:
+
+```toml
+[tools.cmake.overrides.Vulkan]
+source = "installed"
+```
+
+`tools.cmake.overrides` is forbidden in `lito-config.toml`; use `.lito/config.toml` or `-c`.
 
 ## `[build]`
 
@@ -114,27 +167,3 @@ not start with `-`, and must not contain `#`.
 [patch."https://github.com/litocpp/rstd.git"]
 path = "../rstd"
 ```
-
-## `[pkg-config]`
-
-- `search-path` is an array of existing directories used to find package metadata.
-- `library-path` is an array of existing directories used for target library metadata.
-- `sysroot` is an existing path, canonicalized relative to the project root.
-
-Setting `tools.pkg-config`, `library-path`, or `sysroot` marks pkg-config as explicitly
-target-configured.
-
-## `[cmake]`
-
-- `generator` is a non-empty string; default `Ninja`.
-- `search-path` is an array of existing directories.
-- `overrides` is a table of local installed-package substitutions.
-
-An override currently supports only `source = "installed"`:
-
-```toml
-[cmake.overrides.Vulkan]
-source = "installed"
-```
-
-`cmake.overrides` is forbidden in `lito-config.toml`; use `.lito/config.toml` or `-c`.

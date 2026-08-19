@@ -39,20 +39,19 @@ constexpr auto environment_valid_config      = "[environment]\nappend-path = [\"
 constexpr auto environment_empty_config      = "[environment]\nappend-path = []\n"_str;
 constexpr auto lock_local_config             = "[lock]\npath = \".lito/lito.lock\"\n"_str;
 constexpr auto lock_missing_path_config      = "[lock]\n"_str;
-constexpr auto pkg_config_config             = R"toml([pkg-config]
+constexpr auto pkg_config_config             = R"toml([tools.pkg-config]
+executable = "custom-pkg-config"
 search-path = ["."]
 library-path = ["."]
 sysroot = "."
 )toml"_str;
-constexpr auto pkg_config_search_only_config = "[pkg-config]\nsearch-path = [\".\"]\n"_str;
-constexpr auto cmake_config                  = R"toml([tools]
-cmake = "custom-cmake"
-
-[cmake]
+constexpr auto pkg_config_search_only_config = "[tools.pkg-config]\nsearch-path = [\".\"]\n"_str;
+constexpr auto cmake_config                  = R"toml([tools.cmake]
+executable = "custom-cmake"
 generator = "Unix Makefiles"
 search-path = ["."]
 )toml"_str;
-constexpr auto cmake_override_config         = R"toml([cmake.overrides.Eigen3]
+constexpr auto cmake_override_config         = R"toml([tools.cmake.overrides.Eigen3]
 source = "installed"
 )toml"_str;
 
@@ -82,14 +81,45 @@ TEST_F(Config, RemovedConfigFieldsAreRejectedByConfigOwner) {
         { "removed-scanner"_str, removed_scanner_config },
         { "removed-toolchain-format"_str, "[toolchain]\nformat = \"clang-format\"\n"_str },
         { "removed-toolchain-strip"_str, "[toolchain]\nstrip = \"llvm-strip\"\n"_str },
-        { "removed-cmake-executable"_str, "[cmake]\nexecutable = \"cmake\"\n"_str },
-        { "removed-pkg-config-executable"_str, "[pkg-config]\nexecutable = \"pkg-config\"\n"_str },
+        { "removed-cmake"_str, "[cmake]\ngenerator = \"Ninja\"\n"_str },
+        { "removed-pkg-config"_str, "[pkg-config]\nsearch-path = []\n"_str },
     };
     for (const auto& field : fields) {
         auto project = config(field.name, field.contents);
         ASSERT_TRUE(project.is_ok());
         auto loaded = lito::config::load_project_config(project->root.as_path());
         EXPECT_TRUE(loaded.is_err());
+    }
+}
+
+TEST_F(Config, InvalidHostToolProviderConfigurationReportsTheNestedKey) {
+    struct ConfigCase {
+        ref<str> name;
+        ref<str> contents;
+        ref<str> expected;
+    };
+    constexpr ConfigCase cases[] = {
+        { "integer-cmake"_str,
+          "[tools]\ncmake = 7\n"_str,
+          "config.tools.cmake must be a table"_str },
+        { "array-pkg-config"_str,
+          "[tools]\npkg-config = []\n"_str,
+          "config.tools.pkg-config must be a table"_str },
+        { "empty-cmake-executable"_str,
+          "[tools.cmake]\nexecutable = \"\"\n"_str,
+          "config.tools.cmake.executable must not be empty"_str },
+        { "unknown-pkg-config-field"_str,
+          "[tools.pkg-config]\nargs = []\n"_str,
+          "config.tools.pkg-config contains unknown field 'args'"_str },
+    };
+    for (const auto& item : cases) {
+        SCOPED_TRACE(item.name);
+        auto project = config(item.name, item.contents);
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::config::load_project_config(project->root.as_path());
+        ASSERT_TRUE(loaded.is_err());
+        auto error = rstd::move(loaded).unwrap_err();
+        EXPECT_TRUE(error_chain_text(error).as_str().contains(item.expected));
     }
 }
 
@@ -124,6 +154,11 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     auto defaults = lito::config::load_project_config(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrary::Libcxx);
+    EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
+    EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
+    EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
+    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::system::Tool::CMake));
+    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::system::Tool::PkgConfig));
 }
 
 TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
@@ -135,15 +170,16 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
                                 "[toolchain]\n"
                                 "cxx = \"project-cxx\"\n"
                                 "stdlib = \"libstdc++\"\n"
-                                "[cmake]\n"
-                                "generator = \"Ninja\"\n"_str.as_bytes())
+                                "[tools.cmake]\n"
+                                "generator = \"Ninja\"\n"
+                                "search-path = [\".\"]\n"_str.as_bytes())
                     .is_ok());
     auto local = local_directory.join(PathBuf::from("config.toml"_str).as_path());
     ASSERT_TRUE(rstd::fs::write(local.as_path(),
                                 "[toolchain]\n"
                                 "cxx = \"local-cxx\"\n"
-                                "[cmake]\n"
-                                "search-path = [\".\"]\n"_str.as_bytes())
+                                "[tools]\n"
+                                "cmake = \"local-cmake\"\n"_str.as_bytes())
                     .is_ok());
 
     auto loaded = lito::config::load_project_config(directory.as_path());
@@ -153,6 +189,8 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Ninja"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), directory.as_path());
+    EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("local-cmake"_str).as_path());
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
 
     auto shared_only = lito::config::load_project_config(
         directory.as_path(), lito::config::ConfigLoadMode::LocalDisabled);
@@ -160,7 +198,9 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     EXPECT_EQ(shared_only->toolchain.cxx.as_path(), PathBuf::from("project-cxx"_str).as_path());
     EXPECT_EQ(shared_only->standard_library, lito::config::StandardLibrary::Libstdcxx);
     EXPECT_EQ(shared_only->cmake.generator.as_str(), "Ninja"_str);
-    EXPECT_TRUE(shared_only->cmake.search_paths.is_empty());
+    ASSERT_EQ(shared_only->cmake.search_paths.len(), usize(1));
+    EXPECT_EQ(shared_only->cmake.search_paths[usize {}].as_path(), directory.as_path());
+    EXPECT_FALSE(shared_only->tools.explicitly_configured(lito::system::Tool::CMake));
 }
 
 TEST_F(Config, EnvironmentAppendPathBelongsToProjectConfig) {
@@ -283,7 +323,8 @@ TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->pkg_config.target_configured);
-    EXPECT_EQ(loaded->tools.pkg_config.as_path().to_str().unwrap(), "pkg-config"_str);
+    EXPECT_EQ(loaded->tools.pkg_config.as_path().to_str().unwrap(), "custom-pkg-config"_str);
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::PkgConfig));
     EXPECT_EQ(loaded->pkg_config.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->pkg_config.library_paths.len(), usize(1));
     EXPECT_TRUE(loaded->pkg_config.sysroot.is_some());
@@ -293,6 +334,7 @@ TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     auto search_only = lito::config::load_project_config(search_project->root.as_path());
     ASSERT_TRUE(search_only.is_ok());
     EXPECT_FALSE(search_only->pkg_config.target_configured);
+    EXPECT_FALSE(search_only->tools.explicitly_configured(lito::system::Tool::PkgConfig));
 }
 
 TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
@@ -301,6 +343,7 @@ TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->tools.cmake.as_path().to_str().unwrap(), "custom-cmake"_str);
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), project->root.as_path());
@@ -317,7 +360,7 @@ TEST_F(Config, CMakeBuildOverridesBelongToLocalAndInvocationConfiguration) {
     auto invocation_project = empty_project("cmake-build-override-invocation"_str);
     ASSERT_TRUE(invocation_project.is_ok());
     auto overrides = Vec<String>::make();
-    overrides.push(String::make("cmake.overrides.LitoFixture.source=\"installed\""_str));
+    overrides.push(String::make("tools.cmake.overrides.LitoFixture.source=\"installed\""_str));
     auto invocation =
         lito::config::load_project_config(invocation_project->root.as_path(),
                                           lito::config::ProjectConfigRequest {
@@ -339,7 +382,8 @@ TEST_F(Config, SharedConfigurationCannotDeclareCMakeBuildOverrides) {
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_err());
     auto error = rstd::move(loaded).unwrap_err();
-    EXPECT_TRUE(error_chain_text(error).as_str().contains("cannot contain cmake.overrides"_str));
+    EXPECT_TRUE(
+        error_chain_text(error).as_str().contains("cannot contain tools.cmake.overrides"_str));
 
     auto disabled = lito::config::load_project_config(project->root.as_path(),
                                                       lito::config::ConfigLoadMode::LocalDisabled);
@@ -352,13 +396,13 @@ TEST_F(Config, InvalidCMakeBuildOverridesAreRejectedByConfigOwner) {
         ref<str> contents;
     };
     constexpr ConfigCase cases[] = {
-        { "cmake-override-missing-source"_str, "[cmake.overrides.Eigen3]\n"_str },
+        { "cmake-override-missing-source"_str, "[tools.cmake.overrides.Eigen3]\n"_str },
         { "cmake-override-unknown-source"_str,
-          "[cmake.overrides.Eigen3]\nsource = \"managed\"\n"_str },
+          "[tools.cmake.overrides.Eigen3]\nsource = \"managed\"\n"_str },
         { "cmake-override-unknown-field"_str,
-          "[cmake.overrides.Eigen3]\nsource = \"installed\"\nfallback = true\n"_str },
+          "[tools.cmake.overrides.Eigen3]\nsource = \"installed\"\nfallback = true\n"_str },
         { "cmake-override-unsafe-package"_str,
-          "[cmake.overrides.'-Eigen3']\nsource = \"installed\"\n"_str },
+          "[tools.cmake.overrides.'-Eigen3']\nsource = \"installed\"\n"_str },
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -373,7 +417,12 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     auto config_directory = directory.join(PathBuf::from(".lito"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(config_directory.as_path()).is_ok());
     auto config = config_directory.join(PathBuf::from("config.toml"_str).as_path());
-    ASSERT_TRUE(rstd::fs::write(config.as_path(), "[toolchain]\ncxx = 7\n"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(config.as_path(),
+                                "[toolchain]\n"
+                                "cxx = 7\n"
+                                "[tools.cmake]\n"
+                                "generator = \"Ninja\"\n"_str.as_bytes())
+                    .is_ok());
 
     auto overrides = Vec<String>::make();
     overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
@@ -382,6 +431,11 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     overrides.push(String::make("build.options=[\"-pthread\"]"_str));
     overrides.push(String::make("build.c.options=[\"-Wstrict-prototypes\"]"_str));
     overrides.push(String::make("build.linker-options=[\"-Wl,--as-needed\"]"_str));
+    overrides.push(String::make("tools.cmake=runtime-cmake"_str));
+    overrides.push(String::make("tools.cmake={generator=\"Unix Makefiles\"}"_str));
+    overrides.push(String::make("tools.cmake.search-path=[\".\"]"_str));
+    overrides.push(String::make("tools.pkg-config.library-path=[\".\"]"_str));
+    overrides.push(String::make("tools.pkg-config=runtime-pkg-config"_str));
     auto loaded = lito::config::load_project_config(directory.as_path(),
                                                     lito::config::ProjectConfigRequest {
                                                         .overrides = rstd::move(overrides),
@@ -399,6 +453,14 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     ASSERT_EQ(loaded->build_options.linker.len(), usize(1));
     EXPECT_EQ(loaded->build_options.linker[usize {}].arguments[usize {}].as_str(),
               "-Wl,--as-needed"_str);
+    EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("runtime-cmake"_str).as_path());
+    EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
+    ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
+    EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), directory.as_path());
+    EXPECT_EQ(loaded->tools.pkg_config.as_path(),
+              PathBuf::from("runtime-pkg-config"_str).as_path());
+    ASSERT_EQ(loaded->pkg_config.library_paths.len(), usize(1));
+    EXPECT_EQ(loaded->pkg_config.library_paths[usize {}].as_path(), directory.as_path());
 
     auto disabled_overrides = Vec<String>::make();
     disabled_overrides.push(String::make("toolchain.cxx=no-config-cxx"_str));
@@ -591,6 +653,24 @@ TEST_F(Config, PersistedConfigSetGetUnsetIsAtomicAndValidated) {
     auto missing = lito::config::get_persisted_config(directory.as_path(),
                                                       Some(String::make("lock.path"_str)));
     EXPECT_TRUE(missing.is_err());
+}
+
+TEST_F(Config, PersistedHostToolShorthandOnlyUpdatesExecutable) {
+    auto project =
+        config("persisted-host-tool-shorthand"_str, "[tools]\ncmake = \"initial-cmake\"\n"_str);
+    ASSERT_TRUE(project.is_ok());
+
+    auto generator = lito::config::set_persisted_config(
+        project->root.as_path(), "tools.cmake.generator"_str, "Ninja"_str);
+    ASSERT_TRUE(generator.is_ok());
+    auto executable = lito::config::set_persisted_config(
+        project->root.as_path(), "tools.cmake"_str, "updated-cmake"_str);
+    ASSERT_TRUE(executable.is_ok());
+
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("updated-cmake"_str).as_path());
+    EXPECT_EQ(loaded->cmake.generator.as_str(), "Ninja"_str);
 }
 
 TEST_F(Config, PersistedConfigRejectsSymlinkFiles) {

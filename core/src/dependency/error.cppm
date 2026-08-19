@@ -102,7 +102,8 @@ struct Impl<fmt::Display, lito::dependency::DependencyError>
         }
         if (error.is_CMakeOverride()) {
             return formatter.write_fmt(fmt::Arguments::make(
-                "CMake package '{}' selected by cmake.overrides.{}.source = 'installed' failed",
+                "CMake package '{}' selected by tools.cmake.overrides.{}.source = 'installed' "
+                "failed",
                 error.as_CMakeOverride().package,
                 error.as_CMakeOverride().package));
         }

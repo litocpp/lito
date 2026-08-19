@@ -9,7 +9,9 @@ built-in defaults
   -> repeated -c/--config assignments
 ```
 
-Later values replace earlier scalar/array values. Nested tables merge by key.
+Later values replace earlier scalar/array values. Nested tables merge by key. The scalar
+`tools.cmake` and `tools.pkg-config` forms are executable shorthands: Lito normalizes them to the
+provider table before merging, so they replace only `executable` rather than the complete provider.
 
 `--use-env-flags` is an opt-in append operation after configuration decoding rather than another
 config file. It adds `CFLAGS`, `CXXFLAGS`, and `LDFLAGS` after configured build-option arrays while
@@ -21,8 +23,8 @@ do not affect Lito compile or link actions.
 `lito-config.toml` is read from the resolved project root. It expresses choices that every checkout
 should share, such as the standard library contract or a project-wide CMake generator.
 
-The shared file may not contain `cmake.overrides`. Installed-package substitution is local machine
-state; put it in `.lito/config.toml` or pass it with `--config`.
+The shared file may not contain `tools.cmake.overrides`. Installed-package substitution is local
+machine state; put it in `.lito/config.toml` or pass it with `--config`.
 
 ## Local persisted config
 

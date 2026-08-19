@@ -446,8 +446,8 @@ set_property(TARGET LitoOverrideFixture::fixture PROPERTY
     auto missing = lito::build(request);
     ASSERT_TRUE(missing.is_err());
     auto error = error_chain_text(missing.unwrap_err());
-    EXPECT_TRUE(
-        error.as_str().contains("cmake.overrides.LitoOverrideFixture.source = 'installed'"_str));
+    EXPECT_TRUE(error.as_str().contains(
+        "tools.cmake.overrides.LitoOverrideFixture.source = 'installed'"_str));
     EXPECT_EQ(events.fetch, usize {});
     EXPECT_EQ(events.source_operations, usize {});
 }

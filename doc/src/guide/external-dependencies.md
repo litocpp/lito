@@ -14,9 +14,10 @@ version = ">= 3.0"
 visibility = "private"
 ```
 
-`static = true` requests static metadata. Configure the `pkg-config` host tool, search paths,
-library paths, and sysroot in [project config](../reference/config/keys.md), not by inserting shell
-variables into the manifest.
+`static = true` requests static metadata. Configure the provider under `tools.pkg-config` in
+[project config](../reference/config/keys.md), including its executable, search paths, library
+paths, and sysroot. Do not insert shell variables into the manifest. The scalar
+`tools.pkg-config = "pkg-config"` form changes only the provider executable.
 
 ## CMake packages
 
@@ -34,6 +35,11 @@ The provider may use an installed package or build a declared external source. `
 package-owned `[external-sources.NAME]`. `cache` applies only while building a path or Git source.
 `adapter` and `config-directory` are alternative ways to locate/shape package configuration and
 cannot be combined.
+
+Configure the CMake provider under `tools.cmake` in
+[project config](../reference/config/keys.md). The scalar `tools.cmake = "/path/to/cmake"` form
+changes only the provider executable and preserves generator, search path, sysroot, and override
+fields supplied by other configuration sources.
 
 Lito keeps provider metadata as raw compile options until the consuming package language is known,
 then parses it in the C or C++ option domain selected by that package. Ambient `CFLAGS`, `CXXFLAGS`,
