@@ -10,12 +10,13 @@ export namespace lito
 {
 
 struct DocSummary {
-    BuildSummary build;
-    PathBuf      tool;
-    PathBuf      output;
-    PathBuf      data_output;
-    usize        extracted {};
-    usize        reused {};
+    BuildSummary    build;
+    PathBuf         tool;
+    PathBuf         output;
+    PathBuf         data_output;
+    Option<PathBuf> publication_receipt;
+    usize           extracted {};
+    usize           reused {};
 };
 
 } // namespace lito

@@ -388,7 +388,8 @@ auto site_manifest_json(const BuildSummary&     summary,
                         ref<rstd::path::Path>   output,
                         ref<rstd::path::Path>   data_output,
                         const Option<PathBuf>&  frontend,
-                        bool                    data_only) -> DocResult<String> {
+                        bool                    data_only,
+                        bool                    package_publication) -> DocResult<String> {
     auto packages = Vec<PackageResponses>::make();
     for (const auto& selected : summary.selected_packages) {
         packages.push(PackageResponses { .package = rstd::addressof(selected) });
@@ -441,6 +442,8 @@ auto site_manifest_json(const BuildSummary&     summary,
                      package.package->version.is_some()
                          ? doc_json_string(package.package->version->as_str())
                          : doc_json_string(""_str));
+        value.insert(String::make("source_identity"_str),
+                     doc_json_string(package.package->source_identity.as_str()));
         value.insert(String::make("root_module"_str),
                      doc_json_string(package.root_module.as_str()));
         value.insert(String::make("profile"_str), doc_json_string(summary.profile.as_str()));
@@ -468,6 +471,8 @@ auto site_manifest_json(const BuildSummary&     summary,
                         doc_path_text(frontend->as_path(), "documentation frontend"_str))));
     }
     root.insert(String::make("data_only"_str), Json::Bool(data_only));
+    root.insert(String::make("publication"_str),
+                doc_json_string(package_publication ? "package-set"_str : "site"_str));
     root.insert(String::make("data_api"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
     root.insert(String::make("template_api"_str),
                 Json::Number(rstd::json::Number::from_u64(u64(1))));
@@ -559,18 +564,25 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
                                             output.as_path(),
                                             data_output.as_path(),
                                             request.frontend,
-                                            request.data_only);
+                                            request.data_only,
+                                            request.package_publication);
     if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
     rstd_try(write_extraction_request(manifest_path.as_path(), manifest->as_str()));
     emit_doc(request.observer, DocEventKind::Generate, summary.package.as_str(), output.as_path());
     rstd_try(run_generate(*tool, manifest_path.as_path(), *environment));
+    auto publication_receipt = Option<PathBuf> {};
+    if (request.package_publication) {
+        publication_receipt =
+            Some(output.join(PathBuf::from("publication-set.json"_str).as_path()));
+    }
     return Ok(DocSummary {
-        .build       = rstd::move(summary),
-        .tool        = tool->executable.clone(),
-        .output      = rstd::move(output),
-        .data_output = rstd::move(data_output),
-        .extracted   = plans.len() - *reused,
-        .reused      = *reused,
+        .build               = rstd::move(summary),
+        .tool                = tool->executable.clone(),
+        .output              = rstd::move(output),
+        .data_output         = rstd::move(data_output),
+        .publication_receipt = rstd::move(publication_receipt),
+        .extracted           = plans.len() - *reused,
+        .reused              = *reused,
     });
 }
 

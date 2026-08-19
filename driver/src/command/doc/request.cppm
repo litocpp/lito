@@ -17,6 +17,7 @@ struct DocRequest {
     PathBuf                 data_output;
     Option<PathBuf>         frontend;
     bool                    data_only { false };
+    bool                    package_publication { false };
     Option<DocEventSink>    observer;
 };
 

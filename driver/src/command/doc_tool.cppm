@@ -82,7 +82,8 @@ auto parse_capabilities(String                  text,
         ! json_protocol_contains(*parsed, "extract_protocols"_str, u64(1)) ||
         ! json_protocol_contains(*parsed, "site_manifest_versions"_str, u64(1)) ||
         ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(2)) ||
-        ! json_feature_contains(*parsed, "embedded-default-frontend"_str)) {
+        ! json_feature_contains(*parsed, "embedded-default-frontend"_str) ||
+        ! json_feature_contains(*parsed, "package-publications-v1"_str)) {
         return Err(DocError::Protocol(PathBuf::from(executable),
                                       String::make("unsupported litodoc capabilities"_str)));
     }

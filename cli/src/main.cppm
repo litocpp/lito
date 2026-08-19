@@ -691,6 +691,11 @@ extern "C++" int main() {
             request.output =
                 project_output_path(project.root.as_path(), rstd::move(options.output).unwrap());
         }
+        if (options.publication_dir.is_some()) {
+            request.output = project_output_path(project.root.as_path(),
+                                                 rstd::move(options.publication_dir).unwrap());
+            request.package_publication = true;
+        }
         if (options.data_output.is_some()) {
             request.data_output = project_output_path(project.root.as_path(),
                                                       rstd::move(options.data_output).unwrap());
@@ -719,12 +724,21 @@ extern "C++" int main() {
             report_error(error);
             return 1;
         }
-        rstd::io::println("generated documentation for {} packages in {}: {} extracted, {} reused",
-                          summary.build.selected_packages.len(),
-                          options.data_only ? summary.data_output.as_path()
-                                            : summary.output.as_path(),
-                          summary.extracted,
-                          summary.reused);
+        if (summary.publication_receipt.is_some()) {
+            rstd::io::println(
+                "generated package publications for {} packages: {} ({} extracted, {} reused)",
+                summary.build.selected_packages.len(),
+                summary.publication_receipt->as_path(),
+                summary.extracted,
+                summary.reused);
+        } else {
+            rstd::io::println(
+                "generated documentation for {} packages in {}: {} extracted, {} reused",
+                summary.build.selected_packages.len(),
+                options.data_only ? summary.data_output.as_path() : summary.output.as_path(),
+                summary.extracted,
+                summary.reused);
+        }
         return 0;
     }
 

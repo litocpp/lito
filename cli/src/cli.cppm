@@ -51,6 +51,7 @@ struct DocOptions {
     Vec<String>                              targets;
     Option<PathBuf>                          output;
     Option<PathBuf>                          data_output;
+    Option<PathBuf>                          publication_dir;
     Option<PathBuf>                          frontend;
     bool                                     data_only {};
     bool                                     locked {};
@@ -338,6 +339,7 @@ struct DocSchema {
     ArgKey<String>        target;
     ArgKey<String>        output;
     ArgKey<String>        data_output;
+    ArgKey<String>        publication_dir;
     ArgKey<String>        frontend;
     ArgKey<bool>          data_only;
     SourceAcquisitionArgs source_acquisition;
@@ -739,13 +741,20 @@ auto make_doc_definition() -> CommandDefinition<DocSchema> {
                                            .long_name("data-output"_str)
                                            .value_name("DIRECTORY"_str)
                                            .help("Write documentation data to a directory"_str));
-    auto frontend    = command.add_arg(Arg<String>::value("doc-frontend"_str, string_parser())
-                                           .long_name("frontend"_str)
-                                           .value_name("DIRECTORY"_str)
-                                           .help("Use a custom documentation frontend"_str));
-    auto data_only   = command.add_arg(Arg<bool>::flag("doc-data-only"_str)
-                                           .long_name("data-only"_str)
-                                           .help("Generate documentation data without a site"_str));
+    auto publication_dir =
+        command.add_arg(Arg<String>::value("doc-publication-dir"_str, string_parser())
+                            .long_name("publication-dir"_str)
+                            .value_name("DIRECTORY"_str)
+                            .help("Write relocatable package publications to a directory"_str));
+    auto frontend  = command.add_arg(Arg<String>::value("doc-frontend"_str, string_parser())
+                                         .long_name("frontend"_str)
+                                         .value_name("DIRECTORY"_str)
+                                         .help("Use a custom documentation frontend"_str));
+    auto data_only = command.add_arg(Arg<bool>::flag("doc-data-only"_str)
+                                         .long_name("data-only"_str)
+                                         .help("Generate documentation data without a site"_str));
+    command.conflicts(output, publication_dir);
+    command.conflicts(data_only, publication_dir);
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
     return {
@@ -755,6 +764,7 @@ auto make_doc_definition() -> CommandDefinition<DocSchema> {
             .target             = target,
             .output             = output,
             .data_output        = data_output,
+            .publication_dir    = publication_dir,
             .frontend           = frontend,
             .data_only          = data_only,
             .source_acquisition = rstd::move(source_acquisition),
@@ -1206,22 +1216,23 @@ auto DocSchema::decode(const Matches& matches) const -> Result<DocOptions, CliDe
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(DocOptions {
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .targets     = rstd_try(string_values(matches, target)),
-        .output      = rstd_try(optional_path(matches, output)),
-        .data_output = rstd_try(optional_path(matches, data_output)),
-        .frontend    = rstd_try(optional_path(matches, frontend)),
-        .data_only   = rstd_try(flag_value(matches, data_only)),
-        .locked      = source.locked,
-        .offline     = source.offline,
-        .frozen      = source.frozen,
-        .fetch_seeds = rstd::move(source.fetch_seeds),
-        .verbose     = execution.verbose,
-        .timing_file = rstd::move(execution.timing_file),
-        .no_timing   = execution.no_timing,
-        .jobs        = rstd::move(execution.jobs),
-        .features    = rstd::move(package.features),
+        .packages        = rstd::move(package.packages),
+        .profile         = rstd::move(package.profile),
+        .targets         = rstd_try(string_values(matches, target)),
+        .output          = rstd_try(optional_path(matches, output)),
+        .data_output     = rstd_try(optional_path(matches, data_output)),
+        .publication_dir = rstd_try(optional_path(matches, publication_dir)),
+        .frontend        = rstd_try(optional_path(matches, frontend)),
+        .data_only       = rstd_try(flag_value(matches, data_only)),
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .verbose         = execution.verbose,
+        .timing_file     = rstd::move(execution.timing_file),
+        .no_timing       = execution.no_timing,
+        .jobs            = rstd::move(execution.jobs),
+        .features        = rstd::move(package.features),
     });
 }
 
