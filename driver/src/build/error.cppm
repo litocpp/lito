@@ -28,6 +28,7 @@ class BuildError {
               (System, (SystemError source;)),
               (Cache, (CacheError source;)),
               (Module, (cpp::ModuleError source;)),
+              (StandardLibrary, (cpp::StandardLibraryError source;)),
               (Discovery, (cpp::SourceDiscoveryError source;)),
               (Layout, (BuildLayoutError source;)),
               (Script, (BuildScriptError source;)),
@@ -85,6 +86,13 @@ struct Impl<convert::From<lito::cpp::ModuleError>, lito::BuildError> {
 };
 
 template<>
+struct Impl<convert::From<lito::cpp::StandardLibraryError>, lito::BuildError> {
+    static auto from(lito::cpp::StandardLibraryError error) -> lito::BuildError {
+        return lito::BuildError::StandardLibrary(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::cpp::SourceDiscoveryError>, lito::BuildError> {
     static auto from(lito::cpp::SourceDiscoveryError error) -> lito::BuildError {
         return lito::BuildError::Discovery(rstd::move(error));
@@ -133,6 +141,11 @@ struct Impl<fmt::Display, lito::BuildError> : ImplBase<lito::BuildError> {
             return formatter.write_raw("build module resolution failed",
                                        sizeof("build module resolution failed") - 1);
         }
+        if (error.is_StandardLibrary()) {
+            return formatter.write_raw("build standard library module resolution failed",
+                                       sizeof("build standard library module resolution failed") -
+                                           1);
+        }
         if (error.is_Discovery()) {
             return formatter.write_raw("build source discovery failed",
                                        sizeof("build source discovery failed") - 1);
@@ -177,6 +190,9 @@ struct Impl<error::Error, lito::BuildError> : ImplBase<lito::BuildError> {
         }
         if (error.is_Module()) {
             return Some(dyn<error::Error>::from_ref(error.as_Module().source));
+        }
+        if (error.is_StandardLibrary()) {
+            return Some(dyn<error::Error>::from_ref(error.as_StandardLibrary().source));
         }
         if (error.is_Discovery()) {
             return Some(dyn<error::Error>::from_ref(error.as_Discovery().source));

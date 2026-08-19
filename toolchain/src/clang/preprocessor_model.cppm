@@ -108,6 +108,11 @@ struct PackageMacroEntry {
 
 class PackageMacroCatalog {
 public:
+    static auto system() -> PackageMacroCatalog {
+        return PackageMacroCatalog(Vec<PackageMacroEntry>::make(),
+                                   String::make("lito-system-macro-catalog-v1"_str));
+    }
+
     static auto make(const cpp::PackageCompileMetadata& metadata) -> PackageMacroCatalog {
         auto entries = Vec<PackageMacroEntry>::with_capacity(metadata.features.len() + usize(1));
         auto raw_version        = metadata.version.is_some() ? metadata.version->as_str() : ""_str;

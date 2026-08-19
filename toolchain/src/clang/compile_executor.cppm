@@ -145,9 +145,14 @@ public:
                                                 invocation.final_bmi->as_path());
                 if (published.is_err()) return Err(rstd::move(published).unwrap_err());
             }
-            auto published = publish_output(invocation.staged_object.as_path(),
-                                            invocation.final_object.as_path());
-            if (published.is_err()) return Err(rstd::move(published).unwrap_err());
+            if (invocation.final_object.is_some()) {
+                auto published = publish_output(invocation.staged_object.as_path(),
+                                                invocation.final_object->as_path());
+                if (published.is_err()) return Err(rstd::move(published).unwrap_err());
+            } else {
+                auto removed = clear_staged_output(invocation.staged_object.as_path());
+                if (removed.is_err()) return Err(rstd::move(removed).unwrap_err());
+            }
         }
         return Ok(CompileCommandResult {
             .exit_code       = command_output.exit_code,

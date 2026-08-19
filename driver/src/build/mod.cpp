@@ -38,6 +38,7 @@ import :build.frontend_observer;
 import lito.system;
 import :build.compile_test;
 import :build.unit_plan;
+import :build.standard_library_module;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -388,6 +389,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (classified_units.is_err()) {
         return build_failure<BuildSummary>(rstd::move(classified_units).unwrap_err_unchecked());
     }
+
+    auto standard_modules = prepare_standard_library_modules(
+        prepared_build, scans, analysis_service, layout, toolchain);
+    if (standard_modules.is_err()) return Err(rstd::move(standard_modules).unwrap_err());
 
     auto convention_valid = profiler.measure(ScanProbe::Conventions, [&] {
         return cpp::validate_module_conventions(package, units, scans);

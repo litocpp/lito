@@ -9,3 +9,4 @@ export import :compile_executor;
 export import :strip;
 export import :toolchain;
 export import :sdk;
+export import :standard_library_module;

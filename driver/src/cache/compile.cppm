@@ -19,24 +19,27 @@ namespace lito
 {
 
 class CacheDecision {
-    bool         current_ { false };
-    String       artifact_;
-    PathBuf      record_;
-    Json         building_;
-    Json         complete_;
-    Vec<PathBuf> stale_outputs_;
+    bool            current_ { false };
+    String          artifact_;
+    PathBuf         record_;
+    Json            building_;
+    Json            complete_;
+    Option<PathBuf> object_;
+    Vec<PathBuf>    stale_outputs_;
 
-    CacheDecision(bool         current,
-                  String       artifact,
-                  PathBuf      record,
-                  Json         building,
-                  Json         complete,
-                  Vec<PathBuf> stale_outputs)
+    CacheDecision(bool            current,
+                  String          artifact,
+                  PathBuf         record,
+                  Json            building,
+                  Json            complete,
+                  Option<PathBuf> object,
+                  Vec<PathBuf>    stale_outputs)
         : current_(current),
           artifact_(rstd::move(artifact)),
           record_(rstd::move(record)),
           building_(rstd::move(building)),
           complete_(rstd::move(complete)),
+          object_(rstd::move(object)),
           stale_outputs_(rstd::move(stale_outputs)) {}
 
     friend class CompileCacheSession;
@@ -55,8 +58,9 @@ class CompileCacheSession {
     PathBuf owner_root_;
     bool    force_refresh_ { false };
 
-    auto record_current(const cpp::PreparedUnit& unit, const Json& complete) const
-        -> CacheResult<bool> {
+    auto record_current(const cpp::PreparedUnit& unit,
+                        const Json&              complete,
+                        const Option<PathBuf>&   final_object) const -> CacheResult<bool> {
         if (force_refresh_) return Ok(false);
         auto exists = rstd::fs::exists(unit.unit.cache_record.as_path());
         if (exists.is_err()) {
@@ -80,14 +84,16 @@ class CompileCacheSession {
         if (comparable != complete) return Ok(false);
         auto stored_digests = parsed->get("content-digests"_str);
         if (stored_digests.is_none()) return Ok(false);
-        auto stored_object_digest = json_text(*stored_digests, "object"_str);
-        if (stored_object_digest.is_none()) return Ok(false);
-        auto object = output_exists(unit.unit.object.as_path());
-        if (object.is_err()) return object;
-        if (! *object) return Ok(false);
-        auto object_digest = output_content_digest(unit.unit.object.as_path());
-        if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
-        if (object_digest->as_str() != *stored_object_digest) return Ok(false);
+        if (final_object.is_some()) {
+            auto stored_object_digest = json_text(*stored_digests, "object"_str);
+            if (stored_object_digest.is_none()) return Ok(false);
+            auto object = output_exists(final_object->as_path());
+            if (object.is_err()) return object;
+            if (! *object) return Ok(false);
+            auto object_digest = output_content_digest(final_object->as_path());
+            if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
+            if (object_digest->as_str() != *stored_object_digest) return Ok(false);
+        }
         const auto* bmi_artifact = cpp::unit_bmi(unit.unit);
         if (bmi_artifact != nullptr) {
             auto bmi = output_exists(bmi_artifact->path.as_path());
@@ -119,10 +125,14 @@ public:
                   const Vec<DependencyArtifact>& dependencies) -> CacheResult<CacheDecision> {
         auto source   = path_string(unit.unit.source.as_path());
         auto relative = path_string(unit.unit.relative_source.as_path());
-        auto object   = path_string(unit.unit.object.as_path());
+        auto object   = Option<String> {};
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
         if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
-        if (object.is_err()) return Err(rstd::move(object).unwrap_err());
+        if (invocation.final_object.is_some()) {
+            auto path = path_string(invocation.final_object->as_path());
+            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+            object = Some(rstd::move(path).unwrap());
+        }
 
         auto context_key =
             cache::text_identity("lito-context-key-v1"_str, unit.unit.context->id.as_str());
@@ -171,11 +181,15 @@ public:
             bmi_json = Json::Object(rstd::move(bmi_output));
         }
         outputs.insert(String::make("bmi"_str), rstd::move(bmi_json));
-        auto object_output = JsonMap::make();
-        object_output.insert(String::make("kind"_str), cache_string("object"_str));
-        object_output.insert(String::make("path"_str), cache_string(object->as_str()));
-        object_output.insert(String::make("recipe"_str), cache_string(command_key.as_str()));
-        outputs.insert(String::make("object"_str), Json::Object(rstd::move(object_output)));
+        auto object_json = Json::Null();
+        if (object.is_some()) {
+            auto object_output = JsonMap::make();
+            object_output.insert(String::make("kind"_str), cache_string("object"_str));
+            object_output.insert(String::make("path"_str), cache_string(object->as_str()));
+            object_output.insert(String::make("recipe"_str), cache_string(command_key.as_str()));
+            object_json = Json::Object(rstd::move(object_output));
+        }
+        outputs.insert(String::make("object"_str), rstd::move(object_json));
 
         auto complete = JsonMap::make();
         complete.insert(String::make("artifact"_str), cache_string(artifact.as_str()));
@@ -210,20 +224,24 @@ public:
         if (previous_outputs.is_err()) return Err(rstd::move(previous_outputs).unwrap_err());
         auto stale_outputs = Vec<PathBuf>::make();
         for (auto& path : *previous_outputs) {
-            auto        current_output = path.as_path() == unit.unit.object.as_path();
+            auto        current_output = invocation.final_object.is_some() &&
+                                         path.as_path() == invocation.final_object->as_path();
             const auto* bmi_artifact   = cpp::unit_bmi(unit.unit);
             if (bmi_artifact != nullptr)
                 current_output = current_output || path.as_path() == bmi_artifact->path.as_path();
             if (! current_output) stale_outputs.push(rstd::move(path));
         }
 
-        auto current = record_current(unit, complete_json);
+        auto current = record_current(unit, complete_json, invocation.final_object);
         if (current.is_err()) return Err(rstd::move(current).unwrap_err());
         return Ok(CacheDecision { *current,
                                   rstd::move(artifact),
                                   unit.unit.cache_record.clone(),
                                   rstd::move(building_json),
                                   rstd::move(complete_json),
+                                  invocation.final_object.is_some()
+                                      ? Some(invocation.final_object->clone())
+                                      : Option<PathBuf> {},
                                   rstd::move(stale_outputs) });
     }
 
@@ -281,16 +299,18 @@ public:
 
     auto commit_success(const cpp::PreparedUnit& unit, const CacheDecision& decision)
         -> CacheResult<empty> {
-        auto object = output_exists(unit.unit.object.as_path());
-        if (object.is_err()) return Err(rstd::move(object).unwrap_err());
-        if (! *object) {
-            return cache_failure<empty>(
-                rstd::format("compiler did not produce object '{}'", unit.unit.object.as_path()));
+        auto digests = JsonMap::make();
+        if (decision.object_.is_some()) {
+            auto object = output_exists(decision.object_->as_path());
+            if (object.is_err()) return Err(rstd::move(object).unwrap_err());
+            if (! *object) {
+                return cache_failure<empty>(rstd::format("compiler did not produce object '{}'",
+                                                         decision.object_->as_path()));
+            }
+            auto object_digest = output_content_digest(decision.object_->as_path());
+            if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
+            digests.insert(String::make("object"_str), cache_string(object_digest->as_str()));
         }
-        auto digests       = JsonMap::make();
-        auto object_digest = output_content_digest(unit.unit.object.as_path());
-        if (object_digest.is_err()) return Err(rstd::move(object_digest).unwrap_err());
-        digests.insert(String::make("object"_str), cache_string(object_digest->as_str()));
         const auto* bmi_artifact = cpp::unit_bmi(unit.unit);
         if (bmi_artifact != nullptr) {
             auto bmi = output_exists(bmi_artifact->path.as_path());

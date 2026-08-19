@@ -15,6 +15,7 @@ import :preprocessor_environment;
 import :support;
 import :compile_executor;
 import :strip;
+import :standard_library_module;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -483,9 +484,10 @@ public:
             }
             binary_path_text = trim_ascii(String::make(selected_path->get<1>()));
         }
-        auto binary_identity = rstd::format("unresolved:{}", binary_path_text.as_str());
-        auto binary_path     = PathBuf::from(binary_path_text.as_str());
-        auto binary_metadata = rstd::fs::metadata(binary_path.as_path());
+        auto binary_identity  = rstd::format("unresolved:{}", binary_path_text.as_str());
+        auto binary_path      = PathBuf::from(binary_path_text.as_str());
+        auto binary_metadata  = rstd::fs::metadata(binary_path.as_path());
+        auto canonical_binary = binary_path.clone();
         if (binary_metadata.is_ok() && binary_metadata->is_file()) {
             auto modified  = binary_metadata->modified();
             auto timestamp = modified.is_ok() ? modified->as_unix_time() : rstd::time::UnixTime {};
@@ -496,6 +498,7 @@ public:
                                               binary_metadata->size(),
                                               timestamp.seconds,
                                               timestamp.nanoseconds);
+            if (canonical.is_ok()) canonical_binary = rstd::move(canonical).unwrap();
         }
         auto thread_backend = String::make("unknown"_str);
         if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_PTHREAD"_str) ||
@@ -514,17 +517,48 @@ public:
                          target.triple.as_str(),
                          target.environment_name(),
                          rstd::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
-        auto identity = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
-                                     headers_identity.as_str(),
-                                     binary_identity.as_str(),
-                                     thread_backend.as_str());
+        auto identity      = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
+                                          headers_identity.as_str(),
+                                          binary_identity.as_str(),
+                                          thread_backend.as_str());
+        auto manifest_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
+                                 ? "libc++.modules.json"_str
+                                 : "libstdc++.modules.json"_str;
+        auto manifest_candidates   = Vec<PathBuf>::make();
+        const auto append_manifest = [&](ref<rstd::path::Path> artifact) {
+            auto parent = artifact.parent();
+            if (parent.is_none()) return;
+            auto candidate = PathBuf::from(*parent).join(PathBuf::from(manifest_name).as_path());
+            for (const auto& existing : manifest_candidates) {
+                if (existing.as_path() == candidate.as_path()) return;
+            }
+            manifest_candidates.push(rstd::move(candidate));
+        };
+        append_manifest(binary_path.as_path());
+        append_manifest(canonical_binary.as_path());
         return Ok(cpp::ResolvedStandardLibrary {
-            .family           = *detected_family,
+            .family             = *detected_family,
+            .target             = target.triple.clone(),
+            .artifact           = rstd::move(binary_path),
+            .canonical_artifact = rstd::move(canonical_binary),
+            .module_manifest =
+                cpp::StandardLibraryModuleManifestCandidate {
+                    .paths = rstd::move(manifest_candidates),
+                },
             .headers_identity = rstd::move(headers_identity),
             .binary_identity  = rstd::move(binary_identity),
             .thread_backend   = rstd::move(thread_backend),
             .identity         = rstd::move(identity),
         });
+    }
+
+    auto resolve_standard_library_modules(const cpp::CppCompileOptions& options) const
+        -> ToolchainResult<cpp::StandardLibraryModuleCatalog> {
+        if (options.abi.resolved_standard_library.is_none()) {
+            return failure<cpp::StandardLibraryModuleCatalog>(
+                "C++ standard library must be resolved before its modules"_str);
+        }
+        return read_standard_library_module_catalog(*options.abi.resolved_standard_library);
     }
 
     auto validate(const cpp::CppCompileOptions& cpp, const cpp::BmiRequest& bmi) const
@@ -601,32 +635,20 @@ public:
                             const cpp::PackageCompileMetadata& compile_metadata,
                             ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<toolchain::PreparedScanInput> {
-        if (compile_context.language.is_C()) {
-            for (const auto& option : compile_context.language.as_C().options.vendor) {
-                if (option.native_preprocessor_unsupported) {
-                    return failure<toolchain::PreparedScanInput>(rstd::format(
-                        "compiler option '{}' is not supported by the native preprocessor",
-                        option.value.as_str()));
-                }
-            }
-        } else {
-            for (const auto& option : compile_context.language.as_Cpp().options.vendor) {
-                if (option.native_preprocessor_unsupported) {
-                    return failure<toolchain::PreparedScanInput>(rstd::format(
-                        "compiler option '{}' is not supported by the native preprocessor",
-                        option.value.as_str()));
-                }
-            }
-        }
-        auto environment = environment_for(compile_context, working_directory);
-        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
-        return Ok(toolchain::PreparedScanInput {
-            .environment     = rstd::move(environment).unwrap(),
-            .external_macros = toolchain::SharedPackageMacroCatalog::make(
+        return prepare_scan_input_with_catalog(
+            compile_context,
+            toolchain::SharedPackageMacroCatalog::make(
                 toolchain::PackageMacroCatalog::make(compile_metadata)),
-            .language = compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
-                                                        : toolchain::PreprocessorLanguage::Cpp,
-        });
+            working_directory);
+    }
+
+    auto prepare_standard_library_scan_input(const cpp::CompileContext& compile_context,
+                                             ref<rstd::path::Path>      working_directory) const
+        -> ToolchainResult<toolchain::PreparedScanInput> {
+        return prepare_scan_input_with_catalog(
+            compile_context,
+            toolchain::SharedPackageMacroCatalog::make(toolchain::PackageMacroCatalog::system()),
+            working_directory);
     }
 
     auto preprocess(ref<rstd::path::Path>              source,
@@ -720,13 +742,49 @@ public:
         });
     }
 
-    auto prepare_compile(const cpp::PreparedUnit&                  prepared,
-                         const cpp::ScanResult&                    scan_result,
-                         const Vec<cpp::ModuleArtifactDependency>& module_dependencies) const
+private:
+    auto prepare_scan_input_with_catalog(const cpp::CompileContext&           compile_context,
+                                         toolchain::SharedPackageMacroCatalog external_macros,
+                                         ref<rstd::path::Path> working_directory) const
+        -> ToolchainResult<toolchain::PreparedScanInput> {
+        if (compile_context.language.is_C()) {
+            for (const auto& option : compile_context.language.as_C().options.vendor) {
+                if (option.native_preprocessor_unsupported) {
+                    return failure<toolchain::PreparedScanInput>(rstd::format(
+                        "compiler option '{}' is not supported by the native preprocessor",
+                        option.value.as_str()));
+                }
+            }
+        } else {
+            for (const auto& option : compile_context.language.as_Cpp().options.vendor) {
+                if (option.native_preprocessor_unsupported) {
+                    return failure<toolchain::PreparedScanInput>(rstd::format(
+                        "compiler option '{}' is not supported by the native preprocessor",
+                        option.value.as_str()));
+                }
+            }
+        }
+        auto environment = environment_for(compile_context, working_directory);
+        if (environment.is_err()) return Err(rstd::move(environment).unwrap_err());
+        return Ok(toolchain::PreparedScanInput {
+            .environment     = rstd::move(environment).unwrap(),
+            .external_macros = rstd::move(external_macros),
+            .language = compile_context.language.is_C() ? toolchain::PreprocessorLanguage::C
+                                                        : toolchain::PreprocessorLanguage::Cpp,
+        });
+    }
+
+public:
+    auto prepare_compile(
+        const cpp::PreparedUnit&                  prepared,
+        const cpp::ScanResult&                    scan_result,
+        const Vec<cpp::ModuleArtifactDependency>& module_dependencies,
+        cpp::CppCompileDisposition disposition = cpp::CppCompileDisposition::ObjectOnly) const
         -> ToolchainResult<CompileInvocation> {
         if (prepared.unit.context->language.is_C()) {
             if (! scan_result.language.is_C() || ! module_dependencies.is_empty() ||
-                ! prepared.unit.language.is_C()) {
+                ! prepared.unit.language.is_C() ||
+                disposition != cpp::CppCompileDisposition::ObjectOnly) {
                 return failure<CompileInvocation>(
                     rstd::format("C source '{}' unexpectedly participates in the C++ module graph",
                                  prepared.unit.source.as_path()));
@@ -758,17 +816,24 @@ public:
                 .working_directory = prepared.working_directory.clone(),
                 .identity          = rstd::move(identity).unwrap(),
                 .staged_object     = rstd::move(staged_object).unwrap(),
-                .final_object      = prepared.unit.object.clone(),
+                .final_object      = Some(prepared.unit.object.clone()),
             });
         }
         if (! scan_result.language.is_Cpp() || ! prepared.unit.language.is_Cpp()) {
             return failure<CompileInvocation>(rstd::format("C++ source '{}' received C scan facts",
                                                            prepared.unit.source.as_path()));
         }
-        const auto& cpp_context = prepared.unit.context->language.as_Cpp();
-        const auto& source_unit = prepared.unit.language.as_Cpp();
-        const auto& scan        = scan_result.language.as_Cpp().facts;
-        auto        valid       = validate(cpp_context.options, cpp_context.bmi);
+        const auto& cpp_context  = prepared.unit.context->language.as_Cpp();
+        const auto& source_unit  = prepared.unit.language.as_Cpp();
+        const auto& scan         = scan_result.language.as_Cpp().facts;
+        const auto  provides_bmi = scan.provided.is_some();
+        if ((provides_bmi && disposition == cpp::CppCompileDisposition::ObjectOnly) ||
+            (! provides_bmi && disposition != cpp::CppCompileDisposition::ObjectOnly)) {
+            return failure<CompileInvocation>(
+                rstd::format("compile output disposition does not match module facts for '{}'",
+                             prepared.unit.source.as_path()));
+        }
+        auto valid = validate(cpp_context.options, cpp_context.bmi);
         if (valid.is_err()) return Err(rstd::move(valid).unwrap_err());
         auto staged_object = staging_path(prepared.unit.object.as_path());
         if (staged_object.is_err()) return Err(rstd::move(staged_object).unwrap_err());
@@ -776,6 +841,9 @@ public:
         auto command    = Vec<String>::make();
         auto context    = append_compile_context(command, *prepared.unit.context, false);
         if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+        if (prepared.unit.owner.is_StandardLibrary()) {
+            toolchain::command::push_option(command, "-Wno-reserved-module-identifier"_str);
+        }
         for (const auto& macro : scan.common.external_macros) {
             if (macro.state == frontend::ExternalMacroState::Undefined) {
                 if (macro.compiler_definition.is_some()) {
@@ -837,7 +905,9 @@ public:
             .working_directory = prepared.working_directory.clone(),
             .identity          = rstd::move(identity).unwrap(),
             .staged_object     = rstd::move(staged_object).unwrap(),
-            .final_object      = prepared.unit.object.clone(),
+            .final_object      = disposition == cpp::CppCompileDisposition::BmiOnly
+                                     ? Option<PathBuf> {}
+                                     : Some(prepared.unit.object.clone()),
             .staged_bmi        = rstd::move(staged_bmi),
             .final_bmi         = source_unit.bmi.is_some() ? Some(source_unit.bmi->path.clone())
                                                            : Option<PathBuf> {},

@@ -10,17 +10,43 @@ import lito.frontend.lexical;
 import lito.cpp;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 using namespace lito::system;
 
 export namespace lito
 {
 
+struct StandardLibraryModuleErrorContext {
+    config::StandardLibrary family { config::StandardLibrary::Libstdcxx };
+    String                  target;
+    rstd::path::PathBuf     artifact;
+};
+
+class StandardLibraryModuleError {
+    RSTD_ENUM(
+        StandardLibraryModuleError,
+        (Missing, (StandardLibraryModuleErrorContext context; Vec<rstd::path::PathBuf> searched;)),
+        (Ambiguous,
+         (StandardLibraryModuleErrorContext context; rstd::path::PathBuf first;
+          rstd::path::PathBuf                                            second;)),
+        (Manifest,
+         (StandardLibraryModuleErrorContext context; rstd::path::PathBuf manifest;
+          Option<String>                                                 entry;
+          String                                                         message;)),
+        (Io,
+         (StandardLibraryModuleErrorContext context; String operation; rstd::path::PathBuf path;
+          Option<rstd::path::PathBuf>                                                      manifest;
+          Option<String>                                                                   entry;
+          rstd::io::error::Error source;)))
+};
+
 class ToolchainError {
     RSTD_ENUM(ToolchainError,
               (System, (SystemError source;)),
               (Frontend, (frontend::lexical::Error source;)),
               (Cpp, (cpp::CppOptionError source;)),
+              (StandardLibraryModule, (StandardLibraryModuleError source;)),
               (Platform, (PlatformError source;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
               (Execution,
@@ -76,6 +102,89 @@ struct Impl<convert::From<lito::system::PlatformError>, lito::ToolchainError> {
 };
 
 template<>
+struct Impl<fmt::Display, lito::StandardLibraryModuleError>
+    : ImplBase<lito::StandardLibraryModuleError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        const auto& error = this->self();
+        if (error.is_Missing()) {
+            const auto& value    = error.as_Missing();
+            auto        searched = String::make();
+            for (const auto& path : value.searched) {
+                if (! searched.is_empty()) searched.push_str(", "_str);
+                searched.push_str(path.as_path().to_string_lossy().as_str());
+            }
+            return formatter.write_fmt(fmt::Arguments::make(
+                "selected {} for target '{}' at '{}' has no module manifest; searched {}",
+                lito::cpp::standard_library_name(value.context.family),
+                value.context.target,
+                value.context.artifact.as_path(),
+                searched));
+        }
+        if (error.is_Ambiguous()) {
+            const auto& value = error.as_Ambiguous();
+            return formatter.write_fmt(fmt::Arguments::make(
+                "selected {} for target '{}' at '{}' has ambiguous module manifests '{}' and "
+                "'{}'",
+                lito::cpp::standard_library_name(value.context.family),
+                value.context.target,
+                value.context.artifact.as_path(),
+                value.first.as_path(),
+                value.second.as_path()));
+        }
+        if (error.is_Manifest()) {
+            const auto& value = error.as_Manifest();
+            if (value.entry.is_some()) {
+                return formatter.write_fmt(
+                    fmt::Arguments::make("standard library module manifest '{}' entry '{}': {}",
+                                         value.manifest.as_path(),
+                                         value.entry->as_str(),
+                                         value.message));
+            }
+            return formatter.write_fmt(
+                fmt::Arguments::make("standard library module manifest '{}': {}",
+                                     value.manifest.as_path(),
+                                     value.message));
+        }
+        const auto& value = error.as_Io();
+        if (value.manifest.is_some() && value.entry.is_some()) {
+            return formatter.write_fmt(fmt::Arguments::make(
+                "{} '{}' from standard library module manifest '{}' entry '{}'",
+                value.operation,
+                value.path.as_path(),
+                value.manifest->as_path(),
+                value.entry->as_str()));
+        }
+        if (value.manifest.is_some()) {
+            return formatter.write_fmt(
+                fmt::Arguments::make("{} '{}' from standard library module manifest '{}'",
+                                     value.operation,
+                                     value.path.as_path(),
+                                     value.manifest->as_path()));
+        }
+        return formatter.write_fmt(
+            fmt::Arguments::make("{} '{}'", value.operation, value.path.as_path()));
+    }
+};
+
+template<>
+struct Impl<fmt::Debug, lito::StandardLibraryModuleError>
+    : ImplBase<lito::StandardLibraryModuleError> {
+    auto fmt(fmt::Formatter& formatter) const -> bool {
+        return as<fmt::Display>(this->self()).fmt(formatter);
+    }
+};
+
+template<>
+struct Impl<error::Error, lito::StandardLibraryModuleError>
+    : ImplBase<lito::StandardLibraryModuleError> {
+    auto source() const noexcept -> Option<error::ErrorRef> {
+        const auto& error = this->self();
+        if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
+        return None();
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::ToolchainError> : ImplBase<lito::ToolchainError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -90,6 +199,10 @@ struct Impl<fmt::Display, lito::ToolchainError> : ImplBase<lito::ToolchainError>
         if (error.is_Cpp()) {
             return formatter.write_raw("toolchain C++ argument schema failed",
                                        sizeof("toolchain C++ argument schema failed") - 1);
+        }
+        if (error.is_StandardLibraryModule()) {
+            return formatter.write_raw("standard library module resolution failed",
+                                       sizeof("standard library module resolution failed") - 1);
         }
         if (error.is_Platform()) {
             return formatter.write_raw("toolchain target platform is invalid",
@@ -128,6 +241,9 @@ struct Impl<error::Error, lito::ToolchainError> : ImplBase<lito::ToolchainError>
             return Some(dyn<error::Error>::from_ref(error.as_Frontend().source));
         }
         if (error.is_Cpp()) return Some(dyn<error::Error>::from_ref(error.as_Cpp().source));
+        if (error.is_StandardLibraryModule()) {
+            return Some(dyn<error::Error>::from_ref(error.as_StandardLibraryModule().source));
+        }
         if (error.is_Platform()) {
             return Some(dyn<error::Error>::from_ref(error.as_Platform().source));
         }

@@ -20,7 +20,7 @@ struct CompileInvocation {
     PathBuf         working_directory;
     String          identity;
     PathBuf         staged_object;
-    PathBuf         final_object;
+    Option<PathBuf> final_object;
     Option<PathBuf> staged_bmi;
     Option<PathBuf> final_bmi;
 
@@ -30,7 +30,7 @@ struct CompileInvocation {
             .working_directory = working_directory.clone(),
             .identity          = identity.clone(),
             .staged_object     = staged_object.clone(),
-            .final_object      = final_object.clone(),
+            .final_object      = final_object.is_some() ? Some(final_object->clone()) : None(),
             .staged_bmi        = staged_bmi.is_some() ? Some(staged_bmi->clone()) : None(),
             .final_bmi         = final_bmi.is_some() ? Some(final_bmi->clone()) : None(),
         };

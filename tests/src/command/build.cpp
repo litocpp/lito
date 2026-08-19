@@ -13,7 +13,12 @@ using PathBuf = rstd::path::PathBuf;
 
 using namespace lito_test;
 
-class BuildCommand : public ProjectFixture {};
+class BuildCommand : public ProjectFixture {
+protected:
+    auto verify_standard_library_module(lito::config::StandardLibrary family,
+                                        ref<str>                      name,
+                                        ref<str> logical_name = "std"_str) -> void;
+};
 
 struct CMakeOverrideEvents {
     usize fetch {};
@@ -85,6 +90,97 @@ sources = ["src/main.cpp"]
 )build"_str },
     };
     return source_tree(files);
+}
+
+auto BuildCommand::verify_standard_library_module(lito::config::StandardLibrary family,
+                                                  ref<str>                      name,
+                                                  ref<str> logical_name) -> void {
+    auto              source  = rstd::format(R"cpp(import {};
+
+int main() {{
+    std::vector<int> values {{ 1, 2, 3 }};
+    return values.size() == 3 ? 0 : 1;
+}}
+)cpp",
+                                             logical_name);
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-standard-library-module"
+version = "0.1.0"
+standard = "c++23"
+
+[[bin]]
+name = "fixture-standard-library-module"
+sources = ["src/main.cpp"]
+)toml"_str },
+        { "src/main.cpp"_str, source.as_str() },
+    };
+    auto project = materialize(name, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request(
+        name, project->root.as_path(), strings("fixture-standard-library-module"_str));
+    request.configuration.standard_library = family;
+    auto result                            = lito::build(request);
+    if (result.is_err()) {
+        auto message = error_chain_text(result.unwrap_err());
+        if (message.as_str().contains("has no module manifest"_str)) {
+            GTEST_SKIP() << message.as_str();
+        }
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    ASSERT_EQ(result->artifacts.len(), usize(1));
+    auto status =
+        rstd::process::Command::make(result->artifacts[usize {}].path.as_path().as_os_str())
+            .status();
+    ASSERT_TRUE(status.is_ok());
+    EXPECT_TRUE(status->success());
+    auto repeated = lito::build(request);
+    ASSERT_TRUE(repeated.is_ok());
+    EXPECT_EQ(repeated->compiled, usize {});
+    EXPECT_TRUE(repeated->reused >= usize(2));
+}
+
+TEST_F(BuildCommand, BuildsImportStdWithLibcxx) {
+    verify_standard_library_module(lito::config::StandardLibrary::Libcxx,
+                                   "standard-library-module-libcxx"_str);
+}
+
+TEST_F(BuildCommand, BuildsImportStdWithLibstdcxx) {
+    verify_standard_library_module(lito::config::StandardLibrary::Libstdcxx,
+                                   "standard-library-module-libstdcxx"_str);
+}
+
+TEST_F(BuildCommand, BuildsImportStdCompatClosureWithLibstdcxx) {
+    verify_standard_library_module(lito::config::StandardLibrary::Libstdcxx,
+                                   "standard-library-module-compat-libstdcxx"_str,
+                                   "std.compat"_str);
+}
+
+TEST_F(BuildCommand, RejectsImportStdBeforeCxx23) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-standard-library-module-cxx20"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-standard-library-module-cxx20"
+sources = ["src/main.cpp"]
+)toml"_str },
+        { "src/main.cpp"_str, "import std;\nint main() { return 0; }\n"_str },
+    };
+    auto project = materialize("standard-library-module-cxx20"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = project_build_request("standard-library-module-cxx20"_str,
+                                         project->root.as_path(),
+                                         strings("fixture-standard-library-module-cxx20"_str));
+    auto result  = lito::build(request);
+    ASSERT_TRUE(result.is_err());
+    auto error = rstd::move(result).unwrap_err();
+    ASSERT_TRUE(error.is_StandardLibrary());
+    auto message = error_chain_text(error);
+    EXPECT_TRUE(message.as_str().contains("imports standard library module 'std'"_str));
+    EXPECT_TRUE(message.as_str().contains("C++23 or later"_str));
 }
 
 TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {

@@ -42,6 +42,41 @@ Only imports that remain active after preprocessing enter the graph. An import i
 `#if` branch does not cause its source to be compiled. A textual `#include` remains a preprocessor
 file dependency, not a named-module provider.
 
+## Standard library modules
+
+A C++23 or newer package can import the selected standard library directly:
+
+```toml
+[package]
+name = "std-example"
+version = "0.1.0"
+standard = "c++23"
+```
+
+```cpp
+import std;
+
+int main() {
+    std::vector<int> values { 1, 2, 3 };
+    return values.size() == 3 ? 0 : 1;
+}
+```
+
+Lito supports both libc++ and libstdc++. The selected installation must provide its Clang standard
+library module manifest and module sources (`libc++.modules.json` or
+`libstdc++.modules.json`). Lito reads that manifest from the resolved standard-library artifact;
+projects do not configure a module source or a prebuilt `std.pcm`.
+
+`std` and `std.compat` are system providers in the same module dependency graph as project modules.
+Lito scans only the requested standard-module closure, builds its BMI with the package's effective
+C++ context, caches the BMI, and passes consumers an exact `-fmodule-file` mapping. The temporary
+object required by some Clang BMI generation modes is not a link or install input. Importing a
+standard module does not change which standard-library runtime is linked.
+
+Packages that do not import `std` or `std.compat` do not require a module manifest and do not pay
+the standard-module scan or BMI build cost. C++20 imports are rejected even when a local standard
+library accepts them as an extension.
+
 ## Target entries
 
 For a library using module discovery, Lito starts at `src/lib.cppm`:
@@ -172,8 +207,8 @@ Discovery repeats these operations:
 
 1. Start with `src/lib.cppm` or `src/main.cppm`.
 2. Scan the source's provided module and active imports.
-3. Resolve each import to the current target's convention source or a selected dependency's module
-   provider.
+3. Resolve each import to the current target's convention source, a selected dependency's module
+   provider, or the selected standard-library module catalog.
 4. Add the resolved interface and its companion implementation.
 5. Continue until no new module imports remain.
 

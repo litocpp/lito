@@ -45,5 +45,8 @@ target_sources(
          src/package/plan.cppm
          src/package/spec.cppm
          src/package/target.cppm
-         src/source/discovery.cppm)
+         src/source/discovery.cppm
+         src/standard_library/error.cppm
+         src/standard_library/mod.cppm
+         src/standard_library/model.cppm)
 target_link_libraries(lito.cpp PUBLIC lito.core lito.frontend rstd.std)

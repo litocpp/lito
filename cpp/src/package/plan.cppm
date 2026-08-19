@@ -388,6 +388,11 @@ auto attachment_context(const CompileContext&       library,
 export namespace lito::cpp
 {
 
+auto refresh_compile_context_identity(CompileContext& context) -> void {
+    context.id      = context_id(context);
+    context.scan_id = scan_context_id(context);
+}
+
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
     -> lito::package::PackageResult<CompileContext> {
     if (! base.language.is_Cpp()) {

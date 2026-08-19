@@ -108,6 +108,39 @@ public:
 };
 
 class FrontendAnalysisService {
+    auto prepare_with_identity(PathBuf                      record,
+                               String                       target_identity,
+                               ref<rstd::path::Path>        relative_source,
+                               ref<str>                     source_origin_identity,
+                               ref<rstd::path::Path>        source,
+                               const cpp::CompileContext&   context,
+                               toolchain::PreparedScanInput scan_input,
+                               ref<rstd::path::Path>        working_directory,
+                               ScanSourceOrigin origin) -> BuildResult<FrontendAnalysisTask> {
+        auto profile = profiler_.task(target_identity.as_str(), source, origin);
+        if (profile.is_err()) {
+            return Err(BuildError::Message(rstd::move(profile).unwrap_err_unchecked()));
+        }
+        auto cache_input = ScanCacheInput {
+            .record                   = rstd::move(record),
+            .target                   = target_identity.clone(),
+            .relative_source          = PathBuf::from(relative_source),
+            .source_origin_identity   = String::make(source_origin_identity),
+            .source                   = PathBuf::from(source),
+            .context_identity         = context.scan_id.clone(),
+            .working_directory        = PathBuf::from(working_directory),
+            .preprocessor_environment = scan_input.environment->identity.clone(),
+            .external_macro_schema    = String::make(scan_input.external_macros->schema_identity()),
+            .external_macros          = scan_input.external_macros.clone(),
+        };
+        return Ok(FrontendAnalysisTask(toolchain_,
+                                       source_store_.clone(),
+                                       cache_.begin(rstd::move(cache_input)),
+                                       PathBuf::from(source),
+                                       rstd::move(scan_input),
+                                       rstd::move(profile).unwrap_unchecked()));
+    }
+
 public:
     static auto make(const BuildLayout&         layout,
                      const ClangToolchain&      toolchain,
@@ -131,40 +164,27 @@ public:
         if (record.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(record).unwrap_err()));
         }
+        auto target_identity  = lito::package::package_target_id_text(target);
         auto environment_span = profiler_.span(ScanProbe::Environment);
-        auto prepared = toolchain_.prepare_scan_input(context, compile_metadata, working_directory);
+        auto scan_input =
+            toolchain_.prepare_scan_input(context, compile_metadata, working_directory);
         auto environment_finished = profiler_.complete(environment_span);
         if (environment_finished.is_err()) {
             return Err(
                 BuildError::Message(rstd::move(environment_finished).unwrap_err_unchecked()));
         }
-        if (prepared.is_err()) {
-            return Err(rstd::into<BuildError>(rstd::move(prepared).unwrap_err()));
+        if (scan_input.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(scan_input).unwrap_err()));
         }
-        auto scan_input      = rstd::move(prepared).unwrap();
-        auto target_identity = lito::package::package_target_id_text(target);
-        auto profile         = profiler_.task(target_identity.as_str(), source, origin);
-        if (profile.is_err()) {
-            return Err(BuildError::Message(rstd::move(profile).unwrap_err_unchecked()));
-        }
-        auto cache_input = ScanCacheInput {
-            .record                   = rstd::move(record).unwrap(),
-            .target                   = target_identity.clone(),
-            .relative_source          = PathBuf::from(relative_source),
-            .source_origin_identity   = String::make(source_origin_identity),
-            .source                   = PathBuf::from(source),
-            .context_identity         = context.scan_id.clone(),
-            .working_directory        = PathBuf::from(working_directory),
-            .preprocessor_environment = scan_input.environment->identity.clone(),
-            .external_macro_schema    = String::make(scan_input.external_macros->schema_identity()),
-            .external_macros          = scan_input.external_macros.clone(),
-        };
-        return Ok(FrontendAnalysisTask(toolchain_,
-                                       source_store_.clone(),
-                                       cache_.begin(rstd::move(cache_input)),
-                                       PathBuf::from(source),
-                                       rstd::move(scan_input),
-                                       rstd::move(profile).unwrap_unchecked()));
+        return prepare_with_identity(rstd::move(record).unwrap(),
+                                     rstd::move(target_identity),
+                                     relative_source,
+                                     source_origin_identity,
+                                     source,
+                                     context,
+                                     rstd::move(scan_input).unwrap(),
+                                     working_directory,
+                                     origin);
     }
 
     auto commit(FrontendAnalysisTaskOutcome outcome) -> BuildResult<frontend::FrontendAnalysis> {
@@ -192,6 +212,46 @@ public:
                             compile_metadata,
                             working_directory,
                             ScanSourceOrigin::Discovery);
+        if (task.is_err()) return Err(rstd::move(task).unwrap_err());
+        auto outcome = rstd::move(task).unwrap().run();
+        if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());
+        return commit(rstd::move(outcome).unwrap());
+    }
+
+    auto analyze_standard_module(ref<str>                   logical_name,
+                                 ref<str>                   standard_library_context_identity,
+                                 ref<str>                   source_origin_identity,
+                                 ref<rstd::path::Path>      source,
+                                 const cpp::CompileContext& context,
+                                 ref<rstd::path::Path>      working_directory)
+        -> BuildResult<frontend::FrontendAnalysis> {
+        auto record =
+            layout_.cache_standard_module_scan(standard_library_context_identity, logical_name);
+        auto target = rstd::format(
+            "standard-library::{}::{}",
+            cpp::standard_library_name(context.language.as_Cpp().options.abi.standard_library),
+            logical_name);
+        auto relative         = PathBuf::from(rstd::format("{}.cppm", logical_name));
+        auto environment_span = profiler_.span(ScanProbe::Environment);
+        auto scan_input =
+            toolchain_.prepare_standard_library_scan_input(context, working_directory);
+        auto environment_finished = profiler_.complete(environment_span);
+        if (environment_finished.is_err()) {
+            return Err(
+                BuildError::Message(rstd::move(environment_finished).unwrap_err_unchecked()));
+        }
+        if (scan_input.is_err()) {
+            return Err(rstd::into<BuildError>(rstd::move(scan_input).unwrap_err()));
+        }
+        auto task = prepare_with_identity(rstd::move(record),
+                                          rstd::move(target),
+                                          relative.as_path(),
+                                          source_origin_identity,
+                                          source,
+                                          context,
+                                          rstd::move(scan_input).unwrap(),
+                                          working_directory,
+                                          ScanSourceOrigin::StandardLibrary);
         if (task.is_err()) return Err(rstd::move(task).unwrap_err());
         auto outcome = rstd::move(task).unwrap().run();
         if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());

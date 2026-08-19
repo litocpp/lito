@@ -107,8 +107,14 @@ auto emit_compile_event(const Option<BuildEventSink>& observer,
                         BuildEventKind                kind,
                         Option<BuildProgress>         progress = None()) noexcept -> void {
     if (observer.is_none() || observer->notify == nullptr) return;
-    const auto target      = units[unit].unit.target;
-    auto       target_name = lito::package::package_target_id_text(package.targets[target].id);
+    auto target_name = String::make();
+    auto target      = cpp::project_target(units[unit].unit);
+    if (target.is_some()) {
+        target_name = lito::package::package_target_id_text(package.targets[*target].id);
+    } else {
+        auto module = cpp::standard_library_module(units[unit].unit);
+        target_name = rstd::format("standard-library::{}", (*module)->logical_name.as_str());
+    }
     observer->notify(observer->context,
                      BuildEvent {
                          .kind     = kind,
@@ -167,10 +173,11 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
     }
     auto result = Vec<DocumentationBuildUnit>::with_capacity(units.len());
     for (auto unit = cpp::UnitId {}; unit < units.len(); ++unit) {
-        const auto target   = units[unit].unit.target;
-        auto       selected = false;
+        auto target = cpp::project_target(units[unit].unit);
+        if (target.is_none()) continue;
+        auto selected = false;
         for (const auto& candidate : selected_targets) {
-            if (candidate == package.targets[target].id) {
+            if (candidate == package.targets[*target].id) {
                 selected = true;
                 break;
             }
@@ -201,14 +208,14 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
             });
         }
         result.push(DocumentationBuildUnit {
-            .target           = package.targets[target].id.clone(),
-            .package_root     = package.targets[target].root.clone(),
+            .target           = package.targets[*target].id.clone(),
+            .package_root     = package.targets[*target].root.clone(),
             .source           = units[unit].unit.source.clone(),
             .relative_source  = units[unit].unit.relative_source.clone(),
             .kind             = documentation_unit_kind(scans[unit]),
             .is_interface     = is_interface,
             .logical_module   = rstd::move(logical_module),
-            .root_module      = package.targets[target].module_affiliation.clone(),
+            .root_module      = package.targets[*target].module_affiliation.clone(),
             .source_identity  = units[unit].frontend_analysis->receipt.clone(),
             .invocation       = plan.nodes[unit].invocation->clone(),
             .bmi_dependencies = rstd::move(dependencies),
@@ -290,12 +297,21 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
             if (source_identity.is_none() || relative_identity.is_none()) {
                 return compile_failure<CompilePlan>("BMI provider path is not valid UTF-8"_str);
             }
-            const auto target            = units[unit].unit.target;
-            auto       provider_identity = rstd::format(
-                "{}:{}:{}",
-                lito::package::package_target_id_text(package.targets[target].id).as_str(),
-                *relative_identity,
-                units[unit].unit.context->id.as_str());
+            auto target = cpp::project_target(units[unit].unit);
+            auto provider_identity =
+                target.is_some()
+                    ? rstd::format(
+                          "{}:{}:{}",
+                          lito::package::package_target_id_text(package.targets[*target].id)
+                              .as_str(),
+                          *relative_identity,
+                          units[unit].unit.context->id.as_str())
+                    : rstd::format("standard-library:{}:{}:{}",
+                                   units[unit]
+                                       .unit.owner.as_StandardLibrary()
+                                       .module.manifest_identity.as_str(),
+                                   scan_cpp->provided->logical_name.as_str(),
+                                   units[unit].unit.standard_library_context_identity.as_str());
             auto key      = cpp::make_bmi_artifact_key(cpp::BmiRecipe {
                 .request                 = cpp_context.bmi,
                 .logical_name            = scan_cpp->provided->logical_name.clone(),
@@ -317,18 +333,19 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
                     .artifact_key = dependency.artifact.clone(),
                 });
             }
-            auto assigned =
-                cpp::assign_unit_bmi(units[unit].unit,
-                                     cpp::BmiArtifact {
-                                         .logical_name = scan_cpp->provided->logical_name.clone(),
-                                         .provider_identity = rstd::move(provider_identity),
-                                         .key               = rstd::move(key),
-                                         .format  = as<Clone>(toolchain.bmi_format()).clone(),
-                                         .request = cpp_context.bmi,
-                                         .path    = rstd::move(bmi_path),
-                                         .direct_dependencies = rstd::move(direct),
-                                         .paired_object = Some(units[unit].unit.object.clone()),
-                                     });
+            auto assigned = cpp::assign_unit_bmi(
+                units[unit].unit,
+                cpp::BmiArtifact {
+                    .logical_name        = scan_cpp->provided->logical_name.clone(),
+                    .provider_identity   = rstd::move(provider_identity),
+                    .key                 = rstd::move(key),
+                    .format              = as<Clone>(toolchain.bmi_format()).clone(),
+                    .request             = cpp_context.bmi,
+                    .path                = rstd::move(bmi_path),
+                    .direct_dependencies = rstd::move(direct),
+                    .paired_object       = target.is_some() ? Some(units[unit].unit.object.clone())
+                                                            : Option<PathBuf> {},
+                });
             if (! assigned) {
                 return compile_failure<CompilePlan>("C source unexpectedly provided a BMI"_str);
             }
@@ -350,7 +367,14 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
                 .path         = artifact.path.clone(),
             });
         }
-        auto invocation = toolchain.prepare_compile(units[unit], scans[unit], module_dependencies);
+        auto disposition = cpp::CppCompileDisposition::ObjectOnly;
+        if (scan_cpp != nullptr && scan_cpp->provided.is_some()) {
+            disposition = units[unit].unit.owner.is_StandardLibrary()
+                              ? cpp::CppCompileDisposition::BmiOnly
+                              : cpp::CppCompileDisposition::ObjectAndBmi;
+        }
+        auto invocation =
+            toolchain.prepare_compile(units[unit], scans[unit], module_dependencies, disposition);
         if (invocation.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(invocation).unwrap_err()));
         }
@@ -421,14 +445,19 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
     auto wall_started  = rstd::time::Instant::now();
     auto compile_total = usize {};
     for (auto unit = cpp::UnitId {}; unit < plan.nodes.len(); ++unit) {
-        const auto target    = units[unit].unit.target;
-        auto       started   = rstd::time::Instant::now();
-        auto target_identity = lito::package::package_target_id_text(package.targets[target].id);
-        auto decision        = cache.evaluate(target_identity.as_str(),
-                                              units[unit],
-                                              units[unit].frontend_analysis->receipt.as_str(),
-                                              *plan.nodes[unit].invocation,
-                                              plan.nodes[unit].dependencies);
+        auto started = rstd::time::Instant::now();
+        auto target  = cpp::project_target(units[unit].unit);
+        auto target_identity =
+            target.is_some()
+                ? lito::package::package_target_id_text(package.targets[*target].id)
+                : rstd::format(
+                      "standard-library::{}",
+                      units[unit].unit.owner.as_StandardLibrary().module.logical_name.as_str());
+        auto decision = cache.evaluate(target_identity.as_str(),
+                                       units[unit],
+                                       units[unit].frontend_analysis->receipt.as_str(),
+                                       *plan.nodes[unit].invocation,
+                                       plan.nodes[unit].dependencies);
         result.statistics.coordinator_work =
             result.statistics.coordinator_work.saturating_add(started.elapsed());
         if (decision.is_err()) {
@@ -454,7 +483,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
             if (selected.is_none()) break;
             const auto  unit                = *selected;
             auto&       node                = plan.nodes[unit];
-            const auto  target              = units[unit].unit.target;
+            auto        target              = cpp::project_target(units[unit].unit);
             auto        coordinator_started = rstd::time::Instant::now();
             auto        cache_decision      = rstd::move(runtime[unit].decision).unwrap_unchecked();
             const auto* test                = units[unit].unit.compile_test;
@@ -475,7 +504,7 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
             }
             if (cache_decision.current() && test != nullptr &&
                 test->outcome == lito::manifest::CompileTestOutcome::Success) {
-                auto execution = evaluate_compile_test(package.targets[target].id.package.as_str(),
+                auto execution = evaluate_compile_test(package.targets[*target].id.package.as_str(),
                                                        *test,
                                                        units[unit].unit.source.as_path(),
                                                        CompileCommandResult {});
@@ -596,10 +625,10 @@ auto execute_compile_plan(const cpp::PackageSpec&       package,
         auto output   = rstd::move(task.outcome).unwrap();
         auto decision = rstd::move(runtime[unit].decision).unwrap_unchecked();
         result.timing.record(BuildOperation::Compile, output.elapsed);
-        const auto  target = units[unit].unit.target;
+        auto        target = cpp::project_target(units[unit].unit);
         const auto* test   = units[unit].unit.compile_test;
         if (test != nullptr) {
-            auto execution = evaluate_compile_test(package.targets[target].id.package.as_str(),
+            auto execution = evaluate_compile_test(package.targets[*target].id.package.as_str(),
                                                    *test,
                                                    units[unit].unit.source.as_path(),
                                                    rstd::move(output));

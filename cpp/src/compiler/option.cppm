@@ -8,6 +8,7 @@ import rstd;
 import :compiler.argument;
 import :compiler.common;
 export import :compiler.error;
+import :standard_library.model;
 import lito.core;
 
 using namespace rstd::prelude;
@@ -173,19 +174,27 @@ struct CppLanguageOptions {
 };
 
 struct ResolvedStandardLibrary : DefaultInClass<ResolvedStandardLibrary, Clone> {
-    lito::config::StandardLibrary family { lito::config::StandardLibrary::Libstdcxx };
-    String                        headers_identity;
-    String                        binary_identity;
-    String                        thread_backend;
-    String                        identity;
+    lito::config::StandardLibrary          family { lito::config::StandardLibrary::Libstdcxx };
+    String                                 target;
+    PathBuf                                artifact;
+    PathBuf                                canonical_artifact;
+    StandardLibraryModuleManifestCandidate module_manifest;
+    String                                 headers_identity;
+    String                                 binary_identity;
+    String                                 thread_backend;
+    String                                 identity;
 
     auto clone() const -> ResolvedStandardLibrary {
         return ResolvedStandardLibrary {
-            .family           = family,
-            .headers_identity = headers_identity.clone(),
-            .binary_identity  = binary_identity.clone(),
-            .thread_backend   = thread_backend.clone(),
-            .identity         = identity.clone(),
+            .family             = family,
+            .target             = target.clone(),
+            .artifact           = artifact.clone(),
+            .canonical_artifact = canonical_artifact.clone(),
+            .module_manifest    = module_manifest.clone(),
+            .headers_identity   = headers_identity.clone(),
+            .binary_identity    = binary_identity.clone(),
+            .thread_backend     = thread_backend.clone(),
+            .identity           = identity.clone(),
         };
     }
 };

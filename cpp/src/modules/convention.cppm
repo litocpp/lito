@@ -411,7 +411,9 @@ auto validate_module_conventions(const PackageSpec&       package,
             if (expectation.expected_module.is_none()) continue;
             const ScanResult* actual = nullptr;
             for (const auto& scan : scans) {
-                if (scan.unit < units.len() && units[scan.unit].unit.target == target &&
+                auto source_target = scan.unit < units.len() ? project_target(units[scan.unit].unit)
+                                                             : Option<TargetId> {};
+                if (source_target == Some(target) &&
                     same_path(units[scan.unit].unit.source.as_path(), expectation.path.as_path())) {
                     actual = rstd::addressof(scan);
                     break;

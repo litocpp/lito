@@ -59,6 +59,7 @@ enum class ScanSourceOrigin
 {
     Discovery,
     Classify,
+    StandardLibrary,
 };
 
 enum class BuildOperation
@@ -219,6 +220,7 @@ auto scan_source_origin_label(ScanSourceOrigin origin) noexcept -> ref<str> {
     switch (origin) {
     case ScanSourceOrigin::Discovery: return "discovery"_str;
     case ScanSourceOrigin::Classify: return "classify"_str;
+    case ScanSourceOrigin::StandardLibrary: return "standard-library"_str;
     }
     return "unknown"_str;
 }

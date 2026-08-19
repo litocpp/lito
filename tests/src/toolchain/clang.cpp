@@ -188,6 +188,279 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(lto_invocation->arguments, "-fvisibility=default"_str));
 }
 
+TEST(ClangToolchain, ParsesStandardLibraryModuleManifest) {
+    auto directory = rstd::env::temp_dir().join(
+        PathBuf::from(rstd::format("lito-stdlib-manifest-{}", rstd::process::id()).as_str())
+            .as_path());
+    auto exists = rstd::fs::exists(directory.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    if (*exists) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
+    auto include = directory.join(PathBuf::from("include"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(include.as_path()).is_ok());
+    auto source = directory.join(PathBuf::from("std.cppm"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(source.as_path(), "export module std;\n"_str.as_bytes()).is_ok());
+    auto manifest = directory.join(PathBuf::from("libc++.modules.json"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(manifest.as_path(),
+                        "{\n"
+                        "  \"version\": 1,\n"
+                        "  \"revision\": 1,\n"
+                        "  \"modules\": [\n"
+                        "    {\"logical-name\": \"ignored\", \"source-path\": \"std.cppm\", "
+                        "\"is-std-library\": false},\n"
+                        "    {\"logical-name\": \"std\", \"source-path\": \"std.cppm\", "
+                        "\"is-std-library\": true, \"local-arguments\": "
+                        "{\"system-include-directories\": [\"include\"]}}\n"
+                        "  ]\n"
+                        "}\n"_str.as_bytes())
+            .is_ok());
+    auto candidates = Vec<PathBuf>::make();
+    candidates.push(manifest.clone());
+    auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
+        .family   = lito::config::StandardLibrary::Libcxx,
+        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .artifact = directory.join(PathBuf::from("libc++.so"_str).as_path()),
+        .module_manifest =
+            cpp::StandardLibraryModuleManifestCandidate {
+                .paths = rstd::move(candidates),
+            },
+    });
+    ASSERT_TRUE(catalog.is_ok());
+    EXPECT_EQ(catalog->modules.len(), usize(1));
+    auto entry = catalog->get("std"_str);
+    ASSERT_TRUE(entry.is_some());
+    EXPECT_EQ((*entry)->source.as_path(),
+              rstd::fs::canonicalize(source.as_path()).unwrap().as_path());
+    ASSERT_EQ((*entry)->system_include_directories.len(), usize(1));
+    EXPECT_EQ((*entry)->system_include_directories[usize {}].as_path(),
+              rstd::fs::canonicalize(include.as_path()).unwrap().as_path());
+    EXPECT_FALSE((*entry)->source_identity.is_empty());
+    EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+}
+
+TEST(ClangToolchain, ReportsTypedMissingStandardLibraryModuleManifest) {
+    auto candidates = Vec<PathBuf>::make();
+    candidates.push(PathBuf::from("/tmp/lito-missing-stdlib.modules.json"_str));
+    auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
+        .family   = lito::config::StandardLibrary::Libstdcxx,
+        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .artifact = PathBuf::from("/tmp/libstdc++.so"_str),
+        .module_manifest =
+            cpp::StandardLibraryModuleManifestCandidate {
+                .paths = rstd::move(candidates),
+            },
+    });
+    ASSERT_TRUE(catalog.is_err());
+    auto error = rstd::move(catalog).unwrap_err();
+    ASSERT_TRUE(error.is_StandardLibraryModule());
+    EXPECT_TRUE(error.as_StandardLibraryModule().source.is_Missing());
+}
+
+TEST(ClangToolchain, ReportsTypedAmbiguousStandardLibraryModuleManifest) {
+    auto directory = rstd::env::temp_dir().join(
+        PathBuf::from(rstd::format("lito-stdlib-ambiguous-{}", rstd::process::id()).as_str())
+            .as_path());
+    auto exists = rstd::fs::exists(directory.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    if (*exists) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
+    auto first_directory  = directory.join(PathBuf::from("first"_str).as_path());
+    auto second_directory = directory.join(PathBuf::from("second"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(first_directory.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(second_directory.as_path()).is_ok());
+    auto first  = first_directory.join(PathBuf::from("libc++.modules.json"_str).as_path());
+    auto second = second_directory.join(PathBuf::from("libc++.modules.json"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(first.as_path(), "{}"_str.as_bytes()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(second.as_path(), "{}"_str.as_bytes()).is_ok());
+    auto candidates = Vec<PathBuf>::make();
+    candidates.push(rstd::move(first));
+    candidates.push(rstd::move(second));
+    auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
+        .family   = lito::config::StandardLibrary::Libcxx,
+        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .artifact = directory.join(PathBuf::from("libc++.so"_str).as_path()),
+        .module_manifest =
+            cpp::StandardLibraryModuleManifestCandidate {
+                .paths = rstd::move(candidates),
+            },
+    });
+    ASSERT_TRUE(catalog.is_err());
+    auto error = rstd::move(catalog).unwrap_err();
+    ASSERT_TRUE(error.is_StandardLibraryModule());
+    EXPECT_TRUE(error.as_StandardLibraryModule().source.is_Ambiguous());
+    EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+}
+
+TEST(ClangToolchain, RejectsUnsupportedStandardLibraryModuleManifestVersion) {
+    auto directory = rstd::env::temp_dir().join(
+        PathBuf::from(rstd::format("lito-stdlib-version-{}", rstd::process::id()).as_str())
+            .as_path());
+    auto exists = rstd::fs::exists(directory.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    if (*exists) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
+    ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
+    auto manifest = directory.join(PathBuf::from("libstdc++.modules.json"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(manifest.as_path(),
+                                "{\"version\":2,\"revision\":1,\"modules\":[]}"_str.as_bytes())
+                    .is_ok());
+    auto candidates = Vec<PathBuf>::make();
+    candidates.push(rstd::move(manifest));
+    auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
+        .family   = lito::config::StandardLibrary::Libstdcxx,
+        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .artifact = directory.join(PathBuf::from("libstdc++.so"_str).as_path()),
+        .module_manifest =
+            cpp::StandardLibraryModuleManifestCandidate {
+                .paths = rstd::move(candidates),
+            },
+    });
+    ASSERT_TRUE(catalog.is_err());
+    auto error = rstd::move(catalog).unwrap_err();
+    ASSERT_TRUE(error.is_StandardLibraryModule());
+    const auto& source = error.as_StandardLibraryModule().source;
+    ASSERT_TRUE(source.is_Manifest());
+    EXPECT_TRUE(source.as_Manifest().message.as_str().contains("unsupported version/revision"_str));
+    EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+}
+
+TEST(ClangToolchain, ReportsManifestEntryForMissingStandardLibraryModuleSource) {
+    auto directory = rstd::env::temp_dir().join(
+        PathBuf::from(rstd::format("lito-stdlib-source-{}", rstd::process::id()).as_str())
+            .as_path());
+    auto exists = rstd::fs::exists(directory.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    if (*exists) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
+    ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
+    auto manifest = directory.join(PathBuf::from("libstdc++.modules.json"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(
+            manifest.as_path(),
+            R"json({"version":1,"revision":1,"modules":[{"logical-name":"std","source-path":"missing.cc","is-std-library":true}]})json"_str
+                .as_bytes())
+            .is_ok());
+    auto candidates = Vec<PathBuf>::make();
+    candidates.push(manifest.clone());
+    auto catalog = read_standard_library_module_catalog(cpp::ResolvedStandardLibrary {
+        .family   = lito::config::StandardLibrary::Libstdcxx,
+        .target   = String::make("x86_64-unknown-linux-gnu"_str),
+        .artifact = directory.join(PathBuf::from("libstdc++.so"_str).as_path()),
+        .module_manifest =
+            cpp::StandardLibraryModuleManifestCandidate {
+                .paths = rstd::move(candidates),
+            },
+    });
+    ASSERT_TRUE(catalog.is_err());
+    auto error = rstd::move(catalog).unwrap_err();
+    ASSERT_TRUE(error.is_StandardLibraryModule());
+    const auto& source = error.as_StandardLibraryModule().source;
+    ASSERT_TRUE(source.is_Io());
+    EXPECT_TRUE(source.as_Io().manifest.is_some());
+    EXPECT_EQ(source.as_Io().manifest->as_path(), manifest.as_path());
+    EXPECT_TRUE(source.as_Io().entry.is_some());
+    EXPECT_EQ(source.as_Io().entry->as_str(), "manifest.modules[0]"_str);
+    EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+}
+
+TEST(ClangToolchain, MaterializesStandardLibraryModuleAsBmiOnly) {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain = rstd::move(created).unwrap();
+    auto options   = cpp_options(
+        "c++23"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
+    auto context = cpp::CompileContext {
+        .id       = String::make("standard-context"_str),
+        .language = cpp::LanguageCompileContext::Cpp(
+            cpp::BmiRequest {}, rstd::move(options), cpp::CppPublicRequirements {}),
+    };
+    auto artifact = cpp::BmiArtifact {
+        .logical_name      = String::make("std"_str),
+        .provider_identity = String::make("standard-library:std"_str),
+        .key    = cpp::BmiArtifactKey { .value = String::make("standard-library-key"_str) },
+        .format = format(),
+        .path   = PathBuf::from("/tmp/lito-std.pcm"_str),
+    };
+    auto prepared = cpp::PreparedUnit {
+        .unit =
+            cpp::UnitSpec {
+                .owner    = cpp::CompileUnitOwner::StandardLibrary(cpp::StandardLibraryModuleUnit {
+                    .logical_name = String::make("std"_str),
+                }),
+                .source   = PathBuf::from("/tmp/std.cc"_str),
+                .object   = PathBuf::from("/tmp/std.o"_str),
+                .language = cpp::LanguageSourceUnit::Cpp(Some(rstd::move(artifact))),
+                .context  = rstd::addressof(context),
+            },
+        .working_directory = PathBuf::from("/tmp"_str),
+    };
+    auto scan = cpp::ScanResult {
+        .language = cpp::LanguageScanResult::Cpp(cpp::CppScanResult {
+            .provided = Some(frontend::ProvidedModule {
+                .logical_name = String::make("std"_str),
+                .is_interface = true,
+            }),
+        }),
+    };
+    auto invocation = toolchain.prepare_compile(prepared,
+                                                scan,
+                                                Vec<cpp::ModuleArtifactDependency>::make(),
+                                                cpp::CppCompileDisposition::BmiOnly);
+    ASSERT_TRUE(invocation.is_ok());
+    EXPECT_TRUE(invocation->final_object.is_none());
+    EXPECT_TRUE(invocation->final_bmi.is_some());
+    EXPECT_TRUE(has_argument(invocation->arguments, "-x"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "c++-module"_str));
+    EXPECT_TRUE(has_argument(invocation->arguments, "-Wno-reserved-module-identifier"_str));
+}
+
+TEST(ClangToolchain, RemovesTransientBmiOnlyObject) {
+    auto created = ClangToolchain::create(lito::config::ToolchainSpec {
+        .cxx = PathBuf::from("clang++"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
+    });
+    ASSERT_TRUE(created.is_ok());
+    auto toolchain = rstd::move(created).unwrap();
+    auto directory = rstd::env::temp_dir().join(
+        PathBuf::from(rstd::format("lito-bmi-only-toolchain-{}", rstd::process::id()).as_str())
+            .as_path());
+    auto exists = rstd::fs::exists(directory.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    if (*exists) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
+    ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
+    auto staged_object = directory.join(PathBuf::from("std.o.building"_str).as_path());
+    auto staged_bmi    = directory.join(PathBuf::from("std.pcm.building"_str).as_path());
+    auto final_bmi     = directory.join(PathBuf::from("std.pcm"_str).as_path());
+    auto script        = rstd::format(
+        "printf object > '{}'; printf bmi > '{}'", staged_object.as_path(), staged_bmi.as_path());
+    auto result = toolchain.execute_compile_capture(CompileInvocation {
+        .arguments         = strings("/bin/sh"_str, "-c"_str, script.as_str()),
+        .working_directory = directory.clone(),
+        .identity          = String::make("bmi-only-output"_str),
+        .staged_object     = staged_object.clone(),
+        .staged_bmi        = Some(staged_bmi.clone()),
+        .final_bmi         = Some(final_bmi.clone()),
+    });
+    ASSERT_TRUE(result.is_ok());
+    auto object_exists = rstd::fs::exists(staged_object.as_path());
+    auto bmi_exists    = rstd::fs::exists(final_bmi.as_path());
+    ASSERT_TRUE(object_exists.is_ok());
+    ASSERT_TRUE(bmi_exists.is_ok());
+    EXPECT_FALSE(*object_exists);
+    EXPECT_TRUE(*bmi_exists);
+    EXPECT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+}
+
 TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
     auto linux = lito::system::parse_target_info("x86_64-unknown-linux-gnu"_str);
     auto msvc  = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str);
@@ -236,7 +509,9 @@ TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
             .as_path());
     auto removed = rstd::fs::exists(directory.as_path());
     ASSERT_TRUE(removed.is_ok());
-    if (*removed) ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    if (*removed) {
+        ASSERT_TRUE(rstd::fs::remove_dir_all(directory.as_path()).is_ok());
+    }
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
 
     auto staged_object = directory.join(PathBuf::from("object.building"_str).as_path());
@@ -249,7 +524,7 @@ TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
         .working_directory = directory.clone(),
         .identity          = String::make("partial-output"_str),
         .staged_object     = staged_object.clone(),
-        .final_object      = final_object.clone(),
+        .final_object      = Some(final_object.clone()),
         .staged_bmi        = Some(staged_bmi.clone()),
         .final_bmi         = Some(final_bmi.clone()),
     };

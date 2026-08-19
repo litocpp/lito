@@ -11,7 +11,7 @@ import :modules.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using ProviderMap = rstd::collections::BTreeMap<String, lito::cpp::UnitId>;
+using ProviderMap = rstd::collections::BTreeMap<String, Vec<lito::cpp::UnitId>>;
 using StringSet   = rstd::collections::BTreeMap<String, empty>;
 
 namespace lito::cpp
@@ -39,6 +39,30 @@ auto contains_unit(const Vec<UnitId>& values, UnitId value) -> bool {
         if (item == value) return true;
     }
     return false;
+}
+
+auto provider_for(ref<str>                 logical_name,
+                  UnitId                   importer,
+                  const ProviderMap&       providers,
+                  const Vec<PreparedUnit>& units) -> ModuleResult<UnitId> {
+    auto candidates = providers.get(logical_name);
+    if (candidates.is_none()) {
+        return graph_failure<UnitId>(rstd::format("missing module provider '{}' imported by '{}'",
+                                                  logical_name,
+                                                  units[importer].unit.source.as_path()));
+    }
+    for (auto candidate : **candidates) {
+        if (units[candidate].unit.owner.is_Project()) return Ok(candidate);
+        const auto& module = units[candidate].unit.owner.as_StandardLibrary().module;
+        if (module.context_identity.as_str() ==
+            units[importer].unit.standard_library_context_identity.as_str()) {
+            return Ok(candidate);
+        }
+    }
+    return graph_failure<UnitId>(rstd::format(
+        "standard library module '{}' has no provider compatible with source '{}' context",
+        logical_name,
+        units[importer].unit.source.as_path()));
 }
 
 auto directly_visible(const PackagePlan& package, TargetId importer, TargetId provider) -> bool {
@@ -149,15 +173,32 @@ auto resolve_semantic_build(const PackagePlan&       package,
         const auto& facts = scan.language.as_Cpp().facts;
         if (facts.provided.is_none()) continue;
         const auto& provided = *facts.provided;
-        auto        existing = providers.get(provided.logical_name.as_str());
-        if (existing.is_some()) {
-            return graph_failure<ResolvedSemanticBuildGraph>(
-                rstd::format("duplicate module provider '{}': '{}' and '{}'",
-                             provided.logical_name.as_str(),
-                             units[**existing].unit.source.as_path(),
-                             units[scan.unit].unit.source.as_path()));
+        if (units[scan.unit].unit.owner.is_Project() &&
+            is_standard_library_module_name(provided.logical_name.as_str())) {
+            return Err(ModuleError::ReservedProvider(units[scan.unit].unit.source.clone(),
+                                                     provided.logical_name.clone()));
         }
-        providers.insert(provided.logical_name.clone(), scan.unit);
+        auto existing = providers.get_mut(provided.logical_name.as_str());
+        if (existing.is_some()) {
+            for (auto other : **existing) {
+                const auto project_conflict = units[other].unit.owner.is_Project() ||
+                                              units[scan.unit].unit.owner.is_Project();
+                const auto same_context =
+                    units[other].unit.standard_library_context_identity.as_str() ==
+                    units[scan.unit].unit.standard_library_context_identity.as_str();
+                if (! project_conflict && ! same_context) continue;
+                return graph_failure<ResolvedSemanticBuildGraph>(
+                    rstd::format("duplicate module provider '{}': '{}' and '{}'",
+                                 provided.logical_name.as_str(),
+                                 units[other].unit.source.as_path(),
+                                 units[scan.unit].unit.source.as_path()));
+            }
+            (**existing).emplace_back(scan.unit);
+            continue;
+        }
+        auto values = Vec<UnitId>::make();
+        values.emplace_back(scan.unit);
+        providers.insert(provided.logical_name.clone(), rstd::move(values));
     }
 
     for (auto unit : cpp_units) {
@@ -168,20 +209,19 @@ auto resolve_semantic_build(const PackagePlan&       package,
         auto        separator = provided.logical_name.as_str().find(":"_str);
         if (separator.is_none()) continue;
         auto primary_name     = provided.logical_name.as_str().split_at(*separator).get<0>();
-        auto primary_provider = providers.get(primary_name);
-        if (primary_provider.is_none()) {
+        auto primary_provider = provider_for(primary_name, scan.unit, providers, units);
+        if (primary_provider.is_err()) return Err(rstd::move(primary_provider).unwrap_err());
+        auto primary_target   = project_target(units[*primary_provider].unit);
+        auto partition_target = project_target(units[scan.unit].unit);
+        if (primary_target.is_none() || partition_target.is_none()) {
             return graph_failure<ResolvedSemanticBuildGraph>(
-                rstd::format("partition '{}' has no primary module provider '{}'",
-                             provided.logical_name.as_str(),
-                             primary_name));
+                "standard library modules cannot participate in project partitions"_str);
         }
-        const auto  primary_target   = units[**primary_provider].unit.target;
-        const auto  partition_target = units[scan.unit].unit.target;
         const auto& primary_affiliation =
-            package.package->targets[primary_target].module_affiliation;
+            package.package->targets[*primary_target].module_affiliation;
         const auto& partition_affiliation =
-            package.package->targets[partition_target].module_affiliation;
-        if (primary_target != partition_target &&
+            package.package->targets[*partition_target].module_affiliation;
+        if (*primary_target != *partition_target &&
             (primary_affiliation.is_none() || partition_affiliation.is_none() ||
              ! module_name_belongs(primary_affiliation->as_str(), primary_name) ||
              ! module_name_belongs(partition_affiliation->as_str(), primary_name))) {
@@ -191,7 +231,7 @@ auto resolve_semantic_build(const PackagePlan&       package,
                              provided.logical_name.as_str(),
                              primary_name));
         }
-        const auto& primary_context   = *units[**primary_provider].unit.context;
+        const auto& primary_context   = *units[*primary_provider].unit.context;
         const auto& partition_context = *units[scan.unit].unit.context;
         if (! primary_context.language.is_Cpp() || ! partition_context.language.is_Cpp()) {
             return graph_failure<ResolvedSemanticBuildGraph>(
@@ -228,23 +268,20 @@ auto resolve_semantic_build(const PackagePlan&       package,
         const auto& facts = scan.language.as_Cpp().facts;
         auto        names = StringSet::make();
         for (const auto& required : facts.required_modules) {
-            auto provider = providers.get(required.logical_name.as_str());
-            if (provider.is_none()) {
-                return graph_failure<ResolvedSemanticBuildGraph>(
-                    rstd::format("missing module provider '{}' imported by '{}'",
-                                 required.logical_name.as_str(),
-                                 units[scan.unit].unit.source.as_path()));
-            }
-            const auto provider_unit   = **provider;
-            const auto importer_target = units[scan.unit].unit.target;
-            const auto provider_target = units[provider_unit].unit.target;
-            if (importer_target >= package.visible_targets.len() ||
-                ! contains_target(package.visible_targets[importer_target], provider_target)) {
+            auto provider =
+                provider_for(required.logical_name.as_str(), scan.unit, providers, units);
+            if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
+            const auto provider_unit   = *provider;
+            auto       importer_target = project_target(units[scan.unit].unit);
+            auto       provider_target = project_target(units[provider_unit].unit);
+            if (importer_target.is_some() && provider_target.is_some() &&
+                (*importer_target >= package.visible_targets.len() ||
+                 ! contains_target(package.visible_targets[*importer_target], *provider_target))) {
                 return graph_failure<ResolvedSemanticBuildGraph>(
                     rstd::format("module '{}' from target '{}' is not visible to target '{}'",
                                  required.logical_name.as_str(),
-                                 package.package->targets[provider_target].id.name.as_str(),
-                                 package.package->targets[importer_target].id.name.as_str()));
+                                 package.package->targets[*provider_target].id.name.as_str(),
+                                 package.package->targets[*importer_target].id.name.as_str()));
             }
             const auto& provider_context = *units[provider_unit].unit.context;
             const auto& importer_context = *units[scan.unit].unit.context;
@@ -332,13 +369,15 @@ auto resolve_semantic_build(const PackagePlan&       package,
             facts.provided->logical_name.as_str().contains(":"_str)) {
             continue;
         }
-        auto target = units[scan.unit].unit.target;
-        if (! contains_unit(public_target_units[target], scan.unit)) {
-            public_target_units[target].emplace_back(scan.unit);
+        auto target = project_target(units[scan.unit].unit);
+        if (target.is_none()) continue;
+        if (! contains_unit(public_target_units[*target], scan.unit)) {
+            public_target_units[*target].emplace_back(scan.unit);
         }
         for (auto exported : public_inputs[scan.unit]) {
-            if (! contains_unit(public_target_units[target], exported)) {
-                public_target_units[target].emplace_back(exported);
+            if (! units[exported].unit.owner.is_Project()) continue;
+            if (! contains_unit(public_target_units[*target], exported)) {
+                public_target_units[*target].emplace_back(exported);
             }
         }
     }
@@ -346,37 +385,42 @@ auto resolve_semantic_build(const PackagePlan&       package,
     for (auto unit : cpp_units) {
         const auto& scan            = scans[unit];
         const auto& facts           = scan.language.as_Cpp().facts;
-        const auto  importer_target = units[scan.unit].unit.target;
+        auto        importer_target = project_target(units[scan.unit].unit);
+        if (importer_target.is_none()) continue;
         for (const auto& required : facts.required_modules) {
-            auto provider        = providers.get(required.logical_name.as_str());
-            auto provider_unit   = **provider;
-            auto provider_target = units[provider_unit].unit.target;
+            auto provider =
+                provider_for(required.logical_name.as_str(), scan.unit, providers, units);
+            if (provider.is_err()) return Err(rstd::move(provider).unwrap_err());
+            auto provider_unit   = *provider;
+            auto provider_target = project_target(units[provider_unit].unit);
+            if (provider_target.is_none()) continue;
             if (required.exported &&
-                contains_unit(public_target_units[importer_target], scan.unit) &&
-                importer_target != provider_target &&
-                ! contains_target(package.public_targets[importer_target], provider_target)) {
+                contains_unit(public_target_units[*importer_target], scan.unit) &&
+                *importer_target != *provider_target &&
+                ! contains_target(package.public_targets[*importer_target], *provider_target)) {
                 return graph_failure<ResolvedSemanticBuildGraph>(rstd::format(
                     "module '{}' export-imports module '{}' from target '{}', but that target is "
                     "not a public dependency",
                     facts.provided->logical_name.as_str(),
                     required.logical_name.as_str(),
-                    package.package->targets[provider_target].id.name.as_str()));
+                    package.package->targets[*provider_target].id.name.as_str()));
             }
-            if (directly_visible(package, importer_target, provider_target) ||
-                publicly_reexported(package, public_target_units, importer_target, provider_unit)) {
+            if (directly_visible(package, *importer_target, *provider_target) ||
+                publicly_reexported(
+                    package, public_target_units, *importer_target, provider_unit)) {
                 continue;
             }
-            if (package.package->targets[importer_target].test_attachment.is_some() &&
-                importer_target < package.visible_targets.len() &&
-                contains_target(package.visible_targets[importer_target], provider_target)) {
+            if (package.package->targets[*importer_target].test_attachment.is_some() &&
+                *importer_target < package.visible_targets.len() &&
+                contains_target(package.visible_targets[*importer_target], *provider_target)) {
                 continue;
             }
             return graph_failure<ResolvedSemanticBuildGraph>(rstd::format(
                 "module '{}' from target '{}' is not directly visible or re-exported to target "
                 "'{}'",
                 required.logical_name.as_str(),
-                package.package->targets[provider_target].id.name.as_str(),
-                package.package->targets[importer_target].id.name.as_str()));
+                package.package->targets[*provider_target].id.name.as_str(),
+                package.package->targets[*importer_target].id.name.as_str()));
         }
     }
 

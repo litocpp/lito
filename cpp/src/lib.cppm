@@ -14,3 +14,4 @@ export import :link;
 export import :source;
 export import :package;
 export import :modules;
+export import :standard_library;

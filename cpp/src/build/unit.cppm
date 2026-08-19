@@ -8,6 +8,7 @@ import lito.frontend;
 import :bmi.artifact;
 import :package.spec;
 import :package.target;
+import :standard_library.model;
 
 using namespace rstd::prelude;
 
@@ -16,13 +17,20 @@ export namespace lito::cpp
 
 using UnitId = usize;
 
+enum class CppCompileDisposition
+{
+    ObjectOnly,
+    ObjectAndBmi,
+    BmiOnly,
+};
+
 class LanguageSourceUnit {
     RSTD_ENUM_DEFAULT(LanguageSourceUnit, (Cpp), (C), (Cpp, (Option<BmiArtifact> bmi;)))
 };
 
 struct UnitSpec {
     UnitId                         id {};
-    TargetId                       target {};
+    CompileUnitOwner               owner;
     PathBuf                        relative_source;
     String                         source_origin_identity;
     PathBuf                        source;
@@ -31,8 +39,22 @@ struct UnitSpec {
     Option<PathBuf>                compile_test_record;
     LanguageSourceUnit             language;
     const CompileContext*          context {};
+    const PackageCompileMetadata*  compile_metadata {};
     const ResolvedCompileTestCase* compile_test {};
+    String                         standard_library_context_identity;
 };
+
+auto project_target(const UnitSpec& unit) noexcept -> Option<TargetId> {
+    return unit.owner.is_Project() ? Some<TargetId>(unit.owner.as_Project().target) : None();
+}
+
+auto standard_library_module(const UnitSpec& unit) noexcept
+    -> Option<ref<StandardLibraryModuleUnit>> {
+    return unit.owner.is_StandardLibrary()
+               ? Some(ref<StandardLibraryModuleUnit>::from_raw_parts(
+                     rstd::addressof(unit.owner.as_StandardLibrary().module)))
+               : None();
+}
 
 struct PreparedUnit {
     UnitSpec                           unit;

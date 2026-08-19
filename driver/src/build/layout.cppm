@@ -243,6 +243,14 @@ public:
             join(output_.as_path(), "obj"_str).as_path(), target, relative_source, ".o"_str);
     }
 
+    auto standard_module_object(ref<str> context_identity, ref<str> logical_name) const -> PathBuf {
+        auto root     = join(join(output_.as_path(), "obj"_str).as_path(), "standard-library"_str);
+        auto context  = join(root.as_path(), rstd::crypto::sha256_hex(context_identity).as_str());
+        auto filename = module_filename(logical_name);
+        filename.push_str(".o"_str);
+        return context.join(PathBuf::from(rstd::move(filename)).as_path());
+    }
+
     auto compile_cache_directory() const -> PathBuf {
         return join(output_.as_path(), "lito-cache"_str);
     }
@@ -269,6 +277,28 @@ public:
                     ref<rstd::path::Path> relative_source) const -> BuildLayoutResult<PathBuf> {
         auto directory = cache_target_directory(target);
         return relative_source_path(directory.as_path(), relative_source, ".json"_str);
+    }
+
+    auto standard_module_cache_directory(ref<str> context_identity) const -> PathBuf {
+        auto root = join(compile_cache_directory().as_path(), "standard-library"_str);
+        return join(root.as_path(), rstd::crypto::sha256_hex(context_identity).as_str());
+    }
+
+    auto cache_standard_module_unit(ref<str> context_identity, ref<str> logical_name) const
+        -> PathBuf {
+        auto directory = standard_module_cache_directory(context_identity);
+        auto filename  = module_filename(logical_name);
+        filename.push_str(".json"_str);
+        return directory.join(PathBuf::from(rstd::move(filename)).as_path());
+    }
+
+    auto cache_standard_module_scan(ref<str> context_identity, ref<str> logical_name) const
+        -> PathBuf {
+        auto root      = join(scan_cache_directory().as_path(), "standard-library"_str);
+        auto directory = join(root.as_path(), rstd::crypto::sha256_hex(context_identity).as_str());
+        auto filename  = module_filename(logical_name);
+        filename.push_str(".json"_str);
+        return directory.join(PathBuf::from(rstd::move(filename)).as_path());
     }
 
     auto cache_compile_test(const lito::package::PackageTargetId& target,

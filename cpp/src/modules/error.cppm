@@ -14,6 +14,7 @@ class ModuleError {
     RSTD_ENUM(ModuleError,
               (Convention, (String message;)),
               (Graph, (String message;)),
+              (ReservedProvider, (rstd::path::PathBuf source; String logical_name;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)))
 };
 
@@ -33,6 +34,13 @@ struct Impl<fmt::Display, lito::cpp::ModuleError> : ImplBase<lito::cpp::ModuleEr
             return formatter.write_str(error.as_Convention().message.as_str());
         }
         if (error.is_Graph()) return formatter.write_str(error.as_Graph().message.as_str());
+        if (error.is_ReservedProvider()) {
+            const auto& value = error.as_ReservedProvider();
+            return formatter.write_fmt(fmt::Arguments::make(
+                "project source '{}' provides reserved standard library module '{}'",
+                value.source.as_path(),
+                value.logical_name));
+        }
         const auto& value = error.as_Io();
         return formatter.write_fmt(fmt::Arguments::make(
             "cannot {} module path '{}'", value.operation, value.path.as_path()));
