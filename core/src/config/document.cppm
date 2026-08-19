@@ -28,6 +28,9 @@ auto load_project_config(ref<rstd::path::Path> root, ProjectConfigRequest reques
 auto load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode = ConfigLoadMode::Enabled)
     -> ConfigResult<ProjectConfig>;
 
+auto load_host_tool_command_config(ref<rstd::path::Path> root, ProjectConfigRequest request)
+    -> ConfigResult<HostToolCommandConfig>;
+
 auto get_persisted_config(ref<rstd::path::Path> root, Option<String> key)
     -> ConfigResult<ConfigQuery>;
 

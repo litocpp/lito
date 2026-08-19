@@ -11,7 +11,8 @@ target_sources(
           src/command/scan.cpp
           src/command/update.cpp
           src/dependency/external_source.cpp
-          src/install/store.cpp)
+          src/install/store.cpp
+          src/sdk/mod.cpp)
 target_sources(
   lito.driver
   PUBLIC FILE_SET
@@ -97,7 +98,8 @@ target_sources(
          src/command/doc_tool.cppm
          src/install/catalog.cppm
          src/install/publication.cppm
-         src/project/mod.cppm)
+         src/project/mod.cppm
+         src/sdk/mod.cppm)
 target_link_libraries(
   lito.driver
   PUBLIC lito.core lito.cpp lito.toolchain lito.frontend rstd.std

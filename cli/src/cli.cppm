@@ -146,6 +146,12 @@ struct ConfigUnsetOptions {
     String key;
 };
 
+struct SdkListOptions {};
+
+struct SdkInstallOptions {
+    String version;
+};
+
 class LockCommand {
     RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
 };
@@ -156,6 +162,12 @@ class ConfigCommand {
               (Get, (ConfigGetOptions options;)),
               (Set, (ConfigSetOptions options;)),
               (Unset, (ConfigUnsetOptions options;)))
+};
+
+class SdkCommand {
+    RSTD_ENUM(SdkCommand,
+              (List, (SdkListOptions options;)),
+              (Install, (SdkInstallOptions options;)))
 };
 
 class CliCommand {
@@ -169,7 +181,8 @@ class CliCommand {
               (Format, (FormatOptions options;)),
               (Update, (UpdateOptions options;)),
               (Lock, (LockCommand command;)),
-              (Config, (ConfigCommand command;)))
+              (Config, (ConfigCommand command;)),
+              (Sdk, (SdkCommand command;)))
 };
 
 class CliOutcome {
@@ -411,6 +424,27 @@ struct ConfigSchema {
     auto decode(const Matches& matches) const -> Result<ConfigCommand, CliDecodeError>;
 };
 
+struct SdkListSchema {
+    CommandKey command;
+
+    auto decode(const Matches& matches) const -> Result<SdkListOptions, CliDecodeError>;
+};
+
+struct SdkInstallSchema {
+    CommandKey     command;
+    ArgKey<String> version;
+
+    auto decode(const Matches& matches) const -> Result<SdkInstallOptions, CliDecodeError>;
+};
+
+struct SdkSchema {
+    CommandKey       command;
+    SdkListSchema    list;
+    SdkInstallSchema install;
+
+    auto decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError>;
+};
+
 struct CliSchema {
     RootArgs      root;
     BuildSchema   build;
@@ -423,6 +457,7 @@ struct CliSchema {
     UpdateSchema  update;
     LockSchema    lock;
     ConfigSchema  config;
+    SdkSchema     sdk;
     Parser        parser;
 };
 
@@ -890,6 +925,35 @@ auto make_config_definition() -> CommandDefinition<ConfigSchema> {
     };
 }
 
+auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
+    auto list_command = Command::make("list"_str);
+    list_command.about("List LLVM SDKs for the current host"_str);
+    auto list_key = list_command.key();
+
+    auto install_command = Command::make("install"_str);
+    install_command.about("Install an LLVM SDK"_str);
+    auto install_key = install_command.key();
+    auto version     = install_command.add_arg(Arg<String>::value("version"_str, string_parser())
+                                                   .value_name("VERSION"_str)
+                                                   .help("Exact LLVM version to install"_str)
+                                                   .required());
+
+    auto command = Command::make("sdk"_str);
+    command.about("Manage LLVM SDKs"_str);
+    command.require_subcommand();
+    auto key = command.key();
+    command.add_subcommand(rstd::move(list_command));
+    command.add_subcommand(rstd::move(install_command));
+    return {
+        SdkSchema {
+            .command = key,
+            .list    = SdkListSchema { .command = list_key },
+            .install = SdkInstallSchema { .command = install_key, .version = version },
+        },
+        rstd::move(command),
+    };
+}
+
 auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto build   = make_build_definition();
     auto install = make_install_definition();
@@ -901,6 +965,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     auto update  = make_update_definition();
     auto lock    = make_lock_definition();
     auto config  = make_config_definition();
+    auto sdk     = make_sdk_definition();
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
@@ -926,6 +991,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(update.command));
     root.add_subcommand(rstd::move(lock.command));
     root.add_subcommand(rstd::move(config.command));
+    root.add_subcommand(rstd::move(sdk.command));
 
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
@@ -941,6 +1007,7 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
         .update  = rstd::move(update.schema),
         .lock    = rstd::move(lock.schema),
         .config  = rstd::move(config.schema),
+        .sdk     = rstd::move(sdk.schema),
         .parser  = rstd::move(parser).unwrap(),
     });
 }
@@ -1309,6 +1376,27 @@ auto ConfigSchema::decode(const Matches& matches) const -> Result<ConfigCommand,
     return Err(CliDecodeError::CommandMismatch(String::make("config"_str)));
 }
 
+auto SdkListSchema::decode(const Matches&) const -> Result<SdkListOptions, CliDecodeError> {
+    return Ok(SdkListOptions {});
+}
+
+auto SdkInstallSchema::decode(const Matches& matches) const
+    -> Result<SdkInstallOptions, CliDecodeError> {
+    return Ok(SdkInstallOptions {
+        .version = rstd_try(required_string(matches, version, "version"_str)),
+    });
+}
+
+auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError> {
+    if (auto child = matches.subcommand_matches(list.command); child.is_some()) {
+        return Ok(SdkCommand::List(rstd_try(list.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(install.command); child.is_some()) {
+        return Ok(SdkCommand::Install(rstd_try(install.decode(**child))));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
+}
+
 auto decode_command(const CliSchema& schema, const Matches& matches)
     -> Result<CliCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
@@ -1350,6 +1438,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
     if (auto child = matches.subcommand_matches(schema.config.command); child.is_some()) {
         auto command = rstd_try(schema.config.decode(**child));
         return Ok(CliCommand::Config(rstd::move(command)));
+    }
+    if (auto child = matches.subcommand_matches(schema.sdk.command); child.is_some()) {
+        auto command = rstd_try(schema.sdk.decode(**child));
+        return Ok(CliCommand::Sdk(rstd::move(command)));
     }
     return Err(CliDecodeError::CommandMismatch(String::make("lito"_str)));
 }

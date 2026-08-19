@@ -34,6 +34,7 @@ persisted local config directly.
 - [`test` and `bench`](test-and-bench.md)
 - [`doc`, `scan`, and `format`](doc-scan-and-format.md)
 - [`update`, `lock`, and `config`](update-lock-and-config.md)
+- [`sdk`](sdk.md)
 
 Lito reports errors as a cause chain on stderr and returns a non-zero exit status. Commands that
 emit JSON or config values reserve stdout for that result.

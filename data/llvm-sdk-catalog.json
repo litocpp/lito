@@ -1,0 +1,36 @@
+{
+  "schema": 1,
+  "kind": "lito-llvm-sdk-catalog",
+  "releases": [
+    {
+      "version": "22.1.8",
+      "upstream-tag": "llvmorg-22.1.8",
+      "artifacts": [
+        {
+          "host": {
+            "os": "linux",
+            "architecture": "x86_64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/LLVM-22.1.8-Linux-X64.tar.xz",
+            "sha256": "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384",
+            "size": 1938859476,
+            "root": "LLVM-22.1.8-Linux-X64"
+          },
+          "paths": {
+            "cc": "bin/clang",
+            "cxx": "bin/clang++",
+            "linker": "bin/ld.lld",
+            "archiver": "bin/llvm-ar",
+            "strip": "bin/llvm-strip",
+            "format": "bin/clang-format",
+            "llvm-config": "bin/llvm-config",
+            "cmake": "lib/cmake",
+            "clang-cpp": "lib/libclang-cpp.so"
+          }
+        }
+      ]
+    }
+  ]
+}

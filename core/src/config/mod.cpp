@@ -437,6 +437,16 @@ auto lito::config::load_project_config(ref<rstd::path::Path> root, ConfigLoadMod
                                });
 }
 
+auto lito::config::load_host_tool_command_config(ref<rstd::path::Path> root,
+                                                 ProjectConfigRequest  request)
+    -> ConfigResult<HostToolCommandConfig> {
+    auto document = rstd_try(open_config_document(root, request.mode));
+    for (usize index {}; index < request.overrides.len(); ++index) {
+        rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
+    }
+    return decode_host_tool_command_config(document.location.root.clone(), document.value);
+}
+
 auto lito::config::get_persisted_config(ref<rstd::path::Path> root, Option<String> key)
     -> ConfigResult<ConfigQuery> {
     auto location = rstd_try(resolve_config_location(root));

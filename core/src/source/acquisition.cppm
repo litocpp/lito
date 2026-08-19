@@ -11,6 +11,7 @@ import :source.error;
 import :source.event;
 import lito.system;
 import :source.seed;
+import :acquisition;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -74,357 +75,29 @@ auto archive_tool_requirement(const ArchiveSourceFetchRequest& request,
         request.name.is_empty() ? request.url.as_str() : request.name.as_str());
 }
 
-auto process_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> SourceResult<empty> {
-    auto text = path.to_str();
-    if (text.is_none()) {
-        return source_failure<empty>(
-            rstd::format("source operation path '{}' is not valid UTF-8", path));
-    }
-    arguments.push(String::make(*text));
-    return Ok(empty {});
-}
-
-auto file_digest_matches(ref<rstd::path::Path> path, ref<str> expected) -> SourceResult<bool> {
-    auto opened = rstd::fs::File::open(path);
-    if (opened.is_err()) {
-        auto error = rstd::move(opened).unwrap_err();
-        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound })
-            return Ok(false);
-        return source_io_failure<bool>("open source file"_str, path, rstd::move(error));
-    }
-    auto file   = rstd::move(opened).unwrap();
-    auto state  = rstd::crypto::Sha256::make();
-    auto buffer = array<u8, 65536> {};
-    while (true) {
-        auto read = file.read(buffer.as_mut_slice());
-        if (read.is_err()) {
-            return source_io_failure<bool>(
-                "read source file"_str, path, rstd::move(read).unwrap_err());
-        }
-        if (*read == usize {}) break;
-        state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
-    }
-    auto actual = rstd::crypto::sha256_hex(rstd::move(state).finalize());
-    if (actual.len() != expected.len()) return Ok(false);
-    for (usize index {}; index < actual.len(); ++index) {
-        auto value = expected.as_bytes()[index].to_primitive();
-        if (value >= 'A' && value <= 'F') value += 'a' - 'A';
-        if (actual.as_str().as_bytes()[index].to_primitive() != value) return Ok(false);
-    }
-    return Ok(true);
-}
-
-auto reserve_staging_path(ref<rstd::path::Path> bucket) -> SourceResult<PathBuf> {
-    for (usize index {}; index < usize(64); ++index) {
-        auto name      = rstd::format("source.tmp.{}", index);
-        auto candidate = PathBuf::from(bucket).join(PathBuf::from(rstd::move(name)).as_path());
-        auto created   = rstd::fs::File::create_new(candidate.as_path());
-        if (created.is_ok()) return Ok(rstd::move(candidate));
-        auto error = rstd::move(created).unwrap_err();
-        if (error.kind() !=
-            rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::AlreadyExists }) {
-            return source_io_failure<PathBuf>(
-                "reserve source download staging file"_str, candidate.as_path(), rstd::move(error));
-        }
-    }
-    return source_failure<PathBuf>("cannot reserve source download staging file"_str);
-}
-
-auto cached_payload_is_ordinary(ref<rstd::path::Path> source) -> SourceResult<bool> {
-    auto metadata = rstd::fs::symlink_metadata(source);
-    if (metadata.is_err()) {
-        auto error = rstd::move(metadata).unwrap_err();
-        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound })
-            return Ok(false);
-        return source_io_failure<bool>("inspect cached source file"_str, source, rstd::move(error));
-    }
-    if (! metadata->is_file()) {
-        return source_failure<bool>(
-            rstd::format("cached source '{}' must be an ordinary file", source));
-    }
-    return Ok(true);
-}
-
-enum class FetchedFileOrigin
-{
-    Seed,
-    Cache,
+struct SourceAcquisitionObserver {
+    SourceEventSink sink;
 };
 
-struct FetchedFile {
-    String            identity;
-    PathBuf           path;
-    FetchedFileOrigin origin { FetchedFileOrigin::Cache };
-
-    auto clone() const -> FetchedFile {
-        return FetchedFile {
-            .identity = identity.clone(),
-            .path     = path.clone(),
-            .origin   = origin,
-        };
-    }
-};
-
-auto locate_verified_file_seed(const ArchiveSourceFetchRequest& request,
-                               const PackageSourceConfig&       source_config)
-    -> SourceResult<Option<FetchedFile>> {
-    auto identity = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
-    auto located  = rstd_try(locate_fetch_seed(source_config.fetch_seeds, identity));
-    if (located.is_none()) return Ok(None());
-    auto matches = rstd_try(file_digest_matches(located->as_path(), request.sha256.as_str()));
-    if (! matches) {
-        return source_failure<Option<FetchedFile>>(
-            rstd::format("file fetch seed '{}' does not match SHA-256 '{}'",
-                         located->as_path(),
-                         request.sha256));
-    }
-    return Ok(Some(FetchedFile {
-        .identity = archive_source_identity(request.url.as_str(), request.sha256.as_str()),
-        .path     = rstd::move(located).unwrap(),
-        .origin   = FetchedFileOrigin::Seed,
-    }));
+void observe_acquisition(void* raw, const lito::acquisition::AcquisitionEvent& event) noexcept {
+    auto& observer = *static_cast<SourceAcquisitionObserver*>(raw);
+    if (observer.sink.notify == nullptr) return;
+    observer.sink.notify(observer.sink.context,
+                         SourceEvent {
+                             .kind   = event.kind == lito::acquisition::AcquisitionEventKind::Fetch
+                                           ? SourceEventKind::Fetch
+                                           : SourceEventKind::Extract,
+                             .source = event.source,
+                             .destination = event.destination,
+                         });
 }
 
-auto acquire_cached_file(ArchiveSourceFetchRequest         request,
-                         const SourceCacheSession&         session,
-                         const FileCacheLayout&            layout,
-                         ref<rstd::path::Path>             curl_executable,
-                         const ResolvedProcessEnvironment& environment,
-                         const PackageSourceConfig&        source_config,
-                         SourceEventSink                   observer) -> SourceResult<FetchedFile> {
-    (void)session;
-    auto identity  = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
-    auto fetch_key = fetch_identity_stable_key(identity);
-    auto bucket    = layout.bucket(fetch_key.as_str());
-    auto created   = rstd::fs::create_dir_all(bucket.as_path());
-    if (created.is_err()) {
-        return source_io_failure<FetchedFile>(
-            "create file source cache"_str, bucket.as_path(), rstd::move(created).unwrap_err());
-    }
-    auto source = layout.source(fetch_key.as_str());
-    auto exists = rstd_try(cached_payload_is_ordinary(source.as_path()));
-    if (exists && rstd_try(file_digest_matches(source.as_path(), request.sha256.as_str()))) {
-        return Ok(FetchedFile {
-            .identity = archive_source_identity(request.url.as_str(), request.sha256.as_str()),
-            .path     = rstd::move(source),
-            .origin   = FetchedFileOrigin::Cache,
-        });
-    }
-    if (source_config.network == NetworkPolicy::Offline) {
-        return source_failure<FetchedFile>(rstd::format(
-            "offline source resolution cannot fetch file source '{}'", request.url.as_str()));
-    }
-
-    auto staging   = rstd_try(reserve_staging_path(bucket.as_path()));
-    auto arguments = Vec<String>::make();
-    rstd_try(process_path(arguments, curl_executable));
-    arguments.push(String::make("--fail"_str));
-    arguments.push(String::make("--location"_str));
-    arguments.push(String::make("--silent"_str));
-    arguments.push(String::make("--show-error"_str));
-    arguments.push(String::make("--globoff"_str));
-    arguments.push(String::make("--output"_str));
-    rstd_try(process_path(arguments, staging.as_path()));
-    arguments.push(String::make("--"_str));
-    arguments.push(request.url.clone());
-    if (observer.notify != nullptr) {
-        observer.notify(
-            observer.context,
-            SourceEvent { SourceEventKind::Fetch, request.url.as_str(), source.as_path() });
-    }
-    auto downloaded = run_command(arguments, environment);
-    if (downloaded.is_err()) {
-        (void)rstd::fs::remove_file(staging.as_path());
-        return Err(SourceError::System(rstd::format("file source '{}' download", request.url),
-                                       rstd::move(downloaded).unwrap_err()));
-    }
-    if (downloaded->exit_code != i32 {}) {
-        (void)rstd::fs::remove_file(staging.as_path());
-        return source_failure<FetchedFile>(
-            rstd::format("file source '{}' download failed with exit code {}:\n{}{}",
-                         request.url,
-                         downloaded->exit_code,
-                         downloaded->standard_output,
-                         downloaded->standard_error));
-    }
-    auto matches = file_digest_matches(staging.as_path(), request.sha256.as_str());
-    if (matches.is_err()) {
-        (void)rstd::fs::remove_file(staging.as_path());
-        return Err(rstd::move(matches).unwrap_err());
-    }
-    if (! *matches) {
-        (void)rstd::fs::remove_file(staging.as_path());
-        return source_failure<FetchedFile>(rstd::format(
-            "file source '{}' does not match SHA-256 '{}'", request.url, request.sha256));
-    }
-    if (exists) {
-        auto removed = rstd::fs::remove_file(source.as_path());
-        if (removed.is_err()) {
-            (void)rstd::fs::remove_file(staging.as_path());
-            return source_io_failure<FetchedFile>("replace cached source file"_str,
-                                                  source.as_path(),
-                                                  rstd::move(removed).unwrap_err());
-        }
-    }
-    auto published = rstd::fs::rename(staging.as_path(), source.as_path());
-    if (published.is_err()) {
-        (void)rstd::fs::remove_file(staging.as_path());
-        return source_io_failure<FetchedFile>(
-            "publish cached source file"_str, source.as_path(), rstd::move(published).unwrap_err());
-    }
-    return Ok(FetchedFile {
-        .identity = archive_source_identity(request.url.as_str(), request.sha256.as_str()),
-        .path     = rstd::move(source),
-        .origin   = FetchedFileOrigin::Cache,
-    });
-}
-
-struct FetchedFileTask {
-    usize       request {};
-    FetchedFile file;
-};
-
-auto locate_cached_file(const ArchiveSourceFetchRequest& request, const FileCacheLayout& layout)
-    -> SourceResult<Option<FetchedFile>> {
-    auto identity  = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
-    auto fetch_key = fetch_identity_stable_key(identity);
-    auto source    = layout.source(fetch_key.as_str());
-    auto exists    = rstd_try(cached_payload_is_ordinary(source.as_path()));
-    if (! exists || ! rstd_try(file_digest_matches(source.as_path(), request.sha256.as_str()))) {
-        return Ok(Option<FetchedFile> {});
-    }
-    return Ok(Some(FetchedFile {
-        .identity = archive_source_identity(request.url.as_str(), request.sha256.as_str()),
-        .path     = rstd::move(source),
-        .origin   = FetchedFileOrigin::Cache,
-    }));
-}
-
-auto acquire_file_frontier(Vec<ArchiveSourceFetchRequest>    requests,
-                           usize                             jobs,
-                           ToolResolver&                     resolver,
-                           const ResolvedProcessEnvironment& environment,
-                           const PackageSourceConfig&        source_config,
-                           SourceEventSink observer) -> SourceResult<Vec<FetchedFile>> {
-    auto fetched = Vec<Option<FetchedFile>>::with_capacity(requests.len());
-    auto pending = Vec<usize>::make();
-    for (usize index {}; index < requests.len(); ++index) {
-        auto seed = rstd_try(locate_verified_file_seed(requests[index], source_config));
-        if (seed.is_some()) {
-            resolver.report_not_required(
-                archive_tool_requirement(requests[index], HostToolCapability::HttpDownload),
-                "verified fetch seed is available"_str);
-            fetched.push(Some(rstd::move(seed).unwrap()));
-        } else {
-            fetched.push(None());
-            pending.push(usize(index));
-        }
-    }
-    if (! pending.is_empty()) {
-        auto root = LitoDataRoot::resolve();
-        if (root.is_err()) return Err(rstd::into<SourceError>(rstd::move(root).unwrap_err()));
-        auto session = root->acquire_source_cache();
-        if (session.is_err()) {
-            return Err(rstd::into<SourceError>(rstd::move(session).unwrap_err()));
-        }
-        auto layout = session->open_file_cache();
-        if (layout.is_err()) {
-            return Err(rstd::into<SourceError>(rstd::move(layout).unwrap_err()));
-        }
-        auto downloads = Vec<usize>::make();
-        for (const auto index : pending) {
-            auto cached = rstd_try(locate_cached_file(requests[index], *layout));
-            if (cached.is_some()) {
-                resolver.report_not_required(
-                    archive_tool_requirement(requests[index], HostToolCapability::HttpDownload),
-                    "verified file cache entry is available"_str);
-                fetched[index] = Some(rstd::move(cached).unwrap());
-            } else {
-                downloads.push(usize(index));
-            }
-        }
-        if (! downloads.is_empty() && source_config.network == NetworkPolicy::Offline) {
-            return source_failure<Vec<FetchedFile>>(
-                rstd::format("offline source resolution cannot fetch file source '{}'",
-                             requests[downloads[usize {}]].url.as_str()));
-        }
-        if (! downloads.is_empty()) {
-            const auto& request = requests[downloads[usize {}]];
-            const auto  requirement =
-                archive_tool_requirement(request, HostToolCapability::HttpDownload);
-            auto curl = resolver.require(Tool::Curl, requirement);
-            if (curl.is_err()) {
-                return Err(SourceError::System(String::make("resolve curl executable"_str),
-                                               rstd::move(curl).unwrap_err()));
-            }
-            auto worker_count = jobs < downloads.len() ? jobs : downloads.len();
-            auto created = rstd::thread::BlockingTaskGroup<SourceResult<FetchedFileTask>>::make(
-                worker_count, downloads.len());
-            if (created.is_err()) {
-                return Err(SourceError::System(
-                    String::make("create file source fetch executor"_str),
-                    SystemError::Io(String::make("create file source fetch executor"_str),
-                                    PathBuf::make(),
-                                    rstd::move(created).unwrap_err_unchecked())));
-            }
-            auto group = rstd::move(created).unwrap_unchecked();
-            for (auto index : downloads) {
-                auto request      = rstd::move(requests[index]);
-                auto task_session = session->clone();
-                auto task_layout  = layout->clone();
-                auto task_env     = environment.clone();
-                auto task_curl    = curl->executable.clone();
-                auto task_sources = source_config.clone();
-                auto submitted =
-                    group.submit([index,
-                                  request     = rstd::move(request),
-                                  session     = rstd::move(task_session),
-                                  layout      = rstd::move(task_layout),
-                                  curl        = rstd::move(task_curl),
-                                  environment = rstd::move(task_env),
-                                  sources     = rstd::move(task_sources),
-                                  observer]() mutable -> SourceResult<FetchedFileTask> {
-                        auto file = acquire_cached_file(rstd::move(request),
-                                                        session,
-                                                        layout,
-                                                        curl.as_path(),
-                                                        environment,
-                                                        sources,
-                                                        observer);
-                        if (file.is_err()) return Err(rstd::move(file).unwrap_err());
-                        return Ok(FetchedFileTask {
-                            .request = index,
-                            .file    = rstd::move(file).unwrap(),
-                        });
-                    });
-                if (submitted.is_err()) {
-                    return source_failure<Vec<FetchedFile>>(
-                        "cannot submit file source fetch task"_str);
-                }
-            }
-            auto outcomes = rstd::move(group).join();
-            for (auto& outcome : outcomes) {
-                auto value = rstd::move(outcome).into_value();
-                if (value.is_none()) {
-                    return source_failure<Vec<FetchedFile>>(
-                        "file source fetch task was cancelled"_str);
-                }
-                auto result = rstd::move(value).unwrap_unchecked();
-                if (result.is_err()) return Err(rstd::move(result).unwrap_err());
-                auto task             = rstd::move(result).unwrap();
-                fetched[task.request] = Some(rstd::move(task.file));
-            }
-        }
-    }
-
-    auto result = Vec<FetchedFile>::with_capacity(fetched.len());
-    for (auto& file : fetched) {
-        if (file.is_none()) {
-            return source_failure<Vec<FetchedFile>>("file source fetch result is missing"_str);
-        }
-        result.push(rstd::move(file).unwrap());
-    }
-    return Ok(rstd::move(result));
+auto acquisition_sink(SourceAcquisitionObserver& observer)
+    -> lito::acquisition::AcquisitionEventSink {
+    return lito::acquisition::AcquisitionEventSink {
+        .context = rstd::addressof(observer),
+        .notify  = observe_acquisition,
+    };
 }
 
 struct ArchiveMaterializationLayout {
@@ -531,112 +204,12 @@ auto inspect_archive_materialization(ref<rstd::path::Path> materialization_root,
     return reusable_archive_materialization(layout, identity);
 }
 
-enum class ArchiveExtractorKind
-{
-    BsdTar,
-    Tar,
-    CMakeTar,
-};
-
-struct ArchiveExtractor {
-    ArchiveExtractorKind kind { ArchiveExtractorKind::BsdTar };
-    ResolvedTool         tool;
-
-    auto clone() const -> ArchiveExtractor {
-        return ArchiveExtractor {
-            .kind = kind,
-            .tool = tool.clone(),
-        };
-    }
-
-    auto provider_name() const noexcept -> ref<str> {
-        if (kind == ArchiveExtractorKind::BsdTar) return "bsdtar"_str;
-        if (kind == ArchiveExtractorKind::Tar) return "tar"_str;
-        return "cmake -E tar"_str;
-    }
-
-    auto invocation(ref<rstd::path::Path> archive) const -> SourceResult<Vec<String>> {
-        auto arguments = Vec<String>::make();
-        rstd_try(process_path(arguments, tool.executable.as_path()));
-        if (kind == ArchiveExtractorKind::CMakeTar) {
-            arguments.push(String::make("-E"_str));
-            arguments.push(String::make("tar"_str));
-        }
-        arguments.push(String::make("xvf"_str));
-        rstd_try(process_path(arguments, archive));
-        return Ok(rstd::move(arguments));
-    }
-};
-
-auto select_archive_extractor(ToolResolver& resolver, const HostToolRequirement& requirement)
-    -> SourceResult<ArchiveExtractor> {
-    Tool first  = Tool::BsdTar;
-    Tool second = Tool::Tar;
-    if (resolver.tools().explicitly_configured(Tool::Tar) &&
-        ! resolver.tools().explicitly_configured(Tool::BsdTar)) {
-        first  = Tool::Tar;
-        second = Tool::BsdTar;
-    }
-    const Tool candidates[] = { first, second };
-    auto       attempts     = String::make();
-    for (const auto candidate : candidates) {
-        if (candidate == second &&
-            resolver.tools().requested(first).as_os_str().as_encoded_bytes() ==
-                resolver.tools().requested(second).as_os_str().as_encoded_bytes()) {
-            continue;
-        }
-        auto probed = resolver.probe(candidate);
-        if (probed.is_err()) {
-            return Err(SourceError::System(
-                rstd::format("probe {} archive extractor", tool_name(candidate)),
-                rstd::move(probed).unwrap_err()));
-        }
-        if (probed->is_some()) {
-            auto tool   = rstd::move(probed).unwrap().unwrap();
-            auto kind   = candidate == Tool::BsdTar ? ArchiveExtractorKind::BsdTar
-                                                    : ArchiveExtractorKind::Tar;
-            auto result = ArchiveExtractor {
-                .kind = kind,
-                .tool = rstd::move(tool),
-            };
-            resolver.report(requirement, result.provider_name(), result.tool);
-            return Ok(rstd::move(result));
-        }
-        resolver.report_candidate_missing(requirement, tool_name(candidate), candidate);
-        attempts.push_str(rstd::format("\n    {} '{}': not found",
-                                       tool_name(candidate),
-                                       resolver.tools().requested(candidate))
-                              .as_str());
-    }
-    auto cmake = resolver.probe(Tool::CMake);
-    if (cmake.is_err()) {
-        return Err(SourceError::System(String::make("probe CMake archive extractor"_str),
-                                       rstd::move(cmake).unwrap_err()));
-    }
-    if (cmake->is_some()) {
-        auto result = ArchiveExtractor {
-            .kind = ArchiveExtractorKind::CMakeTar,
-            .tool = rstd::move(cmake).unwrap().unwrap(),
-        };
-        resolver.report(requirement, result.provider_name(), result.tool);
-        return Ok(rstd::move(result));
-    }
-    resolver.report_candidate_missing(requirement, "cmake -E tar"_str, Tool::CMake);
-    attempts.push_str(rstd::format("\n    cmake -E tar via '{}': not found",
-                                   resolver.tools().requested(Tool::CMake))
-                          .as_str());
-    return source_failure<ArchiveExtractor>(
-        rstd::format("cannot provide {} required by {}; tried:{}",
-                     host_tool_capability_name(requirement.capability),
-                     host_tool_requirement_origin_text(requirement.origin),
-                     attempts.as_str()));
-}
-
-auto materialize_archive(FetchedFile                       file,
-                         ref<rstd::path::Path>             materialization_root,
-                         const ArchiveExtractor&           extractor,
-                         const ResolvedProcessEnvironment& environment,
-                         SourceEventSink observer) -> SourceResult<AcquiredSource> {
+auto materialize_archive(lito::acquisition::VerifiedFile            file,
+                         ref<rstd::path::Path>                      materialization_root,
+                         const lito::acquisition::ArchiveExtractor& extractor,
+                         const ResolvedProcessEnvironment&          environment,
+                         lito::acquisition::AcquisitionEventSink    observer)
+    -> SourceResult<AcquiredSource> {
     auto layout  = archive_materialization_layout(materialization_root, file.identity.as_str());
     auto created = rstd::fs::create_dir_all(layout.area.as_path());
     if (created.is_err()) {
@@ -678,91 +251,20 @@ auto materialize_archive(FetchedFile                       file,
         }
     }
 
-    auto exists = rstd::fs::exists(layout.extracted.as_path());
-    if (exists.is_err()) {
-        return source_io_failure<AcquiredSource>("inspect archive extraction"_str,
-                                                 layout.extracted.as_path(),
-                                                 rstd::move(exists).unwrap_err());
+    auto extracted = lito::acquisition::extract_verified_archive(
+        rstd::move(file), layout.extracted.as_path(), None(), extractor, environment, observer);
+    if (extracted.is_err()) {
+        return Err(rstd::into<SourceError>(rstd::move(extracted).unwrap_err()));
     }
-    if (*exists) {
-        auto removed = rstd::fs::remove_dir_all(layout.extracted.as_path());
-        if (removed.is_err()) {
-            return source_io_failure<AcquiredSource>("reset archive extraction"_str,
-                                                     layout.extracted.as_path(),
-                                                     rstd::move(removed).unwrap_err());
-        }
-    }
-    created = rstd::fs::create_dir_all(layout.extracted.as_path());
-    if (created.is_err()) {
-        return source_io_failure<AcquiredSource>("create archive extraction"_str,
-                                                 layout.extracted.as_path(),
-                                                 rstd::move(created).unwrap_err());
-    }
-    auto arguments = rstd_try(extractor.invocation(file.path.as_path()));
-    if (observer.notify != nullptr) {
-        observer.notify(observer.context,
-                        SourceEvent { SourceEventKind::Extract,
-                                      file.identity.as_str(),
-                                      layout.extracted.as_path() });
-    }
-    auto status = run_command(arguments, environment, Some(layout.extracted.as_path()));
-    if (status.is_err()) {
-        (void)rstd::fs::remove_dir_all(layout.extracted.as_path());
-        return Err(SourceError::System(String::make("archive source extraction"_str),
-                                       rstd::move(status).unwrap_err()));
-    }
-    if (status->exit_code != i32 {}) {
-        (void)rstd::fs::remove_dir_all(layout.extracted.as_path());
-        return source_failure<AcquiredSource>(
-            rstd::format("archive source extraction with {} failed with exit code {}:\n{}{}",
-                         extractor.provider_name(),
-                         status->exit_code,
-                         status->standard_output,
-                         status->standard_error));
-    }
-
-    auto opened_directory = rstd::fs::read_dir(layout.extracted.as_path());
-    if (opened_directory.is_err()) {
-        return source_io_failure<AcquiredSource>("enumerate archive"_str,
-                                                 layout.extracted.as_path(),
-                                                 rstd::move(opened_directory).unwrap_err());
-    }
-    auto root       = layout.extracted.clone();
-    auto only_entry = Option<PathBuf> {};
-    auto count      = usize {};
-    auto entries    = rstd::move(opened_directory).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        if (next->is_err()) {
-            return source_io_failure<AcquiredSource>("enumerate archive"_str,
-                                                     layout.extracted.as_path(),
-                                                     rstd::move(*next).unwrap_err());
-        }
-        auto entry = rstd::move(*next).unwrap();
-        ++count;
-        if (count != usize(1)) continue;
-        auto type = entry.file_type();
-        if (type.is_err()) {
-            auto path = entry.path();
-            return source_io_failure<AcquiredSource>(
-                "inspect archive entry"_str, path.as_path(), rstd::move(type).unwrap_err());
-        }
-        if (type->is_dir()) only_entry = Some(entry.path());
-    }
-    if (count == usize(1) && only_entry.is_some()) root = rstd::move(only_entry).unwrap();
-    auto canonical = rstd::fs::canonicalize(root.as_path());
-    if (canonical.is_err()) {
-        return source_io_failure<AcquiredSource>(
-            "resolve archive root"_str, root.as_path(), rstd::move(canonical).unwrap_err());
-    }
-    auto relative = canonical->as_path().strip_prefix(layout.extracted.as_path());
+    auto relative = extracted->root.as_path().strip_prefix(layout.extracted.as_path());
     if (relative.is_none()) {
         return source_failure<AcquiredSource>(rstd::format(
-            "archive root '{}' is outside materialization area", canonical->as_path()));
+            "archive root '{}' is outside materialization area", extracted->root.as_path()));
     }
     auto relative_text = relative->is_empty() ? "."_str : relative->to_str().unwrap_or(""_str);
     if (relative_text.is_empty()) {
         return source_failure<AcquiredSource>(
-            rstd::format("archive root '{}' is not valid UTF-8", canonical->as_path()));
+            rstd::format("archive root '{}' is not valid UTF-8", extracted->root.as_path()));
     }
     auto receipt_text = String::make("lito-archive-materialization-v2\n"_str);
     receipt_text.push_str(relative_text);
@@ -774,9 +276,10 @@ auto materialize_archive(FetchedFile                       file,
                                                  layout.receipt.as_path(),
                                                  rstd::move(written).unwrap_err());
     }
+    auto archive = rstd::move(extracted).unwrap();
     return Ok(AcquiredSource {
-        .root      = rstd::move(canonical).unwrap(),
-        .identity  = rstd::move(file.identity),
+        .root      = rstd::move(archive.root),
+        .identity  = rstd::move(archive.identity),
         .cacheable = true,
     });
 }
@@ -847,9 +350,40 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
             HostToolCapability::ArchiveExtraction,
             first.owner.is_empty() ? "archive"_str : first.owner.as_str(),
             first.name.is_empty() ? first.url.as_str() : first.name.as_str());
-        auto files              = rstd_try(acquire_file_frontier(
-            rstd::move(pending), jobs, resolver, environment, source_config, observer));
-        auto extraction_files   = Vec<FetchedFile>::make();
+        auto requests =
+            Vec<lito::acquisition::VerifiedArchiveRequest>::with_capacity(pending.len());
+        for (auto& request : pending) {
+            auto identity = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
+            auto seed     = rstd_try(locate_fetch_seed(source_config.fetch_seeds, identity));
+            requests.push(lito::acquisition::VerifiedArchiveRequest {
+                .label  = request.name.is_empty() ? request.url.clone() : request.name.clone(),
+                .url    = request.url.clone(),
+                .sha256 = request.sha256.clone(),
+                .seed   = rstd::move(seed),
+                .download_requirement =
+                    archive_tool_requirement(request, HostToolCapability::HttpDownload),
+                .extraction_requirement =
+                    archive_tool_requirement(request, HostToolCapability::ArchiveExtraction),
+            });
+        }
+        auto source_observer = SourceAcquisitionObserver { .sink = observer };
+        auto files_result    = lito::acquisition::acquire_verified_files(
+            rstd::move(requests),
+            jobs,
+            resolver,
+            environment,
+            source_config.network == NetworkPolicy::Offline,
+            acquisition_sink(source_observer));
+        if (files_result.is_err()) {
+            auto error = rstd::move(files_result).unwrap_err();
+            if (source_config.network == NetworkPolicy::Offline) {
+                auto operation = rstd::format("offline source resolution failed: {}", error);
+                return Err(SourceError::Acquisition(rstd::move(operation), rstd::move(error)));
+            }
+            return Err(rstd::into<SourceError>(rstd::move(error)));
+        }
+        auto files              = rstd::move(files_result).unwrap();
+        auto extraction_files   = Vec<lito::acquisition::VerifiedFile>::make();
         auto extraction_indices = Vec<usize>::make();
         for (usize index {}; index < files.len(); ++index) {
             auto unique_index = pending_indices[index];
@@ -863,7 +397,12 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
             extraction_files.push(rstd::move(files[index]));
         }
         if (! extraction_files.is_empty()) {
-            auto extractor = rstd_try(select_archive_extractor(resolver, extraction_requirement));
+            auto extractor_result =
+                lito::acquisition::select_archive_extractor(resolver, extraction_requirement);
+            if (extractor_result.is_err()) {
+                return Err(rstd::into<SourceError>(rstd::move(extractor_result).unwrap_err()));
+            }
+            auto extractor    = rstd::move(extractor_result).unwrap();
             auto worker_count = jobs < extraction_files.len() ? jobs : extraction_files.len();
             auto created =
                 rstd::thread::BlockingTaskGroup<SourceResult<MaterializedArchiveTask>>::make(
@@ -882,7 +421,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
                 auto task_root      = PathBuf::from(materialization_root);
                 auto task_extractor = extractor.clone();
                 auto task_env       = environment.clone();
-                auto task_observer  = observer;
+                auto task_observer  = acquisition_sink(source_observer);
                 auto submitted      = group.submit(
                     [unique_index,
                      file        = rstd::move(file),

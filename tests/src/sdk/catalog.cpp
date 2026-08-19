@@ -1,0 +1,110 @@
+#include <rstd/test/gtest.hpp>
+
+import rstd;
+import rstd.json;
+import rstd.test;
+import lito.system;
+import lito.toolchain;
+
+using namespace rstd::prelude;
+using namespace rstd::literals;
+using Json = rstd::json::Value;
+
+auto catalog_document() -> Json {
+    return rstd::json::from_str(lito::embedded_llvm_sdk_catalog_text()).unwrap();
+}
+
+auto rejects_catalog_value(ref<str> pointer, Json value) -> bool {
+    auto document = catalog_document();
+    auto target   = document.pointer_mut(pointer);
+    if (target.is_none()) return false;
+    **target  = rstd::move(value);
+    auto text = rstd::json::to_string(document);
+    return lito::parse_llvm_sdk_catalog(text.as_str()).is_err();
+}
+
+auto catalog_json_string(ref<str> value) -> Json {
+    return Json::String(String::make(value));
+}
+
+auto json_u64(u64 value) -> Json {
+    return Json::Number(rstd::json::Number::from_u64(value));
+}
+
+TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
+    auto catalog = lito::load_embedded_llvm_sdk_catalog();
+    ASSERT_TRUE(catalog.is_ok());
+    ASSERT_EQ(catalog->releases.len(), usize(1));
+    EXPECT_EQ(catalog->releases[usize {}].version.text.as_str(), "22.1.8"_str);
+
+    auto host = lito::system::HostInfo {
+        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .os           = String::make("linux"_str),
+    };
+    auto artifact = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
+    ASSERT_TRUE(artifact.is_some());
+    EXPECT_EQ((**artifact).archive.sha256.as_str(),
+              "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"_str);
+
+    host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
+    EXPECT_TRUE(lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host).is_none());
+}
+
+TEST(LlvmSdkCatalog, VersionsAreCanonicalAndCompareNumerically) {
+    auto older = lito::parse_llvm_version("9.10.2"_str);
+    auto newer = lito::parse_llvm_version("10.0.0"_str);
+    ASSERT_TRUE(older.is_ok());
+    ASSERT_TRUE(newer.is_ok());
+    EXPECT_TRUE(lito::llvm_version_less(*older, *newer));
+
+    constexpr ref<str> invalid[] = {
+        "22"_str,      "22.1"_str,    "22.1.8.1"_str, "022.1.8"_str,
+        "22.01.8"_str, "22.1.08"_str, "22.1.x"_str,   "22.1.8-rc1"_str,
+    };
+    for (const auto value : invalid) EXPECT_TRUE(lito::parse_llvm_version(value).is_err());
+}
+
+TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
+    EXPECT_TRUE(rejects_catalog_value("/schema"_str, json_u64(u64(2))));
+    EXPECT_TRUE(rejects_catalog_value("/kind"_str, catalog_json_string("other"_str)));
+    EXPECT_TRUE(
+        rejects_catalog_value("/releases/0/version"_str, catalog_json_string("22.01.8"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/upstream-tag"_str,
+                                      catalog_json_string("llvmorg-22"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/url"_str,
+                                      catalog_json_string("https://"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/url"_str,
+                                      catalog_json_string("http://example.test/a"_str)));
+    EXPECT_TRUE(rejects_catalog_value(
+        "/releases/0/artifacts/0/archive/sha256"_str,
+        catalog_json_string(
+            "DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str)));
+    EXPECT_TRUE(
+        rejects_catalog_value("/releases/0/artifacts/0/archive/size"_str, json_u64(u64 {})));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/archive/root"_str,
+                                      catalog_json_string("../llvm"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/paths/cc"_str,
+                                      catalog_json_string("../bin/clang"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/paths/cxx"_str,
+                                      catalog_json_string("bin/clang"_str)));
+
+    auto unknown              = catalog_document();
+    unknown["unexpected"_str] = Json::Bool(true);
+    EXPECT_TRUE(lito::parse_llvm_sdk_catalog(rstd::json::to_string(unknown).as_str()).is_err());
+
+    auto duplicate_release = catalog_document();
+    auto releases          = duplicate_release["releases"_str].as_array_mut();
+    ASSERT_TRUE(releases.is_some());
+    (**releases).push((**releases)[usize {}].clone());
+    EXPECT_TRUE(
+        lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_release).as_str()).is_err());
+
+    auto duplicate_host = catalog_document();
+    auto artifacts      = duplicate_host.pointer_mut("/releases/0/artifacts"_str);
+    ASSERT_TRUE(artifacts.is_some());
+    auto values = (**artifacts).as_array_mut();
+    ASSERT_TRUE(values.is_some());
+    (**values).push((**values)[usize {}].clone());
+    EXPECT_TRUE(
+        lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_host).as_str()).is_err());
+}

@@ -61,6 +61,8 @@ sources = [
   "src/source/git.cpp",
   "src/source/seed.cpp",
   "src/source/tree.cpp",
+  "src/sdk/catalog.cpp",
+  "src/sdk/store.cpp",
   "src/system/process.cpp",
   "src/toolchain/clang.cpp",
   "src/toolchain/clang_builtin_context.cpp",
@@ -89,6 +91,10 @@ workspace = true
 visibility = "private"
 
 [dependencies.rstd-std]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-json]
 workspace = true
 visibility = "private"
 

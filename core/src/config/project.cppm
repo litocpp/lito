@@ -91,4 +91,10 @@ struct ProjectConfigRequest {
     EnvironmentFlagPolicy environment_flags { EnvironmentFlagPolicy::Ignore };
 };
 
+struct HostToolCommandConfig {
+    PathBuf                root;
+    ProcessEnvironmentSpec environment;
+    ToolSpec               tools;
+};
+
 } // namespace lito::config

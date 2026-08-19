@@ -800,3 +800,19 @@ auto decode_project_config(PathBuf               root,
         .doc                      = rstd::move(doc).unwrap(),
     });
 }
+
+auto decode_host_tool_command_config(PathBuf root, const Toml& document)
+    -> ConfigResult<HostToolCommandConfig> {
+    auto root_table = config_table(document, "config root"_str);
+    if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
+    auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
+    if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
+
+    auto environment = rstd_try(configured_environment(document, root.as_path()));
+    auto tools       = rstd_try(configured_host_tools(document, root.as_path()));
+    return Ok(HostToolCommandConfig {
+        .root        = rstd::move(root),
+        .environment = rstd::move(environment),
+        .tools       = rstd::move(tools.executables),
+    });
+}
