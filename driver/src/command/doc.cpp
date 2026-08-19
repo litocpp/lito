@@ -473,7 +473,7 @@ auto site_manifest_json(const BuildSummary&     summary,
     root.insert(String::make("data_only"_str), Json::Bool(data_only));
     root.insert(String::make("publication"_str),
                 doc_json_string(package_publication ? "package-set"_str : "site"_str));
-    root.insert(String::make("data_api"_str), Json::Number(rstd::json::Number::from_u64(u64(2))));
+    root.insert(String::make("data_api"_str), Json::Number(rstd::json::Number::from_u64(u64(3))));
     root.insert(String::make("template_api"_str),
                 Json::Number(rstd::json::Number::from_u64(u64(1))));
     root.insert(String::make("packages"_str), Json::Array(rstd::move(package_values)));
