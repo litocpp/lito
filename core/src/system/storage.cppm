@@ -167,16 +167,29 @@ public:
             if (candidate.as_path().is_absolute()) root = rstd::move(candidate);
         }
         if (root.is_empty()) {
+#if defined(_WIN32)
+            auto local_app_data = rstd::env::var("LOCALAPPDATA"_str);
+            if (local_app_data.is_none() || local_app_data->is_empty()) {
+                return Err(SystemError::Storage(
+                    String::make("Lito data root requires XDG_DATA_HOME or LOCALAPPDATA"_str)));
+            }
+            root = PathBuf::from(rstd::move(local_app_data).unwrap());
+            if (! root.as_path().is_absolute()) {
+                return Err(SystemError::Storage(
+                    String::make("LOCALAPPDATA must be an absolute path"_str)));
+            }
+#else
             auto home = rstd::env::var("HOME"_str);
             if (home.is_none() || home->is_empty()) {
                 return Err(SystemError::Storage(
-                    String::make("source cache requires XDG_DATA_HOME or HOME"_str)));
+                    String::make("Lito data root requires XDG_DATA_HOME or HOME"_str)));
             }
             root = PathBuf::from(rstd::move(home).unwrap());
             if (! root.as_path().is_absolute()) {
                 return Err(SystemError::Storage(String::make("HOME must be an absolute path"_str)));
             }
             root.push(PathBuf::from(".local/share"_str).as_path());
+#endif
         }
         root.push(PathBuf::from("lito"_str).as_path());
         return Ok(LitoDataRoot { rstd::move(root) });

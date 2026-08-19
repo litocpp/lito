@@ -1,5 +1,12 @@
 # Configuration keys
 
+## Global data root
+
+Lito keeps reusable Git sources, downloaded archives, and automatically built tools under one
+global data root. An absolute `XDG_DATA_HOME` selects `$XDG_DATA_HOME/lito` on every platform.
+Without that override, the root is `$HOME/.local/share/lito` on Unix and `%LOCALAPPDATA%\lito` on
+Windows.
+
 ## `[environment]`
 
 `append-path` is an array of existing directories. Lito canonicalizes them relative to the project

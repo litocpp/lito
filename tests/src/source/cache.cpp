@@ -101,17 +101,26 @@ TEST_F(Source, SourceCacheUsesDataHomeAndTagsOnlyCacheCategories) {
     EXPECT_TRUE(root->acquire_source_cache().is_err());
 }
 
-TEST_F(Source, RelativeDataHomeFallsBackToHomeDataDirectory) {
-    auto directory = cache_root("source-cache-home-fallback"_str);
+TEST_F(Source, RelativeDataHomeFallsBackToPlatformDataDirectory) {
+    auto directory = cache_root("source-cache-platform-fallback"_str);
     ASSERT_TRUE(rstd::fs::create_dir_all(directory.as_path()).is_ok());
-    auto home_text = directory.as_path().to_str();
-    ASSERT_TRUE(home_text.is_some());
-    EnvironmentVariableGuard home("HOME"_str, *home_text);
+    auto directory_text = directory.as_path().to_str();
+    ASSERT_TRUE(directory_text.is_some());
     EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, "relative-data"_str);
+#if defined(_WIN32)
+    EnvironmentVariableGuard home("HOME"_str);
+    EnvironmentVariableGuard local_app_data("LOCALAPPDATA"_str, *directory_text);
+#else
+    EnvironmentVariableGuard home("HOME"_str, *directory_text);
+#endif
 
     auto root = lito::system::LitoDataRoot::resolve();
     ASSERT_TRUE(root.is_ok());
+#if defined(_WIN32)
+    auto expected = directory.join(PathBuf::from("lito"_str).as_path());
+#else
     auto expected = directory.join(PathBuf::from(".local/share/lito"_str).as_path());
+#endif
     EXPECT_EQ(root->root(), expected.as_path());
 }
 
