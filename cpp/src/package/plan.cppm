@@ -652,8 +652,13 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             append_unique(public_layer.include_directories, exported_usage.include_directories);
             append_unique(public_layer.definitions, exported_usage.definitions);
             append_unique(public_layer, exported_usage.arguments.as_C().layer);
-            auto c_options =
+            auto c_options_result =
                 lito::c::apply_c_option_layer(selected_profile.c.clone(), rstd::move(public_layer));
+            if (c_options_result.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(c_options_result).unwrap_err())));
+            }
+            auto c_options    = rstd::move(c_options_result).unwrap();
             auto requirements = lito::c::c_public_requirements(c_options);
             context.language =
                 LanguageCompileContext::C(rstd::move(c_options), rstd::move(requirements));
@@ -734,8 +739,14 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
                 .definitions         = rstd::move(private_definitions),
                 .occurrences         = rstd::move(private_arguments.as_C().layer.occurrences),
             };
-            auto& c   = context.language.as_C();
-            c.options = lito::c::apply_c_option_layer(rstd::move(c.options), rstd::move(c_layer));
+            auto& c = context.language.as_C();
+            auto  c_options =
+                lito::c::apply_c_option_layer(rstd::move(c.options), rstd::move(c_layer));
+            if (c_options.is_err()) {
+                return Err(lito::package::PackageError::Configuration(
+                    erase_error(rstd::move(c_options).unwrap_err())));
+            }
+            c.options = rstd::move(c_options).unwrap();
             if (spec.usage.link_requirements.posix_threads) {
                 c.options.common.threading = lito::compiler::ThreadingModel::Posix;
             }

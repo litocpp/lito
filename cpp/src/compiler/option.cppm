@@ -92,9 +92,6 @@ enum class CppOwnedSetting
     BmiRepresentation,
     Rtti,
     Exceptions,
-    Optimization,
-    DebugInfo,
-    Lto,
 };
 
 enum class CppOptionFamilyDomain
@@ -249,6 +246,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (Macro, (CppMacroDirective directive;)),
               (IncludeDirectory, (CppIncludeDirectory directory;)),
               (Common, (lito::compiler::CommonCompilerArgument argument;)),
+              (CodegenSetting, (lito::compiler::CodegenCompilerSetting setting;)),
               (OwnedSetting, (CppOwnedSetting setting;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
               (Instrumentation, (String value;)),
@@ -335,6 +333,9 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         }
         RSTD_CASE(Common, argument) {
             return CppCompilerArgument::Common(as<Clone>(argument).clone());
+        }
+        RSTD_CASE(CodegenSetting, setting) {
+            return CppCompilerArgument::CodegenSetting(as<Clone>(setting).clone());
         }
         RSTD_CASE(OwnedSetting, setting) {
             return CppCompilerArgument::OwnedSetting(setting);
@@ -455,6 +456,11 @@ auto cpp_optimization_option(lito::manifest::Optimization value) noexcept -> ref
     return ""_str;
 }
 
+auto cpp_optimization_option(const Option<lito::manifest::Optimization>& value) noexcept
+    -> ref<str> {
+    return value.is_some() ? cpp_optimization_option(*value) : ""_str;
+}
+
 auto cpp_debug_option(lito::manifest::DebugInfo value) noexcept -> ref<str> {
     switch (value) {
     case lito::manifest::DebugInfo::None: return "-g0"_str;
@@ -466,6 +472,10 @@ auto cpp_debug_option(lito::manifest::DebugInfo value) noexcept -> ref<str> {
     return "-g0"_str;
 }
 
+auto cpp_debug_option(const Option<lito::manifest::DebugInfo>& value) noexcept -> ref<str> {
+    return value.is_some() ? cpp_debug_option(*value) : ""_str;
+}
+
 auto cpp_lto_option(lito::manifest::Lto value) noexcept -> ref<str> {
     switch (value) {
     case lito::manifest::Lto::Off: return "-fno-lto"_str;
@@ -473,6 +483,10 @@ auto cpp_lto_option(lito::manifest::Lto value) noexcept -> ref<str> {
     case lito::manifest::Lto::Fat: return "-flto=full"_str;
     }
     return "-fno-lto"_str;
+}
+
+auto cpp_lto_option(const Option<lito::manifest::Lto>& value) noexcept -> ref<str> {
+    return value.is_some() ? cpp_lto_option(*value) : ""_str;
 }
 
 auto cpp_sized_deallocation_name(CppSizedDeallocation value) noexcept -> ref<str> {

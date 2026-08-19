@@ -136,20 +136,25 @@ auto cmake_cxx_standard(ref<str> value) -> ref<str> {
     return value;
 }
 
-auto cmake_cxx_flags(const cpp::ProfileSpec& profile) -> String {
-    auto result =
-        String::make(profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                         ? "-stdlib=libc++"_str
-                         : "-stdlib=libstdc++"_str);
-    result.push_str(profile.cpp.language.exceptions ? " -fexceptions"_str : " -fno-exceptions"_str);
-    result.push_str(profile.cpp.language.rtti ? " -frtti"_str : " -fno-rtti"_str);
-    result.push_ascii(' ');
-    result.push_str(cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
-    result.push_ascii(' ');
-    result.push_str(cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
-    result.push_ascii(' ');
-    result.push_str(cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
-    return result;
+auto cmake_generator_uses_multiple_configurations(ref<str> generator) noexcept -> bool {
+    return generator == "Ninja Multi-Config"_str || generator == "Xcode"_str ||
+           generator.starts_with("Visual Studio "_str);
+}
+
+auto push_cmake_profile_configuration(Vec<String>&                     arguments,
+                                      const CMakeProfileConfiguration& profile,
+                                      ref<str>                         generator) -> void {
+    const auto multi_config = cmake_generator_uses_multiple_configurations(generator);
+    if (! multi_config) {
+        arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", profile.build_type.as_str()));
+    }
+    if (! profile.neutral_configuration) return;
+    if (multi_config) arguments.push(String::make("-DCMAKE_CONFIGURATION_TYPES=None"_str));
+    arguments.push(String::make("-DCMAKE_C_FLAGS_NONE="_str));
+    arguments.push(String::make("-DCMAKE_CXX_FLAGS_NONE="_str));
+    arguments.push(String::make("-DCMAKE_EXE_LINKER_FLAGS_NONE="_str));
+    arguments.push(String::make("-DCMAKE_SHARED_LINKER_FLAGS_NONE="_str));
+    arguments.push(String::make("-DCMAKE_MODULE_LINKER_FLAGS_NONE="_str));
 }
 
 auto source_install_receipt(const CMakeWorkArea& area) -> PathBuf {
@@ -201,12 +206,19 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
     rstd_try(push_cmake_toolchain(arguments, configuration));
-    auto build_type = cmake_build_type(profile);
-    arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
+    auto cmake_profile = cmake_profile_configuration(profile);
+    push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
+    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
     for (const auto& entry : requirement.cache) {
         arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
     }
@@ -467,12 +479,19 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_cmake_toolchain(arguments, configuration));
-    auto build_type = cmake_build_type(profile);
-    arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", build_type));
+    auto cmake_profile = cmake_profile_configuration(profile);
+    push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
                                 cmake_cxx_standard(profile.cpp.language.standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_cxx_flags(profile).as_str()));
+    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(
+        rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
     if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,

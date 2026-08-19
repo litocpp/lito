@@ -162,7 +162,7 @@ auto append_typed_options(Vec<String>&                  command,
     auto debug = cpp::cpp_debug_option(options.common.codegen.debug_info);
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     auto lto = cpp::cpp_lto_option(options.common.codegen.lto);
-    if (! semantic_only) toolchain::command::push_option(command, lto);
+    if (! semantic_only && ! lto.is_empty()) toolchain::command::push_option(command, lto);
     if (target_family != TargetFamily::Windows) {
         toolchain::command::push_option(
             command,
@@ -237,7 +237,8 @@ auto append_c_typed_options(Vec<String>&                    command,
     auto debug = cpp::cpp_debug_option(options.common.codegen.debug_info);
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     if (! semantic_only) {
-        toolchain::command::push_option(command, cpp::cpp_lto_option(options.common.codegen.lto));
+        auto lto = cpp::cpp_lto_option(options.common.codegen.lto);
+        if (! lto.is_empty()) toolchain::command::push_option(command, lto);
     }
     if (target_family != TargetFamily::Windows) {
         toolchain::command::push_option(

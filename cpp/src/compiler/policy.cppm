@@ -111,21 +111,16 @@ auto merge_cpp_public_requirements(CppPublicRequirements input, const CppPublicR
 auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
     -> CppOptionResult<CppCompileOptions>;
 
-auto make_cpp_options(ref<str>                      language_standard,
-                      lito::config::StandardLibrary standard_library,
-                      bool                          exceptions,
-                      bool                          rtti,
-                      lito::manifest::Optimization  optimization_value,
-                      lito::manifest::DebugInfo     debug_info,
+auto make_cpp_options(ref<str>                       language_standard,
+                      lito::config::StandardLibrary  standard_library,
+                      bool                           exceptions,
+                      bool                           rtti,
+                      lito::compiler::CodegenOptions codegen,
                       CppOptionLayer layer = {}) -> CppOptionResult<CppCompileOptions> {
     auto result = CppCompileOptions {
         .common =
             lito::compiler::CommonCompileOptions {
-                .codegen =
-                    lito::compiler::CodegenOptions {
-                        .optimization = optimization_value,
-                        .debug_info   = debug_info,
-                    },
+                .codegen = rstd::move(codegen),
             },
         .language =
             CppLanguageOptions {
@@ -144,6 +139,25 @@ auto make_cpp_options(ref<str>                      language_standard,
             },
     };
     return apply_cpp_option_layer(rstd::move(result), rstd::move(layer));
+}
+
+auto make_cpp_options(ref<str>                      language_standard,
+                      lito::config::StandardLibrary standard_library,
+                      bool                          exceptions,
+                      bool                          rtti,
+                      lito::manifest::Optimization  optimization,
+                      lito::manifest::DebugInfo     debug_info,
+                      CppOptionLayer layer = {}) -> CppOptionResult<CppCompileOptions> {
+    return make_cpp_options(language_standard,
+                            standard_library,
+                            exceptions,
+                            rtti,
+                            lito::compiler::CodegenOptions {
+                                .optimization = Some(optimization),
+                                .debug_info   = Some(debug_info),
+                                .lto          = Some(lito::manifest::Lto::Off),
+                            },
+                            rstd::move(layer));
 }
 
 auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
@@ -183,6 +197,10 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
             RSTD_CASE(Common, argument) {
                 lito::compiler::apply_common_compiler_argument(
                     input.common, input.diagnostics, rstd::move(argument));
+            }
+            RSTD_CASE(CodegenSetting, setting) {
+                static_cast<void>(setting);
+                return option_error("invalid prevalidated Lito-owned codegen option"_str);
             }
             RSTD_CASE(OwnedSetting, setting) {
                 static_cast<void>(setting);

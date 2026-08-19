@@ -602,6 +602,12 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         auto target_identity = lito::package::package_target_id_text(target_spec.id);
         emit(request, BuildEventKind::Link, target_identity.as_str(), executable_path.as_path());
+        const auto& language_lto = target_spec.language == lito::manifest::PackageLanguage::C
+                                       ? package_plan.profile->c.common.codegen.lto
+                                       : package_plan.profile->cpp.common.codegen.lto;
+        const auto& link_lto     = package_plan.profile->link_lto.is_some()
+                                       ? Option<lito::manifest::Lto> {}
+                                       : language_lto;
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
                                                 link_inputs,
@@ -609,7 +615,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                 package_plan.profile->cpp.abi.standard_library,
                                                 project.platform.effective_target,
                                                 target_spec.link_stdlib,
-                                                package_plan.profile->cpp.common.codegen.lto,
+                                                link_lto,
                                                 link_requirements,
                                                 package_plan.linker_options[target],
                                                 target_spec.root.as_path());

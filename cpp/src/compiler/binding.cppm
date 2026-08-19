@@ -33,6 +33,18 @@ struct Impl<convert::TryFrom<lito::cpp::CppCompilerArgumentOccurrence>, lito::cp
 
     static auto try_from(lito::cpp::CppCompilerArgumentOccurrence occurrence)
         -> Result<lito::cpp::CppOptionDelta, Error> {
+        if (occurrence.argument.is_CodegenSetting()) {
+            auto spelling = occurrence.raw_tokens.is_empty()
+                                ? String::make("<structured compiler option>"_str)
+                                : occurrence.raw_tokens[usize {}].clone();
+            return Err(lito::cpp::CppOptionError::Message(
+                rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned "
+                             "codegen setting",
+                             occurrence.source.as_str(),
+                             occurrence.range.begin,
+                             occurrence.range.end,
+                             spelling.as_str())));
+        }
         if (occurrence.argument.is_OwnedSetting()) {
             auto field = "language standard"_str;
             switch (occurrence.argument.as_OwnedSetting().setting) {
@@ -43,9 +55,6 @@ struct Impl<convert::TryFrom<lito::cpp::CppCompilerArgumentOccurrence>, lito::cp
                 break;
             case lito::cpp::CppOwnedSetting::Rtti: field = "RTTI"_str; break;
             case lito::cpp::CppOwnedSetting::Exceptions: field = "exceptions"_str; break;
-            case lito::cpp::CppOwnedSetting::Optimization: field = "optimization"_str; break;
-            case lito::cpp::CppOwnedSetting::DebugInfo: field = "debug info"_str; break;
-            case lito::cpp::CppOwnedSetting::Lto: field = "LTO"_str; break;
             }
             auto spelling = occurrence.raw_tokens.is_empty()
                                 ? String::make("<structured compiler option>"_str)
@@ -83,11 +92,88 @@ auto owned_setting(CppCompilerArgumentKind kind) noexcept -> CppOwnedSetting {
     case CppCompilerArgumentKind::OwnedBmiRepresentation: return CppOwnedSetting::BmiRepresentation;
     case CppCompilerArgumentKind::OwnedRtti: return CppOwnedSetting::Rtti;
     case CppCompilerArgumentKind::OwnedExceptions: return CppOwnedSetting::Exceptions;
-    case CppCompilerArgumentKind::OwnedOptimization: return CppOwnedSetting::Optimization;
-    case CppCompilerArgumentKind::OwnedDebugInfo: return CppOwnedSetting::DebugInfo;
-    case CppCompilerArgumentKind::OwnedLto: return CppOwnedSetting::Lto;
     default: return CppOwnedSetting::LanguageStandard;
     }
+}
+
+auto invalid_codegen_setting(const CompilerArgumentMatch& matched,
+                             ref<str>                     source,
+                             ref<str>                     expected)
+    -> CompilerOptionResult<lito::compiler::CodegenCompilerSetting> {
+    return Err(CompilerOptionError::Message(
+        rstd::format("{} arguments {}..{}: unsupported codegen option '{}'; expected {}",
+                     source,
+                     matched.range.begin,
+                     matched.range.end,
+                     matched.raw_tokens[usize {}].as_str(),
+                     expected)));
+}
+
+auto codegen_setting(CppCompilerArgumentKind      kind,
+                     const CompilerArgumentMatch& matched,
+                     ref<str>                     source)
+    -> CompilerOptionResult<lito::compiler::CodegenCompilerSetting> {
+    if (kind == CppCompilerArgumentKind::OwnedOptimization) {
+        auto value = matched.value.is_some() ? matched.value->as_str() : "1"_str;
+        if (value == "0"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::None));
+        if (value == "1"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Level1));
+        if (value == "2"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Level2));
+        if (value == "3"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Level3));
+        if (value == "4"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Level4));
+        if (value == "g"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Debug));
+        if (value == "s"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Size));
+        if (value == "z"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::SizeMin));
+        if (value == "fast"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::Optimization(
+                lito::manifest::Optimization::Fast));
+        return invalid_codegen_setting(matched, source, "-O0..-O4, -Og, -Os, -Oz, or -Ofast"_str);
+    }
+    if (kind == CppCompilerArgumentKind::OwnedDebugInfo) {
+        auto value = matched.value.is_some() ? matched.value->as_str() : "2"_str;
+        if (value == "0"_str)
+            return Ok(
+                lito::compiler::CodegenCompilerSetting::DebugInfo(lito::manifest::DebugInfo::None));
+        if (value == "1"_str || value == "limited"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::DebugInfo(
+                lito::manifest::DebugInfo::Limited));
+        if (value == "2"_str || value == "3"_str || value == "full"_str)
+            return Ok(
+                lito::compiler::CodegenCompilerSetting::DebugInfo(lito::manifest::DebugInfo::Full));
+        if (value == "line-directives-only"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::DebugInfo(
+                lito::manifest::DebugInfo::LineDirectivesOnly));
+        if (value == "line-tables-only"_str)
+            return Ok(lito::compiler::CodegenCompilerSetting::DebugInfo(
+                lito::manifest::DebugInfo::LineTablesOnly));
+        return invalid_codegen_setting(
+            matched, source, "-g, -g0..-g3, -gline-directives-only, or -gline-tables-only"_str);
+    }
+    if (matched.spelling.as_str() == "-fno-lto"_str) {
+        return Ok(lito::compiler::CodegenCompilerSetting::Lto(lito::manifest::Lto::Off));
+    }
+    auto value = matched.value.is_some() ? matched.value->as_str() : "full"_str;
+    if (value == "thin"_str)
+        return Ok(lito::compiler::CodegenCompilerSetting::Lto(lito::manifest::Lto::Thin));
+    if (value == "full"_str || value == "fat"_str)
+        return Ok(lito::compiler::CodegenCompilerSetting::Lto(lito::manifest::Lto::Fat));
+    return invalid_codegen_setting(
+        matched, source, "-fno-lto, -flto, -flto=thin, or -flto=full"_str);
 }
 
 auto family_domain(CppCompilerArgumentKind kind) noexcept -> CppOptionFamilyDomain {
@@ -164,10 +250,12 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
     case CppCompilerArgumentKind::OwnedRtti:
     case CppCompilerArgumentKind::OwnedExceptions:
+        return Ok(CppCompilerArgument::OwnedSetting(owned_setting(kind)));
     case CppCompilerArgumentKind::OwnedOptimization:
     case CppCompilerArgumentKind::OwnedDebugInfo:
     case CppCompilerArgumentKind::OwnedLto:
-        return Ok(CppCompilerArgument::OwnedSetting(owned_setting(kind)));
+        return Ok(
+            CppCompilerArgument::CodegenSetting(rstd_try(codegen_setting(kind, matched, source))));
     case CppCompilerArgumentKind::LanguageMode:
     case CppCompilerArgumentKind::AbiMode:
     case CppCompilerArgumentKind::TargetMode:
@@ -313,15 +401,17 @@ auto make_c_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
     case CppCompilerArgumentKind::OwnedRtti:
     case CppCompilerArgumentKind::OwnedExceptions:
-    case CppCompilerArgumentKind::OwnedOptimization:
-    case CppCompilerArgumentKind::OwnedDebugInfo:
-    case CppCompilerArgumentKind::OwnedLto:
         return Err(CompilerOptionError::Message(
             rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned setting",
                          source,
                          matched.range.begin,
                          matched.range.end,
                          matched.raw_tokens[usize {}].as_str())));
+    case CppCompilerArgumentKind::OwnedOptimization:
+    case CppCompilerArgumentKind::OwnedDebugInfo:
+    case CppCompilerArgumentKind::OwnedLto:
+        return Ok(lito::c::CCompilerArgument::CodegenSetting(
+            rstd_try(codegen_setting(kind, matched, source))));
     case CppCompilerArgumentKind::TypeVisibility:
         return Err(CompilerOptionError::Message(
             rstd::format("{} arguments {}..{}: compiler option '{}' is C++-specific",

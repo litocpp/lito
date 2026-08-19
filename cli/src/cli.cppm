@@ -445,7 +445,7 @@ auto profile_arg() -> Arg<lito::manifest::BuildProfileName> {
     return Arg<lito::manifest::BuildProfileName>::value("profile"_str, BuildProfileParser {})
         .long_name("profile"_str)
         .value_name("PROFILE"_str)
-        .help("Select the build profile (built-ins: debug, release)"_str);
+        .help("Select the build profile (built-ins: debug, release, plain)"_str);
 }
 
 auto features_arg() -> Arg<String> {

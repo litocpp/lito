@@ -62,7 +62,9 @@ TEST(C, MaterializesTypedCommonOptions) {
         .warning = compiler::CompilerWarning::Pedantic,
         .enabled = false,
     }));
-    options = c::apply_c_option_layer(rstd::move(options), rstd::move(layer));
+    auto applied = c::apply_c_option_layer(rstd::move(options), rstd::move(layer));
+    ASSERT_TRUE(applied.is_ok());
+    options = rstd::move(applied).unwrap();
 
     ASSERT_TRUE(options.common.target.target.is_some());
     EXPECT_EQ(options.common.target.target->as_str(), "aarch64-linux-gnu"_str);

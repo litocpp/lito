@@ -57,10 +57,33 @@ struct TargetOptions {
 };
 
 struct CodegenOptions {
-    manifest::Optimization optimization { manifest::Optimization::Default };
-    manifest::DebugInfo    debug_info { manifest::DebugInfo::None };
-    manifest::Lto          lto { manifest::Lto::Off };
-    bool                   position_independent_code { true };
+    Option<manifest::Optimization> optimization;
+    Option<manifest::DebugInfo>    debug_info;
+    Option<manifest::Lto>          lto;
+    bool                           position_independent_code { true };
+};
+
+class CodegenCompilerSetting : public DefaultInClass<CodegenCompilerSetting, Clone> {
+    RSTD_ENUM(CodegenCompilerSetting,
+              (Optimization, (manifest::Optimization value;)),
+              (DebugInfo, (manifest::DebugInfo value;)),
+              (Lto, (manifest::Lto value;)))
+
+public:
+    auto clone() const -> CodegenCompilerSetting {
+        RSTD_MATCH(*this) {
+            RSTD_CASE(Optimization, value) {
+                return Optimization(value);
+            }
+            RSTD_CASE(DebugInfo, value) {
+                return DebugInfo(value);
+            }
+            RSTD_CASE(Lto, value) {
+                return Lto(value);
+            }
+        }
+        rstd::unreachable();
+    }
 };
 
 struct CommonCompileOptions {

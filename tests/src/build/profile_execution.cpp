@@ -47,4 +47,38 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
                               .status();
     ASSERT_TRUE(release_status.is_ok());
     EXPECT_TRUE(release_status->success());
+
+    auto plain_request = build_request(
+        directory.as_path(), output.as_path(), Vec<String>::make(), build_profile("plain"_str));
+    plain_request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto plain_report            = CompileProgressCapture {};
+    plain_request.setup_reporter = Some(lito::BuildSetupReportSink {
+        .context = rstd::addressof(plain_report),
+        .notify  = capture_build_setup,
+    });
+    auto plain                   = lito::build(plain_request);
+    ASSERT_TRUE(plain.is_ok());
+    EXPECT_EQ(plain_report.profile.as_str(), "plain"_str);
+    auto reported_optimization = false;
+    for (const auto& value : plain_report.profile_values) {
+        if (value.domain != lito::BuildOptionReportDomain::Cpp ||
+            value.field.as_str() != "optimization"_str) {
+            continue;
+        }
+        reported_optimization = true;
+        EXPECT_EQ(value.value.as_str(), "-O2"_str);
+        EXPECT_EQ(value.source.as_str(), "CXXFLAGS"_str);
+    }
+    EXPECT_TRUE(reported_optimization);
+    auto plain_executable = executable(*plain);
+    ASSERT_TRUE(plain_executable.is_some());
+    auto plain_status = rstd::process::Command::make((*plain_executable).as_os_str())
+                            .current_dir(directory.as_path())
+                            .status();
+    ASSERT_TRUE(plain_status.is_ok());
+    ASSERT_TRUE(plain_status->code().is_some());
+    EXPECT_EQ(*plain_status->code(), i32(1));
 }

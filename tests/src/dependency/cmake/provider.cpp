@@ -55,7 +55,7 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .alias   = String::make("fixture"_str),
         .package = String::make("LitoFixture"_str),
         .source  = lito::PreparedCMakeDependencySource::Directory(
-            project->root.clone(), String::make("lito-test-cmake-fixture-v4"_str), true),
+            project->root.clone(), String::make("lito-test-cmake-fixture-v5"_str), true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
@@ -202,6 +202,71 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
 #else
     EXPECT_EQ(fourth_count->as_str(), "configure\nconfigure\nconfigure\n"_str);
 #endif
+}
+
+TEST_F(CMakeProvider, PlainProfileBuildsWithSingleAndMultiConfigGenerators) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto tree = cmake_package_project_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-plain-profile"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+
+    auto build_configuration = configuration();
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("plain"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+
+    auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
+        .name       = String::make("LitoFixture::fixture"_str),
+        .visibility = lito::dependency::DependencyVisibility::Private,
+    });
+    auto cache = Vec<lito::dependency::CMakeCacheEntry>::make();
+    cache.push(lito::dependency::CMakeCacheEntry {
+        .name  = String::make("LITO_FIXTURE_EXPECT_PLAIN"_str),
+        .value = String::make("ON"_str),
+    });
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
+    declarations.push(lito::PreparedCMakeDependencyRequirement {
+        .alias   = String::make("plain-fixture"_str),
+        .package = String::make("LitoFixture"_str),
+        .source  = lito::PreparedCMakeDependencySource::Directory(
+            project->root.clone(), String::make("lito-test-cmake-plain-v1"_str), false),
+        .config_directory = Some(PathBuf::from("lib/cmake/LitoFixture"_str)),
+        .cache            = rstd::move(cache),
+        .targets          = rstd::move(targets),
+    });
+
+    constexpr ref<str> generators[] = { "Ninja"_str, "Ninja Multi-Config"_str };
+    for (auto generator : generators) {
+        SCOPED_TRACE(generator);
+        auto provider      = fixture_cmake();
+        provider.generator = String::make(generator);
+        auto resolved      = resolve_cmake_fixtures_with_provider(
+            declarations,
+            *profile,
+            native_platform(),
+            build_root(rstd::format("cmake-plain-{}", generator).as_str()).as_path(),
+            rstd::move(provider));
+        if (resolved.is_err()) {
+            auto error = rstd::move(resolved).unwrap_err();
+            rstd::io::eprintln("{}", error_chain_text(error));
+            EXPECT_TRUE(false);
+            continue;
+        }
+        ASSERT_EQ(resolved->len(), usize(1));
+    }
 }
 
 TEST_F(CMakeProvider, CMakeProviderBuildsAndReadsSourceAdapterTargetUsage) {

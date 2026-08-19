@@ -57,6 +57,13 @@ lto = "thin"
 [profile.strip-debug]
 inherits = "codegen-variant"
 strip = "debuginfo"
+
+[profile.packaging]
+inherits = "plain"
+
+[profile.packaging-lto]
+inherits = "plain"
+lto = "thin"
 )toml"_str,
         },
         {
@@ -342,6 +349,8 @@ struct CompileProgressCapture {
     Vec<lito::BuildOptionReportDomain>    option_domains;
     Vec<String>                           option_sources;
     Vec<Vec<String>>                      option_arguments;
+    String                                profile;
+    Vec<lito::BuildProfileValueReport>    profile_values;
     bool                                  missing {};
 };
 
@@ -374,6 +383,15 @@ void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report
         capture.option_domains.push(lito::BuildOptionReportDomain(input.domain));
         capture.option_sources.push(input.source.clone());
         capture.option_arguments.push(input.arguments.clone());
+    }
+    capture.profile = report.profile.clone();
+    for (const auto& value : report.profile_values) {
+        capture.profile_values.push(lito::BuildProfileValueReport {
+            .domain = value.domain,
+            .field  = value.field.clone(),
+            .value  = value.value.clone(),
+            .source = value.source.clone(),
+        });
     }
 }
 

@@ -82,6 +82,28 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
                                tool_resolution_text(report.toolchain.cxx).as_str(),
                                tool_resolution_text(report.toolchain.ld).as_str(),
                                tool_resolution_text(report.toolchain.ar).as_str());
+    if (! report.profile_values.is_empty()) {
+        result.push_str(rstd::format("  Profile {}\n", report.profile.as_str()).as_str());
+        auto label_width = usize {};
+        for (const auto& value : report.profile_values) {
+            auto domain = build_option_domain_text(value.domain);
+            auto width  = domain.len() + usize(1) + value.field.len();
+            if (width > label_width) label_width = width;
+        }
+        for (const auto& value : report.profile_values) {
+            auto domain = build_option_domain_text(value.domain);
+            auto label  = rstd::format("{} {}", domain, value.field.as_str());
+            result.push_str("    "_str);
+            result.push_str(label.as_str());
+            for (auto padding = label.len(); padding < label_width + usize(2); ++padding) {
+                result.push_ascii(' ');
+            }
+            result.push_str(value.value.as_str());
+            result.push_str(" ("_str);
+            result.push_str(value.source.as_str());
+            result.push_str(")\n"_str);
+        }
+    }
     if (! report.options.is_empty()) {
         result.push_str("  Build options\n"_str);
         auto label_width = usize {};

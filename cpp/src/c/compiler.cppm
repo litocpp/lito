@@ -8,6 +8,7 @@ import rstd;
 import lito.core;
 import :compiler.argument;
 import :compiler.common;
+import :compiler.error;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -121,6 +122,7 @@ class CCompilerArgument : public DefaultInClass<CCompilerArgument, Clone> {
               (Macro, (CMacroDirective directive;)),
               (IncludeDirectory, (CIncludeDirectory directory;)),
               (Common, (lito::compiler::CommonCompilerArgument argument;)),
+              (CodegenSetting, (lito::compiler::CodegenCompilerSetting setting;)),
               (Diagnostic, (String value;)),
               (Vendor, (CVendorOption option;)))
 
@@ -135,6 +137,9 @@ public:
             }
             RSTD_CASE(Common, argument) {
                 return Common(as<Clone>(argument).clone());
+            }
+            RSTD_CASE(CodegenSetting, setting) {
+                return CodegenSetting(as<Clone>(setting).clone());
             }
             RSTD_CASE(Diagnostic, value) {
                 return Diagnostic(value.clone());
@@ -208,7 +213,8 @@ auto make_c_options(lito::compiler::CommonCompileOptions common, lito::manifest:
     };
 }
 
-auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer) -> CCompileOptions {
+auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer)
+    -> lito::cpp::CompilerOptionResult<CCompileOptions> {
     for (auto& include : layer.include_directories) {
         auto repeated = false;
         for (const auto& existing : options.include_directories) {
@@ -258,6 +264,11 @@ auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer) -> CCom
                 lito::compiler::apply_common_compiler_argument(
                     options.common, options.diagnostics, rstd::move(argument));
             }
+            RSTD_CASE(CodegenSetting, setting) {
+                static_cast<void>(setting);
+                return Err(lito::cpp::CompilerOptionError::Message(
+                    String::make("compiler option overrides a Lito-owned codegen setting"_str)));
+            }
             RSTD_CASE(Diagnostic, value) {
                 auto repeated = false;
                 for (const auto& existing : options.diagnostics.options) {
@@ -270,7 +281,7 @@ auto apply_c_option_layer(CCompileOptions options, CArgumentLayer layer) -> CCom
             }
         }
     }
-    return options;
+    return Ok(rstd::move(options));
 }
 
 auto c_public_requirements(const CCompileOptions& options) -> CPublicRequirements {
@@ -310,9 +321,15 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
             rstd::format("sysroot:{}\n", options.common.target.sysroot->as_str()).as_str());
     }
     result.push_str(rstd::format("optimization:{}\ndebug:{}\nlto:{}\npic:{}\n",
-                                 static_cast<int>(options.common.codegen.optimization),
-                                 static_cast<int>(options.common.codegen.debug_info),
-                                 static_cast<int>(options.common.codegen.lto),
+                                 options.common.codegen.optimization.is_some()
+                                     ? static_cast<int>(*options.common.codegen.optimization)
+                                     : -1,
+                                 options.common.codegen.debug_info.is_some()
+                                     ? static_cast<int>(*options.common.codegen.debug_info)
+                                     : -1,
+                                 options.common.codegen.lto.is_some()
+                                     ? static_cast<int>(*options.common.codegen.lto)
+                                     : -1,
                                  options.common.codegen.position_independent_code)
                         .as_str());
     for (const auto& include : options.include_directories) {

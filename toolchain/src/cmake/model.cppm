@@ -79,8 +79,68 @@ auto append_identity(String& output, ref<str> value) -> void {
 }
 
 auto cmake_build_type(const cpp::ProfileSpec& profile) -> ref<str> {
-    return profile.family == lito::manifest::BuildProfileFamily::Debug ? "Debug"_str
-                                                                       : "Release"_str;
+    switch (profile.family) {
+    case lito::manifest::BuildProfileFamily::Debug: return "Debug"_str;
+    case lito::manifest::BuildProfileFamily::Release: return "Release"_str;
+    case lito::manifest::BuildProfileFamily::Plain: return "None"_str;
+    }
+    return "None"_str;
+}
+
+struct CMakeProfileConfiguration {
+    String build_type;
+    String c_flags;
+    String cxx_flags;
+    String linker_flags;
+    bool   neutral_configuration {};
+};
+
+auto cmake_profile_configuration(const cpp::ProfileSpec& profile) -> CMakeProfileConfiguration {
+    const auto append_flag = [](String& output, ref<str> value) {
+        if (value.is_empty()) return;
+        if (! output.is_empty()) output.push_ascii(' ');
+        output.push_str(value);
+    };
+    const auto append_ndebug = [&](String& output, const Option<bool>& ndebug) {
+        if (ndebug.is_none()) return;
+        append_flag(output, *ndebug ? "-DNDEBUG"_str : "-UNDEBUG"_str);
+    };
+
+    auto c_flags = String::make();
+    append_flag(c_flags, cpp::cpp_optimization_option(profile.c.common.codegen.optimization));
+    append_flag(c_flags, cpp::cpp_debug_option(profile.c.common.codegen.debug_info));
+    append_flag(c_flags, cpp::cpp_lto_option(profile.c.common.codegen.lto));
+    append_ndebug(c_flags, profile.c_ndebug);
+
+    auto cxx_flags = String::make();
+    append_flag(cxx_flags,
+                profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
+                    ? "-stdlib=libc++"_str
+                    : "-stdlib=libstdc++"_str);
+    append_flag(cxx_flags,
+                profile.cpp.language.exceptions ? "-fexceptions"_str : "-fno-exceptions"_str);
+    append_flag(cxx_flags, profile.cpp.language.rtti ? "-frtti"_str : "-fno-rtti"_str);
+    append_flag(cxx_flags, cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
+    append_flag(cxx_flags, cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
+    append_flag(cxx_flags, cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
+    append_ndebug(cxx_flags, profile.cpp_ndebug);
+
+    auto linker_flags = String::make();
+    append_flag(linker_flags, cpp::cpp_lto_option(profile.link_lto));
+    if (profile.linker_strip.is_some()) {
+        append_flag(linker_flags,
+                    *profile.linker_strip == lito::artifact::StripMode::Symbols
+                        ? "-s"_str
+                        : "-Wl,--strip-debug"_str);
+    }
+
+    return CMakeProfileConfiguration {
+        .build_type            = String::make(cmake_build_type(profile)),
+        .c_flags               = rstd::move(c_flags),
+        .cxx_flags             = rstd::move(cxx_flags),
+        .linker_flags          = rstd::move(linker_flags),
+        .neutral_configuration = profile.family == lito::manifest::BuildProfileFamily::Plain,
+    };
 }
 
 auto append_search_path_identity(String&                                      output,
@@ -236,6 +296,15 @@ auto clone_profile(const cpp::ProfileSpec& profile) -> cpp::ProfileSpec {
         .c_link_requirements   = profile.c_link_requirements.clone(),
         .cpp_link_requirements = profile.cpp_link_requirements.clone(),
         .strip                 = profile.strip,
+        .c_ndebug              = profile.c_ndebug,
+        .cpp_ndebug            = profile.cpp_ndebug,
+        .link_lto              = profile.link_lto,
+        .linker_strip          = profile.linker_strip,
+        .c_sources             = profile.c_sources.clone(),
+        .cpp_sources           = profile.cpp_sources.clone(),
+        .strip_source          = profile.strip_source.clone(),
+        .link_lto_source       = profile.link_lto_source.clone(),
+        .linker_strip_source   = profile.linker_strip_source.clone(),
         .linker_options        = as<Clone>(profile.linker_options).clone(),
     };
 }
@@ -280,6 +349,24 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     append_identity(recipe, cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
     append_identity(recipe, cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
     append_identity(recipe, cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
+    append_identity(recipe, cpp::cpp_optimization_option(profile.c.common.codegen.optimization));
+    append_identity(recipe, cpp::cpp_debug_option(profile.c.common.codegen.debug_info));
+    append_identity(recipe, cpp::cpp_lto_option(profile.c.common.codegen.lto));
+    append_identity(recipe,
+                    profile.c_ndebug.is_none()
+                        ? "c-ndebug:unspecified"_str
+                        : (*profile.c_ndebug ? "c-ndebug:on"_str : "c-ndebug:off"_str));
+    append_identity(recipe,
+                    profile.cpp_ndebug.is_none()
+                        ? "cpp-ndebug:unspecified"_str
+                        : (*profile.cpp_ndebug ? "cpp-ndebug:on"_str : "cpp-ndebug:off"_str));
+    append_identity(recipe, cpp::cpp_lto_option(profile.link_lto));
+    append_identity(recipe,
+                    profile.linker_strip.is_none()
+                        ? "link-strip:unspecified"_str
+                        : (*profile.linker_strip == lito::artifact::StripMode::Symbols
+                               ? "link-strip:symbols"_str
+                               : "link-strip:debuginfo"_str));
     for (const auto& entry : requirement.cache) {
         append_identity(recipe, entry.name.as_str());
         append_identity(recipe, entry.value.as_str());

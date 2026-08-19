@@ -84,13 +84,18 @@ auto cmake_package_project_tree() -> lito::source::SourceTreeResult<lito::source
 if(DEFINED ENV{CFLAGS} OR DEFINED ENV{CXXFLAGS} OR DEFINED ENV{LDFLAGS})
   message(FATAL_ERROR "compiler flags environment leaked into CMake")
 endif()
-project(LitoFixture VERSION 1.2.3 LANGUAGES CXX)
+project(LitoFixture VERSION 1.2.3 LANGUAGES C CXX)
 include(CMakePackageConfigHelpers)
 include(GNUInstallDirs)
 if(DEFINED LITO_FIXTURE_CONFIGURE_COUNT)
   file(APPEND "${LITO_FIXTURE_CONFIGURE_COUNT}" "configure\n")
 endif()
 add_library(lito_fixture STATIC src/fixture.cpp)
+add_library(lito_fixture_c OBJECT src/fixture.c)
+if(LITO_FIXTURE_EXPECT_PLAIN)
+  target_compile_definitions(lito_fixture PRIVATE LITO_FIXTURE_EXPECT_PLAIN=1)
+  target_compile_definitions(lito_fixture_c PRIVATE LITO_FIXTURE_EXPECT_PLAIN=1)
+endif()
 set_target_properties(lito_fixture PROPERTIES EXPORT_NAME fixture)
 target_compile_features(lito_fixture PUBLIC cxx_std_20)
 target_compile_definitions(lito_fixture INTERFACE LITO_CMAKE_USAGE=1)
@@ -132,7 +137,28 @@ endif()
 )"_str },
         { "include/lito_fixture.hpp"_str, "#pragma once\nint lito_fixture_value();\n"_str },
         { "src/fixture.cpp"_str,
-          "#include <lito_fixture.hpp>\nint lito_fixture_value() { return 42; }\n"_str },
+          R"cpp(#include <lito_fixture.hpp>
+#ifdef LITO_FIXTURE_EXPECT_PLAIN
+#ifdef NDEBUG
+#error plain C++ compilation must not define NDEBUG
+#endif
+#ifndef __OPTIMIZE__
+#error plain C++ compilation must preserve the supplied optimization
+#endif
+#endif
+int lito_fixture_value() { return 42; }
+)cpp"_str },
+        { "src/fixture.c"_str,
+          R"c(#ifdef LITO_FIXTURE_EXPECT_PLAIN
+#ifdef NDEBUG
+#error plain C compilation must not define NDEBUG
+#endif
+#ifndef __OPTIMIZE__
+#error plain C compilation must preserve the supplied optimization
+#endif
+#endif
+int lito_fixture_c_value(void) { return 42; }
+)c"_str },
         { "runtime/runtime.bin"_str, "runtime\n"_str },
         { "resources/nested/resource.dat"_str, "resource\n"_str },
     };

@@ -9,8 +9,8 @@ Any other valid key defines a named build profile. Profile names contain ASCII l
 
 ## `[profile.NAME]`
 
-- `inherits` names a parent. It is required for custom profiles and forbidden for built-in `debug`
-  and `release`.
+- `inherits` names a parent. It is required for custom profiles and forbidden for built-in `debug`,
+  `release`, and `plain`.
 - `opt-level` is integer `0`, `1`, `2`, or `3`, or string `"s"` or `"z"`.
 - `debug` is boolean; integer `0`, `1`, or `2`; or `"none"`, `"line-directives-only"`,
   `"line-tables-only"`, `"limited"`, or `"full"`.
@@ -19,6 +19,12 @@ Any other valid key defines a named build profile. Profile names contain ASCII l
 
 Boolean `debug = true` means full debug information. Boolean `strip = true` strips symbols. Boolean
 `lto = true` means fat LTO.
+
+The built-in `plain` profile leaves optimization, debug information, strip, LTO, and `NDEBUG`
+delegated. Custom profiles may use `inherits = "plain"` and fix only selected fields. If a delegated
+field is not supplied by global build configuration or explicitly enabled environment flags, Lito
+does not emit a compiler option for it. This does not delegate other Lito-owned C/C++ contracts, and
+package usage cannot set these fields.
 
 The built-in defaults are described in
 [Profiles, features, and conditions](../../guide/profiles-features-and-conditions.md).

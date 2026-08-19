@@ -216,6 +216,24 @@ TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
     ASSERT_TRUE(invalid.is_err());
 }
 
+TEST(CompilerArguments, PreservesTypedLinkProfileArguments) {
+    auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
+        .tokens =
+            strings("-Wl,--as-needed"_str, "-flto=thin"_str, "-Wl,--strip-debug"_str, "-lm"_str),
+        .source   = String::make("LDFLAGS"_str),
+        .identity = String::make("profile-link-v1"_str),
+    });
+    ASSERT_TRUE(normalized.is_ok());
+    ASSERT_EQ(normalized->profile_arguments.len(), usize(2));
+    EXPECT_EQ(normalized->profile_arguments[usize {}].argument.as_Lto().value,
+              lito::manifest::Lto::Thin);
+    EXPECT_EQ(normalized->profile_arguments[usize(1)].argument.as_Strip().value,
+              lito::artifact::StripMode::DebugInfo);
+    ASSERT_EQ(normalized->arguments.tokens.len(), usize(4));
+    EXPECT_EQ(normalized->arguments.tokens[usize(1)].as_str(), "-flto=thin"_str);
+    EXPECT_EQ(normalized->arguments.tokens[usize(2)].as_str(), "-Wl,--strip-debug"_str);
+}
+
 TEST(CompilerArguments, KeepsCVendorOptionsInTheCLanguageDomain) {
     auto parser = make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -233,7 +251,33 @@ TEST(CompilerArguments, KeepsCVendorOptionsInTheCLanguageDomain) {
     auto options = c::apply_c_option_layer(
         c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C17),
         rstd::move(arguments).unwrap());
-    ASSERT_EQ(options.vendor.len(), usize(1));
-    EXPECT_EQ(options.vendor[usize {}].value.as_str(), "-fno-builtin"_str);
-    EXPECT_TRUE(compiler::uses_posix_threads(options.common));
+    ASSERT_TRUE(options.is_ok());
+    ASSERT_EQ(options->vendor.len(), usize(1));
+    EXPECT_EQ(options->vendor[usize {}].value.as_str(), "-fno-builtin"_str);
+    EXPECT_TRUE(compiler::uses_posix_threads(options->common));
+}
+
+TEST(CompilerArguments, DecodesCommonCodegenSettingsForCAndCpp) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto values = strings("-O2"_str, "-gline-tables-only"_str, "-flto=thin"_str);
+    auto cpp    = parser->parse(values, "CXXFLAGS"_str);
+    auto c      = parser->parse_c(values, "CFLAGS"_str);
+    ASSERT_TRUE(cpp.is_ok());
+    ASSERT_TRUE(c.is_ok());
+    ASSERT_EQ(cpp->occurrences.len(), usize(3));
+    ASSERT_EQ(c->occurrences.len(), usize(3));
+    EXPECT_EQ(
+        cpp->occurrences[usize {}].argument.as_CodegenSetting().setting.as_Optimization().value,
+        lito::manifest::Optimization::Level2);
+    EXPECT_EQ(cpp->occurrences[usize(1)].argument.as_CodegenSetting().setting.as_DebugInfo().value,
+              lito::manifest::DebugInfo::LineTablesOnly);
+    EXPECT_EQ(cpp->occurrences[usize(2)].argument.as_CodegenSetting().setting.as_Lto().value,
+              lito::manifest::Lto::Thin);
+    EXPECT_EQ(c->occurrences[usize {}].argument.as_CodegenSetting().setting.as_Optimization().value,
+              lito::manifest::Optimization::Level2);
+    EXPECT_EQ(c->occurrences[usize(1)].argument.as_CodegenSetting().setting.as_DebugInfo().value,
+              lito::manifest::DebugInfo::LineTablesOnly);
+    EXPECT_EQ(c->occurrences[usize(2)].argument.as_CodegenSetting().setting.as_Lto().value,
+              lito::manifest::Lto::Thin);
 }

@@ -358,6 +358,12 @@ auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& 
     -> lito::package::PackageResult<empty> {
     if (arguments.is_C()) {
         for (const auto& occurrence : arguments.as_C().layer.occurrences) {
+            if (occurrence.argument.is_CodegenSetting()) {
+                return adapter_failure<empty>(rstd::format(
+                    "package '{}' compiler option from {} overrides a Lito-owned codegen setting",
+                    package.name.as_str(),
+                    occurrence.source.as_str()));
+            }
             if (! occurrence.argument.is_Macro()) continue;
             const auto& value = occurrence.argument.as_Macro().directive.value;
             auto        name  = definition_name(value.as_str());
@@ -371,6 +377,12 @@ auto validate_package_metadata_arguments(const lito::manifest::PackageManifest& 
         return Ok(empty {});
     }
     for (const auto& occurrence : arguments.as_Cpp().layer.occurrences) {
+        if (occurrence.argument.is_CodegenSetting()) {
+            return adapter_failure<empty>(rstd::format(
+                "package '{}' compiler option from {} overrides a Lito-owned codegen setting",
+                package.name.as_str(),
+                occurrence.source.as_str()));
+        }
         if (! occurrence.argument.is_Macro()) continue;
         const auto& value = occurrence.argument.as_Macro().directive.value;
         auto        name  = definition_name(value.as_str());
@@ -475,6 +487,13 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
     if (normalized.is_err()) {
         return adapter_failure<UsageLinkResolution>(
             rstd::format("{}", rstd::move(normalized).unwrap_err()));
+    }
+    if (! normalized->profile_arguments.is_empty()) {
+        const auto& occurrence = normalized->profile_arguments[usize {}];
+        return adapter_failure<UsageLinkResolution>(
+            rstd::format("{} option '{}' overrides a Lito-owned setting",
+                         usage_source(package, "usage.linker-options"_str).as_str(),
+                         occurrence.raw_tokens[usize {}].as_str()));
     }
     lito::link::append_requirements(result, normalized->requirements);
     return Ok(UsageLinkResolution {

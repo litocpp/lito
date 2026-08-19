@@ -120,7 +120,6 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                 lito::package::PackageSelectionPurpose::Install,
                                 jobs,
                                 request.build.observer,
-                                request.build.setup_reporter,
                                 Some(rstd::move(request.source.project.catalog)))));
     auto effective_target = session.platform.effective_target.clone();
     auto selected_owners =
@@ -193,7 +192,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                                resolver,
                                                                *environment,
                                                                jobs,
-                                                               request.build.observer)));
+                                                               request.build.observer,
+                                                               request.build.setup_reporter)));
     rstd_try(resolve_install_artifact_link_variants(requirements, prepared.external_assets));
     for (const auto& variant : requirements.artifact_link_variants) {
         request.build.artifact_link_variants.push(variant.clone());

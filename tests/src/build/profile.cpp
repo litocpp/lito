@@ -152,6 +152,12 @@ TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
         configuration(), project, build_profile("release"_str), *parser);
     ASSERT_TRUE(debug.is_ok());
     ASSERT_TRUE(release.is_ok());
+    EXPECT_TRUE(debug->c_ndebug.is_none());
+    EXPECT_TRUE(debug->cpp_ndebug.is_none());
+    ASSERT_TRUE(release->c_ndebug.is_some());
+    ASSERT_TRUE(release->cpp_ndebug.is_some());
+    EXPECT_TRUE(*release->c_ndebug);
+    EXPECT_TRUE(*release->cpp_ndebug);
     EXPECT_FALSE(debug->cpp.language.exceptions);
     EXPECT_FALSE(debug->cpp.language.rtti);
     EXPECT_FALSE(release->cpp.language.exceptions);
@@ -287,22 +293,175 @@ TEST_F(BuildProfile, BuildProfilesResolveCargoStyleValuesAndInheritance) {
     auto perf = lito::manifest::resolve_build_profile(graph->profile, build_profile("perf"_str));
     ASSERT_TRUE(perf.is_ok());
     EXPECT_EQ(perf->family, lito::manifest::BuildProfileFamily::Release);
-    EXPECT_EQ(perf->optimization, lito::manifest::Optimization::Level2);
-    EXPECT_EQ(perf->debug_info, lito::manifest::DebugInfo::LineTablesOnly);
-    EXPECT_EQ(perf->strip, lito::artifact::StripMode::None);
-    EXPECT_EQ(perf->lto, lito::manifest::Lto::Off);
-    EXPECT_TRUE(perf->ndebug);
+    ASSERT_TRUE(perf->optimization.fixed.is_some());
+    ASSERT_TRUE(perf->debug_info.fixed.is_some());
+    ASSERT_TRUE(perf->strip.fixed.is_some());
+    ASSERT_TRUE(perf->lto.fixed.is_some());
+    ASSERT_TRUE(perf->ndebug.fixed.is_some());
+    EXPECT_EQ(*perf->optimization.fixed, lito::manifest::Optimization::Level2);
+    EXPECT_EQ(*perf->debug_info.fixed, lito::manifest::DebugInfo::LineTablesOnly);
+    EXPECT_EQ(*perf->strip.fixed, lito::artifact::StripMode::None);
+    EXPECT_EQ(*perf->lto.fixed, lito::manifest::Lto::Off);
+    EXPECT_TRUE(*perf->ndebug.fixed);
 
     auto aliases =
         lito::manifest::resolve_build_profile(graph->profile, build_profile("aliases"_str));
     ASSERT_TRUE(aliases.is_ok());
-    EXPECT_EQ(aliases->optimization, lito::manifest::Optimization::SizeMin);
-    EXPECT_EQ(aliases->debug_info, lito::manifest::DebugInfo::Limited);
-    EXPECT_EQ(aliases->strip, lito::artifact::StripMode::Symbols);
-    EXPECT_EQ(aliases->lto, lito::manifest::Lto::Fat);
+    EXPECT_EQ(*aliases->optimization.fixed, lito::manifest::Optimization::SizeMin);
+    EXPECT_EQ(*aliases->debug_info.fixed, lito::manifest::DebugInfo::Limited);
+    EXPECT_EQ(*aliases->strip.fixed, lito::artifact::StripMode::Symbols);
+    EXPECT_EQ(*aliases->lto.fixed, lito::manifest::Lto::Fat);
+
+    auto packaging =
+        lito::manifest::resolve_build_profile(graph->profile, build_profile("packaging"_str));
+    ASSERT_TRUE(packaging.is_ok());
+    EXPECT_EQ(packaging->family, lito::manifest::BuildProfileFamily::Plain);
+    EXPECT_TRUE(packaging->optimization.is_delegated());
+    EXPECT_TRUE(packaging->debug_info.is_delegated());
+    EXPECT_TRUE(packaging->strip.is_delegated());
+    EXPECT_TRUE(packaging->lto.is_delegated());
+    EXPECT_TRUE(packaging->ndebug.is_delegated());
+
+    auto packaging_lto =
+        lito::manifest::resolve_build_profile(graph->profile, build_profile("packaging-lto"_str));
+    ASSERT_TRUE(packaging_lto.is_ok());
+    EXPECT_TRUE(packaging_lto->optimization.is_delegated());
+    ASSERT_TRUE(packaging_lto->lto.fixed.is_some());
+    EXPECT_EQ(*packaging_lto->lto.fixed, lito::manifest::Lto::Thin);
+}
+
+TEST_F(BuildProfile, PlainProfileAcceptsTypedGlobalCodegenIndependentlyByLanguage) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g"_str, "-flto=thin"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O3"_str, "-g0"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("plain"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    ASSERT_TRUE(profile->cpp.common.codegen.optimization.is_some());
+    ASSERT_TRUE(profile->cpp.common.codegen.debug_info.is_some());
+    ASSERT_TRUE(profile->cpp.common.codegen.lto.is_some());
+    ASSERT_TRUE(profile->c.common.codegen.optimization.is_some());
+    ASSERT_TRUE(profile->c.common.codegen.debug_info.is_some());
+    EXPECT_EQ(*profile->cpp.common.codegen.optimization, lito::manifest::Optimization::Level2);
+    EXPECT_EQ(*profile->cpp.common.codegen.debug_info, lito::manifest::DebugInfo::Full);
+    EXPECT_EQ(*profile->cpp.common.codegen.lto, lito::manifest::Lto::Thin);
+    EXPECT_EQ(*profile->c.common.codegen.optimization, lito::manifest::Optimization::Level3);
+    EXPECT_EQ(*profile->c.common.codegen.debug_info, lito::manifest::DebugInfo::None);
+    EXPECT_TRUE(profile->c.common.codegen.lto.is_none());
+    EXPECT_TRUE(profile->c_ndebug.is_none());
+    EXPECT_TRUE(profile->cpp_ndebug.is_none());
+    EXPECT_EQ(profile->strip, lito::artifact::StripMode::None);
+}
+
+TEST_F(BuildProfile, PlainProfileKeepsUnspecifiedDistinctFromExplicitDisabledCodegen) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto plain = lito::cpp::make_profile_spec(
+        configuration(), lito::manifest::ProjectProfile {}, build_profile("plain"_str), *parser);
+    ASSERT_TRUE(plain.is_ok());
+    EXPECT_TRUE(plain->cpp.common.codegen.optimization.is_none());
+    EXPECT_TRUE(plain->cpp.common.codegen.debug_info.is_none());
+    EXPECT_TRUE(plain->cpp.common.codegen.lto.is_none());
+    EXPECT_TRUE(plain->c.common.codegen.optimization.is_none());
+    EXPECT_TRUE(plain->c.common.codegen.debug_info.is_none());
+    EXPECT_TRUE(plain->c.common.codegen.lto.is_none());
+
+    auto explicit_configuration = configuration();
+    explicit_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O0"_str, "-g0"_str, "-fno-lto"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto explicit_profile = lito::cpp::make_profile_spec(explicit_configuration,
+                                                         lito::manifest::ProjectProfile {},
+                                                         build_profile("plain"_str),
+                                                         *parser);
+    ASSERT_TRUE(explicit_profile.is_ok());
+    EXPECT_NE(lito::cpp::cpp_compile_identity(plain->cpp).as_str(),
+              lito::cpp::cpp_compile_identity(explicit_profile->cpp).as_str());
+}
+
+TEST_F(BuildProfile, FixedProfilesDeduplicateEqualCodegenAndRejectDifferentValues) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto equal_configuration = configuration();
+    equal_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O0"_str, "-g2"_str, "-fno-lto"_str, "-UNDEBUG"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto equal = lito::cpp::make_profile_spec(equal_configuration,
+                                              lito::manifest::ProjectProfile {},
+                                              build_profile("debug"_str),
+                                              *parser);
+    ASSERT_TRUE(equal.is_ok());
+    EXPECT_TRUE(equal->cpp.preprocessor.macros.is_empty());
+
+    auto conflicting_configuration = configuration();
+    conflicting_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto conflicting = lito::cpp::make_profile_spec(conflicting_configuration,
+                                                    lito::manifest::ProjectProfile {},
+                                                    build_profile("debug"_str),
+                                                    *parser);
+    ASSERT_TRUE(conflicting.is_err());
+    auto error = rstd::move(conflicting).unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("optimization"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("CXXFLAGS"_str));
+
+    auto project = profile_project("fixed-link-settings"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    auto link_configuration = configuration();
+    link_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str, "-Wl,-s,--as-needed"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+    auto equal_link = lito::cpp::make_profile_spec(
+        link_configuration, graph->profile, build_profile("codegen-variant"_str), *parser);
+    ASSERT_TRUE(equal_link.is_ok());
+    EXPECT_EQ(equal_link->strip, lito::artifact::StripMode::None);
+    ASSERT_TRUE(equal_link->link_lto.is_some());
+    ASSERT_TRUE(equal_link->linker_strip.is_some());
+    EXPECT_EQ(*equal_link->link_lto, lito::manifest::Lto::Thin);
+    EXPECT_EQ(*equal_link->linker_strip, lito::artifact::StripMode::Symbols);
+    ASSERT_EQ(equal_link->linker_options.len(), usize(2));
+    EXPECT_EQ(equal_link->linker_options[usize {}].as_str(), "-flto=thin"_str);
+    EXPECT_EQ(equal_link->linker_options[usize(1)].as_str(), "-Wl,-s,--as-needed"_str);
 }
 
 TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
+    auto missing_parent = lito::manifest::ProjectProfile {};
+    missing_parent.build_profiles.push(lito::manifest::BuildProfileDefinition {
+        .name = build_profile("no-parent"_str),
+    });
+    auto missing_parent_result = lito::manifest::validate_build_profiles(missing_parent);
+    ASSERT_TRUE(missing_parent_result.is_err());
+    EXPECT_TRUE(missing_parent_result.unwrap_err().as_Message().message.as_str().contains(
+        "must declare inherits"_str));
+
+    auto invalid_plain = lito::manifest::ProjectProfile {};
+    invalid_plain.build_profiles.push(lito::manifest::BuildProfileDefinition {
+        .name     = build_profile("plain"_str),
+        .inherits = Some(build_profile("debug"_str)),
+    });
+    auto invalid_plain_result = lito::manifest::validate_build_profiles(invalid_plain);
+    ASSERT_TRUE(invalid_plain_result.is_err());
+    EXPECT_TRUE(invalid_plain_result.unwrap_err().as_Message().message.as_str().contains(
+        "cannot declare inherits"_str));
+
     auto unknown = lito::manifest::ProjectProfile {};
     unknown.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name     = build_profile("custom"_str),
@@ -369,13 +528,42 @@ TEST_F(BuildProfile, CodegenProfilesMaterializeTypedClangOptionsAndCacheIdentiti
               lito::cpp::cpp_scan_identity(aliases->cpp).as_str());
 }
 
+TEST_F(BuildProfile, PlainProfileProjectsToNeutralCMakeConfiguration) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O2"_str, "-g"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-O3"_str, "-g0"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("plain"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    auto cmake_profile = lito::cmake_profile_configuration(*profile);
+    EXPECT_EQ(cmake_profile.build_type.as_str(), "None"_str);
+    EXPECT_TRUE(cmake_profile.neutral_configuration);
+    EXPECT_TRUE(cmake_profile.c_flags.as_str().contains("-O3"_str));
+    EXPECT_TRUE(cmake_profile.c_flags.as_str().contains("-g0"_str));
+    EXPECT_FALSE(cmake_profile.c_flags.as_str().contains("NDEBUG"_str));
+    EXPECT_TRUE(cmake_profile.cxx_flags.as_str().contains("-O2"_str));
+    EXPECT_TRUE(cmake_profile.cxx_flags.as_str().contains("-g2"_str));
+    EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("-O3"_str));
+    EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("NDEBUG"_str));
+}
+
 TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
 
     auto compiler_configuration = configuration();
     compiler_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
-        .arguments = strings("-flto=auto"_str),
+        .arguments = strings("-flto=thin"_str),
         .source    = String::make("config.build.options"_str),
     });
     auto compiler = lito::cpp::make_profile_spec(compiler_configuration,
@@ -428,6 +616,51 @@ TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     EXPECT_TRUE(pthread->c_link_requirements.posix_threads);
     EXPECT_TRUE(pthread->cpp_link_requirements.posix_threads);
     EXPECT_TRUE(pthread->linker_options.is_empty());
+}
+
+TEST_F(BuildProfile, PlainProfileOwnsTypedLinkLtoAndStripFacts) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration = configuration();
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str, "-Wl,--strip-debug"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("plain"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    ASSERT_TRUE(profile->link_lto.is_some());
+    ASSERT_TRUE(profile->linker_strip.is_some());
+    EXPECT_EQ(*profile->link_lto, lito::manifest::Lto::Thin);
+    EXPECT_EQ(*profile->linker_strip, lito::artifact::StripMode::DebugInfo);
+    ASSERT_EQ(profile->linker_options.len(), usize(2));
+    EXPECT_EQ(profile->linker_options[usize {}].as_str(), "-flto=thin"_str);
+    EXPECT_EQ(profile->linker_options[usize(1)].as_str(), "-Wl,--strip-debug"_str);
+
+    auto conflicting_configuration = configuration();
+    conflicting_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    conflicting_configuration.global_options.linker.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=full"_str),
+        .source    = String::make("LDFLAGS"_str),
+    });
+    auto conflicting = lito::cpp::make_profile_spec(conflicting_configuration,
+                                                    lito::manifest::ProjectProfile {},
+                                                    build_profile("plain"_str),
+                                                    *parser);
+    ASSERT_TRUE(conflicting.is_err());
+    auto error = rstd::move(conflicting).unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("C++"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("LDFLAGS"_str));
 }
 
 TEST_F(BuildProfile, GlobalAndPackageLinkerOptionsPreserveOrderAndDuplicates) {
@@ -491,7 +724,7 @@ linker-options = ["-Wl,--pop-state"]
     EXPECT_EQ(planned->linker_options[usize {}][usize(3)].as_str(), "-Wl,--pop-state"_str);
 }
 
-TEST_F(BuildProfile, CompilerOptionsAreValidatedAfterToolchainParsing) {
+TEST_F(BuildProfile, PackageCodegenOptionsRemainRejectedUnderPlainProfile) {
     auto project = manifest_project("owned-option"_str, R"toml([package]
 name = "fixture-profile-owned_option"
 version = "0.1.0"
@@ -522,7 +755,7 @@ options = ["-O2"]
     ASSERT_TRUE(build_arguments.is_ok());
     auto profile = lito::cpp::make_profile_spec(build_configuration,
                                                 graph->profile,
-                                                build_profile("debug"_str),
+                                                build_profile("plain"_str),
                                                 rstd::move(build_arguments).unwrap());
     ASSERT_TRUE(profile.is_ok());
     auto external_usage = lito::cpp::ExternalUsageCatalog {};
@@ -538,15 +771,55 @@ options = ["-O2"]
                                                             rstd::move(external_usage),
                                                             lito::cpp::ExternalSourceRootCatalog {},
                                                             *parser);
-    ASSERT_TRUE(metadata.is_ok());
+    ASSERT_TRUE(metadata.is_err());
+    auto metadata_error = rstd::move(metadata).unwrap_err();
+    ASSERT_TRUE(metadata_error.is_Message());
+    EXPECT_TRUE(metadata_error.as_Message().message.as_str().contains("codegen setting"_str));
 
-    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
-    ASSERT_TRUE(planned.is_err());
-    auto planned_error = rstd::move(planned).unwrap_err();
-    ASSERT_TRUE(planned_error.is_Configuration());
-    EXPECT_TRUE(rstd::format("{}", planned_error.as_Configuration().source.as_ref())
-                    .as_str()
-                    .contains("optimization"_str));
+    auto c_project = manifest_project("owned-c-option"_str, R"toml([package]
+name = "fixture-profile-owned-c-option"
+version = "0.1.0"
+standard = "c17"
+
+[[bin]]
+link-stdlib = false
+name = "profile-owned-c-option"
+sources = ["main.c"]
+
+[usage]
+options = ["-O2"]
+)toml"_str);
+    ASSERT_TRUE(c_project.is_ok());
+    auto c_graph = lito::package::resolve_package_graph(c_project->root.as_path());
+    ASSERT_TRUE(c_graph.is_ok());
+    auto c_profile = lito::cpp::make_profile_spec(
+        build_configuration, c_graph->profile, build_profile("plain"_str), *parser);
+    ASSERT_TRUE(c_profile.is_ok());
+    auto c_packages = strings("fixture-profile-owned-c-option"_str);
+    auto c_targets  = Vec<lito::package::PackageTargetId>::make();
+    c_targets.push(lito::package::PackageTargetId {
+        .package = String::make("fixture-profile-owned-c-option"_str),
+        .kind    = lito::package::PackageTargetKind::Binary,
+        .name    = String::make("profile-owned-c-option"_str),
+    });
+    auto c_external_usage = lito::cpp::ExternalUsageCatalog {};
+    c_external_usage.packages.push(lito::cpp::ExternalPackageUsage {
+        .package = String::make("fixture-profile-owned-c-option"_str),
+    });
+    auto c_metadata =
+        lito::cpp::adapt_package_graph_metadata(rstd::move(c_graph).unwrap(),
+                                                c_packages,
+                                                c_targets,
+                                                build_configuration,
+                                                rstd::move(c_profile).unwrap(),
+                                                native_platform(),
+                                                rstd::move(c_external_usage),
+                                                lito::cpp::ExternalSourceRootCatalog {},
+                                                *parser);
+    ASSERT_TRUE(c_metadata.is_err());
+    auto c_error = rstd::move(c_metadata).unwrap_err();
+    ASSERT_TRUE(c_error.is_Message());
+    EXPECT_TRUE(c_error.as_Message().message.as_str().contains("codegen setting"_str));
 }
 
 TEST_F(BuildProfile, UsageSettingsAreValidatedByCppAdapter) {

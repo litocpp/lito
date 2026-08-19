@@ -749,17 +749,17 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(ref<rstd::path::Path>           output_path,
-                         const Vec<PathBuf>&             objects,
-                         const Vec<ResolvedLinkInput>&   inputs,
-                         lito::manifest::PackageLanguage language,
-                         lito::config::StandardLibrary   standard_library,
-                         const TargetInfo&               target,
-                         bool                            link_stdlib,
-                         lito::manifest::Lto             lto,
-                         const lito::link::Requirements& link_requirements,
-                         const Vec<String>&              linker_options,
-                         ref<rstd::path::Path>           working_directory) const
+    auto link_executable(ref<rstd::path::Path>              output_path,
+                         const Vec<PathBuf>&                objects,
+                         const Vec<ResolvedLinkInput>&      inputs,
+                         lito::manifest::PackageLanguage    language,
+                         lito::config::StandardLibrary      standard_library,
+                         const TargetInfo&                  target,
+                         bool                               link_stdlib,
+                         const Option<lito::manifest::Lto>& lto,
+                         const lito::link::Requirements&    link_requirements,
+                         const Vec<String>&                 linker_options,
+                         ref<rstd::path::Path>              working_directory) const
         -> ToolchainResult<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
@@ -782,7 +782,8 @@ public:
                 toolchain::clang_options::standard_library_linker_option(standard_library,
                                                                          link_stdlib));
         }
-        toolchain::command::push_option(command, cpp::cpp_lto_option(lto));
+        auto lto_option = cpp::cpp_lto_option(lto);
+        if (! lto_option.is_empty()) toolchain::command::push_option(command, lto_option);
         if (! link_requirements.runtime_search_paths.is_empty()) {
             toolchain::command::push_option(command, "-Wl,--enable-new-dtags"_str);
             for (const auto& requirement : link_requirements.runtime_search_paths) {

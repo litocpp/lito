@@ -67,6 +67,20 @@ enum class BuildProfileFamily
 {
     Debug,
     Release,
+    Plain,
+};
+
+template<typename T>
+struct ProfileSetting {
+    Option<T> fixed;
+
+    static auto delegated() -> ProfileSetting { return {}; }
+
+    static auto with_value(T value) -> ProfileSetting {
+        return ProfileSetting { .fixed = Some(value) };
+    }
+
+    auto is_delegated() const noexcept -> bool { return fixed.is_none(); }
 };
 
 struct BuildProfileDefinition {
@@ -91,13 +105,13 @@ struct BuildProfileDefinition {
 };
 
 struct ResolvedBuildProfile {
-    BuildProfileName          name;
-    BuildProfileFamily        family { BuildProfileFamily::Debug };
-    Optimization              optimization { Optimization::None };
-    DebugInfo                 debug_info { DebugInfo::Full };
-    lito::artifact::StripMode strip { lito::artifact::StripMode::None };
-    Lto                       lto { Lto::Off };
-    bool                      ndebug { false };
+    BuildProfileName                          name;
+    BuildProfileFamily                        family { BuildProfileFamily::Debug };
+    ProfileSetting<Optimization>              optimization;
+    ProfileSetting<DebugInfo>                 debug_info;
+    ProfileSetting<lito::artifact::StripMode> strip;
+    ProfileSetting<Lto>                       lto;
+    ProfileSetting<bool>                      ndebug;
 };
 
 struct ProjectProfile {
@@ -208,10 +222,16 @@ auto inherited_cycle(const Vec<String>& path, ref<str> name) -> Option<String> {
 auto apply_definition(ResolvedBuildProfile profile, const BuildProfileDefinition& value)
     -> ResolvedBuildProfile {
     profile.name = value.name.clone();
-    if (value.optimization.is_some()) profile.optimization = *value.optimization;
-    if (value.debug_info.is_some()) profile.debug_info = *value.debug_info;
-    if (value.strip.is_some()) profile.strip = *value.strip;
-    if (value.lto.is_some()) profile.lto = *value.lto;
+    if (value.optimization.is_some()) {
+        profile.optimization = ProfileSetting<Optimization>::with_value(*value.optimization);
+    }
+    if (value.debug_info.is_some()) {
+        profile.debug_info = ProfileSetting<DebugInfo>::with_value(*value.debug_info);
+    }
+    if (value.strip.is_some()) {
+        profile.strip = ProfileSetting<lito::artifact::StripMode>::with_value(*value.strip);
+    }
+    if (value.lto.is_some()) profile.lto = ProfileSetting<Lto>::with_value(*value.lto);
     return profile;
 }
 
@@ -223,40 +243,42 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
     path.push(String::make(name));
 
     auto declared = definition(project, name);
-    if (name == "debug"_str || name == "release"_str) {
-        auto profile = name == "debug"_str
-                           ? ResolvedBuildProfile {
-                                 .name         = BuildProfileName {
-                                     .value = String::make("debug"_str),
-                                 },
-                                 .family       = BuildProfileFamily::Debug,
-                                 .optimization = Optimization::None,
-                                 .debug_info   = DebugInfo::Full,
-                                 .strip        = lito::artifact::StripMode::None,
-                                 .lto          = Lto::Off,
-                                 .ndebug       = false,
-                             }
-                           : ResolvedBuildProfile {
-                                 .name         = BuildProfileName {
-                                     .value = String::make("release"_str),
-                                 },
-                                 .family       = BuildProfileFamily::Release,
-                                 .optimization = Optimization::Level3,
-                                 .debug_info   = DebugInfo::None,
-                                 .strip        = lito::artifact::StripMode::None,
-                                 .lto          = Lto::Off,
-                                 .ndebug       = true,
-                             };
+    if (name == "debug"_str || name == "release"_str || name == "plain"_str) {
+        auto profile = ResolvedBuildProfile {
+            .name =
+                BuildProfileName {
+                    .value = String::make(name),
+                },
+            .family = BuildProfileFamily::Plain,
+        };
+        if (name == "debug"_str) {
+            profile.family       = BuildProfileFamily::Debug;
+            profile.optimization = ProfileSetting<Optimization>::with_value(Optimization::None);
+            profile.debug_info   = ProfileSetting<DebugInfo>::with_value(DebugInfo::Full);
+            profile.strip        = ProfileSetting<lito::artifact::StripMode>::with_value(
+                lito::artifact::StripMode::None);
+            profile.lto    = ProfileSetting<Lto>::with_value(Lto::Off);
+            profile.ndebug = ProfileSetting<bool>::with_value(false);
+        } else if (name == "release"_str) {
+            profile.family       = BuildProfileFamily::Release;
+            profile.optimization = ProfileSetting<Optimization>::with_value(Optimization::Level3);
+            profile.debug_info   = ProfileSetting<DebugInfo>::with_value(DebugInfo::None);
+            profile.strip        = ProfileSetting<lito::artifact::StripMode>::with_value(
+                lito::artifact::StripMode::None);
+            profile.lto    = ProfileSetting<Lto>::with_value(Lto::Off);
+            profile.ndebug = ProfileSetting<bool>::with_value(true);
+        }
         if (declared.is_some()) profile = apply_definition(rstd::move(profile), **declared);
         return Ok(rstd::move(profile));
     }
 
     if (declared.is_none()) {
         auto message =
-            rstd::format("unknown profile '{}'; available profiles: debug, release", name);
+            rstd::format("unknown profile '{}'; available profiles: debug, release, plain", name);
         for (const auto& candidate : project.build_profiles) {
             if (candidate.name.as_str() == "debug"_str ||
-                candidate.name.as_str() == "release"_str) {
+                candidate.name.as_str() == "release"_str ||
+                candidate.name.as_str() == "plain"_str) {
                 continue;
             }
             message.push_str(", "_str);
@@ -317,8 +339,9 @@ auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResul
                     "build profile '{}' is declared more than once", profile.name.as_str()));
             }
         }
-        const auto builtin =
-            profile.name.as_str() == "debug"_str || profile.name.as_str() == "release"_str;
+        const auto builtin = profile.name.as_str() == "debug"_str ||
+                             profile.name.as_str() == "release"_str ||
+                             profile.name.as_str() == "plain"_str;
         if (builtin && profile.inherits.is_some()) {
             return build_profile_failure<empty>(rstd::format(
                 "built-in profile '{}' cannot declare inherits", profile.name.as_str()));

@@ -183,9 +183,8 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              bool                                           locked,
                              lito::package::PackageSelectionPurpose         purpose,
                              usize                                          jobs,
-                             const Option<BuildEventSink>&                  observer       = None(),
-                             const Option<BuildSetupReportSink>&            setup_reporter = None(),
-                             Option<lito::workspace::WorkspaceCatalog>      catalog        = None())
+                             const Option<BuildEventSink>&                  observer = None(),
+                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
     -> ProjectResult<ResolvedProjectSession> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
@@ -201,8 +200,6 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
             c_target->source,
             platform.effective_target.triple.as_str())));
     }
-    emit_build_setup_report(
-        setup_reporter, configuration.toolchain, toolchain, configuration.global_options);
     auto project = rstd_try(resolve_project(selection,
                                             purpose,
                                             sources,
@@ -234,7 +231,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               ToolResolver&                                    tool_resolver,
                               const ResolvedProcessEnvironment&                environment,
                               usize                                            jobs,
-                              const Option<BuildEventSink>&                    observer = None())
+                              const Option<BuildEventSink>&                    observer = None(),
+                              const Option<BuildSetupReportSink>& setup_reporter        = None())
     -> ProjectResult<ResolvedProjectMetadata> {
     auto external_sources       = rstd::move(session.project.external_sources);
     auto cmake_build_overrides  = rstd::move(session.project.cmake_build_overrides);
@@ -262,6 +260,11 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         resolved_profile.cpp.abi.resolved_standard_library =
             Some(rstd::move(standard_library).unwrap());
     }
+    emit_build_setup_report(setup_reporter,
+                            configuration.toolchain,
+                            toolchain,
+                            configuration.global_options,
+                            resolved_profile);
     auto layout = BuildLayout::create(
         project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());
     if (layout.is_err()) {
@@ -357,7 +360,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     ToolResolver&                                    tool_resolver,
                                     const ResolvedProcessEnvironment&                environment,
                                     usize                                            jobs,
-                                    const Option<BuildEventSink>& observer = None())
+                                    const Option<BuildEventSink>&       observer       = None(),
+                                    const Option<BuildSetupReportSink>& setup_reporter = None())
     -> ProjectResult<PreparedBuildProject> {
     auto metadata = resolve_project_metadata(rstd::move(session),
                                              configuration,
@@ -370,7 +374,8 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                              tool_resolver,
                                              environment,
                                              jobs,
-                                             observer);
+                                             observer,
+                                             setup_reporter);
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
@@ -414,7 +419,6 @@ auto resolve_project_metadata(
                                                     purpose,
                                                     jobs,
                                                     observer,
-                                                    setup_reporter,
                                                     rstd::move(catalog)));
     return resolve_project_metadata(rstd::move(session),
                                     configuration,
@@ -427,7 +431,8 @@ auto resolve_project_metadata(
                                     tool_resolver,
                                     environment,
                                     jobs,
-                                    observer);
+                                    observer,
+                                    setup_reporter);
 }
 
 auto prepare_build_project(

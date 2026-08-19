@@ -63,15 +63,29 @@ struct Requirements {
 class ArgumentError {
     RSTD_ENUM(ArgumentError,
               (InvalidRuntimeSearchPath, (String source; String token; String reason;)),
-              (LegacyRpath, (String source; String token;)))
+              (LegacyRpath, (String source; String token;)),
+              (UnsupportedLto, (String source; String token;)))
 };
 
 template<typename T>
 using ArgumentResult = Result<T, ArgumentError>;
 
+class ProfileArgument {
+    RSTD_ENUM(ProfileArgument,
+              (Lto, (lito::manifest::Lto value;)),
+              (Strip, (lito::artifact::StripMode value;)))
+};
+
+struct ProfileArgumentOccurrence {
+    ProfileArgument argument;
+    Vec<String>     raw_tokens;
+    String          source;
+};
+
 struct NormalizedArguments {
-    ArgumentSequence arguments;
-    Requirements     requirements;
+    ArgumentSequence               arguments;
+    Requirements                   requirements;
+    Vec<ProfileArgumentOccurrence> profile_arguments;
 };
 
 auto requirements_identity(const Requirements& requirements) -> String;
@@ -90,6 +104,13 @@ template<>
 struct Impl<fmt::Display, lito::link::ArgumentError> : ImplBase<lito::link::ArgumentError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
+        if (error.is_UnsupportedLto()) {
+            return formatter.write_fmt(
+                fmt::Arguments::make("linker option '{}' from {} requests unsupported LTO mode; "
+                                     "expected -fno-lto, -flto, -flto=thin, or -flto=full",
+                                     error.as_UnsupportedLto().token,
+                                     error.as_UnsupportedLto().source));
+        }
         if (error.is_LegacyRpath()) {
             return formatter.write_fmt(
                 fmt::Arguments::make("linker option '{}' from {} requests legacy DT_RPATH",
@@ -200,11 +221,85 @@ auto requirements_identity(const Requirements& requirements) -> String {
     return result;
 }
 
+auto lto_argument(ref<str> token) -> Option<lito::manifest::Lto> {
+    if (token == "-fno-lto"_str) return Some(lito::manifest::Lto::Off);
+    if (token == "-flto"_str || token == "-flto=full"_str || token == "-flto=fat"_str) {
+        return Some(lito::manifest::Lto::Fat);
+    }
+    if (token == "-flto=thin"_str) return Some(lito::manifest::Lto::Thin);
+    return None();
+}
+
+auto strip_argument(ref<str> token) -> Option<lito::artifact::StripMode> {
+    if (token == "-s"_str || token == "--strip-all"_str || token == "-Wl,-s"_str ||
+        token == "-Wl,--strip-all"_str) {
+        return Some(lito::artifact::StripMode::Symbols);
+    }
+    if (token == "--strip-debug"_str || token == "-Wl,--strip-debug"_str) {
+        return Some(lito::artifact::StripMode::DebugInfo);
+    }
+    return None();
+}
+
+auto combined_strip_argument(ref<str> token) -> Option<lito::artifact::StripMode> {
+    if (! token.starts_with("-Wl,"_str)) return None();
+    if (token.contains(",--strip-all,"_str) || token.ends_with(",--strip-all"_str) ||
+        token.contains(",-s,"_str) || token.ends_with(",-s"_str)) {
+        return Some(lito::artifact::StripMode::Symbols);
+    }
+    if (token.contains(",--strip-debug,"_str) || token.ends_with(",--strip-debug"_str)) {
+        return Some(lito::artifact::StripMode::DebugInfo);
+    }
+    return None();
+}
+
+auto profile_argument_tokens(ref<str> first, Option<ref<str>> second = None()) -> Vec<String> {
+    auto result = Vec<String>::make();
+    result.push(String::make(first));
+    if (second.is_some()) result.push(String::make(*second));
+    return result;
+}
+
 auto normalize_arguments(ArgumentSequence input) -> ArgumentResult<NormalizedArguments> {
-    auto tokens       = Vec<String>::make();
-    auto requirements = Requirements {};
+    auto tokens            = Vec<String>::make();
+    auto requirements      = Requirements {};
+    auto profile_arguments = Vec<ProfileArgumentOccurrence>::make();
     for (auto index = usize {}; index < input.tokens.len(); ++index) {
         auto token = input.tokens[index].as_str();
+        auto lto   = lto_argument(token);
+        if (lto.is_some()) {
+            profile_arguments.push(ProfileArgumentOccurrence {
+                .argument   = ProfileArgument::Lto(*lto),
+                .raw_tokens = profile_argument_tokens(token),
+                .source     = input.source.clone(),
+            });
+            tokens.push(input.tokens[index].clone());
+            continue;
+        }
+        if (token.starts_with("-flto="_str)) {
+            return Err(
+                ArgumentError::UnsupportedLto(input.source.clone(), input.tokens[index].clone()));
+        }
+        auto strip = strip_argument(token);
+        if (strip.is_some()) {
+            profile_arguments.push(ProfileArgumentOccurrence {
+                .argument   = ProfileArgument::Strip(*strip),
+                .raw_tokens = profile_argument_tokens(token),
+                .source     = input.source.clone(),
+            });
+            tokens.push(input.tokens[index].clone());
+            continue;
+        }
+        auto combined_strip = combined_strip_argument(token);
+        if (combined_strip.is_some()) {
+            profile_arguments.push(ProfileArgumentOccurrence {
+                .argument   = ProfileArgument::Strip(*combined_strip),
+                .raw_tokens = profile_argument_tokens(token),
+                .source     = input.source.clone(),
+            });
+            tokens.push(input.tokens[index].clone());
+            continue;
+        }
         if (token == "-pthread"_str) {
             requirements.posix_threads = true;
             requirements.thread_sources.push(input.source.clone());
@@ -232,7 +327,21 @@ auto normalize_arguments(ArgumentSequence input) -> ArgumentResult<NormalizedArg
             continue;
         }
         if (token == "-Xlinker"_str && index + usize(1) < input.tokens.len()) {
-            auto linker = input.tokens[index + usize(1)].as_str();
+            auto linker       = input.tokens[index + usize(1)].as_str();
+            auto linker_strip = strip_argument(linker);
+            if (linker_strip.is_some()) {
+                profile_arguments.push(ProfileArgumentOccurrence {
+                    .argument = ProfileArgument::Strip(*linker_strip),
+                    .raw_tokens =
+                        profile_argument_tokens(input.tokens[index].as_str(),
+                                                Some(input.tokens[index + usize(1)].as_str())),
+                    .source = input.source.clone(),
+                });
+                tokens.push(input.tokens[index].clone());
+                tokens.push(input.tokens[index + usize(1)].clone());
+                ++index;
+                continue;
+            }
             if (linker == "--disable-new-dtags"_str) {
                 return Err(ArgumentError::LegacyRpath(input.source.clone(),
                                                       input.tokens[index + usize(1)].clone()));
@@ -262,8 +371,9 @@ auto normalize_arguments(ArgumentSequence input) -> ArgumentResult<NormalizedArg
     }
     input.tokens = rstd::move(tokens);
     return Ok(NormalizedArguments {
-        .arguments    = rstd::move(input),
-        .requirements = rstd::move(requirements),
+        .arguments         = rstd::move(input),
+        .requirements      = rstd::move(requirements),
+        .profile_arguments = rstd::move(profile_arguments),
     });
 }
 

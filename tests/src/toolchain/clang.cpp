@@ -60,9 +60,11 @@ TEST(ClangToolchain, ProjectsTypedCCompileOptions) {
     auto options = c::apply_c_option_layer(
         c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C23),
         rstd::move(layer));
+    ASSERT_TRUE(options.is_ok());
     auto context = cpp::CompileContext {
-        .id       = String::make("c-context"_str),
-        .language = cpp::LanguageCompileContext::C(rstd::move(options), c::CPublicRequirements {}),
+        .id = String::make("c-context"_str),
+        .language =
+            cpp::LanguageCompileContext::C(rstd::move(options).unwrap(), c::CPublicRequirements {}),
     };
     auto prepared = cpp::PreparedUnit {
         .unit =
@@ -168,7 +170,18 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-ftype-visibility=protected"_str));
     EXPECT_TRUE(has_argument(visibility_invocation->arguments, "-fvisibility-inlines-hidden"_str));
 
-    context.language.as_Cpp().options.common.codegen.lto = lito::manifest::Lto::Thin;
+    context.language.as_Cpp().options.common.codegen.optimization = None();
+    context.language.as_Cpp().options.common.codegen.debug_info   = None();
+    context.language.as_Cpp().options.common.codegen.lto          = None();
+    auto plain_invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
+    ASSERT_TRUE(plain_invocation.is_ok());
+    EXPECT_FALSE(has_prefix(plain_invocation->arguments, "-O"_str));
+    EXPECT_FALSE(has_prefix(plain_invocation->arguments, "-g"_str));
+    EXPECT_FALSE(has_prefix(plain_invocation->arguments, "-flto"_str));
+    EXPECT_FALSE(has_argument(plain_invocation->arguments, "-fno-lto"_str));
+
+    context.language.as_Cpp().options.common.codegen.lto =
+        Some<lito::manifest::Lto>(lito::manifest::Lto::Thin);
     auto lto_invocation = toolchain.prepare_compile(prepared, cpp::ScanResult {}, dependencies);
     ASSERT_TRUE(lto_invocation.is_ok());
     EXPECT_TRUE(has_argument(lto_invocation->arguments, "-flto=thin"_str));

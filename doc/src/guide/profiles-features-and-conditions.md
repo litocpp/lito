@@ -10,6 +10,11 @@ the build and BMI identities when they affect compilation.
 for build-oriented commands other than `install`. `release` uses optimization level 3, no debug
 information, no stripping, and no LTO. It also defines `NDEBUG` and is the default for `install`.
 
+`plain` delegates optimization, debug information, LTO, `NDEBUG`, and link-time stripping to global
+build inputs. An unspecified field uses the compiler default: Lito does not translate it to `-O0`,
+`-g0`, or `-fno-lto`. `plain` does not delegate the language standard, target, sysroot, standard
+library, exceptions, RTTI, BMI policy, or PIC.
+
 Project-wide exception and RTTI policy is declared at the top of `[profile]`:
 
 ```toml
@@ -27,8 +32,15 @@ debug = "line-tables-only"
 lto = "thin"
 ```
 
-Built-in `debug` and `release` may be customized directly but cannot declare `inherits`. Every other
-profile must inherit another profile, and inheritance cycles are rejected.
+Built-in `debug`, `release`, and `plain` may be customized directly but cannot declare `inherits`.
+Every other profile must inherit another profile, and inheritance cycles are rejected. A packaging
+profile can keep selected fields fixed while delegating the others:
+
+```toml
+[profile.packaging]
+inherits = "plain"
+lto = "thin"
+```
 
 ## Project build options
 
@@ -47,7 +59,16 @@ options = ["-DPROJECT_C=1"]
 Lito keeps C, C++, and link options in separate domains. It parses them before planning, rejects an
 attempt to override profile- or toolchain-owned settings, and includes relevant options in cache and
 compatibility identities. Use `--use-env-flags` to append `CFLAGS`, `CXXFLAGS`, and `LDFLAGS` for
-one invocation; ambient values are otherwise ignored.
+one invocation; ambient values are otherwise ignored. With `plain`, these inputs can provide the
+delegated code-generation fields:
+
+```sh
+CFLAGS="-O2 -g" CXXFLAGS="-O2 -g" LDFLAGS="-Wl,-z,relro" \
+  lito --use-env-flags build --profile plain
+```
+
+For `debug`, `release`, or a fixed field in a custom profile, an equal typed value is normalized and
+a different value remains an error. Package `usage.options` cannot provide delegated profile fields.
 
 ## Package features
 
