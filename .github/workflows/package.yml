@@ -69,10 +69,74 @@ jobs:
             dist/lito-linux-${{ matrix.arch }}.tar.gz.sha256
           if-no-files-found: error
 
+  windows:
+    name: Windows x86_64
+    runs-on: windows-2022
+    timeout-minutes: 60
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Install LLVM 22
+        shell: pwsh
+        env:
+          LLVM_VERSION: 22.1.2
+        run: |
+          $installer = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-win64.exe"
+          $installDir = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION"
+          $url = "https://github.com/llvm/llvm-project/releases/download/llvmorg-$env:LLVM_VERSION/LLVM-$env:LLVM_VERSION-win64.exe"
+
+          curl.exe --fail --location --retry 3 $url --output $installer
+          $process = Start-Process -FilePath $installer -ArgumentList "/S", "/D=$installDir" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "LLVM installer failed with exit code $($process.ExitCode)"
+          }
+
+          $llvmBin = Join-Path $installDir "bin"
+          $llvmBin | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
+          & (Join-Path $llvmBin "clang++.exe") --version
+
+      - name: Configure
+        shell: pwsh
+        run: |
+          cmake `
+            -S . `
+            -B build/cmake-package `
+            -G Ninja `
+            "-DCMAKE_BUILD_TYPE=Release" `
+            "-DCMAKE_C_COMPILER=clang.exe" `
+            "-DCMAKE_CXX_COMPILER=clang++.exe"
+
+      - name: Build
+        run: cmake --build build/cmake-package --target lito --parallel 2
+
+      - name: Package
+        shell: pwsh
+        run: |
+          $package = "lito-windows-x86_64"
+          $archive = "dist/$package.zip"
+          cmake --install build/cmake-package --prefix "dist/$package" --strip
+          & "dist/$package/bin/lito.exe" --help | Out-Null
+          Compress-Archive -Path "dist/$package" -DestinationPath $archive
+          tar -tf $archive
+
+          $hash = (Get-FileHash -Algorithm SHA256 $archive).Hash.ToLowerInvariant()
+          "$hash  $package.zip" | Set-Content -Encoding ascii "$archive.sha256"
+
+      - name: Upload package
+        uses: actions/upload-artifact@v4
+        with:
+          name: lito-windows-x86_64
+          path: |
+            dist/lito-windows-x86_64.zip
+            dist/lito-windows-x86_64.zip.sha256
+          if-no-files-found: error
+
   release:
     name: Release
     if: github.event_name == 'push' && github.ref_type == 'tag'
-    needs: linux
+    needs: [linux, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -81,14 +145,14 @@ jobs:
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
-          pattern: lito-linux-*
+          pattern: lito-*
           path: dist
           merge-multiple: true
 
       - name: Publish immutable release
         uses: ncipollo/release-action@v1
         with:
-          artifacts: "dist/*.tar.gz,dist/*.tar.gz.sha256"
+          artifacts: "dist/*.tar.gz,dist/*.zip,dist/*.sha256"
           artifactErrorsFailBuild: true
           generateReleaseNotes: true
           immutableCreate: true
