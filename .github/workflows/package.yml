@@ -142,6 +142,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
       - name: Download packages
         uses: actions/download-artifact@v4
         with:
@@ -149,11 +152,18 @@ jobs:
           path: dist
           merge-multiple: true
 
+      - name: Prepare release notes
+        id: release-notes
+        uses: hypengw/appstream-release-notes-action@v0.1.0
+        with:
+          file: release.xml
+          version: ${{ github.ref_name }}
+
       - name: Publish immutable release
         uses: ncipollo/release-action@v1
         with:
           artifacts: "dist/*.tar.gz,dist/*.zip,dist/*.sha256"
           artifactErrorsFailBuild: true
-          generateReleaseNotes: true
+          bodyFile: ${{ steps.release-notes.outputs.path }}
           immutableCreate: true
           tag: ${{ github.ref_name }}

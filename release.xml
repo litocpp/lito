@@ -1,3 +1,13 @@
+<release version="0.4.0" date="2026-08-19">
+  <description>
+    <ul>
+      <li>Windows builds and release packages.</li>
+      <li>Plain build profile.</li>
+      <li>PkgConfig and CMake moved to tools section.</li>
+      <li>C++ standard library modules.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.3.0" date="2026-08-18">
   <description>
     <ul>

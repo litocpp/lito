@@ -4,7 +4,7 @@ set(CMAKE_LINKER_TYPE LLD)
 
 project(
   lito
-  VERSION 0.3.0
+  VERSION 0.4.0
   DESCRIPTION "Module-first C++ builder"
   LANGUAGES C CXX)
 
@@ -61,7 +61,7 @@ set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 FetchContent_Declare(
   luato
   GIT_REPOSITORY https://github.com/litocpp/luato.git
-  GIT_TAG 3b10ff2caf2efddcdcdc7196240627cbd3346af5)
+  GIT_TAG afb1a0f908188ea7fb449f865f540811cae03d20)
 FetchContent_MakeAvailable(luato)
 
 add_subdirectory(frontend)
