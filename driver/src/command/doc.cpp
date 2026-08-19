@@ -407,8 +407,16 @@ auto site_manifest_json(const BuildSummary&     summary,
                 .path   = plan.response.clone(),
                 .digest = rstd::crypto::sha256_hex(contents->as_str()),
             });
-            if (package.root_module.is_empty() && unit.logical_module.is_some()) {
-                package.root_module = unit.logical_module->clone();
+            if (unit.root_module.is_some()) {
+                if (package.root_module.is_empty()) {
+                    package.root_module = unit.root_module->clone();
+                } else if (package.root_module.as_str() != unit.root_module->as_str()) {
+                    return doc_failure<String>(rstd::format(
+                        "package '{}' has conflicting documentation root modules '{}' and '{}'",
+                        package.package->name.as_str(),
+                        package.root_module.as_str(),
+                        unit.root_module->as_str()));
+                }
             }
         }
     }

@@ -32,6 +32,7 @@ struct DocumentationBuildUnit {
     DocumentationUnitKind           kind { DocumentationUnitKind::TranslationUnit };
     bool                            is_interface { false };
     Option<String>                  logical_module;
+    Option<String>                  root_module;
     String                          source_identity;
     CompileInvocation               invocation;
     Vec<DocumentationBmiDependency> bmi_dependencies;

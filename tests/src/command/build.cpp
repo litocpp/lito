@@ -468,6 +468,8 @@ TEST_F(BuildCommand, DocumentationSelectsOnlyLibraryArtifacts) {
     ASSERT_FALSE(summary->documentation_units.is_empty());
     for (const auto& unit : summary->documentation_units) {
         EXPECT_EQ(unit.target.kind, lito::package::PackageTargetKind::Library);
+        ASSERT_TRUE(unit.root_module.is_some());
+        EXPECT_EQ(unit.root_module->as_str(), "fixture.test.lib"_str);
     }
 }
 

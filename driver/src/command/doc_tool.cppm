@@ -25,7 +25,7 @@ namespace lito
 {
 
 inline constexpr auto LITODOC_REPOSITORY = "https://github.com/litocpp/litodoc.git"_str;
-inline constexpr auto LITODOC_COMMIT     = "2575f4ba5448054f9ba6ac45780f69f6c7efb750"_str;
+inline constexpr auto LITODOC_COMMIT     = "d4bbd5fd0d217f0923b5795d62897830557c9876"_str;
 
 template<typename T>
 auto doc_tool_failure(String message) -> DocResult<T> {

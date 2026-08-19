@@ -208,6 +208,7 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
             .kind             = documentation_unit_kind(scans[unit]),
             .is_interface     = is_interface,
             .logical_module   = rstd::move(logical_module),
+            .root_module      = package.targets[target].module_affiliation.clone(),
             .source_identity  = units[unit].frontend_analysis->receipt.clone(),
             .invocation       = plan.nodes[unit].invocation->clone(),
             .bmi_dependencies = rstd::move(dependencies),
