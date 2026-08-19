@@ -123,6 +123,7 @@ enum class CppCompilerArgumentKind
     TargetMode,
     CodegenMode,
     Threading,
+    MicrosoftRuntime,
     Instrumentation,
     SymbolVisibility,
     TypeVisibility,

@@ -84,7 +84,7 @@ auto environment_config_key(ref<str> key) -> bool {
 
 auto toolchain_config_key(ref<str> key) -> bool {
     return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
-           key == "stdlib"_str;
+           key == "stdlib"_str || key == "stdlib-runtime"_str;
 }
 
 auto tools_config_key(ref<str> key) -> bool {
@@ -184,7 +184,26 @@ auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<St
     auto parsed = parse_standard_library(*text);
     if (parsed.is_some()) return Ok(*parsed);
     return config_failure<StandardLibrary>(
-        "config.toolchain.stdlib must be 'libc++' or 'libstdc++'"_str);
+        "config.toolchain.stdlib must be 'libc++', 'libstdc++', or 'msvc'"_str);
+}
+
+auto configured_standard_library_runtime(const Toml& toolchain_value)
+    -> ConfigResult<StandardLibraryRuntime> {
+    auto value = config_member(toolchain_value, "stdlib-runtime"_str);
+    if (value.is_none()) return Ok(StandardLibraryRuntime::Dynamic);
+    auto text = (**value).as_str();
+    if (text.is_none()) {
+        return config_failure<StandardLibraryRuntime>(
+            "config.toolchain.stdlib-runtime must be a string"_str);
+    }
+    auto parsed = parse_standard_library_runtime(*text);
+    if (parsed.is_some()) return Ok(*parsed);
+    if (*text == "static"_str) {
+        return config_failure<StandardLibraryRuntime>(
+            "config.toolchain.stdlib-runtime 'static' is not supported yet; expected 'dynamic'"_str);
+    }
+    return config_failure<StandardLibraryRuntime>(
+        "config.toolchain.stdlib-runtime must be 'dynamic'"_str);
 }
 
 auto configured_build_option_input(Option<ref<Toml>> value, ref<str> context)
@@ -723,17 +742,19 @@ auto decode_project_config(PathBuf               root,
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto toolchain        = default_toolchain();
-    auto tools            = rstd_try(configured_host_tools(document, root.as_path()));
-    auto standard_library = StandardLibrary::Libcxx;
-    auto toolchain_value  = config_member(document, "toolchain"_str);
+    auto toolchain                = default_toolchain();
+    auto tools                    = rstd_try(configured_host_tools(document, root.as_path()));
+    auto standard_library         = StandardLibrary::Libcxx;
+    auto standard_library_runtime = StandardLibraryRuntime::Dynamic;
+    auto toolchain_value          = config_member(document, "toolchain"_str);
     if (toolchain_value.is_some()) {
         auto table = config_table(**toolchain_value, "config.toolchain"_str);
         if (table.is_err()) return Err(rstd::move(table).unwrap_err());
         auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
         if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        standard_library = rstd_try(configured_standard_library(**toolchain_value));
-        toolchain        = apply_toolchain_override(
+        standard_library         = rstd_try(configured_standard_library(**toolchain_value));
+        standard_library_runtime = rstd_try(configured_standard_library_runtime(**toolchain_value));
+        toolchain                = apply_toolchain_override(
             rstd::move(toolchain),
             ToolchainOverride {
                 .cc = rstd_try(
@@ -763,18 +784,19 @@ auto decode_project_config(PathBuf               root,
     rstd_try(append_environment_build_options(effective_build_options, environment_flags));
 
     return Ok(ProjectConfig {
-        .root                  = rstd::move(root),
-        .lock                  = rstd::move(lock).unwrap(),
-        .environment           = rstd::move(environment).unwrap(),
-        .tools                 = rstd::move(tools.executables),
-        .toolchain             = rstd::move(toolchain),
-        .standard_library      = standard_library,
-        .build_options         = rstd::move(effective_build_options),
-        .sources               = rstd::move(sources).unwrap(),
-        .pkg_config            = rstd::move(tools.pkg_config),
-        .cmake                 = rstd::move(tools.cmake),
-        .cmake_build_overrides = rstd::move(tools.cmake_build_overrides),
-        .install               = rstd::move(install).unwrap(),
-        .doc                   = rstd::move(doc).unwrap(),
+        .root                     = rstd::move(root),
+        .lock                     = rstd::move(lock).unwrap(),
+        .environment              = rstd::move(environment).unwrap(),
+        .tools                    = rstd::move(tools.executables),
+        .toolchain                = rstd::move(toolchain),
+        .standard_library         = standard_library,
+        .standard_library_runtime = standard_library_runtime,
+        .build_options            = rstd::move(effective_build_options),
+        .sources                  = rstd::move(sources).unwrap(),
+        .pkg_config               = rstd::move(tools.pkg_config),
+        .cmake                    = rstd::move(tools.cmake),
+        .cmake_build_overrides    = rstd::move(tools.cmake_build_overrides),
+        .install                  = rstd::move(install).unwrap(),
+        .doc                      = rstd::move(doc).unwrap(),
     });
 }

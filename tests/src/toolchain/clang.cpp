@@ -189,12 +189,27 @@ TEST(ClangToolchain, EmitsExactResolvedModuleMapping) {
 }
 
 TEST(ClangToolchain, MapsStandardLibraryLinkPolicy) {
+    auto linux = lito::system::parse_target_info("x86_64-unknown-linux-gnu"_str);
+    auto msvc  = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str);
+    auto mingw = lito::system::parse_target_info("x86_64-w64-windows-gnu"_str);
+    ASSERT_TRUE(linux.is_ok());
+    ASSERT_TRUE(msvc.is_ok());
+    ASSERT_TRUE(mingw.is_ok());
     EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
-                  lito::config::StandardLibrary::Libcxx, false),
+                  lito::config::StandardLibrary::Libcxx, *linux, false),
               "-nostdlib++"_str);
     EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
-                  lito::config::StandardLibrary::Libstdcxx, true),
+                  lito::config::StandardLibrary::Libstdcxx, *linux, true),
               "-stdlib=libstdc++"_str);
+    EXPECT_TRUE(toolchain::clang_options::standard_library_linker_option(
+                    lito::config::StandardLibrary::Msvc, *msvc, true)
+                    .is_empty());
+    EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
+                  lito::config::StandardLibrary::Libcxx, *msvc, true),
+              "-lc++"_str);
+    EXPECT_EQ(toolchain::clang_options::standard_library_linker_option(
+                  lito::config::StandardLibrary::Libcxx, *mingw, true),
+              "-stdlib=libc++"_str);
 }
 
 TEST(ClangToolchain, RejectsNonLldLinkers) {

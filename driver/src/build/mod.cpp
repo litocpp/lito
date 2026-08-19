@@ -608,11 +608,16 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         const auto& link_lto     = package_plan.profile->link_lto.is_some()
                                        ? Option<lito::manifest::Lto> {}
                                        : language_lto;
+        const auto& microsoft_runtime_library =
+            target_spec.language == lito::manifest::PackageLanguage::C
+                ? package_plan.profile->c.common.microsoft_runtime_library
+                : package_plan.profile->cpp.common.microsoft_runtime_library;
         auto linked = toolchain.link_executable(executable_path.as_path(),
                                                 objects,
                                                 link_inputs,
                                                 target_spec.language,
                                                 package_plan.profile->cpp.abi.standard_library,
+                                                microsoft_runtime_library,
                                                 project.platform.effective_target,
                                                 target_spec.link_stdlib,
                                                 link_lto,

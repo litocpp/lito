@@ -248,7 +248,8 @@ public:
     }
 
     auto resolve_standard_library(const cpp::CppCompileOptions& options,
-                                  const TargetInfo&             target) const
+                                  const TargetInfo&             target,
+                                  const Vec<String>&            linker_options) const
         -> ToolchainResult<cpp::ResolvedStandardLibrary> {
         auto command = Vec<String>::make();
         auto pushed  = toolchain::command::push_path(command, compiler_.as_path());
@@ -258,13 +259,23 @@ public:
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, options.language.standard.as_str()));
-        toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(options.abi.standard_library));
-        if (options.common.target.target.is_some()) {
-            command.push(rstd::format("--target={}", options.common.target.target->as_str()));
+        auto stdlib_option =
+            toolchain::clang_options::standard_library(options.abi.standard_library, target);
+        if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
+        append_typed_options(command, options, target, true);
+        for (const auto& macro : options.preprocessor.macros) {
+            command.push(
+                rstd::format("{}{}",
+                             macro.action == cpp::CppMacroAction::Define ? "-D"_str : "-U"_str,
+                             macro.value.as_str()));
         }
-        if (options.common.target.sysroot.is_some()) {
-            command.push(rstd::format("--sysroot={}", options.common.target.sysroot->as_str()));
+        for (const auto& include : options.preprocessor.include_directories) {
+            toolchain::command::push_option(command,
+                                            include.kind == cpp::CppIncludeDirectoryKind::System
+                                                ? "-isystem"_str
+                                                : toolchain::clang_options::INCLUDE);
+            pushed = toolchain::command::push_path(command, include.path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         toolchain::command::push_option(command, "-dM"_str);
         toolchain::command::push_option(command, "-E"_str);
@@ -282,13 +293,47 @@ public:
                              queried->standard_error.as_str()));
         }
 
+        auto detected_family = Option<lito::config::StandardLibrary> {};
+        if (queried->standard_output.as_str().contains("_LIBCPP_VERSION"_str)) {
+            detected_family = Some(lito::config::StandardLibrary::Libcxx);
+        } else if (queried->standard_output.as_str().contains("__GLIBCXX__"_str)) {
+            detected_family = Some(lito::config::StandardLibrary::Libstdcxx);
+        } else if (queried->standard_output.as_str().contains("_MSVC_STL_VERSION"_str) ||
+                   queried->standard_output.as_str().contains("_MSVC_STL_UPDATE"_str)) {
+            detected_family = Some(lito::config::StandardLibrary::Msvc);
+        }
+        if (detected_family.is_none()) {
+            return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+                "cannot identify selected C++ standard library for target '{}' from <version>",
+                target.triple.as_str()));
+        }
+        if (*detected_family != options.abi.standard_library) {
+            return failure<cpp::ResolvedStandardLibrary>(
+                rstd::format("configured C++ standard library '{}' resolved to '{}' for target "
+                             "'{}'; configure matching headers and libraries instead of relying "
+                             "on an ignored driver option",
+                             lito::config::standard_library_name(options.abi.standard_library),
+                             lito::config::standard_library_name(*detected_family),
+                             target.triple.as_str()));
+        }
+
         auto library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                 ? "libc++.so"_str
                                 : "libstdc++.so"_str;
-        if (target.family == TargetFamily::Windows) {
+        if (target.environment == TargetEnvironment::Msvc) {
+            library_name = options.abi.standard_library == lito::config::StandardLibrary::Msvc
+                               ? "msvcprt.lib"_str
+                               : "c++.lib"_str;
+            if (options.common.microsoft_runtime_library.is_some() &&
+                *options.common.microsoft_runtime_library ==
+                    lito::compiler::MicrosoftRuntimeLibrary::DynamicDebug &&
+                options.abi.standard_library == lito::config::StandardLibrary::Msvc) {
+                library_name = "msvcprtd.lib"_str;
+            }
+        } else if (target.family == TargetFamily::Windows) {
             library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                               ? "libc++.a"_str
-                               : "libstdc++.a"_str;
+                               ? "libc++.dll.a"_str
+                               : "libstdc++.dll.a"_str;
         } else if (target.os.as_str() == "macos"_str) {
             library_name = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
                                ? "libc++.dylib"_str
@@ -297,9 +342,11 @@ public:
         auto library_command = Vec<String>::make();
         pushed               = toolchain::command::push_path(library_command, compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(
-            library_command,
-            toolchain::clang_options::standard_library(options.abi.standard_library));
+        auto library_stdlib_option =
+            toolchain::clang_options::standard_library(options.abi.standard_library, target);
+        if (! library_stdlib_option.is_empty()) {
+            toolchain::command::push_option(library_command, library_stdlib_option);
+        }
         if (options.common.target.target.is_some()) {
             library_command.push(
                 rstd::format("--target={}", options.common.target.target->as_str()));
@@ -320,9 +367,125 @@ public:
                              library->standard_error.as_str()));
         }
         auto binary_path_text = trim_ascii(rstd::move(library->standard_output));
-        auto binary_identity  = rstd::format("unresolved:{}", binary_path_text.as_str());
-        auto binary_path      = PathBuf::from(binary_path_text.as_str());
-        auto binary_metadata  = rstd::fs::metadata(binary_path.as_path());
+        if (target.environment == TargetEnvironment::Msvc) {
+            auto probe_command = Vec<String>::make();
+            pushed             = toolchain::command::push_path(probe_command, compiler_.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            toolchain::command::push_option(probe_command, toolchain::clang_options::RESOURCE_DIR);
+            pushed = toolchain::command::push_path(probe_command, resource_dir_.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            probe_command.push(rstd::format(
+                "{}{}", toolchain::clang_options::STANDARD, options.language.standard.as_str()));
+            if (! library_stdlib_option.is_empty()) {
+                toolchain::command::push_option(probe_command, library_stdlib_option);
+            }
+            append_typed_options(probe_command, options, target, true);
+            for (const auto& macro : options.preprocessor.macros) {
+                probe_command.push(
+                    rstd::format("{}{}",
+                                 macro.action == cpp::CppMacroAction::Define ? "-D"_str : "-U"_str,
+                                 macro.value.as_str()));
+            }
+            for (const auto& include : options.preprocessor.include_directories) {
+                toolchain::command::push_option(probe_command,
+                                                include.kind == cpp::CppIncludeDirectoryKind::System
+                                                    ? "-isystem"_str
+                                                    : toolchain::clang_options::INCLUDE);
+                pushed = toolchain::command::push_path(probe_command, include.path.as_path());
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            }
+            toolchain::command::push_option(probe_command, "-fuse-ld=lld"_str);
+            toolchain::command::push_option(probe_command,
+                                            toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(probe_command, "/nodefaultlib:libcmt"_str);
+            toolchain::command::push_option(probe_command,
+                                            toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(probe_command, "/nodefaultlib:libcmtd"_str);
+            for (const auto& option : linker_options) probe_command.push(option.clone());
+            auto standard_library_linker_option =
+                toolchain::clang_options::standard_library_linker_option(
+                    options.abi.standard_library, target, true);
+            if (! standard_library_linker_option.is_empty()) {
+                toolchain::command::push_option(probe_command, standard_library_linker_option);
+            }
+            toolchain::command::push_option(probe_command,
+                                            toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(probe_command, "/verbose"_str);
+            toolchain::command::push_option(probe_command, "-x"_str);
+            toolchain::command::push_option(probe_command, "c++"_str);
+            toolchain::command::push_option(probe_command, "-"_str);
+            toolchain::command::push_option(probe_command, "-o"_str);
+            auto probe_path = rstd::env::temp_dir().join(
+                PathBuf::from(
+                    rstd::format("lito-stdlib-probe-{}-{}.exe",
+                                 rstd::process::id(),
+                                 lito::config::standard_library_name(options.abi.standard_library))
+                        .as_str())
+                    .as_path());
+            pushed = toolchain::command::push_path(probe_command, probe_path.as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+            auto linked = run_command_with_input(
+                probe_command,
+                "#include <string>\nint main() { std::string value; return int(value.size()); }\n"_str,
+                environment_);
+            static_cast<void>(rstd::fs::remove_file(probe_path.as_path()));
+            if (linked.is_err()) {
+                return Err(rstd::into<ToolchainError>(rstd::move(linked).unwrap_err()));
+            }
+            if (linked->exit_code != i32 {}) {
+                return failure<cpp::ResolvedStandardLibrary>(
+                    rstd::format("cannot link selected dynamic C++ standard library\n{}\n{}\n{}",
+                                 command_text(probe_command).as_str(),
+                                 linked->standard_output.as_str(),
+                                 linked->standard_error.as_str()));
+            }
+            auto trace = rstd::move(linked->standard_output);
+            trace.push_str(linked->standard_error.as_str());
+            const auto resolved_trace_entry = [&trace](ref<str> artifact) -> Option<String> {
+                auto remaining = trace.as_str();
+                while (auto found = remaining.find(artifact)) {
+                    auto before     = remaining.split_at(*found).get<0>();
+                    auto line_start = usize {};
+                    auto previous   = before.rfind("\n"_str);
+                    if (previous.is_some()) line_start = *previous + usize(1);
+                    auto line = remaining.split_at(line_start).get<1>();
+                    auto end  = line.find("\n"_str);
+                    if (end.is_some()) line = line.split_at(*end).get<0>();
+                    if (line.contains("Reading "_str) &&
+                        (line.contains("\\"_str) || line.contains("/"_str))) {
+                        return Some(String::make(line));
+                    }
+                    remaining = remaining.split_at(*found + artifact.len()).get<1>();
+                }
+                return None();
+            };
+            auto selected = resolved_trace_entry(library_name);
+            if (selected.is_none()) {
+                return failure<cpp::ResolvedStandardLibrary>(rstd::format(
+                    "dynamic C++ standard library '{}' was not selected while linking target '{}'",
+                    library_name,
+                    target.triple.as_str()));
+            }
+            if (resolved_trace_entry("libcmt.lib"_str).is_some() ||
+                resolved_trace_entry("libcmtd.lib"_str).is_some()) {
+                return failure<cpp::ResolvedStandardLibrary>(
+                    "dynamic Microsoft runtime probe selected a static CRT library"_str);
+            }
+            if (options.abi.standard_library == lito::config::StandardLibrary::Libcxx &&
+                ! trace.as_str().contains("c++.dll"_str)) {
+                return failure<cpp::ResolvedStandardLibrary>(
+                    "Windows libc++ probe did not select a DLL import library"_str);
+            }
+            auto selected_path = selected->as_str().split_once("Reading "_str);
+            if (selected_path.is_none()) {
+                return failure<cpp::ResolvedStandardLibrary>(
+                    "cannot decode selected standard library path from linker trace"_str);
+            }
+            binary_path_text = trim_ascii(String::make(selected_path->get<1>()));
+        }
+        auto binary_identity = rstd::format("unresolved:{}", binary_path_text.as_str());
+        auto binary_path     = PathBuf::from(binary_path_text.as_str());
+        auto binary_metadata = rstd::fs::metadata(binary_path.as_path());
         if (binary_metadata.is_ok() && binary_metadata->is_file()) {
             auto modified  = binary_metadata->modified();
             auto timestamp = modified.is_ok() ? modified->as_unix_time() : rstd::time::UnixTime {};
@@ -340,21 +503,23 @@ public:
             thread_backend = String::make("pthread"_str);
         } else if (queried->standard_output.as_str().contains("_LIBCPP_HAS_THREAD_API_WIN32"_str)) {
             thread_backend = String::make("win32"_str);
+        } else if (target.environment == TargetEnvironment::Msvc) {
+            thread_backend = String::make("win32"_str);
         }
-        auto family = options.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                          ? "libc++"_str
-                          : "libstdc++"_str;
+        auto family = lito::config::standard_library_name(*detected_family);
         auto headers_identity =
-            rstd::format("clang-stdlib-headers-v2\nfamily={}\ntarget={}\nmacros-sha256={}",
+            rstd::format("clang-stdlib-headers-v3\nfamily={}\ntarget={}\nenvironment={}\n"
+                         "runtime=dynamic\nmacros-sha256={}",
                          family,
                          target.triple.as_str(),
+                         target.environment_name(),
                          rstd::crypto::sha256_hex(queried->standard_output.as_str()).as_str());
-        auto identity = rstd::format("clang-stdlib-v1\n{}\nbinary={}\nthread-backend={}",
+        auto identity = rstd::format("clang-stdlib-v2\n{}\nbinary={}\nthread-backend={}",
                                      headers_identity.as_str(),
                                      binary_identity.as_str(),
                                      thread_backend.as_str());
         return Ok(cpp::ResolvedStandardLibrary {
-            .family           = options.abi.standard_library,
+            .family           = *detected_family,
             .headers_identity = rstd::move(headers_identity),
             .binary_identity  = rstd::move(binary_identity),
             .thread_backend   = rstd::move(thread_backend),
@@ -749,18 +914,19 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(ref<rstd::path::Path>              output_path,
-                         const Vec<PathBuf>&                objects,
-                         const Vec<ResolvedLinkInput>&      inputs,
-                         lito::manifest::PackageLanguage    language,
-                         lito::config::StandardLibrary      standard_library,
-                         const TargetInfo&                  target,
-                         bool                               link_stdlib,
-                         const Option<lito::manifest::Lto>& lto,
-                         const lito::link::Requirements&    link_requirements,
-                         const Vec<String>&                 linker_options,
-                         ref<rstd::path::Path>              working_directory) const
-        -> ToolchainResult<rstd::time::Duration> {
+    auto link_executable(
+        ref<rstd::path::Path>                                  output_path,
+        const Vec<PathBuf>&                                    objects,
+        const Vec<ResolvedLinkInput>&                          inputs,
+        lito::manifest::PackageLanguage                        language,
+        lito::config::StandardLibrary                          standard_library,
+        const Option<lito::compiler::MicrosoftRuntimeLibrary>& microsoft_runtime_library,
+        const TargetInfo&                                      target,
+        bool                                                   link_stdlib,
+        const Option<lito::manifest::Lto>&                     lto,
+        const lito::link::Requirements&                        link_requirements,
+        const Vec<String>&                                     linker_options,
+        ref<rstd::path::Path> working_directory) const -> ToolchainResult<rstd::time::Duration> {
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto command = Vec<String>::make();
@@ -776,11 +942,22 @@ public:
                 toolchain::command::push_path_option(command, "-fuse-ld="_str, linker_.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
+        if (target.environment == TargetEnvironment::Msvc && microsoft_runtime_library.is_some() &&
+            lito::compiler::microsoft_runtime_library_is_dynamic(*microsoft_runtime_library)) {
+            // The GNU clang driver injects libcmt for an MSVC target even when all input objects
+            // select the dynamic CRT through -fms-runtime-lib. Suppress only the incompatible
+            // static CRT defaults; the object directives select msvcrt or msvcrtd.
+            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(command, "/nodefaultlib:libcmt"_str);
+            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(command, "/nodefaultlib:libcmtd"_str);
+        }
         if (language == lito::manifest::PackageLanguage::Cpp) {
-            toolchain::command::push_option(
-                command,
-                toolchain::clang_options::standard_library_linker_option(standard_library,
-                                                                         link_stdlib));
+            auto stdlib_link_option = toolchain::clang_options::standard_library_linker_option(
+                standard_library, target, link_stdlib);
+            if (! stdlib_link_option.is_empty()) {
+                toolchain::command::push_option(command, stdlib_link_option);
+            }
         }
         auto lto_option = cpp::cpp_lto_option(lto);
         if (! lto_option.is_empty()) toolchain::command::push_option(command, lto_option);
@@ -1034,7 +1211,7 @@ private:
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
                                       lito::manifest::c_standard_name(c.standard)));
-            append_c_typed_options(command, c, target_info_.family, true);
+            append_c_typed_options(command, c, target_info_, true);
             auto key = argument_identity("lito-clang-c-builtin-context-v1"_str, command);
             key.push_ascii('\n');
             key.push_str(compiler_identity_.c_version.as_str());
@@ -1074,9 +1251,10 @@ private:
         }
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
-        toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(cpp_options.abi.standard_library));
-        append_typed_options(command, cpp_options, target_info_.family, true);
+        auto stdlib_option = toolchain::clang_options::standard_library(
+            cpp_options.abi.standard_library, target_info_);
+        if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
+        append_typed_options(command, cpp_options, target_info_, true);
         auto key = argument_identity("lito-clang-builtin-context-v4"_str, command);
         key.push_str(toolchain::CLANG_STANDARD_LIBRARY_CAPABILITY_ID);
         key.push_ascii('\n');
@@ -1116,7 +1294,7 @@ private:
             command.push(rstd::format("{}{}",
                                       toolchain::clang_options::STANDARD,
                                       lito::manifest::c_standard_name(c.standard)));
-            append_c_typed_options(command, c, target_info_.family, semantic_only);
+            append_c_typed_options(command, c, target_info_, semantic_only);
             for (const auto& macro : c.macros) {
                 command.push(rstd::format("{}{}",
                                           macro.action == lito::c::CMacroAction::Define ? "-D"_str
@@ -1143,11 +1321,12 @@ private:
         if (pushed.is_err()) return pushed;
         command.push(rstd::format(
             "{}{}", toolchain::clang_options::STANDARD, cpp_options.language.standard.as_str()));
-        toolchain::command::push_option(
-            command, toolchain::clang_options::standard_library(cpp_options.abi.standard_library));
+        auto stdlib_option = toolchain::clang_options::standard_library(
+            cpp_options.abi.standard_library, target_info_);
+        if (! stdlib_option.is_empty()) toolchain::command::push_option(command, stdlib_option);
         toolchain::command::push_option(
             command, toolchain::clang_options::bmi(cpp_context.bmi.representation));
-        append_typed_options(command, cpp_options, target_info_.family, semantic_only);
+        append_typed_options(command, cpp_options, target_info_, semantic_only);
         for (const auto& macro : cpp_options.preprocessor.macros) {
             command.push(
                 rstd::format("{}{}",

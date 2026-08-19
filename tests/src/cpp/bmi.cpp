@@ -146,6 +146,27 @@ TEST(Bmi, TreatsStandardLibraryModesAsAnExplicitConsistencyDomain) {
               cpp::cpp_abi_compatibility_identity(consumer).as_str());
 }
 
+TEST(Bmi, TreatsMicrosoftRuntimeAsAnAbiCompatibilityDomain) {
+    auto provider = cpp_options(
+        "c++20"_str, lito::manifest::Optimization::None, lito::manifest::DebugInfo::None);
+    auto consumer                             = provider.clone();
+    provider.common.microsoft_runtime_library = Some(compiler::MicrosoftRuntimeLibrary::Dynamic);
+    consumer.common.microsoft_runtime_library =
+        Some(compiler::MicrosoftRuntimeLibrary::DynamicDebug);
+    auto identity     = format();
+    auto requirements = cpp::cpp_public_requirements(provider);
+    auto result =
+        cpp::check_bmi_compatibility(identity, provider, requirements, identity, consumer);
+    ASSERT_FALSE(result.compatible());
+    EXPECT_EQ(result.differences[usize {}].field,
+              cpp::BmiCompatibilityField::MicrosoftRuntimeLibrary);
+    auto abi = cpp::check_cpp_abi_compatibility(provider, consumer);
+    ASSERT_TRUE(abi.is_some());
+    EXPECT_EQ(abi->field, cpp::CppAbiCompatibilityField::MicrosoftRuntimeLibrary);
+    EXPECT_NE(cpp::cpp_compile_identity(provider).as_str(),
+              cpp::cpp_compile_identity(consumer).as_str());
+}
+
 TEST(Bmi, ArtifactIdentityIncludesRepresentationEmbeddingAndDependencies) {
     auto reduced            = artifact_key(cpp::BmiRepresentation::Reduced,
                                            cpp::BmiSourceEmbeddingPolicy::ExternalSources,

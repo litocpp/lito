@@ -33,6 +33,8 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
     context.set_string(String::make("target.os"_str), platform.effective_target.os.clone());
     context.set_string(String::make("target.family"_str),
                        String::make(platform.effective_target.family_name()));
+    context.set_string(String::make("target.environment"_str),
+                       String::make(platform.effective_target.environment_name()));
     context.set_string(String::make("target.arch"_str),
                        platform.effective_target.architecture.name.clone());
     context.set_string(String::make("target.triple"_str), platform.effective_target.triple.clone());
@@ -43,9 +45,10 @@ auto make_package_condition_context(const lito::package::ResolvedPackage& packag
     context.set_string(String::make("toolchain.compiler"_str), String::make("clang"_str));
     context.set_string(
         String::make("toolchain.stdlib"_str),
-        String::make(configuration.standard_library == lito::config::StandardLibrary::Libstdcxx
-                         ? "libstdc++"_str
-                         : "libc++"_str));
+        String::make(lito::config::standard_library_name(configuration.standard_library)));
+    context.set_string(String::make("toolchain.stdlib-runtime"_str),
+                       String::make(lito::config::standard_library_runtime_name(
+                           configuration.standard_library_runtime)));
     for (const auto& feature : package.features) {
         auto key = String::make("feature."_str);
         key.push_str(feature.name.as_str());

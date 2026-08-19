@@ -69,14 +69,15 @@ enum class EnvironmentFlagPolicy
 };
 
 struct ProjectConfig {
-    PathBuf                                   root;
-    lito::lock::LockConfig                    lock;
-    ProcessEnvironmentSpec                    environment;
-    ToolSpec                                  tools;
-    ToolchainSpec                             toolchain;
-    StandardLibrary                           standard_library { StandardLibrary::Libcxx };
-    ProjectBuildOptions                       build_options;
-    lito::source::PackageSourceConfig         sources;
+    PathBuf                           root;
+    lito::lock::LockConfig            lock;
+    ProcessEnvironmentSpec            environment;
+    ToolSpec                          tools;
+    ToolchainSpec                     toolchain;
+    StandardLibrary                   standard_library { StandardLibrary::Libcxx };
+    StandardLibraryRuntime            standard_library_runtime { StandardLibraryRuntime::Dynamic };
+    ProjectBuildOptions               build_options;
+    lito::source::PackageSourceConfig sources;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;

@@ -54,3 +54,20 @@ TEST(Condition, DistinguishesHostTargetAndCrossState) {
     ASSERT_TRUE(evaluated.is_ok());
     EXPECT_TRUE(*evaluated);
 }
+
+TEST(System, ClassifiesWindowsTargetEnvironments) {
+    auto msvc  = lito::system::parse_target_info("x86_64-pc-windows-msvc"_str);
+    auto gnu   = lito::system::parse_target_info("x86_64-w64-windows-gnu"_str);
+    auto mingw = lito::system::parse_target_info("x86_64-w64-mingw32"_str);
+    auto linux = lito::system::parse_target_info("aarch64-unknown-linux-gnu"_str);
+    ASSERT_TRUE(msvc.is_ok());
+    ASSERT_TRUE(gnu.is_ok());
+    ASSERT_TRUE(mingw.is_ok());
+    ASSERT_TRUE(linux.is_ok());
+    EXPECT_EQ(msvc->environment, lito::system::TargetEnvironment::Msvc);
+    EXPECT_EQ(gnu->environment, lito::system::TargetEnvironment::Gnu);
+    EXPECT_EQ(mingw->environment, lito::system::TargetEnvironment::Gnu);
+    EXPECT_EQ(linux->environment, lito::system::TargetEnvironment::Unknown);
+    EXPECT_EQ(msvc->environment_name(), "msvc"_str);
+    EXPECT_EQ(gnu->environment_name(), "gnu"_str);
+}

@@ -56,9 +56,14 @@ auto configuration() -> lito::cpp::BuildConfiguration {
                 .ld  = rstd::move(linker),
                 .ar  = rstd::move(archiver),
             },
-        .standard_library  = lito::config::StandardLibrary::Libcxx,
-        .bmi_mode          = lito::cpp::BmiMode::Reduced,
-        .language_standard = String::make("c++20"_str),
+#if defined(_WIN32)
+        .standard_library = lito::config::StandardLibrary::Msvc,
+#else
+        .standard_library = lito::config::StandardLibrary::Libcxx,
+#endif
+        .standard_library_runtime = lito::config::StandardLibraryRuntime::Dynamic,
+        .bmi_mode                 = lito::cpp::BmiMode::Reduced,
+        .language_standard        = String::make("c++20"_str),
     };
 }
 

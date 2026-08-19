@@ -3,6 +3,7 @@ export module lito.toolchain.clang:options;
 import rstd;
 import lito.core;
 import lito.cpp;
+import lito.system;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -50,14 +51,25 @@ inline constexpr auto LINKER_ARGUMENT     = "-Xlinker"_str;
 inline constexpr auto FORCE_LOAD          = "-force_load"_str;
 inline constexpr auto NO_STANDARD_LIBRARY = "-nostdlib++"_str;
 
-constexpr auto standard_library(lito::config::StandardLibrary value) noexcept -> ref<str> {
-    return value == lito::config::StandardLibrary::Libstdcxx ? "-stdlib=libstdc++"_str
-                                                             : "-stdlib=libc++"_str;
+constexpr auto standard_library(lito::config::StandardLibrary   value,
+                                const lito::system::TargetInfo& target) noexcept -> ref<str> {
+    if (target.environment == lito::system::TargetEnvironment::Msvc) return {};
+    switch (value) {
+    case lito::config::StandardLibrary::Libstdcxx: return "-stdlib=libstdc++"_str;
+    case lito::config::StandardLibrary::Libcxx: return "-stdlib=libc++"_str;
+    case lito::config::StandardLibrary::Msvc: return {};
+    }
+    return {};
 }
 
-constexpr auto standard_library_linker_option(lito::config::StandardLibrary value,
+constexpr auto standard_library_linker_option(lito::config::StandardLibrary   value,
+                                              const lito::system::TargetInfo& target,
                                               bool link) noexcept -> ref<str> {
-    return link ? standard_library(value) : NO_STANDARD_LIBRARY;
+    if (! link) return NO_STANDARD_LIBRARY;
+    if (target.environment == lito::system::TargetEnvironment::Msvc) {
+        return value == lito::config::StandardLibrary::Libcxx ? "-lc++"_str : ref<str> {};
+    }
+    return standard_library(value, target);
 }
 
 constexpr auto bmi(cpp::BmiMode value) noexcept -> ref<str> {

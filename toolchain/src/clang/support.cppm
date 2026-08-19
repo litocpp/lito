@@ -149,7 +149,7 @@ auto clang_warning_option(compiler::CompilerWarningOption option) noexcept -> re
 
 auto append_typed_options(Vec<String>&                  command,
                           const cpp::CppCompileOptions& options,
-                          TargetFamily                  target_family,
+                          const TargetInfo&             target,
                           bool                          semantic_only) -> void {
     if (options.common.target.target.is_some()) {
         command.push(rstd::format("--target={}", options.common.target.target->as_str()));
@@ -163,7 +163,7 @@ auto append_typed_options(Vec<String>&                  command,
     if (! semantic_only && ! debug.is_empty()) toolchain::command::push_option(command, debug);
     auto lto = cpp::cpp_lto_option(options.common.codegen.lto);
     if (! semantic_only && ! lto.is_empty()) toolchain::command::push_option(command, lto);
-    if (target_family != TargetFamily::Windows) {
+    if (target.family != TargetFamily::Windows) {
         toolchain::command::push_option(
             command,
             options.common.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
@@ -192,6 +192,12 @@ auto append_typed_options(Vec<String>&                  command,
     }
     for (const auto& option : options.language.modes) command.push(option.value.clone());
     for (const auto& option : options.abi.modes) command.push(option.value.clone());
+    if (target.environment == TargetEnvironment::Msvc &&
+        options.common.microsoft_runtime_library.is_some()) {
+        command.push(rstd::format("-fms-runtime-lib={}",
+                                  lito::compiler::microsoft_runtime_library_name(
+                                      *options.common.microsoft_runtime_library)));
+    }
     if (compiler::uses_posix_threads(options.common)) command.push(String::make("-pthread"_str));
     for (const auto& option : options.target.features) command.push(option.value.clone());
     for (const auto& option : options.codegen.modes) command.push(option.value.clone());
@@ -224,7 +230,7 @@ auto append_typed_options(Vec<String>&                  command,
 
 auto append_c_typed_options(Vec<String>&                    command,
                             const lito::c::CCompileOptions& options,
-                            TargetFamily                    target_family,
+                            const TargetInfo&               target,
                             bool                            semantic_only) -> void {
     if (options.common.target.target.is_some()) {
         command.push(rstd::format("--target={}", options.common.target.target->as_str()));
@@ -240,13 +246,19 @@ auto append_c_typed_options(Vec<String>&                    command,
         auto lto = cpp::cpp_lto_option(options.common.codegen.lto);
         if (! lto.is_empty()) toolchain::command::push_option(command, lto);
     }
-    if (target_family != TargetFamily::Windows) {
+    if (target.family != TargetFamily::Windows) {
         toolchain::command::push_option(
             command,
             options.common.codegen.position_independent_code ? "-fPIC"_str : "-fno-PIC"_str);
     }
     if (compiler::uses_posix_threads(options.common)) {
         toolchain::command::push_option(command, "-pthread"_str);
+    }
+    if (target.environment == TargetEnvironment::Msvc &&
+        options.common.microsoft_runtime_library.is_some()) {
+        command.push(rstd::format("-fms-runtime-lib={}",
+                                  lito::compiler::microsoft_runtime_library_name(
+                                      *options.common.microsoft_runtime_library)));
     }
     for (const auto& option : options.vendor) {
         if (semantic_only && (option.effect == lito::c::CVendorOptionEffect::Codegen ||

@@ -35,9 +35,16 @@ add_compile_options(
   "$<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-declarations>"
   "$<$<COMPILE_LANGUAGE:CXX>:-Wunknown-attributes>"
   "$<$<COMPILE_LANGUAGE:CXX>:-fsized-deallocation>")
-add_link_options(
-  "$<$<LINK_LANGUAGE:CXX>:-stdlib=libc++>"
-  "$<$<LINK_LANGUAGE:CXX>:-nostdlib++>")
+
+if(WIN32)
+  set(CMAKE_MSVC_RUNTIME_LIBRARY
+      "MultiThreaded$<$<CONFIG:Debug>:Debug>DLL")
+else()
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-stdlib=libc++>")
+  add_link_options(
+    "$<$<LINK_LANGUAGE:CXX>:-stdlib=libc++>"
+    "$<$<LINK_LANGUAGE:CXX>:-nostdlib++>")
+endif()
 
 set(RSTD_BUILD_BENCHMARKS OFF CACHE BOOL "" FORCE)
 
@@ -48,7 +55,6 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
   GIT_TAG e5451a6ac1acbe22c47b5061839ee378e559ef39)
 
-set(CMAKE_CXX_FLAGS_INIT "${CMAKE_CXX_FLAGS_INIT} -stdlib=libc++")
 FetchContent_MakeAvailable(rstd)
 
 set(LUATO_BUILD_TESTS OFF CACHE BOOL "" FORCE)

@@ -281,3 +281,42 @@ TEST(CompilerArguments, DecodesCommonCodegenSettingsForCAndCpp) {
     EXPECT_EQ(c->occurrences[usize(2)].argument.as_CodegenSetting().setting.as_Lto().value,
               lito::manifest::Lto::Thin);
 }
+
+TEST(CompilerArguments, DecodesMicrosoftRuntimeForCAndCppWithLastValueWins) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto values        = strings("-fms-runtime-lib=static"_str, "-fms-runtime-lib=dll_dbg"_str);
+    auto cpp_arguments = parser->parse(values, "CXXFLAGS"_str);
+    auto c_arguments   = parser->parse_c(values, "CFLAGS"_str);
+    ASSERT_TRUE(cpp_arguments.is_ok());
+    ASSERT_TRUE(c_arguments.is_ok());
+    auto cpp_options = cpp::make_cpp_options("c++20"_str,
+                                             lito::config::StandardLibrary::Msvc,
+                                             false,
+                                             false,
+                                             lito::manifest::Optimization::None,
+                                             lito::manifest::DebugInfo::None,
+                                             cpp::CppOptionLayer {
+                                                 .arguments = rstd::move(cpp_arguments).unwrap(),
+                                             });
+    auto c_options   = c::apply_c_option_layer(
+        c::make_c_options(compiler::CommonCompileOptions {}, lito::manifest::CStandard::C17),
+        rstd::move(c_arguments).unwrap());
+    ASSERT_TRUE(cpp_options.is_ok());
+    ASSERT_TRUE(c_options.is_ok());
+    ASSERT_TRUE(cpp_options->common.microsoft_runtime_library.is_some());
+    ASSERT_TRUE(c_options->common.microsoft_runtime_library.is_some());
+    EXPECT_EQ(*cpp_options->common.microsoft_runtime_library,
+              compiler::MicrosoftRuntimeLibrary::DynamicDebug);
+    EXPECT_EQ(*c_options->common.microsoft_runtime_library,
+              compiler::MicrosoftRuntimeLibrary::DynamicDebug);
+
+    auto invalid = parser->parse(strings("-fms-runtime-lib=dynamic"_str), "CXXFLAGS"_str);
+    ASSERT_TRUE(invalid.is_err());
+    auto error = invalid.unwrap_err();
+    ASSERT_TRUE(error.is_Argument());
+    ASSERT_TRUE(error.as_Argument().source.is_InvalidValue());
+    const auto& source = error.as_Argument().source.as_InvalidValue();
+    EXPECT_EQ(source.value.as_str(), "dynamic"_str);
+    EXPECT_TRUE(source.expected.as_str().contains("dll_dbg"_str));
+}

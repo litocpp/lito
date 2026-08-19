@@ -22,7 +22,13 @@ auto bool_text(bool value) -> ref<str> {
 }
 
 auto standard_library_text(lito::config::StandardLibrary value) -> ref<str> {
-    return value == lito::config::StandardLibrary::Libstdcxx ? "libstdc++"_str : "libc++"_str;
+    return lito::config::standard_library_name(value);
+}
+
+auto microsoft_runtime_text(const lito::compiler::CommonCompileOptions& options) -> ref<str> {
+    return options.microsoft_runtime_library.is_some()
+               ? lito::compiler::microsoft_runtime_library_name(*options.microsoft_runtime_library)
+               : "<default>"_str;
 }
 
 auto family_identity(ref<str> prefix, const Vec<CppFamilyOption>& options) -> String {
@@ -92,6 +98,7 @@ enum class BmiCompatibilityField
     StandardLibrary,
     StandardLibraryIdentity,
     StandardLibraryModes,
+    MicrosoftRuntimeLibrary,
     Exceptions,
     Rtti,
     SizedDeallocation,
@@ -163,6 +170,9 @@ auto check_bmi_compatibility(const BmiFormatIdentity&     provider_format,
     add_difference(BmiCompatibilityField::StandardLibraryModes,
                    provider_stdlib_modes.as_str(),
                    consumer_stdlib_modes.as_str());
+    add_difference(BmiCompatibilityField::MicrosoftRuntimeLibrary,
+                   microsoft_runtime_text(provider.common),
+                   microsoft_runtime_text(consumer.common));
     add_difference(BmiCompatibilityField::Exceptions,
                    bool_text(provider.language.exceptions),
                    bool_text(consumer.language.exceptions));
@@ -236,6 +246,9 @@ struct Impl<fmt::Display, lito::cpp::BmiCompatibilityField>
             break;
         case lito::cpp::BmiCompatibilityField::StandardLibraryModes:
             name = "standard library consistency modes"_str;
+            break;
+        case lito::cpp::BmiCompatibilityField::MicrosoftRuntimeLibrary:
+            name = "Microsoft runtime library"_str;
             break;
         case lito::cpp::BmiCompatibilityField::Exceptions: name = "exceptions"_str; break;
         case lito::cpp::BmiCompatibilityField::Rtti: name = "RTTI"_str; break;

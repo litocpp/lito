@@ -8,6 +8,7 @@ import rstd;
 import lito.core;
 
 using namespace rstd::prelude;
+using namespace rstd::literals;
 
 export namespace lito::compiler
 {
@@ -17,6 +18,46 @@ enum class ThreadingModel
     None,
     Posix,
 };
+
+enum class MicrosoftRuntimeLibrary
+{
+    Static,
+    StaticDebug,
+    Dynamic,
+    DynamicDebug,
+};
+
+constexpr auto microsoft_runtime_library_name(MicrosoftRuntimeLibrary value) noexcept -> ref<str> {
+    switch (value) {
+    case MicrosoftRuntimeLibrary::Static: return "static"_str;
+    case MicrosoftRuntimeLibrary::StaticDebug: return "static_dbg"_str;
+    case MicrosoftRuntimeLibrary::Dynamic: return "dll"_str;
+    case MicrosoftRuntimeLibrary::DynamicDebug: return "dll_dbg"_str;
+    }
+    return ""_str;
+}
+
+auto parse_microsoft_runtime_library(ref<str> value) noexcept -> Option<MicrosoftRuntimeLibrary> {
+    if (value == microsoft_runtime_library_name(MicrosoftRuntimeLibrary::Static)) {
+        return Some(MicrosoftRuntimeLibrary::Static);
+    }
+    if (value == microsoft_runtime_library_name(MicrosoftRuntimeLibrary::StaticDebug)) {
+        return Some(MicrosoftRuntimeLibrary::StaticDebug);
+    }
+    if (value == microsoft_runtime_library_name(MicrosoftRuntimeLibrary::Dynamic)) {
+        return Some(MicrosoftRuntimeLibrary::Dynamic);
+    }
+    if (value == microsoft_runtime_library_name(MicrosoftRuntimeLibrary::DynamicDebug)) {
+        return Some(MicrosoftRuntimeLibrary::DynamicDebug);
+    }
+    return None();
+}
+
+constexpr auto microsoft_runtime_library_is_dynamic(MicrosoftRuntimeLibrary value) noexcept
+    -> bool {
+    return value == MicrosoftRuntimeLibrary::Dynamic ||
+           value == MicrosoftRuntimeLibrary::DynamicDebug;
+}
 
 enum class CompilerWarning
 {
@@ -87,15 +128,17 @@ public:
 };
 
 struct CommonCompileOptions {
-    TargetOptions  target;
-    CodegenOptions codegen;
-    ThreadingModel threading { ThreadingModel::None };
+    TargetOptions                   target;
+    CodegenOptions                  codegen;
+    ThreadingModel                  threading { ThreadingModel::None };
+    Option<MicrosoftRuntimeLibrary> microsoft_runtime_library;
 
     auto clone() const -> CommonCompileOptions {
         return CommonCompileOptions {
-            .target    = target.clone(),
-            .codegen   = codegen,
-            .threading = threading,
+            .target                    = target.clone(),
+            .codegen                   = codegen,
+            .threading                 = threading,
+            .microsoft_runtime_library = microsoft_runtime_library,
         };
     }
 };
@@ -105,6 +148,7 @@ class CommonCompilerArgument : public DefaultInClass<CommonCompilerArgument, Clo
               (Target, (String value;)),
               (Sysroot, (String value;)),
               (Threading, (ThreadingModel model;)),
+              (MicrosoftRuntime, (MicrosoftRuntimeLibrary library;)),
               (PositionIndependentCode, (bool enabled;)),
               (Warning, (CompilerWarningOption option;)))
 
@@ -119,6 +163,9 @@ public:
             }
             RSTD_CASE(Threading, model) {
                 return Threading(model);
+            }
+            RSTD_CASE(MicrosoftRuntime, library) {
+                return MicrosoftRuntime(library);
             }
             RSTD_CASE(PositionIndependentCode, enabled) {
                 return PositionIndependentCode(enabled);
@@ -152,6 +199,9 @@ auto apply_common_compiler_argument(CommonCompileOptions&  options,
         }
         RSTD_CASE(Threading, model) {
             options.threading = model;
+        }
+        RSTD_CASE(MicrosoftRuntime, library) {
+            options.microsoft_runtime_library = Some(library);
         }
         RSTD_CASE(PositionIndependentCode, enabled) {
             options.codegen.position_independent_code = enabled;

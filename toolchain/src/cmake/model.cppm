@@ -92,6 +92,7 @@ struct CMakeProfileConfiguration {
     String c_flags;
     String cxx_flags;
     String linker_flags;
+    String msvc_runtime;
     bool   neutral_configuration {};
 };
 
@@ -110,19 +111,36 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile) -> CMakeProfil
     append_flag(c_flags, cpp::cpp_optimization_option(profile.c.common.codegen.optimization));
     append_flag(c_flags, cpp::cpp_debug_option(profile.c.common.codegen.debug_info));
     append_flag(c_flags, cpp::cpp_lto_option(profile.c.common.codegen.lto));
+    if (profile.c.common.microsoft_runtime_library.is_some()) {
+        append_flag(c_flags,
+                    rstd::format("-fms-runtime-lib={}",
+                                 lito::compiler::microsoft_runtime_library_name(
+                                     *profile.c.common.microsoft_runtime_library))
+                        .as_str());
+    }
     append_ndebug(c_flags, profile.c_ndebug);
 
     auto cxx_flags = String::make();
-    append_flag(cxx_flags,
-                profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                    ? "-stdlib=libc++"_str
-                    : "-stdlib=libstdc++"_str);
+    switch (profile.cpp.abi.standard_library) {
+    case lito::config::StandardLibrary::Libcxx: append_flag(cxx_flags, "-stdlib=libc++"_str); break;
+    case lito::config::StandardLibrary::Libstdcxx:
+        append_flag(cxx_flags, "-stdlib=libstdc++"_str);
+        break;
+    case lito::config::StandardLibrary::Msvc: break;
+    }
     append_flag(cxx_flags,
                 profile.cpp.language.exceptions ? "-fexceptions"_str : "-fno-exceptions"_str);
     append_flag(cxx_flags, profile.cpp.language.rtti ? "-frtti"_str : "-fno-rtti"_str);
     append_flag(cxx_flags, cpp::cpp_optimization_option(profile.cpp.common.codegen.optimization));
     append_flag(cxx_flags, cpp::cpp_debug_option(profile.cpp.common.codegen.debug_info));
     append_flag(cxx_flags, cpp::cpp_lto_option(profile.cpp.common.codegen.lto));
+    if (profile.cpp.common.microsoft_runtime_library.is_some()) {
+        append_flag(cxx_flags,
+                    rstd::format("-fms-runtime-lib={}",
+                                 lito::compiler::microsoft_runtime_library_name(
+                                     *profile.cpp.common.microsoft_runtime_library))
+                        .as_str());
+    }
     append_ndebug(cxx_flags, profile.cpp_ndebug);
 
     auto linker_flags = String::make();
@@ -134,11 +152,26 @@ auto cmake_profile_configuration(const cpp::ProfileSpec& profile) -> CMakeProfil
                         : "-Wl,--strip-debug"_str);
     }
 
+    auto msvc_runtime = String::make();
+    if (profile.cpp.common.microsoft_runtime_library.is_some()) {
+        switch (*profile.cpp.common.microsoft_runtime_library) {
+        case lito::compiler::MicrosoftRuntimeLibrary::Dynamic:
+            msvc_runtime = String::make("MultiThreadedDLL"_str);
+            break;
+        case lito::compiler::MicrosoftRuntimeLibrary::DynamicDebug:
+            msvc_runtime = String::make("MultiThreadedDebugDLL"_str);
+            break;
+        case lito::compiler::MicrosoftRuntimeLibrary::Static:
+        case lito::compiler::MicrosoftRuntimeLibrary::StaticDebug: break;
+        }
+    }
+
     return CMakeProfileConfiguration {
         .build_type            = String::make(cmake_build_type(profile)),
         .c_flags               = rstd::move(c_flags),
         .cxx_flags             = rstd::move(cxx_flags),
         .linker_flags          = rstd::move(linker_flags),
+        .msvc_runtime          = rstd::move(msvc_runtime),
         .neutral_configuration = profile.family == lito::manifest::BuildProfileFamily::Plain,
     };
 }
@@ -339,10 +372,13 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     append_identity(recipe, effective_target);
     append_identity(recipe, cmake_build_type(profile));
     append_identity(recipe, profile.cpp.language.standard.as_str());
+    append_identity(recipe, lito::config::standard_library_name(profile.cpp.abi.standard_library));
+    append_identity(recipe, "stdlib-runtime:dynamic"_str);
     append_identity(recipe,
-                    profile.cpp.abi.standard_library == lito::config::StandardLibrary::Libcxx
-                        ? "libc++"_str
-                        : "libstdc++"_str);
+                    profile.cpp.common.microsoft_runtime_library.is_some()
+                        ? lito::compiler::microsoft_runtime_library_name(
+                              *profile.cpp.common.microsoft_runtime_library)
+                        : "ms-runtime-lib:default"_str);
     append_identity(recipe,
                     profile.cpp.language.exceptions ? "exceptions"_str : "no-exceptions"_str);
     append_identity(recipe, profile.cpp.language.rtti ? "rtti"_str : "no-rtti"_str);

@@ -309,7 +309,7 @@ auto append_c_vendor_identity(String& result, const CVendorOption& option) -> vo
 }
 
 auto c_compile_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-compile-options-v4\n"_str);
+    auto result = String::make("lito-c-compile-options-v5\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -348,6 +348,12 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
     }
     result.push_str(lito::compiler::uses_posix_threads(options.common) ? "threads:posix\n"_str
                                                                        : "threads:none\n"_str);
+    result.push_str(rstd::format("ms-runtime-lib:{}\n",
+                                 options.common.microsoft_runtime_library.is_some()
+                                     ? lito::compiler::microsoft_runtime_library_name(
+                                           *options.common.microsoft_runtime_library)
+                                     : "<default>"_str)
+                        .as_str());
     for (const auto& warning : options.diagnostics.warnings) {
         result.push_str(
             rstd::format("warning:{}:{}\n", static_cast<int>(warning.warning), warning.enabled)
@@ -363,7 +369,7 @@ auto c_compile_identity(const CCompileOptions& options) -> String {
 }
 
 auto c_scan_identity(const CCompileOptions& options) -> String {
-    auto result = String::make("lito-c-scan-options-v4\n"_str);
+    auto result = String::make("lito-c-scan-options-v5\n"_str);
     result.push_str(lito::manifest::c_standard_name(options.standard));
     result.push_ascii('\n');
     if (options.common.target.target.is_some()) {
@@ -390,6 +396,12 @@ auto c_scan_identity(const CCompileOptions& options) -> String {
     }
     result.push_str(lito::compiler::uses_posix_threads(options.common) ? "threads:posix\n"_str
                                                                        : "threads:none\n"_str);
+    result.push_str(rstd::format("ms-runtime-lib:{}\n",
+                                 options.common.microsoft_runtime_library.is_some()
+                                     ? lito::compiler::microsoft_runtime_library_name(
+                                           *options.common.microsoft_runtime_library)
+                                     : "<default>"_str)
+                        .as_str());
     for (const auto& option : options.vendor) {
         if (option.effect == CVendorOptionEffect::Codegen ||
             option.effect == CVendorOptionEffect::Diagnostic) {

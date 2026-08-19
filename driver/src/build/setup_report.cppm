@@ -65,6 +65,7 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                              const lito::config::ToolchainSpec&       requested,
                              const ClangToolchain&                    resolved,
                              const lito::config::ProjectBuildOptions& options,
+                             lito::config::StandardLibraryRuntime     standard_library_runtime,
                              const lito::cpp::ProfileSpec&            profile) -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
@@ -124,6 +125,37 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                    profile.cpp_ndebug);
     append_codegen(
         BuildOptionReportDomain::C, profile.c.common.codegen, profile.c_sources, profile.c_ndebug);
+    const auto append_microsoft_runtime =
+        [&report](BuildOptionReportDomain                                domain,
+                  const Option<lito::compiler::MicrosoftRuntimeLibrary>& runtime) {
+            report.profile_values.push(BuildProfileValueReport {
+                .domain = domain,
+                .field  = String::make("Microsoft runtime"_str),
+                .value =
+                    runtime.is_some()
+                        ? String::make(lito::compiler::microsoft_runtime_library_name(*runtime))
+                        : String::make("not applicable"_str),
+                .source = String::make("effective toolchain policy"_str),
+            });
+        };
+    append_microsoft_runtime(BuildOptionReportDomain::Cpp,
+                             profile.cpp.common.microsoft_runtime_library);
+    append_microsoft_runtime(BuildOptionReportDomain::C,
+                             profile.c.common.microsoft_runtime_library);
+    report.profile_values.push(BuildProfileValueReport {
+        .domain = BuildOptionReportDomain::Link,
+        .field  = String::make("standard library"_str),
+        .value =
+            String::make(lito::config::standard_library_name(profile.cpp.abi.standard_library)),
+        .source = String::make("toolchain.stdlib"_str),
+    });
+    report.profile_values.push(BuildProfileValueReport {
+        .domain = BuildOptionReportDomain::Link,
+        .field  = String::make("standard library runtime"_str),
+        .value =
+            String::make(lito::config::standard_library_runtime_name(standard_library_runtime)),
+        .source = String::make("toolchain.stdlib-runtime"_str),
+    });
     report.profile_values.push(BuildProfileValueReport {
         .domain = BuildOptionReportDomain::Link,
         .field  = String::make("LTO"_str),

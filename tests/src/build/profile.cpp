@@ -557,6 +557,31 @@ TEST_F(BuildProfile, PlainProfileProjectsToNeutralCMakeConfiguration) {
     EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("NDEBUG"_str));
 }
 
+TEST_F(BuildProfile, ProjectsMicrosoftRuntimeToCMakeConfiguration) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto build_configuration             = configuration();
+    build_configuration.standard_library = lito::config::StandardLibrary::Msvc;
+    build_configuration.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fms-runtime-lib=dll_dbg"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    build_configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fms-runtime-lib=dll_dbg"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto profile = lito::cpp::make_profile_spec(build_configuration,
+                                                lito::manifest::ProjectProfile {},
+                                                build_profile("debug"_str),
+                                                *parser);
+    ASSERT_TRUE(profile.is_ok());
+    auto cmake_profile = lito::cmake_profile_configuration(*profile);
+    EXPECT_EQ(cmake_profile.msvc_runtime.as_str(), "MultiThreadedDebugDLL"_str);
+    EXPECT_TRUE(cmake_profile.c_flags.as_str().contains("-fms-runtime-lib=dll_dbg"_str));
+    EXPECT_TRUE(cmake_profile.cxx_flags.as_str().contains("-fms-runtime-lib=dll_dbg"_str));
+    EXPECT_FALSE(cmake_profile.cxx_flags.as_str().contains("-stdlib="_str));
+}
+
 TEST_F(BuildProfile, RawCompilerAndLinkerOptionsCannotOverrideOwnedSettings) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());

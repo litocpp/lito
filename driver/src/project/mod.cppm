@@ -251,9 +251,55 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                             project.graph.profile,
                                                             profile,
                                                             rstd::move(session.build_arguments)));
+    const auto& target    = session.platform.effective_target;
+    if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
+        target.environment != TargetEnvironment::Msvc) {
+        return Err(ProjectError::Message(rstd::format(
+            "standard library 'msvc' requires a Windows MSVC target; effective target is '{}'",
+            target.triple.as_str())));
+    }
+    if (resolved_configuration.standard_library == lito::config::StandardLibrary::Libstdcxx &&
+        target.environment == TargetEnvironment::Msvc) {
+        return Err(ProjectError::Message(rstd::format(
+            "standard library 'libstdc++' is not supported for Windows MSVC target '{}'",
+            target.triple.as_str())));
+    }
+    auto normalize_microsoft_runtime =
+        [&target](lito::compiler::CommonCompileOptions& options) -> ProjectResult<empty> {
+        if (target.environment != TargetEnvironment::Msvc) {
+            if (options.microsoft_runtime_library.is_some()) {
+                return Err(ProjectError::Message(rstd::format(
+                    "-fms-runtime-lib requires a Windows MSVC target; effective target is '{}'",
+                    target.triple.as_str())));
+            }
+            return Ok(empty {});
+        }
+        if (options.microsoft_runtime_library.is_none()) {
+            options.microsoft_runtime_library =
+                Some(lito::compiler::MicrosoftRuntimeLibrary::Dynamic);
+        }
+        if (! lito::compiler::microsoft_runtime_library_is_dynamic(
+                *options.microsoft_runtime_library)) {
+            return Err(ProjectError::Message(rstd::format(
+                "Microsoft runtime '{}' requires static standard-library runtime support, which "
+                "is not supported yet; toolchain.stdlib-runtime is 'dynamic'",
+                lito::compiler::microsoft_runtime_library_name(
+                    *options.microsoft_runtime_library))));
+        }
+        return Ok(empty {});
+    };
+    rstd_try(normalize_microsoft_runtime(resolved_profile.c.common));
+    rstd_try(normalize_microsoft_runtime(resolved_profile.cpp.common));
+    if (resolved_profile.c.common.microsoft_runtime_library !=
+        resolved_profile.cpp.common.microsoft_runtime_library) {
+        return Err(ProjectError::Message(String::make(
+            "C and C++ compilation selected different Microsoft runtime libraries"_str)));
+    }
     if (project.standards.cpp.is_some()) {
-        auto standard_library = toolchain.resolve_standard_library(
-            resolved_profile.cpp, session.platform.effective_target);
+        auto standard_library =
+            toolchain.resolve_standard_library(resolved_profile.cpp,
+                                               session.platform.effective_target,
+                                               resolved_profile.linker_options);
         if (standard_library.is_err()) {
             return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
         }
@@ -264,6 +310,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                             configuration.toolchain,
                             toolchain,
                             configuration.global_options,
+                            resolved_configuration.standard_library_runtime,
                             resolved_profile);
     auto layout = BuildLayout::create(
         project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());

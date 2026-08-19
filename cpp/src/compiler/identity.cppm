@@ -102,11 +102,14 @@ auto append_semantic_identity(String& output, const CppCompileOptions& options) 
     push_identity(output,
                   "sized-deallocation"_str,
                   cpp_sized_deallocation_name(options.language.sized_deallocation));
+    push_identity(
+        output, "stdlib"_str, lito::config::standard_library_name(options.abi.standard_library));
     push_identity(output,
-                  "stdlib"_str,
-                  options.abi.standard_library == lito::config::StandardLibrary::Libstdcxx
-                      ? "libstdc++"_str
-                      : "libc++"_str);
+                  "ms-runtime-lib"_str,
+                  options.common.microsoft_runtime_library.is_some()
+                      ? lito::compiler::microsoft_runtime_library_name(
+                            *options.common.microsoft_runtime_library)
+                      : "<default>"_str);
     if (options.abi.resolved_standard_library.is_some()) {
         push_identity(output,
                       "resolved-stdlib"_str,
@@ -143,6 +146,7 @@ export namespace lito::cpp
 enum class CppAbiCompatibilityField
 {
     StandardLibrary,
+    MicrosoftRuntimeLibrary,
     StandardLibraryHeaders,
     StandardLibraryModes,
     AbiModes,
@@ -160,6 +164,7 @@ struct CppAbiCompatibilityDifference {
 constexpr auto cpp_abi_compatibility_field_name(CppAbiCompatibilityField field) -> ref<str> {
     switch (field) {
     case CppAbiCompatibilityField::StandardLibrary: return "standard library"_str;
+    case CppAbiCompatibilityField::MicrosoftRuntimeLibrary: return "Microsoft runtime library"_str;
     case CppAbiCompatibilityField::StandardLibraryHeaders:
         return "resolved standard library headers"_str;
     case CppAbiCompatibilityField::StandardLibraryModes: return "standard library ABI modes"_str;
@@ -182,12 +187,15 @@ auto cpp_standard_library_modes_identity(const CppCompileOptions& options) -> St
 }
 
 auto cpp_abi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-abi-compatibility-v1\n"_str);
+    auto result = String::make("lito-cpp-abi-compatibility-v2\n"_str);
+    push_identity(
+        result, "stdlib"_str, lito::config::standard_library_name(options.abi.standard_library));
     push_identity(result,
-                  "stdlib"_str,
-                  options.abi.standard_library == lito::config::StandardLibrary::Libstdcxx
-                      ? "libstdc++"_str
-                      : "libc++"_str);
+                  "ms-runtime-lib"_str,
+                  options.common.microsoft_runtime_library.is_some()
+                      ? lito::compiler::microsoft_runtime_library_name(
+                            *options.common.microsoft_runtime_library)
+                      : "<default>"_str);
     if (options.abi.resolved_standard_library.is_some()) {
         push_identity(result,
                       "resolved-stdlib"_str,
@@ -224,6 +232,17 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
     auto found = difference(CppAbiCompatibilityField::StandardLibrary,
                             lito::config::standard_library_name(provider.abi.standard_library),
                             lito::config::standard_library_name(consumer.abi.standard_library));
+    if (found.is_some()) return found;
+    auto provider_runtime = provider.common.microsoft_runtime_library.is_some()
+                                ? lito::compiler::microsoft_runtime_library_name(
+                                      *provider.common.microsoft_runtime_library)
+                                : "<default>"_str;
+    auto consumer_runtime = consumer.common.microsoft_runtime_library.is_some()
+                                ? lito::compiler::microsoft_runtime_library_name(
+                                      *consumer.common.microsoft_runtime_library)
+                                : "<default>"_str;
+    found                 = difference(
+        CppAbiCompatibilityField::MicrosoftRuntimeLibrary, provider_runtime, consumer_runtime);
     if (found.is_some()) return found;
     auto provider_headers = provider.abi.resolved_standard_library.is_some()
                                 ? provider.abi.resolved_standard_library->headers_identity.as_str()
@@ -269,7 +288,7 @@ auto check_cpp_abi_compatibility(const CppCompileOptions& provider,
 }
 
 auto cpp_compile_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-compile-context-v4\n"_str);
+    auto result = String::make("lito-cpp-compile-context-v5\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
@@ -322,7 +341,7 @@ auto cpp_compile_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_scan_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-scan-context-v3\n"_str);
+    auto result = String::make("lito-cpp-scan-context-v4\n"_str);
     append_semantic_identity(result, options);
     push_identity(
         result, "optimization"_str, cpp_optimization_option(options.common.codegen.optimization));
@@ -359,7 +378,7 @@ auto cpp_scan_identity(const CppCompileOptions& options) -> String {
 }
 
 auto cpp_bmi_compatibility_identity(const CppCompileOptions& options) -> String {
-    auto result = String::make("lito-cpp-bmi-compatibility-v2\n"_str);
+    auto result = String::make("lito-cpp-bmi-compatibility-v3\n"_str);
     append_semantic_identity(result, options);
     for (const auto& value : options.vendor) {
         if (value.effect == CppVendorOptionEffect::Language ||

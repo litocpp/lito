@@ -23,6 +23,7 @@ cxx = "custom-cxx"
 ld = "custom-ld"
 ar = "custom-ar"
 stdlib = "libstdc++"
+stdlib-runtime = "dynamic"
 
 [tools]
 cmake = "custom-cmake"
@@ -143,6 +144,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::PkgConfig));
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
 
     auto legacy_project = config("toolchain-legacy"_str, toolchain_legacy_config);
     ASSERT_TRUE(legacy_project.is_ok());
@@ -154,6 +156,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     auto defaults = lito::config::load_project_config(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrary::Libcxx);
+    EXPECT_EQ(defaults->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
     EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
@@ -428,6 +431,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     overrides.push(String::make("toolchain.cxx=generic-cxx"_str));
     overrides.push(String::make("toolchain.cc=generic-cc"_str));
     overrides.push(String::make("toolchain.stdlib=libstdc++"_str));
+    overrides.push(String::make("toolchain.stdlib-runtime=dynamic"_str));
     overrides.push(String::make("build.options=[\"-pthread\"]"_str));
     overrides.push(String::make("build.c.options=[\"-Wstrict-prototypes\"]"_str));
     overrides.push(String::make("build.linker-options=[\"-Wl,--as-needed\"]"_str));
@@ -444,6 +448,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("generic-cxx"_str).as_path());
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
     ASSERT_EQ(loaded->build_options.cpp.len(), usize(1));
     EXPECT_EQ(loaded->build_options.cpp[usize {}].source.as_str(), "config.build.options"_str);
     EXPECT_EQ(loaded->build_options.cpp[usize {}].arguments[usize {}].as_str(), "-pthread"_str);
@@ -484,6 +489,28 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                                               .overrides = rstd::move(invalid_standard_library),
                                           });
     EXPECT_TRUE(invalid.is_err());
+
+    auto msvc_standard_library = Vec<String>::make();
+    msvc_standard_library.push(String::make("toolchain.stdlib=msvc"_str));
+    auto msvc =
+        lito::config::load_project_config(directory.as_path(),
+                                          lito::config::ProjectConfigRequest {
+                                              .mode = lito::config::ConfigLoadMode::LocalDisabled,
+                                              .overrides = rstd::move(msvc_standard_library),
+                                          });
+    ASSERT_TRUE(msvc.is_ok());
+    EXPECT_EQ(msvc->standard_library, lito::config::StandardLibrary::Msvc);
+
+    auto static_runtime = Vec<String>::make();
+    static_runtime.push(String::make("toolchain.stdlib-runtime=static"_str));
+    auto unsupported =
+        lito::config::load_project_config(directory.as_path(),
+                                          lito::config::ProjectConfigRequest {
+                                              .mode = lito::config::ConfigLoadMode::LocalDisabled,
+                                              .overrides = rstd::move(static_runtime),
+                                          });
+    ASSERT_TRUE(unsupported.is_err());
+    EXPECT_TRUE(error_chain_text(unsupported.unwrap_err()).as_str().contains("not supported"_str));
 
     auto patch_directory = directory.join(PathBuf::from("rstd-patch"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(patch_directory.as_path()).is_ok());

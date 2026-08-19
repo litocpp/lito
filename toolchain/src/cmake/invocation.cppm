@@ -213,6 +213,10 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
     arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
+    if (! cmake_profile.msvc_runtime.is_empty()) {
+        arguments.push(
+            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", cmake_profile.msvc_runtime.as_str()));
+    }
     arguments.push(
         rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
     arguments.push(
@@ -486,6 +490,10 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
     arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
     arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
+    if (! cmake_profile.msvc_runtime.is_empty()) {
+        arguments.push(
+            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", cmake_profile.msvc_runtime.as_str()));
+    }
     arguments.push(
         rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
     arguments.push(

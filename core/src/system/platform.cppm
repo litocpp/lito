@@ -44,11 +44,19 @@ enum class TargetFamily
     Unknown,
 };
 
+enum class TargetEnvironment
+{
+    Msvc,
+    Gnu,
+    Unknown,
+};
+
 struct TargetInfo {
-    String       triple;
-    Architecture architecture;
-    String       os;
-    TargetFamily family { TargetFamily::Unknown };
+    String            triple;
+    Architecture      architecture;
+    String            os;
+    TargetFamily      family { TargetFamily::Unknown };
+    TargetEnvironment environment { TargetEnvironment::Unknown };
 
     auto clone() const -> TargetInfo {
         return TargetInfo {
@@ -56,6 +64,7 @@ struct TargetInfo {
             .architecture = architecture.clone(),
             .os           = os.clone(),
             .family       = family,
+            .environment  = environment,
         };
     }
 
@@ -64,6 +73,15 @@ struct TargetInfo {
         case TargetFamily::Unix: return "unix"_str;
         case TargetFamily::Windows: return "windows"_str;
         case TargetFamily::Unknown: return "unknown"_str;
+        }
+        return "unknown"_str;
+    }
+
+    auto environment_name() const noexcept -> ref<str> {
+        switch (environment) {
+        case TargetEnvironment::Msvc: return "msvc"_str;
+        case TargetEnvironment::Gnu: return "gnu"_str;
+        case TargetEnvironment::Unknown: return "unknown"_str;
         }
         return "unknown"_str;
     }
@@ -218,12 +236,18 @@ auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
     auto architecture = canonical_architecture(*arch);
     if (architecture.is_err()) return Err(rstd::move(architecture).unwrap_err());
 
-    auto os     = String::make("unknown"_str);
-    auto family = TargetFamily::Unknown;
+    auto os          = String::make("unknown"_str);
+    auto family      = TargetFamily::Unknown;
+    auto environment = TargetEnvironment::Unknown;
     if (triple.contains("-windows"_str) || triple.contains("-win32"_str) ||
         triple.contains("-mingw"_str)) {
         os     = String::make("windows"_str);
         family = TargetFamily::Windows;
+        if (triple.contains("-msvc"_str)) {
+            environment = TargetEnvironment::Msvc;
+        } else if (triple.contains("-gnu"_str) || triple.contains("-mingw"_str)) {
+            environment = TargetEnvironment::Gnu;
+        }
     } else if (triple.contains("-android"_str)) {
         os     = String::make("android"_str);
         family = TargetFamily::Unix;
@@ -248,6 +272,7 @@ auto parse_target_info(ref<str> triple) -> PlatformResult<TargetInfo> {
         .architecture = rstd::move(architecture).unwrap(),
         .os           = rstd::move(os),
         .family       = family,
+        .environment  = environment,
     });
 }
 

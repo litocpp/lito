@@ -34,16 +34,22 @@ struct Impl<convert::TryFrom<lito::cpp::CppCompilerArgumentOccurrence>, lito::cp
     static auto try_from(lito::cpp::CppCompilerArgumentOccurrence occurrence)
         -> Result<lito::cpp::CppOptionDelta, Error> {
         if (occurrence.argument.is_CodegenSetting()) {
+            auto        field   = "codegen"_str;
+            const auto& setting = occurrence.argument.as_CodegenSetting().setting;
+            if (setting.is_Optimization()) field = "optimization"_str;
+            if (setting.is_DebugInfo()) field = "debug information"_str;
+            if (setting.is_Lto()) field = "link-time optimization"_str;
             auto spelling = occurrence.raw_tokens.is_empty()
                                 ? String::make("<structured compiler option>"_str)
                                 : occurrence.raw_tokens[usize {}].clone();
             return Err(lito::cpp::CppOptionError::Message(
                 rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned "
-                             "codegen setting",
+                             "{} setting",
                              occurrence.source.as_str(),
                              occurrence.range.begin,
                              occurrence.range.end,
-                             spelling.as_str())));
+                             spelling.as_str(),
+                             field)));
         }
         if (occurrence.argument.is_OwnedSetting()) {
             auto field = "language standard"_str;
@@ -270,6 +276,20 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::Threading:
         return Ok(CppCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
             lito::compiler::ThreadingModel::Posix)));
+    case CppCompilerArgumentKind::MicrosoftRuntime: {
+        auto parsed = lito::compiler::parse_microsoft_runtime_library(
+            compiler_argument_value(matched).as_str());
+        if (parsed.is_none()) {
+            return Err(CppOptionError::Message(
+                rstd::format("{} arguments {}..{}: invalid Microsoft runtime library '{}'",
+                             source,
+                             matched.range.begin,
+                             matched.range.end,
+                             compiler_argument_value(matched).as_str())));
+        }
+        return Ok(CppCompilerArgument::Common(
+            lito::compiler::CommonCompilerArgument::MicrosoftRuntime(*parsed)));
+    }
     case CppCompilerArgumentKind::Instrumentation:
         return Ok(CppCompilerArgument::Instrumentation(canonical_argument(matched)));
     case CppCompilerArgumentKind::SymbolVisibility:
@@ -396,6 +416,20 @@ auto make_c_compiler_argument(const CompilerArgumentMatch&      matched,
         return Ok(
             lito::c::CCompilerArgument::Common(lito::compiler::CommonCompilerArgument::Threading(
                 lito::compiler::ThreadingModel::Posix)));
+    case CppCompilerArgumentKind::MicrosoftRuntime: {
+        auto parsed = lito::compiler::parse_microsoft_runtime_library(
+            compiler_argument_value(matched).as_str());
+        if (parsed.is_none()) {
+            return Err(CompilerOptionError::Message(
+                rstd::format("{} arguments {}..{}: invalid Microsoft runtime library '{}'",
+                             source,
+                             matched.range.begin,
+                             matched.range.end,
+                             compiler_argument_value(matched).as_str())));
+        }
+        return Ok(lito::c::CCompilerArgument::Common(
+            lito::compiler::CommonCompilerArgument::MicrosoftRuntime(*parsed)));
+    }
     case CppCompilerArgumentKind::OwnedLanguageStandard:
     case CppCompilerArgumentKind::OwnedStandardLibrary:
     case CppCompilerArgumentKind::OwnedBmiRepresentation:

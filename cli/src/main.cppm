@@ -245,16 +245,18 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
                                         : rstd::path::PathBuf::from(root).join(path.as_path());
 }
 
-auto build_configuration(lito::config::ToolchainSpec       toolchain,
-                         lito::config::StandardLibrary     standard_library,
-                         lito::config::ProjectBuildOptions options)
+auto build_configuration(lito::config::ToolchainSpec          toolchain,
+                         lito::config::StandardLibrary        standard_library,
+                         lito::config::StandardLibraryRuntime standard_library_runtime,
+                         lito::config::ProjectBuildOptions    options)
     -> lito::cpp::BuildConfiguration {
     return lito::cpp::BuildConfiguration {
-        .toolchain         = rstd::move(toolchain),
-        .standard_library  = standard_library,
-        .bmi_mode          = lito::cpp::BmiMode::Reduced,
-        .language_standard = String::make("c++20"_str),
-        .global_options    = rstd::move(options),
+        .toolchain                = rstd::move(toolchain),
+        .standard_library         = standard_library,
+        .standard_library_runtime = standard_library_runtime,
+        .bmi_mode                 = lito::cpp::BmiMode::Reduced,
+        .language_standard        = String::make("c++20"_str),
+        .global_options           = rstd::move(options),
     };
 }
 
@@ -492,6 +494,7 @@ extern "C++" int main() {
         request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
+                                                           project.standard_library_runtime,
                                                            rstd::move(project.build_options));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
@@ -636,6 +639,7 @@ extern "C++" int main() {
         request.tools                 = rstd::move(project.tools);
         request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                             project.standard_library,
+                                                            project.standard_library_runtime,
                                                             rstd::move(project.build_options));
         request.lock                  = rstd::move(project.lock);
         request.sources               = rstd::move(project.sources);
@@ -694,6 +698,7 @@ extern "C++" int main() {
         request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
+                                                           project.standard_library_runtime,
                                                            rstd::move(project.build_options));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
@@ -780,6 +785,7 @@ extern "C++" int main() {
         request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
+                                                           project.standard_library_runtime,
                                                            rstd::move(project.build_options));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
@@ -904,6 +910,7 @@ extern "C++" int main() {
         request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
+                                                           project.standard_library_runtime,
                                                            rstd::move(project.build_options));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
@@ -993,15 +1000,17 @@ extern "C++" int main() {
                          options.offline,
                          options.frozen,
                          rstd::move(options.fetch_seeds));
-    auto timing            = make_timing_output(project.root.as_path(),
-                                                rstd::move(options.timing_file),
-                                                options.verbose && ! options.no_timing);
-    auto request           = lito::BuildRequest {};
-    request.selection.root = rstd::move(project.root);
-    request.environment    = rstd::move(project.environment);
-    request.tools          = rstd::move(project.tools);
-    request.configuration  = build_configuration(
-        rstd::move(project.toolchain), project.standard_library, rstd::move(project.build_options));
+    auto timing                   = make_timing_output(project.root.as_path(),
+                                                       rstd::move(options.timing_file),
+                                                       options.verbose && ! options.no_timing);
+    auto request                  = lito::BuildRequest {};
+    request.selection.root        = rstd::move(project.root);
+    request.environment           = rstd::move(project.environment);
+    request.tools                 = rstd::move(project.tools);
+    request.configuration         = build_configuration(rstd::move(project.toolchain),
+                                                        project.standard_library,
+                                                        project.standard_library_runtime,
+                                                        rstd::move(project.build_options));
     request.lock                  = rstd::move(project.lock);
     request.sources               = rstd::move(project.sources);
     request.pkg_config            = rstd::move(project.pkg_config);

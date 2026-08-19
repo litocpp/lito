@@ -133,6 +133,14 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
         "-stdlib"_str,
         cpp::CompilerArgumentValueForm::Equals);
 
+    auto microsoft_runtime = definition("microsoft-runtime-library"_str);
+    spelling(microsoft_runtime, "-fms-runtime-lib"_str, cpp::CompilerArgumentValueForm::Equals);
+    microsoft_runtime.allowed_values.push(String::make("static"_str));
+    microsoft_runtime.allowed_values.push(String::make("static_dbg"_str));
+    microsoft_runtime.allowed_values.push(String::make("dll"_str));
+    microsoft_runtime.allowed_values.push(String::make("dll_dbg"_str));
+    schema.add(cpp::CppCompilerArgumentKind::MicrosoftRuntime, rstd::move(microsoft_runtime));
+
     auto bmi = definition("bmi-representation"_str);
     spelling(bmi, "-fmodules-reduced-bmi"_str);
     spelling(bmi, "-fno-modules-reduced-bmi"_str);

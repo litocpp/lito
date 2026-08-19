@@ -30,10 +30,16 @@ enum class StandardLibrary
 {
     Libstdcxx,
     Libcxx,
+    Msvc,
 };
 
 constexpr auto standard_library_name(StandardLibrary value) noexcept -> ref<str> {
-    return value == StandardLibrary::Libcxx ? "libc++"_str : "libstdc++"_str;
+    switch (value) {
+    case StandardLibrary::Libstdcxx: return "libstdc++"_str;
+    case StandardLibrary::Libcxx: return "libc++"_str;
+    case StandardLibrary::Msvc: return "msvc"_str;
+    }
+    return ""_str;
 }
 
 auto parse_standard_library(ref<str> value) noexcept -> Option<StandardLibrary> {
@@ -43,14 +49,37 @@ auto parse_standard_library(ref<str> value) noexcept -> Option<StandardLibrary> 
     if (value == standard_library_name(StandardLibrary::Libstdcxx)) {
         return Some(StandardLibrary::Libstdcxx);
     }
+    if (value == standard_library_name(StandardLibrary::Msvc)) {
+        return Some(StandardLibrary::Msvc);
+    }
     return None();
 }
 
 auto standard_library_names() -> Vec<String> {
-    auto values = Vec<String>::with_capacity(usize(2));
+    auto values = Vec<String>::with_capacity(usize(3));
     values.push(String::make(standard_library_name(StandardLibrary::Libcxx)));
     values.push(String::make(standard_library_name(StandardLibrary::Libstdcxx)));
+    values.push(String::make(standard_library_name(StandardLibrary::Msvc)));
     return values;
+}
+
+enum class StandardLibraryRuntime
+{
+    Dynamic,
+};
+
+constexpr auto standard_library_runtime_name(StandardLibraryRuntime value) noexcept -> ref<str> {
+    switch (value) {
+    case StandardLibraryRuntime::Dynamic: return "dynamic"_str;
+    }
+    return ""_str;
+}
+
+auto parse_standard_library_runtime(ref<str> value) noexcept -> Option<StandardLibraryRuntime> {
+    if (value == standard_library_runtime_name(StandardLibraryRuntime::Dynamic)) {
+        return Some(StandardLibraryRuntime::Dynamic);
+    }
+    return None();
 }
 
 struct ToolchainSpec {
