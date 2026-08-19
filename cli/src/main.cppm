@@ -115,6 +115,62 @@ void report_build_setup(void* raw_context, const lito::BuildSetupReport& report)
         rstd::io::print("{}", output.as_str());
 }
 
+void report_host_tool_resolution(void*                                   raw_context,
+                                 const lito::system::HostToolResolution& resolution) noexcept {
+    auto& context = *static_cast<EventContext*>(raw_context);
+    if (resolution.kind == lito::system::HostToolResolution::Kind::CandidateMissing) {
+        if (! context.verbose) return;
+        if (context.standard_error) {
+            rstd::io::eprintln(
+                "[tool-candidate] {} {} '{}' not found",
+                lito::system::host_tool_capability_name(resolution.requirement.capability),
+                resolution.provider.as_str(),
+                resolution.requested.as_path());
+        } else {
+            rstd::io::println(
+                "[tool-candidate] {} {} '{}' not found",
+                lito::system::host_tool_capability_name(resolution.requirement.capability),
+                resolution.provider.as_str(),
+                resolution.requested.as_path());
+        }
+        return;
+    }
+    if (resolution.kind == lito::system::HostToolResolution::Kind::NotRequired) {
+        if (! context.verbose) return;
+        if (context.standard_error) {
+            rstd::io::eprintln(
+                "[tool-reuse] {} {}",
+                lito::system::host_tool_capability_name(resolution.requirement.capability),
+                resolution.detail.as_str());
+        } else {
+            rstd::io::println(
+                "[tool-reuse] {} {}",
+                lito::system::host_tool_capability_name(resolution.requirement.capability),
+                resolution.detail.as_str());
+        }
+        return;
+    }
+    if (resolution.executable.is_none()) return;
+    auto selected = resolution.requested.as_path() == resolution.executable->as_path()
+                        ? rstd::format("{}", resolution.executable->as_path())
+                        : rstd::format("{} -> {}",
+                                       resolution.requested.as_path(),
+                                       resolution.executable->as_path());
+    if (context.standard_error) {
+        rstd::io::eprintln(
+            "[tool] {} {} {}",
+            lito::system::host_tool_capability_name(resolution.requirement.capability),
+            resolution.provider.as_str(),
+            selected.as_str());
+    } else {
+        rstd::io::println(
+            "[tool] {} {} {}",
+            lito::system::host_tool_capability_name(resolution.requirement.capability),
+            resolution.provider.as_str(),
+            selected.as_str());
+    }
+}
+
 auto configure_build_output(lito::BuildRequest& request, EventContext& context) -> void {
     request.observer       = Some(lito::BuildEventSink {
         .context = rstd::addressof(context),
@@ -123,6 +179,10 @@ auto configure_build_output(lito::BuildRequest& request, EventContext& context) 
     request.setup_reporter = Some(lito::BuildSetupReportSink {
         .context = rstd::addressof(context),
         .notify  = report_build_setup,
+    });
+    request.tool_reporter  = Some(lito::system::HostToolResolutionSink {
+        .context = rstd::addressof(context),
+        .notify  = report_host_tool_resolution,
     });
 }
 
@@ -407,6 +467,7 @@ extern "C++" int main() {
         request.force                = options.force;
         request.build.selection.root = project.root.clone();
         request.build.environment    = rstd::move(project.environment);
+        request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            rstd::move(project.build_options));
@@ -475,13 +536,18 @@ extern "C++" int main() {
                              rstd::move(options.fetch_seeds));
         auto event_context = EventContext {};
         auto request       = lito::UpdateRequest {
-            .root        = rstd::move(project.root),
-            .environment = rstd::move(project.environment),
-            .lock        = rstd::move(project.lock),
-            .sources     = rstd::move(project.sources),
-            .observer    = Some(lito::BuildEventSink {
+            .root          = rstd::move(project.root),
+            .environment   = rstd::move(project.environment),
+            .tools         = rstd::move(project.tools),
+            .lock          = rstd::move(project.lock),
+            .sources       = rstd::move(project.sources),
+            .observer      = Some(lito::BuildEventSink {
                 .context = rstd::addressof(event_context),
                 .notify  = observe,
+            }),
+            .tool_reporter = Some(lito::system::HostToolResolutionSink {
+                .context = rstd::addressof(event_context),
+                .notify  = report_host_tool_resolution,
             }),
         };
         auto result = lito::update_dependencies(request);
@@ -502,17 +568,21 @@ extern "C++" int main() {
         auto request               = lito::FormatRequest {};
         request.selection.root     = rstd::move(project.root);
         request.environment        = rstd::move(project.environment);
-        request.toolchain          = rstd::move(project.toolchain);
+        request.tools              = rstd::move(project.tools);
         request.lock               = rstd::move(project.lock);
         request.sources            = rstd::move(project.sources);
         request.selection.packages = rstd::move(options.packages);
-        request.mode       = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
-        auto event_context = EventContext {};
-        request.observer   = Some(lito::BuildEventSink {
+        request.mode          = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
+        auto event_context    = EventContext {};
+        request.observer      = Some(lito::BuildEventSink {
             .context = rstd::addressof(event_context),
             .notify  = observe,
         });
-        auto result        = lito::format(request);
+        request.tool_reporter = Some(lito::system::HostToolResolutionSink {
+            .context = rstd::addressof(event_context),
+            .notify  = report_host_tool_resolution,
+        });
+        auto result           = lito::format(request);
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
             report_error(error);
@@ -541,6 +611,7 @@ extern "C++" int main() {
         auto request                  = lito::ScanRequest {};
         request.selection.root        = rstd::move(project.root);
         request.environment           = rstd::move(project.environment);
+        request.tools                 = rstd::move(project.tools);
         request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                             project.standard_library,
                                                             rstd::move(project.build_options));
@@ -563,6 +634,10 @@ extern "C++" int main() {
         request.setup_reporter = Some(lito::BuildSetupReportSink {
             .context = rstd::addressof(event_context),
             .notify  = report_build_setup,
+        });
+        request.tool_reporter  = Some(lito::system::HostToolResolutionSink {
+            .context = rstd::addressof(event_context),
+            .notify  = report_host_tool_resolution,
         });
 
         auto scanned = lito::scan(request);
@@ -594,6 +669,7 @@ extern "C++" int main() {
         auto request                 = lito::DocRequest {};
         request.build.selection.root = project.root.clone();
         request.build.environment    = rstd::move(project.environment);
+        request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            rstd::move(project.build_options));
@@ -665,6 +741,7 @@ extern "C++" int main() {
         auto request                 = lito::TestRequest {};
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
+        request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            rstd::move(project.build_options));
@@ -788,6 +865,7 @@ extern "C++" int main() {
         auto request                 = lito::BenchRequest {};
         request.build.selection.root = rstd::move(project.root);
         request.build.environment    = rstd::move(project.environment);
+        request.build.tools          = rstd::move(project.tools);
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            rstd::move(project.build_options));
@@ -885,6 +963,7 @@ extern "C++" int main() {
     auto request           = lito::BuildRequest {};
     request.selection.root = rstd::move(project.root);
     request.environment    = rstd::move(project.environment);
+    request.tools          = rstd::move(project.tools);
     request.configuration  = build_configuration(
         rstd::move(project.toolchain), project.standard_library, rstd::move(project.build_options));
     request.lock                  = rstd::move(project.lock);

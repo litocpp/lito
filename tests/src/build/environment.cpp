@@ -78,10 +78,15 @@ extern "C" auto fixture_environment_two() -> int {
         .context = rstd::addressof(progress),
         .notify  = capture_build_setup,
     });
+    request.tool_reporter          = Some(lito::system::HostToolResolutionSink {
+        .context = rstd::addressof(progress),
+        .notify  = capture_host_tool,
+    });
     auto summary                   = lito::build(request);
     ASSERT_TRUE(summary.is_ok());
     ASSERT_EQ(progress.requested_tools.len(), usize(4));
     ASSERT_EQ(progress.resolved_tools.len(), usize(4));
+    EXPECT_TRUE(progress.host_tools.is_empty());
     for (const auto& path : progress.requested_tools) EXPECT_FALSE(path.is_empty());
     for (const auto& path : progress.resolved_tools) EXPECT_TRUE(path.as_path().is_absolute());
     ASSERT_EQ(progress.option_domains.len(), usize(3));

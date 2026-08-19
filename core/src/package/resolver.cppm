@@ -275,6 +275,8 @@ class PackageGraphResolver {
             if (catalog.is_err()) return Err(rstd::move(catalog).unwrap_err());
             auto root = PathBuf::from(catalog->root());
             prepared.push(lito::source::PackageSourceFetchRequest {
+                .owner  = rstd::move(request.owner),
+                .name   = rstd::move(request.name),
                 .source = lito::source::PackageSourceRequirement::Path(PathBuf::from("."_str)),
                 .declaring_root = rstd::move(root),
             });
@@ -452,6 +454,8 @@ public:
                     declaring_root = dependency.declaration_root->clone();
                 }
                 fetch_requests.push(lito::source::PackageSourceFetchRequest {
+                    .owner          = loaded.package.name.clone(),
+                    .name           = dependency.name.clone(),
                     .source         = clone_dependency_source(dependency.source),
                     .declaring_root = rstd::move(declaring_root),
                 });
@@ -465,6 +469,8 @@ public:
                 declaring_root = dependency.declaration_root->clone();
             }
             fetch_requests.push(lito::source::PackageSourceFetchRequest {
+                .owner          = loaded.package.name.clone(),
+                .name           = dependency.name.clone(),
                 .source         = clone_dependency_source(dependency.source),
                 .declaring_root = rstd::move(declaring_root),
             });

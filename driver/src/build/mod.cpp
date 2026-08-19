@@ -136,7 +136,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build directory is required"_str);
     }
-    auto tool_resolver = ToolResolver(process_environment);
+    auto tool_resolver =
+        ToolResolver(process_environment, request.tools.clone(), request.tool_reporter);
     auto profile =
         request.profile.is_some()
             ? request.profile->clone()
@@ -278,13 +279,22 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                                        *selected,
                                                        request.observer,
                                                        project.platform.host,
-                                                       request.cmake,
                                                        tool_resolver,
                                                        process_environment,
                                                        request.sources,
                                                        execution->jobs));
     auto runtime_resources =
         rstd_try(resolve_runtime_resources(metadata, layout, selected_targets, request.observer));
+
+    auto needs_strip_tool = false;
+    for (const auto target : selected->target_order) {
+        const auto kind = metadata.targets[target].artifact_kind;
+        if (kind == cpp::ArtifactKind::Executable || kind == cpp::ArtifactKind::TestExecutable ||
+            kind == cpp::ArtifactKind::BenchmarkExecutable) {
+            needs_strip_tool = true;
+            break;
+        }
+    }
 
     auto scan_span = profiler.span(ScanProbe::Total);
 
@@ -296,9 +306,13 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
     auto stripper           = Option<PathBuf> {};
-    if (metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None) {
-        auto resolved_stripper = tool_resolver.resolve(
-            request.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
+    if (needs_strip_tool &&
+        metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None) {
+        const auto tool_requirement = build_profile_tool_requirement(
+            HostToolCapability::ArtifactStripping,
+            metadata.profiles[native_target_plan.profile].name.as_str(),
+            "strip"_str);
+        auto resolved_stripper = tool_resolver.require(Tool::Strip, tool_requirement);
         if (resolved_stripper.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(resolved_stripper).unwrap_err()));
         }

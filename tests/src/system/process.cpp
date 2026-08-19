@@ -18,6 +18,19 @@ using PathBuf = rstd::path::PathBuf;
 
 class SystemProcess : public ProjectFixture {};
 
+struct HostToolCapture {
+    Vec<lito::system::HostToolCapability> capabilities;
+    Vec<String>                           providers;
+};
+
+void capture_host_tool_resolution(void*                                   raw_context,
+                                  const lito::system::HostToolResolution& resolution) noexcept {
+    if (resolution.kind != lito::system::HostToolResolution::Kind::Selected) return;
+    auto& capture = *static_cast<HostToolCapture*>(raw_context);
+    capture.capabilities.push(lito::system::HostToolCapability(resolution.requirement.capability));
+    capture.providers.push(resolution.provider.clone());
+}
+
 TEST_F(SystemProcess, WindowsCommandFragmentsPreservePathSeparators) {
     auto parsed = tokenize_windows_command_fragments(
         "fixture-source\\lito_source_adapter.lib \"directory with spaces\\fixture.lib\""_str,
@@ -140,6 +153,35 @@ TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
     EXPECT_TRUE(missing_error.as_Environment().message.as_str().contains(
         first.as_path().to_str().unwrap()));
 
+#if RSTD_OS_WINDOWS
+    auto late_tool = first.join(rstd::path::PathBuf::from("lito-missing.EXE"_str).as_path());
+#else
+    auto late_tool = first.join(rstd::path::PathBuf::from("lito-missing"_str).as_path());
+#endif
+    ASSERT_TRUE(write_executable(late_tool.as_path()));
+    EXPECT_TRUE(
+        resolver
+            .probe(rstd::path::PathBuf::from("lito-missing"_str).as_path(), "test executable"_str)
+            .unwrap()
+            .is_none());
+
+    auto capture            = HostToolCapture {};
+    auto tool_spec          = lito::system::ToolSpec {};
+    tool_spec.clang_format  = rstd::path::PathBuf::from("lito-fallback"_str);
+    auto reporting_resolver = lito::system::ToolResolver(*environment,
+                                                         rstd::move(tool_spec),
+                                                         Some(lito::system::HostToolResolutionSink {
+                                                             .context = rstd::addressof(capture),
+                                                             .notify = capture_host_tool_resolution,
+                                                         }));
+    auto requirement        = lito::system::command_tool_requirement(
+        lito::system::HostToolCapability::SourceFormatting, "lito format"_str);
+    EXPECT_TRUE(reporting_resolver.require(lito::system::Tool::ClangFormat, requirement).is_ok());
+    EXPECT_TRUE(reporting_resolver.require(lito::system::Tool::ClangFormat, requirement).is_ok());
+    ASSERT_EQ(capture.capabilities.len(), usize(1));
+    EXPECT_EQ(capture.capabilities[usize {}], lito::system::HostToolCapability::SourceFormatting);
+    EXPECT_EQ(capture.providers[usize {}].as_str(), "clang-format"_str);
+
     ASSERT_TRUE(rstd::fs::remove_file(inherited_tool.as_path()).is_ok());
     auto cached = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
                                    "test executable"_str);
@@ -169,6 +211,7 @@ TEST_F(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     auto request = build_request(
         project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
+    request.tools                   = rstd::move(config->tools);
     request.configuration.toolchain = rstd::move(config->toolchain);
     auto built                      = lito::build(request);
     ASSERT_TRUE(built.is_ok());
@@ -188,6 +231,7 @@ TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     auto request = build_request(
         project.as_path(), output.as_path(), Vec<String>::make(), build_profile("release"_str));
     request.environment             = rstd::move(config->environment);
+    request.tools                   = rstd::move(config->tools);
     request.configuration.toolchain = rstd::move(config->toolchain);
     auto tested                     = lito::test(lito::TestRequest {
         .build = rstd::move(request),

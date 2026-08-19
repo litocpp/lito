@@ -17,9 +17,7 @@ Executable fields accept a searchable name or an absolute path:
 - `cc`, default `clang`;
 - `cxx`, default `clang++`;
 - `ld`, default `ld.lld`;
-- `ar`, default `llvm-ar`;
-- `strip`, default `llvm-strip`;
-- `format`, default `clang-format`.
+- `ar`, default `llvm-ar`.
 
 `stdlib` is `"libc++"` or `"libstdc++"` and defaults to `"libc++"`.
 
@@ -28,6 +26,35 @@ Executable fields accept a searchable name or an absolute path:
 cxx = "clang++"
 stdlib = "libstdc++"
 ```
+
+## `[tools]`
+
+Host tool fields accept a searchable name or an absolute path:
+
+- `cmake`, default `cmake`;
+- `tar`, default `tar`;
+- `bsdtar`, default `bsdtar`;
+- `clang-format`, default `clang-format`;
+- `curl`, default `curl`;
+- `git`, default `git`;
+- `pkg-config`, default `pkg-config`;
+- `strip`, default `llvm-strip`.
+
+```toml
+[tools]
+cmake = "/opt/cmake/bin/cmake"
+clang-format = "clang-format"
+```
+
+This table maps tool roles to executable requests; it does not make every tool a prerequisite.
+Lito resolves a role only when the selected command, package, external input, profile, or install
+entry produces an action that needs it. A configured executable may therefore be absent when the
+current invocation does not use its capability.
+
+Archive extraction selects the first available provider. An explicitly configured `bsdtar` or
+`tar` is considered first, followed by the other archive tool and `cmake -E tar`. A valid
+materialization needs none of them, and a fetch-seed or verified file-cache hit does not require
+`curl`.
 
 ## `[build]`
 
@@ -90,16 +117,15 @@ path = "../rstd"
 
 ## `[pkg-config]`
 
-- `executable` is a searchable executable name or absolute path; default `pkg-config`.
 - `search-path` is an array of existing directories used to find package metadata.
 - `library-path` is an array of existing directories used for target library metadata.
 - `sysroot` is an existing path, canonicalized relative to the project root.
 
-Setting `executable`, `library-path`, or `sysroot` marks pkg-config as explicitly target-configured.
+Setting `tools.pkg-config`, `library-path`, or `sysroot` marks pkg-config as explicitly
+target-configured.
 
 ## `[cmake]`
 
-- `executable` is a searchable executable name or absolute path; default `cmake`.
 - `generator` is a non-empty string; default `Ninja`.
 - `search-path` is an array of existing directories.
 - `overrides` is a table of local installed-package substitutions.

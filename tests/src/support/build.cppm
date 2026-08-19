@@ -82,7 +82,9 @@ append-path = ["tools"]
 [toolchain]
 cxx = "clang++"
 ar = "llvm-ar"
-format = "clang-format"
+
+[tools]
+clang-format = "clang-format"
 )toml"_str;
     constexpr auto test_config   = R"toml([environment]
 append-path = ["../append-path/tools"]
@@ -90,7 +92,9 @@ append-path = ["../append-path/tools"]
 [toolchain]
 cxx = "clang++"
 ar = "llvm-ar"
-format = "clang-format"
+
+[tools]
+clang-format = "clang-format"
 )toml"_str;
     constexpr auto test_manifest = R"toml([package]
 name = "fixture-environment-test"
@@ -108,7 +112,9 @@ append-path = ["tools"]
 [toolchain]
 cxx = "lito-fixture-clang++"
 ar = "lito-fixture-llvm-ar"
-format = "lito-fixture-clang-format"
+
+[tools]
+clang-format = "lito-fixture-clang-format"
 )toml"_str;
     constexpr auto test_config   = R"toml([environment]
 append-path = ["../append-path/tools"]
@@ -116,7 +122,9 @@ append-path = ["../append-path/tools"]
 [toolchain]
 cxx = "lito-fixture-clang++"
 ar = "lito-fixture-llvm-ar"
-format = "lito-fixture-clang-format"
+
+[tools]
+clang-format = "lito-fixture-clang-format"
 )toml"_str;
     constexpr auto test_manifest = R"toml([package]
 name = "fixture-environment-test"
@@ -327,13 +335,14 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 }
 
 struct CompileProgressCapture {
-    Vec<lito::BuildProgress>           values;
-    Vec<PathBuf>                       requested_tools;
-    Vec<PathBuf>                       resolved_tools;
-    Vec<lito::BuildOptionReportDomain> option_domains;
-    Vec<String>                        option_sources;
-    Vec<Vec<String>>                   option_arguments;
-    bool                               missing {};
+    Vec<lito::BuildProgress>              values;
+    Vec<PathBuf>                          requested_tools;
+    Vec<PathBuf>                          resolved_tools;
+    Vec<lito::system::HostToolCapability> host_tools;
+    Vec<lito::BuildOptionReportDomain>    option_domains;
+    Vec<String>                           option_sources;
+    Vec<Vec<String>>                      option_arguments;
+    bool                                  missing {};
 };
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
@@ -366,6 +375,12 @@ void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report
         capture.option_sources.push(input.source.clone());
         capture.option_arguments.push(input.arguments.clone());
     }
+}
+
+void capture_host_tool(void*                                   raw_context,
+                       const lito::system::HostToolResolution& resolution) noexcept {
+    auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
+    capture.host_tools.push(lito::system::HostToolCapability(resolution.requirement.capability));
 }
 
 } // namespace lito_test

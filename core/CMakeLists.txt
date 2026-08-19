@@ -84,6 +84,7 @@ target_sources(
          src/system/platform.cppm
          src/system/process.cppm
          src/system/storage.cppm
+         src/system/tools.cppm
          src/template/configure.cppm
          src/template/mod.cppm
          src/workspace/catalog.cppm

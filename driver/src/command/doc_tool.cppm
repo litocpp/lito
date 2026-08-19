@@ -411,7 +411,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
                       const Option<DocEventSink>&       observer) -> DocResult<ResolvedDocTool> {
     auto sdk = resolve_clang_sdk(project.compiler, environment);
     if (sdk.is_err()) return Err(rstd::into<DocError>(rstd::move(sdk).unwrap_err()));
-    auto resolver = ToolResolver(environment);
+    auto resolver = ToolResolver(environment, request.tools.clone(), request.tool_reporter);
     auto source   = acquire_doc_tool_source(request, config, resolver, environment);
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto key_material = rstd::format("lito-doc-tool-v3\n{}\n{}\n{}\n{}\n{}",
@@ -460,6 +460,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     });
     tool_request.output        = tool_root->join(PathBuf::from("build"_str).as_path());
     tool_request.environment   = request.environment.clone();
+    tool_request.tools         = request.tools.clone();
     tool_request.configuration = request.configuration.clone();
     tool_request.configuration.toolchain.cxx    = project.compiler.path.clone();
     tool_request.configuration.standard_library = sdk->standard_library;

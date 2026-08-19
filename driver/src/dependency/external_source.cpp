@@ -402,6 +402,8 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                     source_fetch = Some(fetch_requests.len());
                     fetch_indices.insert(key.clone(), fetch_requests.len());
                     fetch_requests.push(lito::source::PackageSourceFetchRequest {
+                        .owner          = package.manifest.name.clone(),
+                        .name           = external.name.clone(),
                         .source         = rstd::move(acquisition),
                         .declaring_root = rstd::move(declaring_root),
                     });

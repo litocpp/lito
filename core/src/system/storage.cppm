@@ -90,6 +90,11 @@ public:
         auto checkouts = join(root_.as_path(), "checkouts"_str);
         return join(join(checkouts.as_path(), repository_key).as_path(), commit);
     }
+    auto checkout_receipt(ref<str> repository_key, ref<str> commit) const -> PathBuf {
+        auto checkouts  = join(root_.as_path(), "checkouts"_str);
+        auto repository = join(checkouts.as_path(), repository_key);
+        return join(repository.as_path(), rstd::format("{}.lito-receipt", commit).as_str());
+    }
 };
 
 class FileCacheLayout {

@@ -92,7 +92,8 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         return install_failure<InstallSummary>(
             rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
     }
-    auto resolver = ToolResolver(*environment);
+    auto resolver =
+        ToolResolver(*environment, request.build.tools.clone(), request.build.tool_reporter);
     auto toolchain =
         ClangToolchain::create(request.build.configuration.toolchain, resolver, *environment);
     if (toolchain.is_err()) {
@@ -199,21 +200,24 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     }
     auto summary =
         rstd_try(build_prepared_project(request.build, *environment, rstd::move(prepared)));
-    auto plan        = rstd_try(materialize_install_plan(rstd::move(recipes),
-                                                         requirements,
-                                                         summary,
-                                                         summary.profile.as_str(),
-                                                         summary.target.as_str()));
-    auto needs_strip = false;
+    auto plan              = rstd_try(materialize_install_plan(rstd::move(recipes),
+                                                               requirements,
+                                                               summary,
+                                                               summary.profile.as_str(),
+                                                               summary.target.as_str()));
+    auto strip_requirement = Option<HostToolRequirement> {};
     for (const auto& package : plan.packages) {
         for (const auto& entry : package.entries) {
-            if (! entry.transforms.is_empty()) needs_strip = true;
+            if (entry.transforms.is_empty() || strip_requirement.is_some()) continue;
+            strip_requirement = Some(install_entry_tool_requirement(
+                HostToolCapability::ArtifactStripping,
+                package.name.as_str(),
+                entry.relative_destination.as_path().to_string_lossy().as_str()));
         }
     }
     auto strip_provider = Option<LlvmStrip> {};
-    if (needs_strip) {
-        auto resolved_strip = resolver.resolve(
-            request.build.configuration.toolchain.strip.as_path(), "LLVM strip executable"_str);
+    if (strip_requirement.is_some()) {
+        auto resolved_strip = resolver.require(Tool::Strip, *strip_requirement);
         if (resolved_strip.is_err()) {
             return install_failure<InstallSummary>(
                 rstd::format("cannot resolve LLVM strip executable: {}",
@@ -227,7 +231,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         .observer = rstd::addressof(request.build.observer),
     };
     auto strip_executor = Option<InstallStripExecutor> {};
-    if (needs_strip) {
+    if (strip_requirement.is_some()) {
         strip_executor = Some(InstallStripExecutor {
             .context = rstd::addressof(strip_context),
             .apply   = apply_install_strip,

@@ -100,7 +100,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
     if (environment.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
     }
-    auto tool_resolver = ToolResolver(*environment);
+    auto tool_resolver = ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
     auto profile =
         request.profile.is_some() ? request.profile->clone() : lito::manifest::BuildProfileName {};
     auto requested_output = PathBuf::make();

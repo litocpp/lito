@@ -31,15 +31,11 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (request.selection.root.is_empty()) {
         return format_failure<FormatSummary>("format directory is required"_str);
     }
-    if (request.toolchain.format.is_empty()) {
-        return format_failure<FormatSummary>("clang-format path is required"_str);
-    }
-
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
     }
-    auto tool_resolver = ToolResolver(*environment);
+    auto tool_resolver = ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
     auto resolved      = resolve_project_selection(request.selection,
                                                    lito::package::PackageSelectionPurpose::All,
                                                    request.sources,
@@ -59,8 +55,14 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         selected_roots.insert(name.clone(), empty {});
     }
 
-    auto created = toolchain::ClangFormat::create(
-        request.toolchain.format.as_path(), tool_resolver, *environment);
+    const auto tool_requirement =
+        command_tool_requirement(HostToolCapability::SourceFormatting, "lito format"_str);
+    auto resolved_formatter = tool_resolver.require(Tool::ClangFormat, tool_requirement);
+    if (resolved_formatter.is_err()) {
+        return Err(rstd::into<CommandError>(rstd::move(resolved_formatter).unwrap_err()));
+    }
+    auto created =
+        toolchain::ClangFormat::create(resolved_formatter->executable.as_path(), *environment);
     if (created.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(created).unwrap_err()));
     }

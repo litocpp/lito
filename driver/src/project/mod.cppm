@@ -485,9 +485,11 @@ auto prepare_build_project(
 
 auto update_project_dependencies(ref<rstd::path::Path>                    root,
                                  const ProcessEnvironmentSpec&            environment_spec,
+                                 const ToolSpec&                          tools,
                                  const lito::lock::LockConfig&            lock,
                                  const lito::source::PackageSourceConfig& sources,
-                                 const Option<BuildEventSink>&            observer)
+                                 const Option<BuildEventSink>&            observer,
+                                 const Option<HostToolResolutionSink>&    tool_reporter = None())
     -> ProjectResult<lito::lock::LockStatus> {
     if (root.is_empty()) {
         return Err(ProjectError::Message(String::make("update directory is required"_str)));
@@ -496,7 +498,7 @@ auto update_project_dependencies(ref<rstd::path::Path>                    root,
         .root = PathBuf::from(root),
     };
     auto environment   = rstd_try(ResolvedProcessEnvironment::resolve(environment_spec));
-    auto tool_resolver = ToolResolver(environment);
+    auto tool_resolver = ToolResolver(environment, tools.clone(), tool_reporter);
     auto jobs          = usize(1);
     auto available     = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();

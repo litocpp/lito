@@ -14,9 +14,9 @@ version = ">= 3.0"
 visibility = "private"
 ```
 
-`static = true` requests static metadata. Configure the executable, search paths, library paths,
-and sysroot in [project config](../reference/config/keys.md), not by inserting shell variables into
-the manifest.
+`static = true` requests static metadata. Configure the `pkg-config` host tool, search paths,
+library paths, and sysroot in [project config](../reference/config/keys.md), not by inserting shell
+variables into the manifest.
 
 ## CMake packages
 
@@ -71,6 +71,11 @@ An external source has exactly one recipe:
 
 The same prepared source can back a CMake dependency, source group, or include directory. The
 package owner resolves it once and passes typed roots to each consumer.
+
+Archive acquisition checks an existing materialization, read-only fetch seeds, and the global file
+cache before resolving download or extraction tools. Fresh downloads use `tools.curl`; extraction
+tries `tools.bsdtar`, `tools.tar`, then the public `cmake -E tar` interface. An archive used only as
+a source group does not require a CMake package query.
 
 ## System libraries and threads
 

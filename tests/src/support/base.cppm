@@ -52,11 +52,9 @@ auto configuration() -> lito::cpp::BuildConfiguration {
     return lito::cpp::BuildConfiguration {
         .toolchain =
             lito::config::ToolchainSpec {
-                .cxx    = rstd::move(compiler),
-                .ld     = rstd::move(linker),
-                .ar     = rstd::move(archiver),
-                .strip  = PathBuf::from("llvm-strip"_str),
-                .format = PathBuf::from("clang-format"_str),
+                .cxx = rstd::move(compiler),
+                .ld  = rstd::move(linker),
+                .ar  = rstd::move(archiver),
             },
         .standard_library  = lito::config::StandardLibrary::Libcxx,
         .bmi_mode          = lito::cpp::BmiMode::Reduced,

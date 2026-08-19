@@ -48,7 +48,7 @@ lito format --check
 
 From a workspace root, format operates on selected workspace packages. It discovers source files
 from manifests and source conventions; it does not accept a directory operand. Configure the
-formatter through `toolchain.format`.
+formatter through `tools.clang-format`.
 
 ## Scan
 

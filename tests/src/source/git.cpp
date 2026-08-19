@@ -135,6 +135,23 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     ASSERT_TRUE(lock_text.is_ok());
     EXPECT_FALSE(lock_text->as_str().contains("git/checkouts"_str));
 
+    auto cached_session = lito::lock::load_lock_session(project.as_path(), true);
+    ASSERT_TRUE(cached_session.is_ok());
+    auto cached_environment = lito::system::ResolvedProcessEnvironment::resolve(
+        lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
+    ASSERT_TRUE(cached_environment.is_ok());
+    auto cached_tools = lito::system::ToolSpec {};
+    cached_tools.git  = PathBuf::from("lito-missing-git"_str);
+    auto cached_resolver =
+        lito::system::ToolResolver(*cached_environment, rstd::move(cached_tools));
+    auto cached_graph = lito::package::resolve_package_graph_with_environment(
+        project.as_path(),
+        cached_session->take_resolution_options(),
+        cached_resolver,
+        *cached_environment,
+        usize(1));
+    ASSERT_TRUE(cached_graph.is_ok());
+
     auto seed_catalog = rstd::format(
         "{{\"version\":1,\"sources\":[{{\"identity\":\"lito-fetch-v1\\ngit\\n{}\\n{}\","
         "\"kind\":\"git\",\"path\":\"git/source\"}}]}}",

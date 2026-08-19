@@ -1215,12 +1215,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         .build_tools       = rstd::move(build_tools),
         .toolchain =
             lito::config::ToolchainSpec {
-                .cc     = configuration.toolchain.cc.clone(),
-                .cxx    = configuration.toolchain.cxx.clone(),
-                .ld     = configuration.toolchain.ld.clone(),
-                .ar     = configuration.toolchain.ar.clone(),
-                .strip  = configuration.toolchain.strip.clone(),
-                .format = configuration.toolchain.format.clone(),
+                .cc  = configuration.toolchain.cc.clone(),
+                .cxx = configuration.toolchain.cxx.clone(),
+                .ld  = configuration.toolchain.ld.clone(),
+                .ar  = configuration.toolchain.ar.clone(),
             },
         .profiles = rstd::move(profiles),
         .targets  = rstd::move(targets),

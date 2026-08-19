@@ -1226,17 +1226,16 @@ auto copy_package_names(const Vec<String>& packages) -> Vec<String> {
     return copied;
 }
 
-auto execute_build_script_invocation(const cpp::PackageMetadata&                  metadata,
-                                     const BuildLayout&                           layout,
-                                     ref<str>                                     profile,
-                                     BuildScriptInvocation                        invocation,
-                                     BuildOutputRegistry&                         output_registry,
-                                     const Option<BuildEventSink>&                observer,
-                                     const HostInfo&                              host,
-                                     const lito::dependency::CMakeProviderConfig& cmake,
-                                     ToolResolver&                                resolver,
-                                     const ResolvedProcessEnvironment&            environment,
-                                     const lito::source::PackageSourceConfig&     sources,
+auto execute_build_script_invocation(const cpp::PackageMetadata&              metadata,
+                                     const BuildLayout&                       layout,
+                                     ref<str>                                 profile,
+                                     BuildScriptInvocation                    invocation,
+                                     BuildOutputRegistry&                     output_registry,
+                                     const Option<BuildEventSink>&            observer,
+                                     const HostInfo&                          host,
+                                     ToolResolver&                            resolver,
+                                     const ResolvedProcessEnvironment&        environment,
+                                     const lito::source::PackageSourceConfig& sources,
                                      usize jobs) -> BuildScriptResult<BuildScriptReport> {
     auto default_package = as<Clone>(invocation.package).clone();
     auto session         = ConfigureSession::create(metadata,
@@ -1253,7 +1252,6 @@ auto execute_build_script_invocation(const cpp::PackageMetadata&                
                                  invocation.packages,
                                  host,
                                  layout,
-                                 cmake,
                                  resolver,
                                  environment,
                                  sources,
@@ -1372,17 +1370,16 @@ auto package_has_script(const Vec<String>& packages, ref<str> package) noexcept 
     return false;
 }
 
-auto execute_build_script(cpp::PackageMetadata&                        metadata,
-                          const BuildLayout&                           layout,
-                          ref<str>                                     profile,
-                          const Vec<String>&                           selected_packages,
-                          const cpp::SourceTargetSelection&            selection,
-                          const Option<BuildEventSink>&                observer,
-                          const HostInfo&                              host,
-                          const lito::dependency::CMakeProviderConfig& cmake,
-                          ToolResolver&                                resolver,
-                          const ResolvedProcessEnvironment&            environment,
-                          const lito::source::PackageSourceConfig&     sources,
+auto execute_build_script(cpp::PackageMetadata&                    metadata,
+                          const BuildLayout&                       layout,
+                          ref<str>                                 profile,
+                          const Vec<String>&                       selected_packages,
+                          const cpp::SourceTargetSelection&        selection,
+                          const Option<BuildEventSink>&            observer,
+                          const HostInfo&                          host,
+                          ToolResolver&                            resolver,
+                          const ResolvedProcessEnvironment&        environment,
+                          const lito::source::PackageSourceConfig& sources,
                           usize jobs) -> BuildScriptResult<BuildScriptReport> {
     auto invocations       = Vec<BuildScriptInvocation>::make();
     auto scripted_packages = Vec<String>::make();
@@ -1463,7 +1460,6 @@ auto execute_build_script(cpp::PackageMetadata&                        metadata,
                                                       output_registry,
                                                       observer,
                                                       host,
-                                                      cmake,
                                                       resolver,
                                                       environment,
                                                       sources,

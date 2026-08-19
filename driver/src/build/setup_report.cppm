@@ -5,6 +5,7 @@ import lito.core;
 import lito.toolchain;
 
 using namespace rstd::prelude;
+using namespace lito::system;
 
 export namespace lito
 {
@@ -52,7 +53,7 @@ namespace lito
 auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                              const lito::config::ToolchainSpec&       requested,
                              const ClangToolchain&                    resolved,
-                             const lito::config::ProjectBuildOptions& options) noexcept -> void {
+                             const lito::config::ProjectBuildOptions& options) -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
         .toolchain =

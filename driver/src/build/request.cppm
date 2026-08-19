@@ -59,6 +59,7 @@ struct BuildRequest {
     Vec<RequestedArtifactLinkVariant>         artifact_link_variants;
     PathBuf                                   output;
     ProcessEnvironmentSpec                    environment;
+    ToolSpec                                  tools;
     cpp::BuildConfiguration                   configuration;
     lito::lock::LockConfig                    lock;
     Option<lito::manifest::BuildProfileName>  profile;
@@ -69,10 +70,11 @@ struct BuildRequest {
     lito::package::PackageSelectionPurpose    purpose {
         lito::package::PackageSelectionPurpose::Production
     };
-    bool                         locked { false };
-    BuildExecutionPolicy         execution;
-    Option<BuildEventSink>       observer;
-    Option<BuildSetupReportSink> setup_reporter;
+    bool                           locked { false };
+    BuildExecutionPolicy           execution;
+    Option<BuildEventSink>         observer;
+    Option<BuildSetupReportSink>   setup_reporter;
+    Option<HostToolResolutionSink> tool_reporter;
 };
 
 } // namespace lito

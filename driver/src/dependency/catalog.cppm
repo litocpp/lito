@@ -68,6 +68,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         auto dependencies =
             resolve_pkg_config_dependencies(package.manifest.pkg_config_external_dependencies,
                                             pkg_config,
+                                            package.manifest.name.as_str(),
                                             platform,
                                             tool_resolver,
                                             process_environment);
@@ -129,18 +130,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             .sources = rstd::move(source_catalog),
         });
     }
-    auto resolved_tool =
-        tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
-    if (resolved_tool.is_err()) {
-        return Err(
-            rstd::into<lito::dependency::DependencyError>(rstd::move(resolved_tool).unwrap_err()));
-    }
-    auto resolved_cmake       = cmake_config.clone();
-    resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
-    auto identified = identify_cmake_provider(rstd::move(resolved_cmake), process_environment);
-    if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
-    resolved_cmake = rstd::move(identified).unwrap();
-
     auto source_catalog  = cpp::ExternalSourceRootCatalog {};
     auto archive_sources = Vec<usize>::make();
     auto source_archives = Vec<lito::source::ArchiveSourceFetchRequest>::make();
@@ -185,6 +174,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         }
         archive_sources.push(usize(index));
         source_archives.push(lito::source::ArchiveSourceFetchRequest {
+            .owner  = graph.packages[source.package].manifest.name.clone(),
+            .name   = source.name.clone(),
             .url    = rstd::move(url),
             .sha256 = rstd::move(sha256),
         });
@@ -194,7 +185,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         auto fetched = lito::source::acquire_archive_frontier(rstd::move(source_archives),
                                                               jobs,
                                                               materialization_root.as_path(),
-                                                              resolved_cmake.executable.as_path(),
+                                                              tool_resolver,
                                                               process_environment,
                                                               source_config,
                                                               source_observer(observer));
@@ -239,6 +230,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         if (! source.is_Archive()) continue;
         archive_bindings.push(usize(index));
         archive_requests.push(lito::source::ArchiveSourceFetchRequest {
+            .owner  = bindings[index].owner.clone(),
+            .name   = bindings[index].requirement.alias.clone(),
             .url    = source.as_Archive().url.clone(),
             .sha256 = source.as_Archive().sha256.clone(),
         });
@@ -249,7 +242,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         auto fetched = lito::source::acquire_archive_frontier(rstd::move(archive_requests),
                                                               jobs,
                                                               materialization_root.as_path(),
-                                                              resolved_cmake.executable.as_path(),
+                                                              tool_resolver,
                                                               process_environment,
                                                               source_config,
                                                               fetch_observer);
@@ -264,6 +257,31 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                     rstd::move(acquired.root), rstd::move(acquired.identity), true);
         }
     }
+
+    if (bindings.is_empty()) {
+        return Ok(PreparedExternalCatalog {
+            .usage   = rstd::move(result),
+            .sources = rstd::move(source_catalog),
+        });
+    }
+
+    const auto cmake_requirement =
+        external_dependency_tool_requirement(HostToolCapability::CMakeProject,
+                                             bindings[usize {}].owner,
+                                             bindings[usize {}].requirement.alias);
+    auto resolved_tool =
+        cmake_config.executable.is_empty()
+            ? tool_resolver.require(Tool::CMake, cmake_requirement)
+            : tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
+    if (resolved_tool.is_err()) {
+        return Err(
+            rstd::into<lito::dependency::DependencyError>(rstd::move(resolved_tool).unwrap_err()));
+    }
+    auto resolved_cmake       = cmake_config.clone();
+    resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
+    auto identified = identify_cmake_provider(rstd::move(resolved_cmake), process_environment);
+    if (identified.is_err()) return Err(rstd::move(identified).unwrap_err());
+    resolved_cmake = rstd::move(identified).unwrap();
 
     auto snapshots       = rstd::collections::BTreeMap<String, CMakeUsageSnapshot>::make();
     auto assets          = ExternalAssetCatalog {};

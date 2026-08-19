@@ -31,7 +31,7 @@ TEST_F(FormatCommand, FormatCheckReportsWithoutChangingSources) {
     auto checked = lito::format(lito::FormatRequest {
         .selection   = lito::package::PackageSelection { .root = fixture.clone() },
         .environment = rstd::move(checked_project->environment),
-        .toolchain   = rstd::move(checked_project->toolchain),
+        .tools       = rstd::move(checked_project->tools),
         .sources     = rstd::move(checked_project->sources),
         .mode        = lito::FormatMode::Check,
     });
@@ -50,7 +50,7 @@ TEST_F(FormatCommand, FormatCheckReportsWithoutChangingSources) {
     auto formatted = lito::format(lito::FormatRequest {
         .selection   = lito::package::PackageSelection { .root = fixture.clone() },
         .environment = rstd::move(format_project->environment),
-        .toolchain   = rstd::move(format_project->toolchain),
+        .tools       = rstd::move(format_project->tools),
         .sources     = rstd::move(format_project->sources),
     });
     ASSERT_TRUE(formatted.is_ok());
@@ -61,7 +61,7 @@ TEST_F(FormatCommand, FormatCheckReportsWithoutChangingSources) {
     auto clean = lito::format(lito::FormatRequest {
         .selection   = lito::package::PackageSelection { .root = fixture.clone() },
         .environment = rstd::move(clean_project->environment),
-        .toolchain   = rstd::move(clean_project->toolchain),
+        .tools       = rstd::move(clean_project->tools),
         .sources     = rstd::move(clean_project->sources),
         .mode        = lito::FormatMode::Check,
     });

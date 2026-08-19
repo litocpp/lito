@@ -5,7 +5,9 @@ the message names the owning package, target, source, config key, or tool invoca
 
 ## Confirm the effective tools
 
-A build prints resolved tool paths before scanning. Override one invocation through config keys:
+A build prints the target toolchain before scanning. Host tools are reported incrementally when an
+actual action selects them, for example `[tool] archive extraction cmake -E tar ...`. Override one
+invocation through config keys:
 
 ```sh
 lito -c toolchain.cxx=/opt/llvm/bin/clang++ build
@@ -19,6 +21,10 @@ ignore `lito-config.toml`.
 The build setup also lists configured C, C++, and link options together with their source key or
 environment variable. If an integration expects `CFLAGS`, `CXXFLAGS`, or `LDFLAGS`, remember that
 Lito ignores them unless the command uses `--use-env-flags`.
+
+`--verbose` also reports missing fallback candidates and cache or materialization reuse that made a
+host capability unnecessary. Missing tools that are unrelated to the selected action are not
+errors and are not listed in the default output.
 
 ## Module source cannot be resolved
 

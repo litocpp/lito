@@ -22,11 +22,12 @@ enum class FormatMode
 struct FormatRequest {
     lito::package::PackageSelection   selection;
     ProcessEnvironmentSpec            environment;
-    lito::config::ToolchainSpec       toolchain;
+    ToolSpec                          tools;
     lito::lock::LockConfig            lock;
     lito::source::PackageSourceConfig sources;
     FormatMode                        mode { FormatMode::Write };
     Option<BuildEventSink>            observer;
+    Option<HostToolResolutionSink>    tool_reporter;
 };
 
 struct FormatSummary {

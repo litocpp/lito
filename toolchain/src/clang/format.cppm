@@ -26,14 +26,9 @@ export namespace lito::toolchain
 class ClangFormat {
 public:
     static auto create(ref<rstd::path::Path>             formatter_path,
-                       ToolResolver&                     resolver,
                        const ResolvedProcessEnvironment& environment)
         -> ToolchainResult<ClangFormat> {
-        auto resolved = resolver.resolve(formatter_path, "clang-format"_str);
-        if (resolved.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(resolved).unwrap_err()));
-        }
-        auto path = rstd::move(resolved).unwrap().executable;
+        auto path = PathBuf::from(formatter_path);
 
         auto arguments = Vec<String>::make();
         auto pushed    = command::push_path(arguments, path.as_path());

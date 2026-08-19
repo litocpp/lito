@@ -51,9 +51,9 @@ auto config_table(const Toml& value, ref<str> context) -> ConfigResult<ref<Table
 }
 
 auto root_config_key(ref<str> key) -> bool {
-    return key == "environment"_str || key == "toolchain"_str || key == "pkg-config"_str ||
-           key == "cmake"_str || key == "patch"_str || key == "lock"_str || key == "install"_str ||
-           key == "build"_str || key == "doc"_str;
+    return key == "environment"_str || key == "tools"_str || key == "toolchain"_str ||
+           key == "pkg-config"_str || key == "cmake"_str || key == "patch"_str ||
+           key == "lock"_str || key == "install"_str || key == "build"_str || key == "doc"_str;
 }
 
 auto environment_config_key(ref<str> key) -> bool {
@@ -62,7 +62,13 @@ auto environment_config_key(ref<str> key) -> bool {
 
 auto toolchain_config_key(ref<str> key) -> bool {
     return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
-           key == "strip"_str || key == "format"_str || key == "stdlib"_str;
+           key == "stdlib"_str;
+}
+
+auto tools_config_key(ref<str> key) -> bool {
+    return key == "cmake"_str || key == "tar"_str || key == "bsdtar"_str ||
+           key == "clang-format"_str || key == "curl"_str || key == "git"_str ||
+           key == "pkg-config"_str || key == "strip"_str;
 }
 
 auto build_config_key(ref<str> key) -> bool {
@@ -90,13 +96,11 @@ auto doc_config_key(ref<str> key) -> bool {
 }
 
 auto pkg_config_key(ref<str> key) -> bool {
-    return key == "executable"_str || key == "search-path"_str || key == "library-path"_str ||
-           key == "sysroot"_str;
+    return key == "search-path"_str || key == "library-path"_str || key == "sysroot"_str;
 }
 
 auto cmake_key(ref<str> key) -> bool {
-    return key == "executable"_str || key == "generator"_str || key == "search-path"_str ||
-           key == "overrides"_str;
+    return key == "generator"_str || key == "search-path"_str || key == "overrides"_str;
 }
 
 auto cmake_override_key(ref<str> key) -> bool {
@@ -286,17 +290,13 @@ auto configured_directories(const Toml&           table,
 
 auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_root)
     -> ConfigResult<lito::dependency::PkgConfigProviderConfig> {
-    auto result = lito::dependency::PkgConfigProviderConfig {
-        .executable = PathBuf::from("pkg-config"_str),
-    };
-    auto value = config_member(document, "pkg-config"_str);
+    auto result = lito::dependency::PkgConfigProviderConfig {};
+    auto value  = config_member(document, "pkg-config"_str);
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = config_table(**value, "config.pkg-config"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto known = reject_config_unknown(**table, "config.pkg-config"_str, pkg_config_key);
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-    result.executable = rstd_try(
-        configured_tool(**value, "executable"_str, "pkg-config"_str, "config.pkg-config"_str));
     result.search_paths = rstd_try(
         configured_directories(**value, "search-path"_str, "config.pkg-config"_str, project_root));
     result.library_paths = rstd_try(
@@ -319,8 +319,7 @@ auto configured_pkg_config(const Toml& document, ref<rstd::path::Path> project_r
         }
         result.sysroot = Some(rstd::move(canonical).unwrap());
     }
-    result.target_configured = config_member(**value, "executable"_str).is_some() ||
-                               ! result.library_paths.is_empty() || result.sysroot.is_some();
+    result.target_configured = ! result.library_paths.is_empty() || result.sysroot.is_some();
     return Ok(rstd::move(result));
 }
 
@@ -343,8 +342,7 @@ auto configured_environment(const Toml& document, ref<rstd::path::Path> project_
 auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
     -> ConfigResult<lito::dependency::CMakeProviderConfig> {
     auto result = lito::dependency::CMakeProviderConfig {
-        .executable = PathBuf::from("cmake"_str),
-        .generator  = String::make("Ninja"_str),
+        .generator = String::make("Ninja"_str),
     };
     auto value = config_member(document, "cmake"_str);
     if (value.is_none()) return Ok(rstd::move(result));
@@ -352,8 +350,6 @@ auto configured_cmake(const Toml& document, ref<rstd::path::Path> project_root)
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto known = reject_config_unknown(**table, "config.cmake"_str, cmake_key);
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-    result.executable =
-        rstd_try(configured_tool(**value, "executable"_str, "cmake"_str, "config.cmake"_str));
     auto generator = config_member(**value, "generator"_str);
     if (generator.is_some()) {
         auto text = (**generator).as_str();
@@ -414,13 +410,41 @@ auto configured_cmake_build_overrides(const Toml& document)
 
 auto default_toolchain() -> ToolchainSpec {
     return ToolchainSpec {
-        .cc     = PathBuf::from("clang"_str),
-        .cxx    = PathBuf::from("clang++"_str),
-        .ld     = PathBuf::from("ld.lld"_str),
-        .ar     = PathBuf::from("llvm-ar"_str),
-        .strip  = PathBuf::from("llvm-strip"_str),
-        .format = PathBuf::from("clang-format"_str),
+        .cc  = PathBuf::from("clang"_str),
+        .cxx = PathBuf::from("clang++"_str),
+        .ld  = PathBuf::from("ld.lld"_str),
+        .ar  = PathBuf::from("llvm-ar"_str),
     };
+}
+
+auto configured_tools(const Toml& document) -> ConfigResult<ToolSpec> {
+    auto result = ToolSpec {};
+    auto value  = config_member(document, "tools"_str);
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = config_table(**value, "config.tools"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    auto known = reject_config_unknown(**table, "config.tools"_str, tools_config_key);
+    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    result.cmake = rstd_try(configured_tool(**value, "cmake"_str, "cmake"_str, "config.tools"_str));
+    result.tar   = rstd_try(configured_tool(**value, "tar"_str, "tar"_str, "config.tools"_str));
+    result.bsdtar =
+        rstd_try(configured_tool(**value, "bsdtar"_str, "bsdtar"_str, "config.tools"_str));
+    result.clang_format = rstd_try(
+        configured_tool(**value, "clang-format"_str, "clang-format"_str, "config.tools"_str));
+    result.curl = rstd_try(configured_tool(**value, "curl"_str, "curl"_str, "config.tools"_str));
+    result.git  = rstd_try(configured_tool(**value, "git"_str, "git"_str, "config.tools"_str));
+    result.pkg_config =
+        rstd_try(configured_tool(**value, "pkg-config"_str, "pkg-config"_str, "config.tools"_str));
+    result.strip =
+        rstd_try(configured_tool(**value, "strip"_str, "llvm-strip"_str, "config.tools"_str));
+    constexpr Tool tool_values[] = {
+        Tool::CMake, Tool::Tar, Tool::BsdTar,    Tool::ClangFormat,
+        Tool::Curl,  Tool::Git, Tool::PkgConfig, Tool::Strip,
+    };
+    for (const auto tool : tool_values) {
+        if (config_member(**value, tool_name(tool)).is_some()) result.mark_configured(tool);
+    }
+    return Ok(rstd::move(result));
 }
 
 auto default_lock_config(ref<rstd::path::Path> project_root) -> lito::lock::LockConfig {
@@ -626,6 +650,7 @@ auto decode_project_config(PathBuf               root,
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
     auto toolchain        = default_toolchain();
+    auto tools            = rstd_try(configured_tools(document));
     auto standard_library = StandardLibrary::Libcxx;
     auto toolchain_value  = config_member(document, "toolchain"_str);
     if (toolchain_value.is_some()) {
@@ -645,10 +670,6 @@ auto decode_project_config(PathBuf               root,
                     configured_tool_override(**toolchain_value, "ld"_str, "config.toolchain"_str)),
                 .ar = rstd_try(
                     configured_tool_override(**toolchain_value, "ar"_str, "config.toolchain"_str)),
-                .strip  = rstd_try(configured_tool_override(
-                    **toolchain_value, "strip"_str, "config.toolchain"_str)),
-                .format = rstd_try(configured_tool_override(
-                    **toolchain_value, "format"_str, "config.toolchain"_str)),
             });
     }
 
@@ -660,6 +681,7 @@ auto decode_project_config(PathBuf               root,
     if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
     auto pkg_config = configured_pkg_config(document, root.as_path());
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
+    if (tools.explicitly_configured(Tool::PkgConfig)) pkg_config->target_configured = true;
     auto cmake                 = configured_cmake(document, root.as_path());
     auto cmake_build_overrides = configured_cmake_build_overrides(document);
     auto install               = configured_install(document, root.as_path());
@@ -679,6 +701,7 @@ auto decode_project_config(PathBuf               root,
         .root                  = rstd::move(root),
         .lock                  = rstd::move(lock).unwrap(),
         .environment           = rstd::move(environment).unwrap(),
+        .tools                 = rstd::move(tools),
         .toolchain             = rstd::move(toolchain),
         .standard_library      = standard_library,
         .build_options         = rstd::move(effective_build_options),

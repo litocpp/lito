@@ -22,9 +22,17 @@ cc = "custom-cc"
 cxx = "custom-cxx"
 ld = "custom-ld"
 ar = "custom-ar"
-strip = "custom-strip"
-format = "custom-format"
 stdlib = "libstdc++"
+
+[tools]
+cmake = "custom-cmake"
+tar = "custom-tar"
+bsdtar = "custom-bsdtar"
+clang-format = "custom-format"
+curl = "custom-curl"
+git = "custom-git"
+pkg-config = "custom-pkg-config"
+strip = "custom-strip"
 )toml"_str;
 constexpr auto toolchain_legacy_config       = "[toolchain]\ncompiler = \"custom-cxx\"\n"_str;
 constexpr auto environment_valid_config      = "[environment]\nappend-path = [\".\", \"..\"]\n"_str;
@@ -32,14 +40,15 @@ constexpr auto environment_empty_config      = "[environment]\nappend-path = []\
 constexpr auto lock_local_config             = "[lock]\npath = \".lito/lito.lock\"\n"_str;
 constexpr auto lock_missing_path_config      = "[lock]\n"_str;
 constexpr auto pkg_config_config             = R"toml([pkg-config]
-executable = "pkg-config"
 search-path = ["."]
 library-path = ["."]
 sysroot = "."
 )toml"_str;
 constexpr auto pkg_config_search_only_config = "[pkg-config]\nsearch-path = [\".\"]\n"_str;
-constexpr auto cmake_config                  = R"toml([cmake]
-executable = "custom-cmake"
+constexpr auto cmake_config                  = R"toml([tools]
+cmake = "custom-cmake"
+
+[cmake]
 generator = "Unix Makefiles"
 search-path = ["."]
 )toml"_str;
@@ -65,13 +74,26 @@ protected:
 };
 
 TEST_F(Config, RemovedConfigFieldsAreRejectedByConfigOwner) {
-    auto project = config("removed-scanner"_str, removed_scanner_config);
-    ASSERT_TRUE(project.is_ok());
-    auto loaded = lito::config::load_project_config(project->root.as_path());
-    EXPECT_TRUE(loaded.is_err());
+    struct RemovedField {
+        ref<str> name;
+        ref<str> contents;
+    };
+    constexpr RemovedField fields[] = {
+        { "removed-scanner"_str, removed_scanner_config },
+        { "removed-toolchain-format"_str, "[toolchain]\nformat = \"clang-format\"\n"_str },
+        { "removed-toolchain-strip"_str, "[toolchain]\nstrip = \"llvm-strip\"\n"_str },
+        { "removed-cmake-executable"_str, "[cmake]\nexecutable = \"cmake\"\n"_str },
+        { "removed-pkg-config-executable"_str, "[pkg-config]\nexecutable = \"pkg-config\"\n"_str },
+    };
+    for (const auto& field : fields) {
+        auto project = config(field.name, field.contents);
+        ASSERT_TRUE(project.is_ok());
+        auto loaded = lito::config::load_project_config(project->root.as_path());
+        EXPECT_TRUE(loaded.is_err());
+    }
 }
 
-TEST_F(Config, ToolchainConfigurationUsesCommandLineNames) {
+TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     auto project = config("toolchain"_str, toolchain_config);
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::config::load_project_config(project->root.as_path());
@@ -80,8 +102,16 @@ TEST_F(Config, ToolchainConfigurationUsesCommandLineNames) {
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("custom-cxx"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("custom-ld"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("custom-ar"_str).as_path());
-    EXPECT_EQ(loaded->toolchain.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
-    EXPECT_EQ(loaded->toolchain.format.as_path(), PathBuf::from("custom-format"_str).as_path());
+    EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("custom-cmake"_str).as_path());
+    EXPECT_EQ(loaded->tools.tar.as_path(), PathBuf::from("custom-tar"_str).as_path());
+    EXPECT_EQ(loaded->tools.bsdtar.as_path(), PathBuf::from("custom-bsdtar"_str).as_path());
+    EXPECT_EQ(loaded->tools.clang_format.as_path(), PathBuf::from("custom-format"_str).as_path());
+    EXPECT_EQ(loaded->tools.curl.as_path(), PathBuf::from("custom-curl"_str).as_path());
+    EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("custom-git"_str).as_path());
+    EXPECT_EQ(loaded->tools.pkg_config.as_path(), PathBuf::from("custom-pkg-config"_str).as_path());
+    EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::PkgConfig));
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
 
     auto legacy_project = config("toolchain-legacy"_str, toolchain_legacy_config);
@@ -253,7 +283,7 @@ TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->pkg_config.target_configured);
-    EXPECT_EQ(loaded->pkg_config.executable.as_path().to_str().unwrap(), "pkg-config"_str);
+    EXPECT_EQ(loaded->tools.pkg_config.as_path().to_str().unwrap(), "pkg-config"_str);
     EXPECT_EQ(loaded->pkg_config.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->pkg_config.library_paths.len(), usize(1));
     EXPECT_TRUE(loaded->pkg_config.sysroot.is_some());
@@ -270,7 +300,7 @@ TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
     ASSERT_TRUE(project.is_ok());
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
-    EXPECT_EQ(loaded->cmake.executable.as_path().to_str().unwrap(), "custom-cmake"_str);
+    EXPECT_EQ(loaded->tools.cmake.as_path().to_str().unwrap(), "custom-cmake"_str);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), project->root.as_path());

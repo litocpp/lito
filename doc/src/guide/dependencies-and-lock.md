@@ -46,6 +46,11 @@ for reproducible applications and workspaces.
 - `--frozen` combines `--locked` and `--offline`.
 - repeated `--fetch-seed DIRECTORY` adds read-only pre-populated sources for offline acquisition.
 
+Offline resolution evaluates source availability before resolving network tools. A verified
+archive file-cache entry can be extracted without `curl`, and a valid archive materialization
+needs neither a downloader nor an extractor. Locked Git checkouts carry a Lito-owned receipt, so a
+reusable checkout does not require Git merely to reinterpret Git's internal repository format.
+
 `lito lock export --format flatpak-sources --output FILE` exports locked network inputs as Flatpak
 source entries and an inline fetch-seed catalog.
 

@@ -22,6 +22,7 @@ export namespace lito
 auto resolve_pkg_config_dependencies(
     const Vec<lito::dependency::PkgConfigExternalDependency>& pkg_config_declarations,
     const lito::dependency::PkgConfigProviderConfig&          pkg_config,
+    ref<str>                                                  owner,
     const BuildPlatform&                                      platform,
     ToolResolver&                                             tool_resolver,
     const ResolvedProcessEnvironment&                         process_environment)
@@ -39,15 +40,26 @@ auto resolve_pkg_config_dependencies(
                     "sysroot configuration",
                     platform.effective_target.triple.as_str()));
         }
+        auto requested_provider = pkg_config.executable.is_empty()
+                                      ? tool_resolver.tools().pkg_config.as_path()
+                                      : pkg_config.executable.as_path();
+        auto requirement_subject =
+            rstd::format("{} ({})",
+                         pkg_config_declarations[usize {}].alias.as_str(),
+                         pkg_config_declarations[usize {}].requirement.module.as_str());
+        const auto tool_requirement = external_dependency_tool_requirement(
+            HostToolCapability::PkgConfigQuery, owner, requirement_subject.as_str());
         auto resolved =
-            tool_resolver.resolve(pkg_config.executable.as_path(), "pkg-config executable"_str);
+            pkg_config.executable.is_empty()
+                ? tool_resolver.require(Tool::PkgConfig, tool_requirement)
+                : tool_resolver.resolve(requested_provider, "pkg-config executable"_str);
         if (resolved.is_err()) {
             const auto& declaration = pkg_config_declarations[usize {}];
             return Err(lito::dependency::DependencyError::Operation(
                 rstd::format("pkg-config dependency '{}' module '{}' provider '{}' resolution",
                              declaration.alias.as_str(),
                              declaration.requirement.module.as_str(),
-                             pkg_config.executable.as_path()),
+                             requested_provider),
                 rstd::move(resolved).unwrap_err()));
         }
         resolved_pkg_config.executable = rstd::move(resolved).unwrap().executable;
@@ -171,8 +183,12 @@ auto resolve_external_dependencies(
     ToolResolver&                     tool_resolver,
     const ResolvedProcessEnvironment& process_environment)
     -> lito::dependency::DependencyResult<Vec<cpp::ExternalDependencyUsage>> {
-    return resolve_pkg_config_dependencies(
-        declarations, pkg_config, platform, tool_resolver, process_environment);
+    return resolve_pkg_config_dependencies(declarations,
+                                           pkg_config,
+                                           "selected package"_str,
+                                           platform,
+                                           tool_resolver,
+                                           process_environment);
 }
 
 auto resolve_external_dependencies(

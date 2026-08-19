@@ -72,6 +72,7 @@ struct ProjectConfig {
     PathBuf                                   root;
     lito::lock::LockConfig                    lock;
     ProcessEnvironmentSpec                    environment;
+    ToolSpec                                  tools;
     ToolchainSpec                             toolchain;
     StandardLibrary                           standard_library { StandardLibrary::Libcxx };
     ProjectBuildOptions                       build_options;

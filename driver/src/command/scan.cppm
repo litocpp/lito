@@ -19,6 +19,7 @@ struct ScanRequest {
     Vec<String>                               targets;
     PathBuf                                   source;
     ProcessEnvironmentSpec                    environment;
+    ToolSpec                                  tools;
     cpp::BuildConfiguration                   configuration;
     lito::lock::LockConfig                    lock;
     Option<lito::manifest::BuildProfileName>  profile;
@@ -29,6 +30,7 @@ struct ScanRequest {
     bool                                      locked { false };
     Option<BuildEventSink>                    observer;
     Option<BuildSetupReportSink>              setup_reporter;
+    Option<HostToolResolutionSink>            tool_reporter;
 };
 
 struct ScanReport {

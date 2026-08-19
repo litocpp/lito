@@ -18,6 +18,9 @@
     "environment": {
       "$ref": "#/definitions/environment"
     },
+    "tools": {
+      "$ref": "#/definitions/tools"
+    },
     "toolchain": {
       "$ref": "#/definitions/toolchain"
     },
@@ -79,11 +82,35 @@
         },
         "ar": {
           "$ref": "#/definitions/tool"
-        },
-        "strip": {
+        }
+      },
+      "additionalProperties": false
+    },
+    "tools": {
+      "type": "object",
+      "properties": {
+        "cmake": {
           "$ref": "#/definitions/tool"
         },
-        "format": {
+        "tar": {
+          "$ref": "#/definitions/tool"
+        },
+        "bsdtar": {
+          "$ref": "#/definitions/tool"
+        },
+        "clang-format": {
+          "$ref": "#/definitions/tool"
+        },
+        "curl": {
+          "$ref": "#/definitions/tool"
+        },
+        "git": {
+          "$ref": "#/definitions/tool"
+        },
+        "pkg-config": {
+          "$ref": "#/definitions/tool"
+        },
+        "strip": {
           "$ref": "#/definitions/tool"
         }
       },
@@ -126,9 +153,6 @@
     "pkgConfig": {
       "type": "object",
       "properties": {
-        "executable": {
-          "$ref": "#/definitions/tool"
-        },
         "search-path": {
           "$ref": "#/definitions/directoryArray"
         },
@@ -145,9 +169,6 @@
     "cmake": {
       "type": "object",
       "properties": {
-        "executable": {
-          "$ref": "#/definitions/tool"
-        },
         "generator": {
           "$ref": "#/definitions/nonEmptyString"
         },

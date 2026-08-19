@@ -5,6 +5,7 @@ export module lito.system:environment;
 
 import rstd;
 import :error;
+import :tools;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -204,17 +205,129 @@ struct ResolvedTool {
     }
 };
 
+struct ToolProbeCacheEntry {
+    PathBuf         requested;
+    Option<PathBuf> executable;
+};
+
 class ToolResolver {
 public:
-    explicit ToolResolver(const ResolvedProcessEnvironment& environment)
-        : environment_(rstd::addressof(environment)) {}
+    explicit ToolResolver(const ResolvedProcessEnvironment& environment,
+                          ToolSpec                          tools    = {},
+                          Option<HostToolResolutionSink>    reporter = None())
+        : environment_(rstd::addressof(environment)),
+          tools_(rstd::move(tools)),
+          reporter_(rstd::move(reporter)) {}
+
+    auto tools() const noexcept -> const ToolSpec& { return tools_; }
+
+    auto probe(Tool tool) -> SystemResult<Option<ResolvedTool>> {
+        return probe(tools_.requested(tool), tool_description(tool));
+    }
+
+    auto resolve(Tool tool) -> SystemResult<ResolvedTool> {
+        return resolve(tools_.requested(tool), tool_description(tool));
+    }
+
+    auto require(Tool tool, const HostToolRequirement& requirement) -> SystemResult<ResolvedTool> {
+        auto selected = rstd_try(probe(tool));
+        if (selected.is_none()) {
+            auto message = rstd::format("cannot provide {} required by {}; cannot resolve {} '{}' "
+                                        "from effective PATH; searched: ",
+                                        host_tool_capability_name(requirement.capability),
+                                        host_tool_requirement_origin_text(requirement.origin),
+                                        tool_description(tool),
+                                        tools_.requested(tool));
+            append_search_directories(message, environment_->search_directories());
+            return environment_failure<ResolvedTool>(rstd::move(message));
+        }
+        auto result = rstd::move(selected).unwrap();
+        report(requirement, tool_name(tool), result);
+        return Ok(rstd::move(result));
+    }
+
+    auto report(const HostToolRequirement& requirement, ref<str> provider, const ResolvedTool& tool)
+        -> void {
+        for (const auto capability : reported_capabilities_) {
+            if (capability == requirement.capability) return;
+        }
+        reported_capabilities_.push(HostToolCapability(requirement.capability));
+        if (reporter_.is_none() || reporter_->notify == nullptr) return;
+        auto resolution = HostToolResolution {
+            .requirement = requirement.clone(),
+            .provider    = String::make(provider),
+            .requested   = tool.requested.clone(),
+            .executable  = Some(tool.executable.clone()),
+        };
+        reporter_->notify(reporter_->context, resolution);
+    }
+
+    auto report_candidate_missing(const HostToolRequirement& requirement,
+                                  ref<str>                   provider,
+                                  Tool                       tool) const -> void {
+        if (reporter_.is_none() || reporter_->notify == nullptr) return;
+        auto resolution = HostToolResolution {
+            .kind        = HostToolResolution::Kind::CandidateMissing,
+            .requirement = requirement.clone(),
+            .provider    = String::make(provider),
+            .requested   = PathBuf::from(tools_.requested(tool)),
+        };
+        reporter_->notify(reporter_->context, resolution);
+    }
+
+    auto report_not_required(const HostToolRequirement& requirement, ref<str> detail) const
+        -> void {
+        if (reporter_.is_none() || reporter_->notify == nullptr) return;
+        auto resolution = HostToolResolution {
+            .kind        = HostToolResolution::Kind::NotRequired,
+            .requirement = requirement.clone(),
+            .detail      = String::make(detail),
+        };
+        reporter_->notify(reporter_->context, resolution);
+    }
+
+    auto probe(ref<rstd::path::Path> requested, ref<str> description)
+        -> SystemResult<Option<ResolvedTool>> {
+        for (const auto& cached : cache_) {
+            if (! same_path(cached.requested.as_path(), requested)) continue;
+            if (cached.executable.is_none()) return Ok(Option<ResolvedTool> {});
+            return Ok(Some(ResolvedTool {
+                .requested  = cached.requested.clone(),
+                .executable = cached.executable->clone(),
+            }));
+        }
+
+        auto selected = rstd_try(locate(requested, description));
+        if (selected.is_none()) {
+            cache_.push(ToolProbeCacheEntry {
+                .requested = PathBuf::from(requested),
+            });
+            return Ok(Option<ResolvedTool> {});
+        }
+        auto result = ResolvedTool {
+            .requested  = PathBuf::from(requested),
+            .executable = rstd::move(selected).unwrap(),
+        };
+        cache_.push(ToolProbeCacheEntry {
+            .requested  = result.requested.clone(),
+            .executable = Some(result.executable.clone()),
+        });
+        return Ok(Some(rstd::move(result)));
+    }
 
     auto resolve(ref<rstd::path::Path> requested, ref<str> description)
         -> SystemResult<ResolvedTool> {
-        for (const auto& cached : cache_) {
-            if (same_path(cached.requested.as_path(), requested)) return Ok(cached.clone());
-        }
+        auto selected = rstd_try(probe(requested, description));
+        if (selected.is_some()) return Ok(rstd::move(selected).unwrap());
+        auto message = rstd::format(
+            "cannot resolve {} '{}' from effective PATH; searched: ", description, requested);
+        append_search_directories(message, environment_->search_directories());
+        return environment_failure<ResolvedTool>(rstd::move(message));
+    }
 
+private:
+    auto locate(ref<rstd::path::Path> requested, ref<str> description)
+        -> SystemResult<Option<PathBuf>> {
         auto selected = Option<PathBuf> {};
         if (requested.is_absolute()) {
             auto executable = executable_candidate(requested);
@@ -252,29 +365,19 @@ public:
 #endif
             }
         } else {
-            return environment_failure<ResolvedTool>(
+            return environment_failure<Option<PathBuf>>(
                 rstd::format("cannot resolve {} '{}': expected an executable name or absolute path",
                              description,
                              requested));
         }
-
-        if (selected.is_none()) {
-            auto message = rstd::format(
-                "cannot resolve {} '{}' from effective PATH; searched: ", description, requested);
-            append_search_directories(message, environment_->search_directories());
-            return environment_failure<ResolvedTool>(rstd::move(message));
-        }
-        auto result = ResolvedTool {
-            .requested  = PathBuf::from(requested),
-            .executable = rstd::move(selected).unwrap(),
-        };
-        cache_.push(result.clone());
-        return Ok(rstd::move(result));
+        return Ok(rstd::move(selected));
     }
 
-private:
     const ResolvedProcessEnvironment* environment_ {};
-    Vec<ResolvedTool>                 cache_;
+    ToolSpec                          tools_;
+    Option<HostToolResolutionSink>    reporter_;
+    Vec<ToolProbeCacheEntry>          cache_;
+    Vec<HostToolCapability>           reported_capabilities_;
 };
 
 } // namespace lito::system
