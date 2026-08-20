@@ -3,6 +3,7 @@
 import rstd;
 import rstd.test;
 import lito.core;
+import lito.driver;
 import lito.test.support;
 
 using namespace rstd::prelude;

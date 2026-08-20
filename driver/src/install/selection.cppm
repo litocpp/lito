@@ -5,6 +5,7 @@ export module lito.driver:install.selection;
 
 import rstd;
 import lito.core;
+import :package.selection;
 import :install.error;
 import :install.recipe;
 import :install.package;

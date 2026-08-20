@@ -32,38 +32,48 @@ public:
         if (environment.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(environment).unwrap_err()));
         }
-        auto resolver = ToolResolver(*environment);
-        return create(specification, resolver, *environment);
+        return create(specification, *environment);
     }
 
     static auto create(const lito::config::ToolchainSpec& specification,
-                       ToolResolver&                      resolver,
                        const ResolvedProcessEnvironment&  environment)
         -> ToolchainResult<ClangToolchain> {
         auto argument_parser = make_clang_cpp_argument_parser();
         if (argument_parser.is_err()) {
             return Err(ToolchainError::Cpp(rstd::move(argument_parser).unwrap_err()));
         }
-        auto configured_compiler   = resolver.resolve(specification.cxx.as_path(), "clang++"_str);
-        auto configured_c_compiler = resolver.resolve(specification.cc.as_path(), "clang"_str);
-        auto configured_linker     = resolver.resolve(specification.ld.as_path(), "linker"_str);
-        auto configured_archiver   = resolver.resolve(specification.ar.as_path(), "llvm-ar"_str);
+        const auto resolve = [&](ref<rstd::path::Path> requested,
+                                 ref<str>              description) -> ToolchainResult<PathBuf> {
+            auto located = environment.locate_executable(requested, description);
+            if (located.is_err()) {
+                return Err(rstd::into<ToolchainError>(rstd::move(located).unwrap_err()));
+            }
+            if (located->is_none()) {
+                return failure<PathBuf>(rstd::format(
+                    "cannot resolve {} '{}' from effective PATH", description, requested));
+            }
+            return Ok(rstd::move(located).unwrap().unwrap());
+        };
+        auto configured_compiler   = resolve(specification.cxx.as_path(), "clang++"_str);
+        auto configured_c_compiler = resolve(specification.cc.as_path(), "clang"_str);
+        auto configured_linker     = resolve(specification.ld.as_path(), "linker"_str);
+        auto configured_archiver   = resolve(specification.ar.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(configured_compiler).unwrap_err()));
+            return Err(rstd::move(configured_compiler).unwrap_err());
         }
         if (configured_c_compiler.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(configured_c_compiler).unwrap_err()));
+            return Err(rstd::move(configured_c_compiler).unwrap_err());
         }
         if (configured_linker.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(configured_linker).unwrap_err()));
+            return Err(rstd::move(configured_linker).unwrap_err());
         }
         if (configured_archiver.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(configured_archiver).unwrap_err()));
+            return Err(rstd::move(configured_archiver).unwrap_err());
         }
-        auto compiler_path   = rstd::move(configured_compiler).unwrap().executable;
-        auto c_compiler_path = rstd::move(configured_c_compiler).unwrap().executable;
-        auto linker_path     = rstd::move(configured_linker).unwrap().executable;
-        auto archiver_path   = rstd::move(configured_archiver).unwrap().executable;
+        auto compiler_path   = rstd::move(configured_compiler).unwrap();
+        auto c_compiler_path = rstd::move(configured_c_compiler).unwrap();
+        auto linker_path     = rstd::move(configured_linker).unwrap();
+        auto archiver_path   = rstd::move(configured_archiver).unwrap();
 
         auto compiler_command   = Vec<String>::make();
         auto c_compiler_command = Vec<String>::make();

@@ -1,11 +1,12 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.driver;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.support;
 
@@ -140,11 +141,10 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     auto cached_environment = lito::system::ResolvedProcessEnvironment::resolve(
         lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(cached_environment.is_ok());
-    auto cached_tools = lito::system::ToolSpec {};
-    cached_tools.git  = PathBuf::from("lito-missing-git"_str);
-    auto cached_resolver =
-        lito::system::ToolResolver(*cached_environment, rstd::move(cached_tools));
-    auto cached_graph = lito::package::resolve_package_graph_with_environment(
+    auto cached_tools    = lito::tools::ToolSpec {};
+    cached_tools.git     = PathBuf::from("lito-missing-git"_str);
+    auto cached_resolver = lito::tools::ToolResolver(*cached_environment, rstd::move(cached_tools));
+    auto cached_graph    = lito::package::resolve_package_graph_with_environment(
         project.as_path(),
         cached_session->take_resolution_options(),
         cached_resolver,
@@ -176,7 +176,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver       = lito::system::ToolResolver(*environment);
+    auto resolver       = lito::tools::ToolResolver(*environment);
     auto offline_events = FetchEventCapture { .expected_url = *url };
     auto graph          = lito::package::resolve_package_graph_with_environment(
         project.as_path(),

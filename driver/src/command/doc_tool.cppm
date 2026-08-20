@@ -4,6 +4,7 @@ module;
 module lito.driver:command.doc_tool;
 
 import rstd;
+import lito.tools;
 import rstd.json;
 import lito.core;
 import :build;
@@ -11,6 +12,7 @@ import :build.event;
 import :command.doc.event;
 import :command.doc.request;
 import :command.doc_error;
+import :package;
 import lito.cpp;
 import lito.system;
 import lito.toolchain;
@@ -140,7 +142,7 @@ auto tool_source_requirement(const lito::config::DocConfig& config)
 
 auto acquire_doc_tool_source(const BuildRequest&               request,
                              const lito::config::DocConfig&    config,
-                             ToolResolver&                     resolver,
+                             lito::tools::ToolResolver&        resolver,
                              const ResolvedProcessEnvironment& environment)
     -> DocResult<lito::source::AcquiredSource> {
     auto options = lito::source::SourceResolutionOptions {
@@ -412,8 +414,9 @@ auto resolve_doc_tool(const BuildRequest&               request,
                       const Option<DocEventSink>&       observer) -> DocResult<ResolvedDocTool> {
     auto sdk = resolve_clang_sdk(project.compiler, environment);
     if (sdk.is_err()) return Err(rstd::into<DocError>(rstd::move(sdk).unwrap_err()));
-    auto resolver = ToolResolver(environment, request.tools.clone(), request.tool_reporter);
-    auto source   = acquire_doc_tool_source(request, config, resolver, environment);
+    auto resolver =
+        lito::tools::ToolResolver(environment, request.tools.clone(), request.tool_reporter);
+    auto source = acquire_doc_tool_source(request, config, resolver, environment);
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     auto key_material = rstd::format("lito-doc-tool-v3\n{}\n{}\n{}\n{}\n{}",
                                      source->identity.as_str(),

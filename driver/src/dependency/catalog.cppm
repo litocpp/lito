@@ -4,17 +4,18 @@ module;
 export module lito.driver:dependency.catalog;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import lito.cpp;
 import :build.event;
 import :build.layout;
 import lito.system;
 import lito.toolchain.clang;
-import lito.toolchain.cmake;
+import :dependency.cmake;
 import :dependency.external_source;
 import :dependency.preparation;
 import :dependency.pkg_config;
-import lito.toolchain.pkg_config;
+import :source;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -61,7 +62,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                     const LinkerIdentity&                            linker,
                                     const BuildLayout&                               layout,
                                     const BuildPlatform&                             platform,
-                                    ToolResolver&                                    tool_resolver,
+                                    lito::tools::ToolResolver&                       tool_resolver,
                                     const ResolvedProcessEnvironment&        process_environment,
                                     usize                                    jobs,
                                     const Option<BuildEventSink>&            observer,
@@ -292,17 +293,17 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         });
     }
 
-    const auto cmake_requirement =
-        external_dependency_tool_requirement(HostToolCapability::CMakeProject,
-                                             bindings[usize {}].owner,
-                                             bindings[usize {}].requirement.alias);
+    const auto cmake_requirement = lito::tools::external_dependency_tool_requirement(
+        lito::tools::HostToolCapability::CMakeProject,
+        bindings[usize {}].owner,
+        bindings[usize {}].requirement.alias);
     auto resolved_tool =
         cmake_config.executable.is_empty()
-            ? tool_resolver.require(Tool::CMake, cmake_requirement)
+            ? tool_resolver.require(lito::tools::Tool::CMake, cmake_requirement)
             : tool_resolver.resolve(cmake_config.executable.as_path(), "CMake executable"_str);
     if (resolved_tool.is_err()) {
         return Err(
-            rstd::into<lito::dependency::DependencyError>(rstd::move(resolved_tool).unwrap_err()));
+            cmake_error("resolve CMake executable"_str, rstd::move(resolved_tool).unwrap_err()));
     }
     auto resolved_cmake       = cmake_config.clone();
     resolved_cmake.executable = rstd::move(resolved_tool).unwrap().executable;
@@ -332,10 +333,10 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        cmake_work_root.as_path(),
                                        jobs);
         if (plan.is_err()) return Err(contextualize(rstd::move(plan).unwrap_err()));
-        auto key_text = plan->area.query_root.as_path().to_str();
+        auto key_text = plan->tool.area.query_root.as_path().to_str();
         if (key_text.is_none()) {
             return lito::dependency::dependency_failure<PreparedExternalCatalog>(rstd::format(
-                "CMake query path '{}' is not valid UTF-8", plan->area.query_root.as_path()));
+                "CMake query path '{}' is not valid UTF-8", plan->tool.area.query_root.as_path()));
         }
         auto cached = snapshots.get(*key_text);
         auto usage  = [&]() -> lito::dependency::DependencyResult<cpp::ExternalDependencyUsage> {

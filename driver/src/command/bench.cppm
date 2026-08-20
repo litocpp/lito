@@ -2,6 +2,7 @@ export module lito.driver:command.bench;
 
 import rstd;
 import lito.core;
+import :package.selection;
 import :command.error;
 import :build.request;
 import :build.result;

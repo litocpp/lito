@@ -1,10 +1,11 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.driver;
 import lito.test.support;
@@ -82,7 +83,7 @@ TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = lito::system::ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto pins     = Vec<lito::source::GitSourcePin>::make();
     pins.push(lito::source::GitSourcePin {
         .git       = String::make("https://example.invalid/seed-only.git"_str),

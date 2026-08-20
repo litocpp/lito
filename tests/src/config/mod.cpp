@@ -1,11 +1,12 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.core;
 import lito.cpp;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.driver;
 import lito.test.support;
@@ -141,8 +142,8 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("custom-git"_str).as_path());
     EXPECT_EQ(loaded->tools.pkg_config.as_path(), PathBuf::from("custom-pkg-config"_str).as_path());
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
-    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
-    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::PkgConfig));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
     EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
 
@@ -160,8 +161,8 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
     EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
-    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::system::Tool::CMake));
-    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::system::Tool::PkgConfig));
+    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::CMake));
+    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
 }
 
 TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
@@ -172,11 +173,11 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
                           "git = \"project-git\"\n"_str);
     ASSERT_TRUE(project.is_ok());
     auto defaults = [] {
-        auto tools         = ToolSpec {};
+        auto tools         = lito::tools::ToolSpec {};
         tools.strip        = PathBuf::from("sdk-strip"_str);
         tools.clang_format = PathBuf::from("sdk-format"_str);
-        tools.mark_configured(Tool::Strip);
-        tools.mark_configured(Tool::ClangFormat);
+        tools.mark_configured(lito::tools::Tool::Strip);
+        tools.mark_configured(lito::tools::Tool::ClangFormat);
         return lito::config::ProjectConfigDefaults {
             .tools = rstd::move(tools),
             .toolchain =
@@ -201,7 +202,7 @@ TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("sdk-strip"_str).as_path());
     EXPECT_EQ(loaded->tools.clang_format.as_path(), PathBuf::from("sdk-format"_str).as_path());
     EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("project-git"_str).as_path());
-    EXPECT_TRUE(loaded->tools.explicitly_configured(Tool::Strip));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Strip));
 
     auto overrides = Vec<String>::make();
     overrides.push(String::make("toolchain.ld=runtime-ld"_str));
@@ -240,7 +241,7 @@ TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
     ASSERT_TRUE(command.is_ok());
     EXPECT_EQ(command->tools.curl.as_path(), PathBuf::from("sdk-curl"_str).as_path());
     EXPECT_EQ(command->toolchain.ld.as_path(), PathBuf::from("project-linker"_str).as_path());
-    EXPECT_TRUE(command->tools.explicitly_configured(lito::system::Tool::Curl));
+    EXPECT_TRUE(command->tools.explicitly_configured(lito::tools::Tool::Curl));
     EXPECT_TRUE(lito::config::load_project_config(project->root.as_path()).is_err());
 
     auto overridden = lito::config::load_host_tool_command_config(
@@ -281,7 +282,7 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), directory.as_path());
     EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("local-cmake"_str).as_path());
-    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
 
     auto shared_only = lito::config::load_project_config(
         directory.as_path(), lito::config::ConfigLoadMode::LocalDisabled);
@@ -291,7 +292,7 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     EXPECT_EQ(shared_only->cmake.generator.as_str(), "Ninja"_str);
     ASSERT_EQ(shared_only->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(shared_only->cmake.search_paths[usize {}].as_path(), directory.as_path());
-    EXPECT_FALSE(shared_only->tools.explicitly_configured(lito::system::Tool::CMake));
+    EXPECT_FALSE(shared_only->tools.explicitly_configured(lito::tools::Tool::CMake));
 }
 
 TEST_F(Config, EnvironmentAppendPathBelongsToProjectConfig) {
@@ -415,7 +416,7 @@ TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_TRUE(loaded->pkg_config.target_configured);
     EXPECT_EQ(loaded->tools.pkg_config.as_path().to_str().unwrap(), "custom-pkg-config"_str);
-    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::PkgConfig));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
     EXPECT_EQ(loaded->pkg_config.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->pkg_config.library_paths.len(), usize(1));
     EXPECT_TRUE(loaded->pkg_config.sysroot.is_some());
@@ -425,7 +426,7 @@ TEST_F(Config, PkgConfigProviderConfigurationBelongsToProjectConfig) {
     auto search_only = lito::config::load_project_config(search_project->root.as_path());
     ASSERT_TRUE(search_only.is_ok());
     EXPECT_FALSE(search_only->pkg_config.target_configured);
-    EXPECT_FALSE(search_only->tools.explicitly_configured(lito::system::Tool::PkgConfig));
+    EXPECT_FALSE(search_only->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
 }
 
 TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
@@ -434,7 +435,7 @@ TEST_F(Config, CMakeProviderConfigurationBelongsToProjectConfig) {
     auto loaded = lito::config::load_project_config(project->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->tools.cmake.as_path().to_str().unwrap(), "custom-cmake"_str);
-    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::system::Tool::CMake));
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Unix Makefiles"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), project->root.as_path());

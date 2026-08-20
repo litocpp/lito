@@ -1,6 +1,7 @@
 export module lito.driver:build.event;
 
 import rstd;
+import lito.tools.cmake;
 import lito.core;
 import lito.toolchain;
 
@@ -106,5 +107,6 @@ namespace lito
 auto source_observer(const BuildEventSink& observer) noexcept -> lito::source::SourceEventSink;
 auto source_observer(const Option<BuildEventSink>& observer) noexcept
     -> lito::source::SourceEventSink;
-auto cmake_observer(const Option<BuildEventSink>& observer) noexcept -> Option<ToolchainEventSink>;
+auto cmake_observer(const Option<BuildEventSink>& observer) noexcept
+    -> Option<lito::tools::cmake::EventSink>;
 } // namespace lito

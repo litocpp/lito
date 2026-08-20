@@ -6,9 +6,11 @@ export module lito.driver:dependency.external_source;
 export import :dependency.preparation;
 
 import rstd;
+import lito.tools;
 import lito.core;
-import lito.toolchain.cmake;
+import :dependency.cmake;
 import :build.event;
+import :source;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -37,7 +39,7 @@ struct AcquiredExternalDependencySources {
 
 auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                                   lito::source::SourceResolutionOptions options,
-                                                  ToolResolver&                         resolver,
+                                                  lito::tools::ToolResolver&            resolver,
                                                   const ResolvedProcessEnvironment&     environment,
                                                   lito::source::SourceEventSink         observer)
     -> lito::dependency::DependencyResult<DeclaredExternalDependencySources>;
@@ -46,7 +48,7 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                          const Vec<String>&                   selected_packages,
                                          DeclaredExternalDependencySources    declared,
                                          const lito::dependency::CMakeBuildOverrideSet& overrides,
-                                         ToolResolver&                                  resolver,
+                                         lito::tools::ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment&              environment,
                                          usize                                          jobs,
                                          lito::source::SourceEventSink                  observer)
@@ -182,18 +184,9 @@ auto prepare_external_source_task(ExternalSourceTask task)
 export namespace lito
 {
 
-auto tokenize_pkg_config_fragments(ref<str> input)
-    -> lito::dependency::DependencyResult<Vec<String>> {
-    auto tokens = tokenize_command_fragments(input, "pkg-config output"_str);
-    if (tokens.is_err()) {
-        return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tokens).unwrap_err()));
-    }
-    return Ok(rstd::move(tokens).unwrap());
-}
-
 auto resolve_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                          lito::source::SourceResolutionOptions options,
-                                         ToolResolver&                         resolver,
+                                         lito::tools::ToolResolver&            resolver,
                                          const ResolvedProcessEnvironment&     environment,
                                          BuildEventSink                        observer = {})
     -> lito::dependency::DependencyResult<DeclaredExternalDependencySources> {
@@ -205,7 +198,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                          const Vec<String>&                   selected_packages,
                                          DeclaredExternalDependencySources    declared,
                                          const lito::dependency::CMakeBuildOverrideSet& overrides,
-                                         ToolResolver&                                  resolver,
+                                         lito::tools::ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment&              environment,
                                          usize          jobs     = usize(1),
                                          BuildEventSink observer = {})
@@ -308,7 +301,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
 auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                          const Vec<String>&                    selected_packages,
                                          lito::source::SourceResolutionOptions options,
-                                         ToolResolver&                         resolver,
+                                         lito::tools::ToolResolver&            resolver,
                                          const ResolvedProcessEnvironment&     environment,
                                          usize                                 jobs     = usize(1),
                                          BuildEventSink                        observer = {})
@@ -328,7 +321,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
 
 auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                          lito::source::SourceResolutionOptions options,
-                                         ToolResolver&                         resolver,
+                                         lito::tools::ToolResolver&            resolver,
                                          const ResolvedProcessEnvironment&     environment,
                                          usize                                 jobs     = usize(1),
                                          BuildEventSink                        observer = {})
@@ -349,7 +342,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph&  g
         return Err(
             rstd::into<lito::dependency::DependencyError>(rstd::move(environment).unwrap_err()));
     }
-    auto resolver = ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     return prepare_external_dependency_sources(
         graph, rstd::move(options), resolver, *environment, jobs, observer);
 }

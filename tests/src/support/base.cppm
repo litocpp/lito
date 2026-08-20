@@ -1,6 +1,7 @@
 export module lito.test.base_support;
 
 import rstd;
+import lito.tools;
 import lito.driver;
 import lito.cpp;
 import lito.system;
@@ -42,7 +43,7 @@ auto configuration() -> lito::cpp::BuildConfiguration {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {})
             .unwrap();
-    auto resolver = lito::system::ToolResolver(environment);
+    auto resolver = lito::tools::ToolResolver(environment);
     auto compiler =
         resolver.resolve(PathBuf::from("clang++"_str).as_path(), "clang++"_str).unwrap().executable;
     auto linker = resolver.resolve(PathBuf::from("ld.lld"_str).as_path(), "LLD linker"_str)

@@ -2,22 +2,27 @@ module;
 #include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
-export module lito.core:acquisition;
+export module lito.tools:acquisition;
 
 import rstd;
 import lito.system;
+import :error;
+import :model;
+import :resolver;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito::system;
+using namespace lito::tools;
 using PathBuf = rstd::path::PathBuf;
 
-export namespace lito::acquisition
+export namespace lito::tools::acquisition
 {
 
 class AcquisitionError {
     RSTD_ENUM(AcquisitionError,
               (System, (String operation; SystemError source;)),
+              (Tools, (String operation; lito::tools::ToolError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Message, (String message;)))
 };
@@ -44,13 +49,13 @@ struct AcquisitionEventSink {
 };
 
 struct VerifiedArchiveRequest {
-    String              label;
-    String              url;
-    String              sha256;
-    Option<u64>         expected_size;
-    Option<PathBuf>     seed;
-    HostToolRequirement download_requirement;
-    HostToolRequirement extraction_requirement;
+    String                           label;
+    String                           url;
+    String                           sha256;
+    Option<u64>                      expected_size;
+    Option<PathBuf>                  seed;
+    lito::tools::HostToolRequirement download_requirement;
+    lito::tools::HostToolRequirement extraction_requirement;
 };
 
 struct VerifiedFile {
@@ -75,8 +80,8 @@ enum class ArchiveExtractorKind
 };
 
 struct ArchiveExtractor {
-    ArchiveExtractorKind kind { ArchiveExtractorKind::BsdTar };
-    ResolvedTool         tool;
+    ArchiveExtractorKind      kind { ArchiveExtractorKind::BsdTar };
+    lito::tools::ResolvedTool tool;
 
     auto clone() const -> ArchiveExtractor {
         return ArchiveExtractor {
@@ -99,13 +104,14 @@ struct ExtractedArchive {
 
 auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
                             usize                             jobs,
-                            ToolResolver&                     resolver,
+                            lito::tools::ToolResolver&        resolver,
                             const ResolvedProcessEnvironment& environment,
                             bool                              offline  = false,
                             AcquisitionEventSink              observer = {})
     -> AcquisitionResult<Vec<VerifiedFile>>;
 
-auto select_archive_extractor(ToolResolver& resolver, const HostToolRequirement& requirement)
+auto select_archive_extractor(lito::tools::ToolResolver&              resolver,
+                              const lito::tools::HostToolRequirement& requirement)
     -> AcquisitionResult<ArchiveExtractor>;
 
 auto extract_verified_archive(VerifiedFile                      file,
@@ -116,25 +122,27 @@ auto extract_verified_archive(VerifiedFile                      file,
                               AcquisitionEventSink              observer = {})
     -> AcquisitionResult<ExtractedArchive>;
 
-} // namespace lito::acquisition
+} // namespace lito::tools::acquisition
 
 export namespace rstd
 {
 
 template<>
-struct Impl<convert::From<lito::system::SystemError>, lito::acquisition::AcquisitionError> {
-    static auto from(lito::system::SystemError error) -> lito::acquisition::AcquisitionError {
-        return lito::acquisition::AcquisitionError::System(
+struct Impl<convert::From<lito::system::SystemError>, lito::tools::acquisition::AcquisitionError> {
+    static auto from(lito::system::SystemError error)
+        -> lito::tools::acquisition::AcquisitionError {
+        return lito::tools::acquisition::AcquisitionError::System(
             String::make("acquisition operation"_str), rstd::move(error));
     }
 };
 
 template<>
-struct Impl<fmt::Display, lito::acquisition::AcquisitionError>
-    : ImplBase<lito::acquisition::AcquisitionError> {
+struct Impl<fmt::Display, lito::tools::acquisition::AcquisitionError>
+    : ImplBase<lito::tools::acquisition::AcquisitionError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
         if (error.is_System()) return formatter.write_str(error.as_System().operation.as_str());
+        if (error.is_Tools()) return formatter.write_str(error.as_Tools().operation.as_str());
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_fmt(
@@ -145,20 +153,23 @@ struct Impl<fmt::Display, lito::acquisition::AcquisitionError>
 };
 
 template<>
-struct Impl<fmt::Debug, lito::acquisition::AcquisitionError>
-    : ImplBase<lito::acquisition::AcquisitionError> {
+struct Impl<fmt::Debug, lito::tools::acquisition::AcquisitionError>
+    : ImplBase<lito::tools::acquisition::AcquisitionError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         return as<fmt::Display>(this->self()).fmt(formatter);
     }
 };
 
 template<>
-struct Impl<error::Error, lito::acquisition::AcquisitionError>
-    : ImplBase<lito::acquisition::AcquisitionError> {
+struct Impl<error::Error, lito::tools::acquisition::AcquisitionError>
+    : ImplBase<lito::tools::acquisition::AcquisitionError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_System()) {
             return Some(dyn<error::Error>::from_ref(error.as_System().source));
+        }
+        if (error.is_Tools()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Tools().source));
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         return None();
@@ -167,7 +178,7 @@ struct Impl<error::Error, lito::acquisition::AcquisitionError>
 
 } // namespace rstd
 
-namespace lito::acquisition
+namespace lito::tools::acquisition
 {
 
 template<typename T>
@@ -419,14 +430,14 @@ auto clean_extraction_destination(ref<rstd::path::Path> destination) -> Acquisit
     return Ok(empty {});
 }
 
-} // namespace lito::acquisition
+} // namespace lito::tools::acquisition
 
-export namespace lito::acquisition
+export namespace lito::tools::acquisition
 {
 
 auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
                             usize                             jobs,
-                            ToolResolver&                     resolver,
+                            lito::tools::ToolResolver&        resolver,
                             const ResolvedProcessEnvironment& environment,
                             bool                              offline,
                             AcquisitionEventSink observer) -> AcquisitionResult<Vec<VerifiedFile>> {
@@ -483,11 +494,11 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
                              requests[downloads[usize {}]].url.as_str()));
         }
         if (! downloads.is_empty()) {
-            auto curl =
-                resolver.require(Tool::Curl, requests[downloads[usize {}]].download_requirement);
+            auto curl = resolver.require(lito::tools::Tool::Curl,
+                                         requests[downloads[usize {}]].download_requirement);
             if (curl.is_err()) {
-                return Err(AcquisitionError::System(String::make("resolve curl executable"_str),
-                                                    rstd::move(curl).unwrap_err()));
+                return Err(AcquisitionError::Tools(String::make("resolve curl executable"_str),
+                                                   rstd::move(curl).unwrap_err()));
             }
             const auto workers = jobs < downloads.len() ? jobs : downloads.len();
             auto created = rstd::thread::BlockingTaskGroup<AcquisitionResult<FetchTask>>::make(
@@ -546,17 +557,18 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
     return Ok(rstd::move(result));
 }
 
-auto select_archive_extractor(ToolResolver& resolver, const HostToolRequirement& requirement)
+auto select_archive_extractor(lito::tools::ToolResolver&              resolver,
+                              const lito::tools::HostToolRequirement& requirement)
     -> AcquisitionResult<ArchiveExtractor> {
-    Tool first  = Tool::BsdTar;
-    Tool second = Tool::Tar;
-    if (resolver.tools().explicitly_configured(Tool::Tar) &&
-        ! resolver.tools().explicitly_configured(Tool::BsdTar)) {
-        first  = Tool::Tar;
-        second = Tool::BsdTar;
+    lito::tools::Tool first  = lito::tools::Tool::BsdTar;
+    lito::tools::Tool second = lito::tools::Tool::Tar;
+    if (resolver.tools().explicitly_configured(lito::tools::Tool::Tar) &&
+        ! resolver.tools().explicitly_configured(lito::tools::Tool::BsdTar)) {
+        first  = lito::tools::Tool::Tar;
+        second = lito::tools::Tool::BsdTar;
     }
-    const Tool candidates[] = { first, second };
-    auto       attempts     = String::make();
+    const lito::tools::Tool candidates[] = { first, second };
+    auto                    attempts     = String::make();
     for (const auto candidate : candidates) {
         if (candidate == second &&
             resolver.tools().requested(first).as_os_str().as_encoded_bytes() ==
@@ -565,29 +577,30 @@ auto select_archive_extractor(ToolResolver& resolver, const HostToolRequirement&
         }
         auto probed = resolver.probe(candidate);
         if (probed.is_err()) {
-            return Err(AcquisitionError::System(
-                rstd::format("probe {} archive extractor", tool_name(candidate)),
+            return Err(AcquisitionError::Tools(
+                rstd::format("probe {} archive extractor", lito::tools::tool_name(candidate)),
                 rstd::move(probed).unwrap_err()));
         }
         if (probed->is_some()) {
             auto result = ArchiveExtractor {
-                .kind = candidate == Tool::BsdTar ? ArchiveExtractorKind::BsdTar
-                                                  : ArchiveExtractorKind::Tar,
+                .kind = candidate == lito::tools::Tool::BsdTar ? ArchiveExtractorKind::BsdTar
+                                                               : ArchiveExtractorKind::Tar,
                 .tool = rstd::move(probed).unwrap().unwrap(),
             };
             resolver.report(requirement, result.provider_name(), result.tool);
             return Ok(rstd::move(result));
         }
-        resolver.report_candidate_missing(requirement, tool_name(candidate), candidate);
+        resolver.report_candidate_missing(
+            requirement, lito::tools::tool_name(candidate), candidate);
         attempts.push_str(rstd::format("\n    {} '{}': not found",
-                                       tool_name(candidate),
+                                       lito::tools::tool_name(candidate),
                                        resolver.tools().requested(candidate))
                               .as_str());
     }
-    auto cmake = resolver.probe(Tool::CMake);
+    auto cmake = resolver.probe(lito::tools::Tool::CMake);
     if (cmake.is_err()) {
-        return Err(AcquisitionError::System(String::make("probe CMake archive extractor"_str),
-                                            rstd::move(cmake).unwrap_err()));
+        return Err(AcquisitionError::Tools(String::make("probe CMake archive extractor"_str),
+                                           rstd::move(cmake).unwrap_err()));
     }
     if (cmake->is_some()) {
         auto result = ArchiveExtractor {
@@ -597,14 +610,14 @@ auto select_archive_extractor(ToolResolver& resolver, const HostToolRequirement&
         resolver.report(requirement, result.provider_name(), result.tool);
         return Ok(rstd::move(result));
     }
-    resolver.report_candidate_missing(requirement, "cmake -E tar"_str, Tool::CMake);
+    resolver.report_candidate_missing(requirement, "cmake -E tar"_str, lito::tools::Tool::CMake);
     attempts.push_str(rstd::format("\n    cmake -E tar via '{}': not found",
-                                   resolver.tools().requested(Tool::CMake))
+                                   resolver.tools().requested(lito::tools::Tool::CMake))
                           .as_str());
     return failure<ArchiveExtractor>(
         rstd::format("cannot provide {} required by {}; tried:{}",
-                     host_tool_capability_name(requirement.capability),
-                     host_tool_requirement_origin_text(requirement.origin),
+                     lito::tools::host_tool_capability_name(requirement.capability),
+                     lito::tools::host_tool_requirement_origin_text(requirement.origin),
                      attempts.as_str()));
 }
 
@@ -727,4 +740,4 @@ auto extract_verified_archive(VerifiedFile                      file,
     });
 }
 
-} // namespace lito::acquisition
+} // namespace lito::tools::acquisition

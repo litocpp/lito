@@ -4,6 +4,7 @@ module;
 module lito.driver:build.script;
 
 import rstd;
+import lito.tools;
 import rstd.json;
 import luato;
 import lito.core;
@@ -1233,7 +1234,7 @@ auto execute_build_script_invocation(const cpp::PackageMetadata&              me
                                      BuildOutputRegistry&                     output_registry,
                                      const Option<BuildEventSink>&            observer,
                                      const HostInfo&                          host,
-                                     ToolResolver&                            resolver,
+                                     lito::tools::ToolResolver&               resolver,
                                      const ResolvedProcessEnvironment&        environment,
                                      const lito::source::PackageSourceConfig& sources,
                                      usize jobs) -> BuildScriptResult<BuildScriptReport> {
@@ -1377,7 +1378,7 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
                           const cpp::SourceTargetSelection&        selection,
                           const Option<BuildEventSink>&            observer,
                           const HostInfo&                          host,
-                          ToolResolver&                            resolver,
+                          lito::tools::ToolResolver&               resolver,
                           const ResolvedProcessEnvironment&        environment,
                           const lito::source::PackageSourceConfig& sources,
                           usize jobs) -> BuildScriptResult<BuildScriptReport> {

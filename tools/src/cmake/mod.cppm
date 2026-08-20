@@ -1,6 +1,6 @@
-export module lito.toolchain.cmake;
+export module lito.tools.cmake;
 
-export import :dependency;
+export import :request;
 export import :model;
 export import :file_api;
 export import :snapshot;

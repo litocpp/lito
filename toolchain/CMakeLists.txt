@@ -7,17 +7,8 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
-         src/cmake/dependency.cppm
-         src/cmake/executor.cppm
-         src/cmake/file_api.cppm
-         src/cmake/invocation.cppm
-         src/cmake/mod.cppm
-         src/cmake/model.cppm
-         src/cmake/snapshot.cppm
          src/clang/arguments.cppm
          src/clang/compile_executor.cppm
-         src/clang/format.cppm
-         src/clang/format_options.cppm
          src/clang/mod.cppm
          src/clang/options.cppm
          src/clang/preprocessor_environment.cppm
@@ -34,14 +25,12 @@ target_sources(
          src/common/command.cppm
          src/common/compiler.cppm
          src/common/error.cppm
-         src/common/event.cppm
          src/common/invocation.cppm
          src/common/link.cppm
          src/common/mod.cppm
          src/common/statistics.cppm
-         src/pkg_config.cppm
          src/lib.cppm)
 target_link_libraries(
   lito.toolchain
-  PUBLIC lito.core lito.cpp lito.frontend rstd.std
+  PUBLIC lito.core lito.cpp lito.frontend lito.tools rstd.std
   PRIVATE rstd.json)

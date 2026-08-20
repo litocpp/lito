@@ -1,21 +1,19 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.core:config.schema;
+module lito.driver:config.schema;
 
 import rstd;
 import rstd.toml;
+import lito.core;
+import lito.tools;
 import :config.project;
-import :dependency.cmake;
-import :dependency.pkg_config;
-import :lock.config;
-import :source.config;
 import lito.system;
-import :config.toolchain;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
+using namespace lito::tools;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
@@ -471,7 +469,7 @@ auto configured_toolchain(const Toml& document, ToolchainSpec toolchain)
 }
 
 struct DecodedHostTools {
-    ToolSpec                                  executables;
+    lito::tools::ToolSpec                     executables;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
@@ -479,7 +477,7 @@ struct DecodedHostTools {
 
 auto configured_host_tools(const Toml&           document,
                            ref<rstd::path::Path> project_root,
-                           ToolSpec              executables) -> ConfigResult<DecodedHostTools> {
+                           lito::tools::ToolSpec executables) -> ConfigResult<DecodedHostTools> {
     auto result = DecodedHostTools {
         .executables = rstd::move(executables),
         .cmake =
@@ -508,11 +506,12 @@ auto configured_host_tools(const Toml&           document,
     if (git.is_some()) result.executables.git = rstd::move(git).unwrap();
     auto strip = rstd_try(configured_tool_override(**value, "strip"_str, "config.tools"_str));
     if (strip.is_some()) result.executables.strip = rstd::move(strip).unwrap();
-    constexpr Tool tool_values[] = {
-        Tool::Tar, Tool::BsdTar, Tool::ClangFormat, Tool::Curl, Tool::Git, Tool::Strip,
+    constexpr lito::tools::Tool tool_values[] = {
+        lito::tools::Tool::Tar,  lito::tools::Tool::BsdTar, lito::tools::Tool::ClangFormat,
+        lito::tools::Tool::Curl, lito::tools::Tool::Git,    lito::tools::Tool::Strip,
     };
     for (const auto tool : tool_values) {
-        if (config_member(**value, tool_name(tool)).is_some()) {
+        if (config_member(**value, lito::tools::tool_name(tool)).is_some()) {
             result.executables.mark_configured(tool);
         }
     }
@@ -523,14 +522,14 @@ auto configured_host_tools(const Toml&           document,
         if (shorthand.is_some()) {
             result.executables.cmake =
                 rstd_try(configured_executable(**cmake, "config.tools.cmake"_str));
-            result.executables.mark_configured(Tool::CMake);
+            result.executables.mark_configured(lito::tools::Tool::CMake);
         } else {
             result.cmake    = rstd_try(configured_cmake(**cmake, project_root));
             auto executable = rstd_try(
                 configured_tool_override(**cmake, "executable"_str, "config.tools.cmake"_str));
             if (executable.is_some()) {
                 result.executables.cmake = rstd::move(executable).unwrap();
-                result.executables.mark_configured(Tool::CMake);
+                result.executables.mark_configured(lito::tools::Tool::CMake);
             }
             result.cmake_build_overrides = rstd_try(configured_cmake_build_overrides(**cmake));
         }
@@ -542,7 +541,7 @@ auto configured_host_tools(const Toml&           document,
         if (shorthand.is_some()) {
             result.executables.pkg_config =
                 rstd_try(configured_executable(**pkg_config, "config.tools.pkg-config"_str));
-            result.executables.mark_configured(Tool::PkgConfig);
+            result.executables.mark_configured(lito::tools::Tool::PkgConfig);
             result.pkg_config.target_configured = true;
         } else {
             result.pkg_config = rstd_try(configured_pkg_config(**pkg_config, project_root));
@@ -550,7 +549,7 @@ auto configured_host_tools(const Toml&           document,
                 **pkg_config, "executable"_str, "config.tools.pkg-config"_str));
             if (executable.is_some()) {
                 result.executables.pkg_config = rstd::move(executable).unwrap();
-                result.executables.mark_configured(Tool::PkgConfig);
+                result.executables.mark_configured(lito::tools::Tool::PkgConfig);
                 result.pkg_config.target_configured = true;
             }
         }
@@ -761,7 +760,7 @@ auto decode_project_config(PathBuf               root,
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto tool_defaults      = ToolSpec {};
+    auto tool_defaults      = lito::tools::ToolSpec {};
     auto toolchain_defaults = default_toolchain();
     if (defaults.is_some()) {
         tool_defaults      = rstd::move(defaults->tools);
@@ -820,7 +819,7 @@ auto decode_host_tool_command_config(PathBuf                       root,
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto tool_defaults      = ToolSpec {};
+    auto tool_defaults      = lito::tools::ToolSpec {};
     auto toolchain_defaults = default_toolchain();
     if (defaults.is_some()) {
         tool_defaults      = rstd::move(defaults->tools);

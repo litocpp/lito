@@ -2,6 +2,7 @@ export module lito.driver:command.test;
 
 import rstd;
 import lito.core;
+import :package.selection;
 import :command.error;
 import :build.request;
 import :build.artifact;

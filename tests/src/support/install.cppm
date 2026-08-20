@@ -8,7 +8,7 @@ import rstd;
 import lito.driver;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.base_support;
 

@@ -4,11 +4,13 @@ module;
 export module lito.driver:build.host_tool;
 
 import rstd;
+import lito.tools;
 import rstd.json;
 import lito.core;
 import :build.event;
 import :build.layout;
 import :build.host_tool_error;
+import :source;
 import lito.cpp;
 import lito.system;
 
@@ -232,7 +234,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                               const Vec<String>&                       packages,
                               const HostInfo&                          host,
                               const BuildLayout&                       layout,
-                              ToolResolver&                            resolver,
+                              lito::tools::ToolResolver&               resolver,
                               const ResolvedProcessEnvironment&        environment,
                               const lito::source::PackageSourceConfig& sources,
                               usize                                    jobs,

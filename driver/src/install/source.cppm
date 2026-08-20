@@ -7,6 +7,8 @@ export module lito.driver:install.source;
 import rstd;
 import rstd.json;
 import lito.core;
+import :config.project;
+import :source.acquisition;
 import :install.error;
 import :install.destination;
 import :install.package;

@@ -1,0 +1,24 @@
+[package]
+name = "lito-tools"
+version.workspace = true
+
+[lib]
+name = "lito-tools"
+module = "lito.tools"
+archive = "lito.tools"
+
+[dependencies.lito-core]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-std]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-json]
+workspace = true
+visibility = "public"
+
+[dependencies.rstd-nostd]
+workspace = true
+visibility = "link"

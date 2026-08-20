@@ -7,7 +7,7 @@ import rstd;
 import lito.core;
 import :command.error;
 import :build.discovery;
-import lito.toolchain;
+import lito.tools;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -36,8 +36,9 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     if (environment.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
     }
-    auto tool_resolver = ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
-    auto resolved      = lito::workspace::resolve_local_project(request.root.as_path());
+    auto tool_resolver =
+        lito::tools::ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
+    auto resolved = lito::workspace::resolve_local_project(request.root.as_path());
     if (resolved.is_err()) {
         auto package_error =
             rstd::into<lito::package::PackageError>(rstd::move(resolved).unwrap_err());
@@ -78,14 +79,15 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         return format_failure<FormatSummary>("project has no selected format package"_str);
     }
 
-    const auto tool_requirement =
-        command_tool_requirement(HostToolCapability::SourceFormatting, "lito format"_str);
-    auto resolved_formatter = tool_resolver.require(Tool::ClangFormat, tool_requirement);
+    const auto tool_requirement = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::SourceFormatting, "lito format"_str);
+    auto resolved_formatter =
+        tool_resolver.require(lito::tools::Tool::ClangFormat, tool_requirement);
     if (resolved_formatter.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(resolved_formatter).unwrap_err()));
     }
     auto created =
-        toolchain::ClangFormat::create(resolved_formatter->executable.as_path(), *environment);
+        tools::ClangFormat::create(resolved_formatter->executable.as_path(), *environment);
     if (created.is_err()) {
         return Err(rstd::into<CommandError>(rstd::move(created).unwrap_err()));
     }

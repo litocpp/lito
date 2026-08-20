@@ -23,6 +23,7 @@ class DependencyError {
               (Operation, (String operation; SystemError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (String context; PathBuf path; rstd::json::Error source;)),
+              (Provider, (String context; ErrorBox source;)),
               (Configuration, (String dependency; ErrorBox source;)),
               (CMakeOperation,
                (String dependency; String operation; PathBuf work_area;
@@ -87,6 +88,7 @@ struct Impl<fmt::Display, lito::dependency::DependencyError>
             return formatter.write_fmt(
                 fmt::Arguments::make("cannot parse {} '{}'", value.context, value.path.as_path()));
         }
+        if (error.is_Provider()) return formatter.write_str(error.as_Provider().context.as_str());
         if (error.is_Configuration()) {
             return formatter.write_fmt(
                 fmt::Arguments::make("dependency '{}' build configuration is invalid",
@@ -135,6 +137,7 @@ struct Impl<error::Error, lito::dependency::DependencyError>
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Provider()) return Some(error.as_Provider().source.as_ref());
         if (error.is_Configuration()) {
             return Some(error.as_Configuration().source.as_ref());
         }

@@ -1,10 +1,11 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.driver;
 import lito.toolchain;
 import lito.test.support;
@@ -220,7 +221,7 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
     });
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto declared = lito::resolve_external_dependency_sources(
         graph, rstd::move(options), resolver, *environment);
     ASSERT_TRUE(declared.is_ok());
@@ -268,7 +269,7 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     ASSERT_TRUE(graph.is_ok());
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver  = ToolResolver(*environment);
+    auto resolver  = lito::tools::ToolResolver(*environment);
     auto overrides = lito::dependency::CMakeBuildOverrideSet {};
     overrides.entries.push(lito::dependency::CMakeBuildOverride {
         .package = String::make("LitoSourceAdapter"_str),

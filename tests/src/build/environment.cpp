@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.driver;
 import lito.core;
@@ -78,7 +79,7 @@ extern "C" auto fixture_environment_two() -> int {
         .context = rstd::addressof(progress),
         .notify  = capture_build_setup,
     });
-    request.tool_reporter          = Some(lito::system::HostToolResolutionSink {
+    request.tool_reporter          = Some(lito::tools::HostToolResolutionSink {
         .context = rstd::addressof(progress),
         .notify  = capture_host_tool,
     });

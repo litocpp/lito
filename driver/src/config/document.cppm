@@ -1,7 +1,7 @@
-export module lito.core:config.document;
+export module lito.driver:config.document;
 
 import rstd;
-import :config.error;
+import lito.core;
 import :config.project;
 
 using namespace rstd::prelude;

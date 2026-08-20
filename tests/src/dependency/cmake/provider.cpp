@@ -5,7 +5,7 @@ import rstd.test;
 import lito.cpp;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.driver;
 import lito.toolchain;
 import lito.test.support;

@@ -5,11 +5,12 @@ module;
 export module lito.test.support.dependency;
 
 import rstd;
+import lito.tools;
 import lito.cpp;
 import lito.driver;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.base_support;
 import lito.test.support.project;
@@ -272,10 +273,12 @@ auto resolve_cmake_fixtures_with_provider(
         return Err(
             rstd::into<lito::dependency::DependencyError>(rstd::move(environment).unwrap_err()));
     }
-    auto resolver = lito::system::ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto tool     = resolver.resolve(provider.executable.as_path(), "CMake executable"_str);
     if (tool.is_err()) {
-        return Err(rstd::into<lito::dependency::DependencyError>(rstd::move(tool).unwrap_err()));
+        return Err(lito::dependency::DependencyError::Provider(
+            String::make("cannot resolve CMake executable"_str),
+            Box<dyn<rstd::error::Error>>::make(rstd::move(tool).unwrap_err())));
     }
     provider.executable = rstd::move(tool).unwrap().executable;
     auto identified     = lito::identify_cmake_provider(rstd::move(provider), *environment);

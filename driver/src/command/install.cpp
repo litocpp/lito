@@ -4,6 +4,7 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import :build;
 import :build.error;
@@ -92,10 +93,9 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
         return install_failure<InstallSummary>(
             rstd::format("cannot resolve install environment: {}", environment.unwrap_err()));
     }
-    auto resolver =
-        ToolResolver(*environment, request.build.tools.clone(), request.build.tool_reporter);
-    auto toolchain =
-        ClangToolchain::create(request.build.configuration.toolchain, resolver, *environment);
+    auto resolver = lito::tools::ToolResolver(
+        *environment, request.build.tools.clone(), request.build.tool_reporter);
+    auto toolchain = ClangToolchain::create(request.build.configuration.toolchain, *environment);
     if (toolchain.is_err()) {
         return install_failure<InstallSummary>(
             rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
@@ -205,19 +205,19 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                                                summary,
                                                                summary.profile.as_str(),
                                                                summary.target.as_str()));
-    auto strip_requirement = Option<HostToolRequirement> {};
+    auto strip_requirement = Option<lito::tools::HostToolRequirement> {};
     for (const auto& package : plan.packages) {
         for (const auto& entry : package.entries) {
             if (entry.transforms.is_empty() || strip_requirement.is_some()) continue;
-            strip_requirement = Some(install_entry_tool_requirement(
-                HostToolCapability::ArtifactStripping,
+            strip_requirement = Some(lito::tools::install_entry_tool_requirement(
+                lito::tools::HostToolCapability::ArtifactStripping,
                 package.name.as_str(),
                 entry.relative_destination.as_path().to_string_lossy().as_str()));
         }
     }
     auto strip_provider = Option<LlvmStrip> {};
     if (strip_requirement.is_some()) {
-        auto resolved_strip = resolver.require(Tool::Strip, *strip_requirement);
+        auto resolved_strip = resolver.require(lito::tools::Tool::Strip, *strip_requirement);
         if (resolved_strip.is_err()) {
             return install_failure<InstallSummary>(
                 rstd::format("cannot resolve LLVM strip executable: {}",

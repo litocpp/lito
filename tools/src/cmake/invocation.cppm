@@ -1,12 +1,10 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.toolchain.cmake:invocation;
+export module lito.tools.cmake:invocation;
 
 import rstd;
-import lito.core;
-import lito.cpp;
-import lito.toolchain.common;
+import lito.tools;
 import lito.system;
 import :model;
 
@@ -14,19 +12,15 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 
-export namespace lito
+export namespace lito::tools::cmake
 {
 
 auto cmake_process_environment() -> CommandEnvironment {
-    constexpr lito::config::ToolchainEnvironmentVariable variables[] = {
-        lito::config::ToolchainEnvironmentVariable::CFlags,
-        lito::config::ToolchainEnvironmentVariable::CxxFlags,
-        lito::config::ToolchainEnvironmentVariable::LdFlags,
-    };
-    auto result = CommandEnvironment {};
+    constexpr ref<str> variables[] = { "CFLAGS"_str, "CXXFLAGS"_str, "LDFLAGS"_str };
+    auto               result      = CommandEnvironment {};
     for (auto variable : variables) {
         result.entries.push(CommandEnvironmentEntry {
-            .key = String::make(lito::config::toolchain_environment_variable_name(variable)),
+            .key = String::make(variable),
         });
     }
     return result;
@@ -55,22 +49,16 @@ auto run_cmake(Vec<String>                       arguments,
                ref<str>                          operation,
                const ResolvedProcessEnvironment& environment,
                Option<ref<rstd::path::Path>>     working_directory = None(),
-               bool stream_output = true) -> lito::dependency::DependencyResult<empty> {
+               bool stream_output = true) -> lito::tools::ToolResult<empty> {
     auto output = invoke_cmake(arguments, environment, working_directory, stream_output);
     if (output.is_err()) {
-        return Err(lito::dependency::DependencyError::Operation(String::make(operation),
-                                                                rstd::move(output).unwrap_err()));
+        return Err(rstd::into<lito::tools::ToolError>(rstd::move(output).unwrap_err()));
     }
     if (output->exit_code != i32 {}) {
-        auto diagnostics = output->standard_output.clone();
-        if (! diagnostics.is_empty() && ! output->standard_error.is_empty()) {
-            diagnostics.push('\n');
-        }
-        diagnostics.push_str(output->standard_error.as_str());
-        return cmake_failure<empty>(rstd::format("{} failed with exit code {}:\n{}",
-                                                 operation,
-                                                 output->exit_code,
-                                                 diagnostics.as_str()));
+        return Err(lito::tools::ToolError::Execution(String::make(operation),
+                                                     output->exit_code,
+                                                     rstd::move(output->standard_output),
+                                                     rstd::move(output->standard_error)));
     }
     return Ok(empty {});
 }
@@ -78,7 +66,7 @@ auto run_cmake(Vec<String>                       arguments,
 auto push_path_argument(Vec<String>&          arguments,
                         ref<str>              prefix,
                         ref<rstd::path::Path> path,
-                        ref<str> context) -> lito::dependency::DependencyResult<empty> {
+                        ref<str>              context) -> lito::tools::ToolResult<empty> {
     auto text = path_text(path, context);
     if (text.is_err()) return Err(rstd::move(text).unwrap_err());
     auto argument = String::make(prefix);
@@ -87,35 +75,28 @@ auto push_path_argument(Vec<String>&          arguments,
     return Ok(empty {});
 }
 
-auto push_cmake_toolchain(Vec<String>&                   arguments,
-                          const cpp::BuildConfiguration& configuration,
-                          const LinkerIdentity&          linker)
-    -> lito::dependency::DependencyResult<empty> {
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_C_COMPILER="_str,
-                                configuration.toolchain.cc.as_path(),
-                                "C compiler"_str));
-    rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_CXX_COMPILER="_str,
-                                configuration.toolchain.cxx.as_path(),
-                                "C++ compiler"_str));
+auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& toolchain)
+    -> lito::tools::ToolResult<empty> {
+    rstd_try(push_path_argument(
+        arguments, "-DCMAKE_C_COMPILER="_str, toolchain.cc.as_path(), "C compiler"_str));
+    rstd_try(push_path_argument(
+        arguments, "-DCMAKE_CXX_COMPILER="_str, toolchain.cxx.as_path(), "C++ compiler"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_USING_LINKER_lito_configured=-fuse-ld="_str,
-                                linker.executable.as_path(),
+                                toolchain.linker.as_path(),
                                 "linker"_str));
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_CXX_USING_LINKER_lito_configured=-fuse-ld="_str,
-                                linker.executable.as_path(),
+                                toolchain.linker.as_path(),
                                 "linker"_str));
     arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_configured"_str));
     rstd_try(push_path_argument(
-        arguments, "-DCMAKE_AR="_str, configuration.toolchain.ar.as_path(), "archiver"_str));
+        arguments, "-DCMAKE_AR="_str, toolchain.archiver.as_path(), "archiver"_str));
     return Ok(empty {});
 }
 
-auto push_cmake_search_path(Vec<String>&                                 arguments,
-                            const lito::dependency::CMakeProviderConfig& provider)
-    -> lito::dependency::DependencyResult<empty> {
+auto push_cmake_search_path(Vec<String>& arguments, const Provider& provider)
+    -> lito::tools::ToolResult<empty> {
     if (provider.search_paths.is_empty()) return Ok(empty {});
     auto value = String::make("-DCMAKE_PREFIX_PATH="_str);
     for (usize index {}; index < provider.search_paths.len(); ++index) {
@@ -139,9 +120,9 @@ auto cmake_generator_uses_multiple_configurations(ref<str> generator) noexcept -
            generator.starts_with("Visual Studio "_str);
 }
 
-auto push_cmake_profile_configuration(Vec<String>&                     arguments,
-                                      const CMakeProfileConfiguration& profile,
-                                      ref<str>                         generator) -> void {
+auto push_cmake_profile_configuration(Vec<String>&                arguments,
+                                      const ProfileConfiguration& profile,
+                                      ref<str>                    generator) -> void {
     const auto multi_config = cmake_generator_uses_multiple_configurations(generator);
     if (! multi_config) {
         arguments.push(rstd::format("-DCMAKE_BUILD_TYPE={}", profile.build_type.as_str()));
@@ -159,7 +140,7 @@ auto source_install_receipt(const CMakeWorkArea& area) -> PathBuf {
     return area.root.join(PathBuf::from("install-receipt-v1"_str).as_path());
 }
 
-auto source_install_current(const CMakeWorkArea& area) -> lito::dependency::DependencyResult<bool> {
+auto source_install_current(const CMakeWorkArea& area) -> lito::tools::ToolResult<bool> {
     auto marker = source_install_receipt(area);
     auto ready  = rstd::fs::exists(marker.as_path());
     if (ready.is_err()) {
@@ -179,14 +160,13 @@ auto source_install_current(const CMakeWorkArea& area) -> lito::dependency::Depe
     return Ok(true);
 }
 
-auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
-                      const lito::dependency::CMakeProviderConfig& provider,
-                      const cpp::BuildConfiguration&               configuration,
-                      const cpp::ProfileSpec&                      profile,
-                      const LinkerIdentity&                        linker,
-                      const CMakeWorkArea&                         area,
-                      const ResolvedProcessEnvironment&            environment)
-    -> lito::dependency::DependencyResult<empty> {
+auto configure_source(const Request&                    requirement,
+                      const Provider&                   provider,
+                      const ToolchainConfiguration&     toolchain,
+                      const ProfileConfiguration&       profile,
+                      const CMakeWorkArea&              area,
+                      const ResolvedProcessEnvironment& environment)
+    -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -204,24 +184,20 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
     rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
-    rstd_try(push_cmake_toolchain(arguments, configuration, linker));
-    auto cmake_profile = cmake_profile_configuration(profile);
-    push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
-    arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
-                                cmake_cxx_standard(profile.cpp.language.standard.as_str())));
+    rstd_try(push_cmake_toolchain(arguments, toolchain));
+    push_cmake_profile_configuration(arguments, profile, provider.generator.as_str());
+    arguments.push(
+        rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
-    if (! cmake_profile.msvc_runtime.is_empty()) {
+    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", profile.c_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", profile.cxx_flags.as_str()));
+    if (! profile.msvc_runtime.is_empty()) {
         arguments.push(
-            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", cmake_profile.msvc_runtime.as_str()));
+            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", profile.msvc_runtime.as_str()));
     }
-    arguments.push(
-        rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
-    arguments.push(
-        rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
-    arguments.push(
-        rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
     for (const auto& entry : requirement.cache) {
         arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
     }
@@ -232,13 +208,12 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
     return Ok(empty {});
 }
 
-auto build_source(const ResolvedCMakeDependencyRequirement&    requirement,
-                  const lito::dependency::CMakeProviderConfig& provider,
-                  const cpp::ProfileSpec&                      profile,
-                  const CMakeWorkArea&                         area,
-                  usize                                        jobs,
-                  const ResolvedProcessEnvironment&            environment)
-    -> lito::dependency::DependencyResult<empty> {
+auto build_source(const Request&                    requirement,
+                  const Provider&                   provider,
+                  const ProfileConfiguration&       profile,
+                  const CMakeWorkArea&              area,
+                  usize                             jobs,
+                  const ResolvedProcessEnvironment& environment) -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -248,7 +223,7 @@ auto build_source(const ResolvedCMakeDependencyRequirement&    requirement,
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("--config"_str));
-    arguments.push(String::make(cmake_build_type(profile)));
+    arguments.push(profile.build_type.clone());
     arguments.push(String::make("--parallel"_str));
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(
@@ -259,13 +234,13 @@ auto build_source(const ResolvedCMakeDependencyRequirement&    requirement,
         true);
 }
 
-auto install_source(const ResolvedCMakeDependencyRequirement&    requirement,
-                    const lito::dependency::CMakeProviderConfig& provider,
-                    const cpp::ProfileSpec&                      profile,
-                    const CMakeWorkArea&                         area,
-                    bool                                         publish_receipt,
-                    const ResolvedProcessEnvironment&            environment)
-    -> lito::dependency::DependencyResult<empty> {
+auto install_source(const Request&                    requirement,
+                    const Provider&                   provider,
+                    const ProfileConfiguration&       profile,
+                    const CMakeWorkArea&              area,
+                    bool                              publish_receipt,
+                    const ResolvedProcessEnvironment& environment)
+    -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -275,7 +250,7 @@ auto install_source(const ResolvedCMakeDependencyRequirement&    requirement,
     if (build.is_err()) return Err(rstd::move(build).unwrap_err());
     arguments.push(rstd::move(build).unwrap());
     arguments.push(String::make("--config"_str));
-    arguments.push(String::make(cmake_build_type(profile)));
+    arguments.push(profile.build_type.clone());
     rstd_try(run_cmake(
         rstd::move(arguments),
         rstd::format("CMake dependency '{}' install", requirement.package.as_str()).as_str(),
@@ -291,9 +266,9 @@ auto install_source(const ResolvedCMakeDependencyRequirement&    requirement,
     return Ok(empty {});
 }
 
-auto probe_project(const ResolvedCMakeDependencyRequirement& requirement, const CMakeWorkArea& area)
-    -> lito::dependency::DependencyResult<String> {
-    auto result = String::make(R"cmake(cmake_minimum_required(VERSION 3.29)
+auto probe_project(const Request& requirement, const CMakeWorkArea& area)
+    -> lito::tools::ToolResult<String> {
+    auto       result          = String::make(R"cmake(cmake_minimum_required(VERSION 3.29)
 project(lito_cmake_probe LANGUAGES C CXX)
 set(CMAKE_FIND_PACKAGE_PREFER_CONFIG TRUE)
 set(_LITO_ASSET_RECEIPT "${CMAKE_BINARY_DIR}/lito-assets-v2.txt")
@@ -335,8 +310,22 @@ function(lito_export_asset_set)
   endforeach()
 endfunction()
 )cmake"_str);
+    const auto safe_cmake_name = [](ref<str> value) noexcept {
+        if (value.is_empty() || value.starts_with("-"_str)) return false;
+        for (const auto byte : value) {
+            const auto character = byte.to_primitive();
+            const auto alpha =
+                (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
+            const auto digit = character >= '0' && character <= '9';
+            if (! (alpha || digit || character == '_' || character == '-' || character == '.' ||
+                   character == '+')) {
+                return false;
+            }
+        }
+        return true;
+    };
     for (const auto& component : requirement.components) {
-        if (! lito::dependency::cmake_component_name_is_valid(component.as_str())) {
+        if (! safe_cmake_name(component.as_str())) {
             return cmake_failure<String>(
                 rstd::format("CMake dependency '{}' has unsafe component '{}'",
                              requirement.alias.as_str(),
@@ -440,8 +429,8 @@ endfunction()
     return Ok(rstd::move(result));
 }
 
-auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
-                       const CMakeWorkArea& area) -> lito::dependency::DependencyResult<empty> {
+auto write_probe_files(const Request& requirement, const CMakeWorkArea& area)
+    -> lito::tools::ToolResult<empty> {
     auto query =
         area.query_build.join(PathBuf::from(".cmake/api/v1/query/client-lito"_str).as_path());
     auto directories = Vec<PathBuf>::make();
@@ -488,14 +477,13 @@ auto write_probe_files(const ResolvedCMakeDependencyRequirement& requirement,
     return Ok(empty {});
 }
 
-auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
-                     const lito::dependency::CMakeProviderConfig& provider,
-                     const cpp::BuildConfiguration&               configuration,
-                     const cpp::ProfileSpec&                      profile,
-                     const LinkerIdentity&                        linker,
-                     const CMakeWorkArea&                         area,
-                     const ResolvedProcessEnvironment&            environment)
-    -> lito::dependency::DependencyResult<empty> {
+auto configure_probe(const Request&                    requirement,
+                     const Provider&                   provider,
+                     const ToolchainConfiguration&     toolchain,
+                     const ProfileConfiguration&       profile,
+                     const CMakeWorkArea&              area,
+                     const ResolvedProcessEnvironment& environment)
+    -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -511,24 +499,20 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
-    rstd_try(push_cmake_toolchain(arguments, configuration, linker));
-    auto cmake_profile = cmake_profile_configuration(profile);
-    push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
-    arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
-                                cmake_cxx_standard(profile.cpp.language.standard.as_str())));
+    rstd_try(push_cmake_toolchain(arguments, toolchain));
+    push_cmake_profile_configuration(arguments, profile, provider.generator.as_str());
+    arguments.push(
+        rstd::format("-DCMAKE_CXX_STANDARD={}", cmake_cxx_standard(profile.cxx_standard.as_str())));
     arguments.push(String::make("-DCMAKE_CXX_EXTENSIONS=OFF"_str));
-    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", cmake_profile.c_flags.as_str()));
-    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", cmake_profile.cxx_flags.as_str()));
-    if (! cmake_profile.msvc_runtime.is_empty()) {
+    arguments.push(rstd::format("-DCMAKE_C_FLAGS={}", profile.c_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_CXX_FLAGS={}", profile.cxx_flags.as_str()));
+    if (! profile.msvc_runtime.is_empty()) {
         arguments.push(
-            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", cmake_profile.msvc_runtime.as_str()));
+            rstd::format("-DCMAKE_MSVC_RUNTIME_LIBRARY={}", profile.msvc_runtime.as_str()));
     }
-    arguments.push(
-        rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
-    arguments.push(
-        rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
-    arguments.push(
-        rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", cmake_profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_EXE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_SHARED_LINKER_FLAGS={}", profile.linker_flags.as_str()));
+    arguments.push(rstd::format("-DCMAKE_MODULE_LINKER_FLAGS={}", profile.linker_flags.as_str()));
     if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
         rstd_try(push_path_argument(arguments,
                                     "-DLITO_CMAKE_DEPENDENCY_PREFIX="_str,
@@ -552,14 +536,12 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
         environment);
 }
 
-auto build_probe(const ResolvedCMakeDependencyRequirement&    requirement,
-                 const lito::dependency::CMakeProviderConfig& provider,
-                 const cpp::BuildConfiguration&,
-                 const cpp::ProfileSpec&           profile,
+auto build_probe(const Request&                    requirement,
+                 const Provider&                   provider,
+                 const ProfileConfiguration&       profile,
                  const CMakeWorkArea&              area,
                  usize                             jobs,
-                 const ResolvedProcessEnvironment& environment)
-    -> lito::dependency::DependencyResult<empty> {
+                 const ResolvedProcessEnvironment& environment) -> lito::tools::ToolResult<empty> {
     auto arguments  = Vec<String>::make();
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -571,7 +553,7 @@ auto build_probe(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(String::make("--target"_str));
     arguments.push(String::make("lito_cmake_combined"_str));
     arguments.push(String::make("--config"_str));
-    arguments.push(String::make(cmake_build_type(profile)));
+    arguments.push(profile.build_type.clone());
     arguments.push(String::make("--parallel"_str));
     arguments.push(rstd::format("{}", jobs));
     return run_cmake(
@@ -582,4 +564,4 @@ auto build_probe(const ResolvedCMakeDependencyRequirement&    requirement,
         true);
 }
 
-} // namespace lito
+} // namespace lito::tools::cmake

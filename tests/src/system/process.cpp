@@ -2,11 +2,12 @@
 #include <rstd/macro.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.driver;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.support;
 
@@ -19,8 +20,8 @@ using PathBuf = rstd::path::PathBuf;
 class SystemProcess : public ProjectFixture {};
 
 struct HostToolCapture {
-    Vec<lito::system::HostToolCapability> capabilities;
-    Vec<String>                           providers;
+    Vec<lito::tools::HostToolCapability> capabilities;
+    Vec<String>                          providers;
 };
 
 TEST_F(SystemProcess, ResolvedEnvironmentCanRemoveInheritedVariables) {
@@ -28,7 +29,7 @@ TEST_F(SystemProcess, ResolvedEnvironmentCanRemoveInheritedVariables) {
     auto                     environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = lito::system::ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto env_tool = resolver.resolve(PathBuf::from("env"_str).as_path(), "env"_str);
     ASSERT_TRUE(env_tool.is_ok());
     auto scrubbed  = environment->without_variable("LITO_TEST_REMOVED_VARIABLE"_str);
@@ -38,11 +39,11 @@ TEST_F(SystemProcess, ResolvedEnvironmentCanRemoveInheritedVariables) {
     EXPECT_FALSE(output->standard_output.as_str().contains("LITO_TEST_REMOVED_VARIABLE="_str));
 }
 
-void capture_host_tool_resolution(void*                                   raw_context,
-                                  const lito::system::HostToolResolution& resolution) noexcept {
-    if (resolution.kind != lito::system::HostToolResolution::Kind::Selected) return;
+void capture_host_tool_resolution(void*                                  raw_context,
+                                  const lito::tools::HostToolResolution& resolution) noexcept {
+    if (resolution.kind != lito::tools::HostToolResolution::Kind::Selected) return;
     auto& capture = *static_cast<HostToolCapture*>(raw_context);
-    capture.capabilities.push(lito::system::HostToolCapability(resolution.requirement.capability));
+    capture.capabilities.push(lito::tools::HostToolCapability(resolution.requirement.capability));
     capture.providers.push(resolution.provider.clone());
 }
 
@@ -129,7 +130,7 @@ TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
                   environment->search_directories()[index].as_path());
     }
 
-    auto resolver = lito::system::ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto selected = resolver.resolve(rstd::path::PathBuf::from("lito-tool"_str).as_path(),
                                      "test executable"_str);
     ASSERT_TRUE(selected.is_ok());
@@ -163,10 +164,10 @@ TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
                                     "test executable"_str);
     ASSERT_TRUE(missing.is_err());
     auto missing_error = rstd::move(missing).unwrap_err();
-    ASSERT_TRUE(missing_error.is_Environment());
-    EXPECT_TRUE(missing_error.as_Environment().message.as_str().contains("lito-missing"_str));
-    EXPECT_TRUE(missing_error.as_Environment().message.as_str().contains(
-        first.as_path().to_str().unwrap()));
+    ASSERT_TRUE(missing_error.is_Message());
+    EXPECT_TRUE(missing_error.as_Message().message.as_str().contains("lito-missing"_str));
+    EXPECT_TRUE(
+        missing_error.as_Message().message.as_str().contains(first.as_path().to_str().unwrap()));
 
 #if RSTD_OS_WINDOWS
     auto late_tool = first.join(rstd::path::PathBuf::from("lito-missing.EXE"_str).as_path());
@@ -181,20 +182,20 @@ TEST_F(SystemProcess, ToolResolverUsesOneOrderedEffectivePathSnapshot) {
             .is_none());
 
     auto capture            = HostToolCapture {};
-    auto tool_spec          = lito::system::ToolSpec {};
+    auto tool_spec          = lito::tools::ToolSpec {};
     tool_spec.clang_format  = rstd::path::PathBuf::from("lito-fallback"_str);
-    auto reporting_resolver = lito::system::ToolResolver(*environment,
-                                                         rstd::move(tool_spec),
-                                                         Some(lito::system::HostToolResolutionSink {
-                                                             .context = rstd::addressof(capture),
-                                                             .notify = capture_host_tool_resolution,
-                                                         }));
-    auto requirement        = lito::system::command_tool_requirement(
-        lito::system::HostToolCapability::SourceFormatting, "lito format"_str);
-    EXPECT_TRUE(reporting_resolver.require(lito::system::Tool::ClangFormat, requirement).is_ok());
-    EXPECT_TRUE(reporting_resolver.require(lito::system::Tool::ClangFormat, requirement).is_ok());
+    auto reporting_resolver = lito::tools::ToolResolver(*environment,
+                                                        rstd::move(tool_spec),
+                                                        Some(lito::tools::HostToolResolutionSink {
+                                                            .context = rstd::addressof(capture),
+                                                            .notify  = capture_host_tool_resolution,
+                                                        }));
+    auto requirement        = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::SourceFormatting, "lito format"_str);
+    EXPECT_TRUE(reporting_resolver.require(lito::tools::Tool::ClangFormat, requirement).is_ok());
+    EXPECT_TRUE(reporting_resolver.require(lito::tools::Tool::ClangFormat, requirement).is_ok());
     ASSERT_EQ(capture.capabilities.len(), usize(1));
-    EXPECT_EQ(capture.capabilities[usize {}], lito::system::HostToolCapability::SourceFormatting);
+    EXPECT_EQ(capture.capabilities[usize {}], lito::tools::HostToolCapability::SourceFormatting);
     EXPECT_EQ(capture.providers[usize {}].as_str(), "clang-format"_str);
 
     ASSERT_TRUE(rstd::fs::remove_file(inherited_tool.as_path()).is_ok());

@@ -2,6 +2,7 @@ export module lito.driver:command.doc.request;
 
 import rstd;
 import lito.core;
+import :config.project;
 import :build.request;
 import :command.doc.event;
 

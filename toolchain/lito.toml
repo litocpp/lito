@@ -19,6 +19,10 @@ visibility = "public"
 workspace = true
 visibility = "public"
 
+[dependencies.lito-tools]
+workspace = true
+visibility = "public"
+
 [dependencies.rstd-std]
 workspace = true
 visibility = "public"

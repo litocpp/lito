@@ -1,10 +1,12 @@
 module;
 #include <rstd/macro.hpp>
 
-module lito.core;
+module lito.driver;
 
 import rstd;
 import rstd.toml;
+import lito.core;
+import lito.tools;
 import :config;
 import :config.schema;
 

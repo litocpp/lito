@@ -78,6 +78,10 @@ visibility = "private"
 workspace = true
 visibility = "private"
 
+[dependencies.lito-tools]
+workspace = true
+visibility = "private"
+
 [dependencies.lito-toolchain]
 workspace = true
 visibility = "private"

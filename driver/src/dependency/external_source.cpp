@@ -4,7 +4,9 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.tools;
 import lito.core;
+import :source;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -119,7 +121,7 @@ auto resolve_package_owned_external(
 
 auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackageGraph&  graph,
                                                   lito::source::SourceResolutionOptions options,
-                                                  ToolResolver&                         resolver,
+                                                  lito::tools::ToolResolver&            resolver,
                                                   const ResolvedProcessEnvironment&     environment,
                                                   lito::source::SourceEventSink         observer)
     -> lito::dependency::DependencyResult<DeclaredExternalDependencySources> {
@@ -340,7 +342,7 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                          const Vec<String>&                   selected_packages,
                                          DeclaredExternalDependencySources    declared,
                                          const lito::dependency::CMakeBuildOverrideSet& overrides,
-                                         ToolResolver&                                  resolver,
+                                         lito::tools::ToolResolver&                     resolver,
                                          const ResolvedProcessEnvironment&              environment,
                                          usize                         jobs     = usize(1),
                                          lito::source::SourceEventSink observer = {})

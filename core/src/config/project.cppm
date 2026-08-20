@@ -1,17 +1,8 @@
 export module lito.core:config.project;
 
 import rstd;
-import lito.system;
-import :config.error;
-import :config.toolchain;
-import :source.config;
-import :dependency.cmake;
-import :dependency.pkg_config;
-import :lock.config;
 
 using namespace rstd::prelude;
-using PathBuf = rstd::path::PathBuf;
-using namespace lito::system;
 
 export namespace lito::config
 {
@@ -21,14 +12,6 @@ enum class ConfigLoadMode
     Enabled,
     LocalDisabled,
     Disabled = LocalDisabled,
-};
-
-struct InstallConfig {
-    Option<PathBuf> root;
-};
-
-struct DocConfig {
-    Option<PathBuf> litodoc_path;
 };
 
 struct BuildOptionInput {
@@ -66,49 +49,6 @@ enum class EnvironmentFlagPolicy
 {
     Ignore,
     Append,
-};
-
-struct ProjectConfig {
-    PathBuf                           root;
-    lito::lock::LockConfig            lock;
-    ProcessEnvironmentSpec            environment;
-    ToolSpec                          tools;
-    ToolchainSpec                     toolchain;
-    StandardLibrary                   standard_library { StandardLibrary::Libcxx };
-    StandardLibraryRuntime            standard_library_runtime { StandardLibraryRuntime::Dynamic };
-    ProjectBuildOptions               build_options;
-    lito::source::PackageSourceConfig sources;
-    lito::dependency::PkgConfigProviderConfig pkg_config;
-    lito::dependency::CMakeProviderConfig     cmake;
-    lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
-    InstallConfig                             install;
-    DocConfig                                 doc;
-};
-
-struct ProjectConfigDefaults {
-    ToolSpec      tools;
-    ToolchainSpec toolchain;
-
-    auto clone() const -> ProjectConfigDefaults {
-        return ProjectConfigDefaults {
-            .tools     = tools.clone(),
-            .toolchain = toolchain.clone(),
-        };
-    }
-};
-
-struct ProjectConfigRequest {
-    ConfigLoadMode                mode { ConfigLoadMode::Enabled };
-    Vec<String>                   overrides;
-    EnvironmentFlagPolicy         environment_flags { EnvironmentFlagPolicy::Ignore };
-    Option<ProjectConfigDefaults> defaults;
-};
-
-struct HostToolCommandConfig {
-    PathBuf                root;
-    ProcessEnvironmentSpec environment;
-    ToolSpec               tools;
-    ToolchainSpec          toolchain;
 };
 
 } // namespace lito::config

@@ -1,4 +1,4 @@
-export module lito.system:tools;
+export module lito.tools:model;
 
 import rstd;
 
@@ -6,7 +6,7 @@ using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
-export namespace lito::system
+export namespace lito::tools
 {
 
 enum class Tool
@@ -240,14 +240,16 @@ struct ToolSpec {
         return cmake.as_path();
     }
 
+    auto mark_configured(Tool tool) -> void {
+        if (! explicitly_configured(tool)) configured_tools.push(rstd::move(tool));
+    }
+
     auto explicitly_configured(Tool tool) const noexcept -> bool {
         for (const auto configured : configured_tools) {
             if (configured == tool) return true;
         }
         return false;
     }
-
-    auto mark_configured(Tool tool) -> void { configured_tools.push(rstd::move(tool)); }
 
     auto clone() const -> ToolSpec {
         return ToolSpec {
@@ -264,4 +266,4 @@ struct ToolSpec {
     }
 };
 
-} // namespace lito::system
+} // namespace lito::tools

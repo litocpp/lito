@@ -1,12 +1,11 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.toolchain.cmake:snapshot;
+export module lito.tools.cmake:snapshot;
 
 import rstd;
 import rstd.json;
-import lito.core;
-import lito.cpp;
+import lito.tools;
 import :model;
 import :file_api;
 
@@ -16,7 +15,7 @@ using Json      = rstd::json::Value;
 using JsonArray = rstd::json::Array;
 using JsonMap   = rstd::json::Map;
 
-export namespace lito
+export namespace lito::tools::cmake
 {
 
 auto usage_snapshot_path(const CMakeWorkArea& area) -> PathBuf {
@@ -37,7 +36,7 @@ auto snapshot_json(const CMakeTargetUsageSnapshot& snapshot) -> Json {
 }
 
 auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& snapshot)
-    -> lito::dependency::DependencyResult<empty> {
+    -> lito::tools::ToolResult<empty> {
     auto targets = JsonArray::with_capacity(snapshot.targets.len());
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
@@ -81,7 +80,7 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
 }
 
 auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
-    -> lito::dependency::DependencyResult<Vec<String>> {
+    -> lito::tools::ToolResult<Vec<String>> {
     auto array = required_json_array(value, key, context);
     if (array.is_err()) return Err(rstd::move(array).unwrap_err());
     auto result = Vec<String>::with_capacity((**array).len());
@@ -97,7 +96,7 @@ auto parse_snapshot_strings(const Json& value, ref<str> key, ref<str> context)
 }
 
 auto parse_usage_target(const Json& value, ref<str> context)
-    -> lito::dependency::DependencyResult<CMakeTargetUsageSnapshot> {
+    -> lito::tools::ToolResult<CMakeTargetUsageSnapshot> {
     auto compile = parse_snapshot_strings(value, "compile"_str, context);
     if (compile.is_err()) return Err(rstd::move(compile).unwrap_err());
     auto link = parse_snapshot_strings(value, "link"_str, context);
@@ -109,7 +108,7 @@ auto parse_usage_target(const Json& value, ref<str> context)
 }
 
 auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> query_build)
-    -> lito::dependency::DependencyResult<Vec<String>> {
+    -> lito::tools::ToolResult<Vec<String>> {
     auto result = Vec<String>::with_capacity(tokens.len());
     auto root   = PathBuf::from(query_build);
     for (const auto& token : tokens) {
@@ -142,9 +141,8 @@ auto materialize_link_tokens(const Vec<String>& tokens, ref<rstd::path::Path> qu
     return Ok(rstd::move(result));
 }
 
-auto read_usage_snapshot(const CMakeWorkArea&                      area,
-                         const ResolvedCMakeDependencyRequirement& requirement)
-    -> lito::dependency::DependencyResult<Option<CMakeUsageSnapshot>> {
+auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<Option<CMakeUsageSnapshot>> {
     auto path   = usage_snapshot_path(area);
     auto exists = rstd::fs::exists(path.as_path());
     if (exists.is_err()) {
@@ -225,13 +223,12 @@ auto read_usage_snapshot(const CMakeWorkArea&                      area,
     }));
 }
 
-auto target_snapshot_identity(const lito::dependency::CMakeProviderConfig& provider,
-                              const ResolvedCMakeDependencyRequirement&    requirement,
-                              ref<str>                                     target,
-                              ref<str>                                     version,
-                              const CMakeTargetUsageSnapshot&              snapshot,
-                              ref<str>                                     effective_target)
-    -> lito::dependency::DependencyResult<String> {
+auto target_snapshot_identity(const Provider&                 provider,
+                              const Request&                  requirement,
+                              ref<str>                        target,
+                              ref<str>                        version,
+                              const CMakeTargetUsageSnapshot& snapshot,
+                              ref<str> effective_target) -> lito::tools::ToolResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-dependency-v1\n"_str);
@@ -251,11 +248,11 @@ auto target_snapshot_identity(const lito::dependency::CMakeProviderConfig& provi
     return Ok(rstd::move(result));
 }
 
-auto dependency_identity(const lito::dependency::CMakeProviderConfig& provider,
-                         const ResolvedCMakeDependencyRequirement&    requirement,
-                         ref<str>                                     version,
-                         const CMakeUsageSnapshot&                    snapshots,
-                         ref<str> effective_target) -> lito::dependency::DependencyResult<String> {
+auto dependency_identity(const Provider&           provider,
+                         const Request&            requirement,
+                         ref<str>                  version,
+                         const CMakeUsageSnapshot& snapshots,
+                         ref<str> effective_target) -> lito::tools::ToolResult<String> {
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
     auto result = String::make("lito-cmake-declaration-v1\n"_str);
@@ -280,4 +277,4 @@ auto dependency_identity(const lito::dependency::CMakeProviderConfig& provider,
     return Ok(rstd::move(result));
 }
 
-} // namespace lito
+} // namespace lito::tools::cmake

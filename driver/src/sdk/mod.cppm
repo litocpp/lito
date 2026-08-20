@@ -4,8 +4,10 @@ module;
 export module lito.driver:sdk;
 
 import rstd;
+import lito.tools;
 import rstd.json;
 import lito.core;
+import :config.project;
 import lito.toolchain;
 import :build.error;
 
@@ -17,9 +19,10 @@ export namespace lito
 class SdkError {
     RSTD_ENUM(SdkError,
               (Catalog, (LlvmSdkCatalogError source;)),
-              (Acquisition, (lito::acquisition::AcquisitionError source;)),
+              (Acquisition, (lito::tools::acquisition::AcquisitionError source;)),
               (Toolchain, (ToolchainError source;)),
               (Build, (BuildError source;)),
+              (Tools, (lito::tools::ToolError source;)),
               (SourceTree, (lito::source::SourceTreeError source;)),
               (Platform, (lito::system::PlatformError source;)),
               (System, (lito::system::SystemError source;)),
@@ -77,12 +80,12 @@ struct SdkListSummary {
 };
 
 struct SdkInstallRequest {
-    String                                       version;
-    lito::system::ProcessEnvironmentSpec         environment;
-    lito::system::ToolSpec                       tools;
-    lito::config::ToolchainSpec                  toolchain;
-    Option<lito::system::HostToolResolutionSink> tool_reporter;
-    Option<SdkEventSink>                         observer;
+    String                                      version;
+    lito::system::ProcessEnvironmentSpec        environment;
+    lito::tools::ToolSpec                       tools;
+    lito::config::ToolchainSpec                 toolchain;
+    Option<lito::tools::HostToolResolutionSink> tool_reporter;
+    Option<SdkEventSink>                        observer;
 };
 
 struct SdkInstallSummary {
@@ -183,6 +186,10 @@ struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
             return formatter.write_raw("LLVM SDK component build failed",
                                        sizeof("LLVM SDK component build failed") - 1);
         }
+        if (error.is_Tools()) {
+            return formatter.write_raw("LLVM SDK host tool operation failed",
+                                       sizeof("LLVM SDK host tool operation failed") - 1);
+        }
         if (error.is_SourceTree()) {
             return formatter.write_raw("LLVM SDK recipe materialization failed",
                                        sizeof("LLVM SDK recipe materialization failed") - 1);
@@ -227,6 +234,7 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
             return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
         }
         if (error.is_Build()) return Some(dyn<error::Error>::from_ref(error.as_Build().source));
+        if (error.is_Tools()) return Some(dyn<error::Error>::from_ref(error.as_Tools().source));
         if (error.is_SourceTree()) {
             return Some(dyn<error::Error>::from_ref(error.as_SourceTree().source));
         }

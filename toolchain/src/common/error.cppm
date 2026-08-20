@@ -5,6 +5,7 @@ export module lito.toolchain.common:error;
 
 import rstd;
 import lito.core;
+import lito.tools;
 import lito.system;
 import lito.frontend.lexical;
 import lito.cpp;
@@ -44,6 +45,7 @@ class StandardLibraryModuleError {
 class ToolchainError {
     RSTD_ENUM(ToolchainError,
               (System, (SystemError source;)),
+              (Tools, (lito::tools::ToolError source;)),
               (Frontend, (frontend::lexical::Error source;)),
               (Cpp, (cpp::CppOptionError source;)),
               (StandardLibraryModule, (StandardLibraryModuleError source;)),
@@ -77,6 +79,13 @@ template<>
 struct Impl<convert::From<lito::system::SystemError>, lito::ToolchainError> {
     static auto from(lito::system::SystemError error) -> lito::ToolchainError {
         return lito::ToolchainError::System(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::tools::ToolError>, lito::ToolchainError> {
+    static auto from(lito::tools::ToolError error) -> lito::ToolchainError {
+        return lito::ToolchainError::Tools(rstd::move(error));
     }
 };
 
@@ -192,6 +201,10 @@ struct Impl<fmt::Display, lito::ToolchainError> : ImplBase<lito::ToolchainError>
             return formatter.write_raw("toolchain process operation failed",
                                        sizeof("toolchain process operation failed") - 1);
         }
+        if (error.is_Tools()) {
+            return formatter.write_raw("toolchain host tool operation failed",
+                                       sizeof("toolchain host tool operation failed") - 1);
+        }
         if (error.is_Frontend()) {
             return formatter.write_raw("toolchain frontend analysis failed",
                                        sizeof("toolchain frontend analysis failed") - 1);
@@ -237,6 +250,9 @@ struct Impl<error::Error, lito::ToolchainError> : ImplBase<lito::ToolchainError>
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
+        if (error.is_Tools()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Tools().source));
+        }
         if (error.is_Frontend()) {
             return Some(dyn<error::Error>::from_ref(error.as_Frontend().source));
         }

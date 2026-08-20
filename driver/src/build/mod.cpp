@@ -4,6 +4,7 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import lito.cpp;
 import :build.event;
@@ -137,8 +138,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     if (request.selection.root.is_empty()) {
         return build_failure<BuildSummary>("build directory is required"_str);
     }
-    auto tool_resolver =
-        ToolResolver(process_environment, request.tools.clone(), request.tool_reporter);
+    auto tool_resolver = lito::tools::ToolResolver(
+        process_environment, request.tools.clone(), request.tool_reporter);
     auto profile =
         request.profile.is_some()
             ? request.profile->clone()
@@ -309,11 +310,11 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto stripper           = Option<PathBuf> {};
     if (needs_strip_tool &&
         metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None) {
-        const auto tool_requirement = build_profile_tool_requirement(
-            HostToolCapability::ArtifactStripping,
+        const auto tool_requirement = lito::tools::build_profile_tool_requirement(
+            lito::tools::HostToolCapability::ArtifactStripping,
             metadata.profiles[native_target_plan.profile].name.as_str(),
             "strip"_str);
-        auto resolved_stripper = tool_resolver.require(Tool::Strip, tool_requirement);
+        auto resolved_stripper = tool_resolver.require(lito::tools::Tool::Strip, tool_requirement);
         if (resolved_stripper.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(resolved_stripper).unwrap_err()));
         }

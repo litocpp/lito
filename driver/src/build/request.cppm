@@ -1,7 +1,9 @@
 export module lito.driver:build.request;
 
 import rstd;
+import lito.tools;
 import lito.core;
+import :package.selection;
 import :build.event;
 import :build.setup_report;
 import lito.cpp;
@@ -59,7 +61,7 @@ struct BuildRequest {
     Vec<RequestedArtifactLinkVariant>         artifact_link_variants;
     PathBuf                                   output;
     ProcessEnvironmentSpec                    environment;
-    ToolSpec                                  tools;
+    lito::tools::ToolSpec                     tools;
     cpp::BuildConfiguration                   configuration;
     lito::lock::LockConfig                    lock;
     Option<lito::manifest::BuildProfileName>  profile;
@@ -70,11 +72,11 @@ struct BuildRequest {
     lito::package::PackageSelectionPurpose    purpose {
         lito::package::PackageSelectionPurpose::Production
     };
-    bool                           locked { false };
-    BuildExecutionPolicy           execution;
-    Option<BuildEventSink>         observer;
-    Option<BuildSetupReportSink>   setup_reporter;
-    Option<HostToolResolutionSink> tool_reporter;
+    bool                                        locked { false };
+    BuildExecutionPolicy                        execution;
+    Option<BuildEventSink>                      observer;
+    Option<BuildSetupReportSink>                setup_reporter;
+    Option<lito::tools::HostToolResolutionSink> tool_reporter;
 };
 
 } // namespace lito

@@ -1,10 +1,11 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.tools;
 import rstd.test;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.driver;
 import lito.test.support;
@@ -18,24 +19,24 @@ using PathBuf = rstd::path::PathBuf;
 class Source : public ProjectFixture {};
 
 struct SourceToolCapture {
-    Vec<lito::system::HostToolCapability> capabilities;
-    Vec<String>                           providers;
-    usize                                 candidate_missing {};
-    usize                                 not_required {};
+    Vec<lito::tools::HostToolCapability> capabilities;
+    Vec<String>                          providers;
+    usize                                candidate_missing {};
+    usize                                not_required {};
 };
 
-void capture_source_tool(void*                                   raw_context,
-                         const lito::system::HostToolResolution& resolution) noexcept {
+void capture_source_tool(void*                                  raw_context,
+                         const lito::tools::HostToolResolution& resolution) noexcept {
     auto& capture = *static_cast<SourceToolCapture*>(raw_context);
-    if (resolution.kind == lito::system::HostToolResolution::Kind::CandidateMissing) {
+    if (resolution.kind == lito::tools::HostToolResolution::Kind::CandidateMissing) {
         ++capture.candidate_missing;
         return;
     }
-    if (resolution.kind == lito::system::HostToolResolution::Kind::NotRequired) {
+    if (resolution.kind == lito::tools::HostToolResolution::Kind::NotRequired) {
         ++capture.not_required;
         return;
     }
-    capture.capabilities.push(lito::system::HostToolCapability(resolution.requirement.capability));
+    capture.capabilities.push(lito::tools::HostToolCapability(resolution.requirement.capability));
     capture.providers.push(resolution.provider.clone());
 }
 
@@ -134,7 +135,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     auto environment =
         lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());
-    auto resolver = lito::system::ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     auto cmake    = resolver.resolve(PathBuf::from("cmake"_str).as_path(), "CMake executable"_str);
     ASSERT_TRUE(cmake.is_ok());
     auto archive = directory.join(PathBuf::from("fixture.tar"_str).as_path());
@@ -210,16 +211,16 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     auto cache_environment = lito::system::ResolvedProcessEnvironment::resolve(
         lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(cache_environment.is_ok());
-    auto cache_tools        = lito::system::ToolSpec {};
+    auto cache_tools        = lito::tools::ToolSpec {};
     cache_tools.curl        = PathBuf::from("lito-missing-curl"_str);
     auto cache_tool_capture = SourceToolCapture {};
     auto cache_resolver =
-        lito::system::ToolResolver(*environment,
-                                   rstd::move(cache_tools),
-                                   Some(lito::system::HostToolResolutionSink {
-                                       .context = rstd::addressof(cache_tool_capture),
-                                       .notify  = capture_source_tool,
-                                   }));
+        lito::tools::ToolResolver(*environment,
+                                  rstd::move(cache_tools),
+                                  Some(lito::tools::HostToolResolutionSink {
+                                      .context = rstd::addressof(cache_tool_capture),
+                                      .notify  = capture_source_tool,
+                                  }));
     auto release_materialization = release_layout->source_materialization_root();
     auto second =
         lito::source::acquire_archive_frontier(rstd::move(requests),
@@ -238,7 +239,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_EQ(second_events.extract, usize(1));
     ASSERT_EQ(cache_tool_capture.capabilities.len(), usize(1));
     EXPECT_EQ(cache_tool_capture.capabilities[usize {}],
-              lito::system::HostToolCapability::ArchiveExtraction);
+              lito::tools::HostToolCapability::ArchiveExtraction);
     EXPECT_EQ(cache_tool_capture.not_required, usize(1));
     EXPECT_TRUE((*second)[usize {}].root.as_path().starts_with(release_layout->output()));
     EXPECT_NE((*first)[usize {}].root.as_path(), (*second)[usize {}].root.as_path());
@@ -278,7 +279,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .sha256 = digest.clone(),
     });
     auto reuse_capture       = SourceToolCapture {};
-    auto missing_tools       = lito::system::ToolSpec {};
+    auto missing_tools       = lito::tools::ToolSpec {};
     missing_tools.curl       = PathBuf::from("lito-missing-curl"_str);
     missing_tools.tar        = PathBuf::from("lito-missing-tar"_str);
     missing_tools.bsdtar     = PathBuf::from("lito-missing-bsdtar"_str);
@@ -286,12 +287,12 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     auto no_path_environment = lito::system::ResolvedProcessEnvironment::resolve(
         lito::system::ProcessEnvironmentSpec {}, None(), directory.as_path());
     ASSERT_TRUE(no_path_environment.is_ok());
-    auto reuse_resolver = lito::system::ToolResolver(*no_path_environment,
-                                                     rstd::move(missing_tools),
-                                                     Some(lito::system::HostToolResolutionSink {
-                                                         .context = rstd::addressof(reuse_capture),
-                                                         .notify  = capture_source_tool,
-                                                     }));
+    auto reuse_resolver = lito::tools::ToolResolver(*no_path_environment,
+                                                    rstd::move(missing_tools),
+                                                    Some(lito::tools::HostToolResolutionSink {
+                                                        .context = rstd::addressof(reuse_capture),
+                                                        .notify  = capture_source_tool,
+                                                    }));
     auto reused         = lito::source::acquire_archive_frontier(rstd::move(requests),
                                                                  usize(1),
                                                                  release_materialization.as_path(),
@@ -312,18 +313,18 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .sha256 = digest.clone(),
     });
     auto fallback_capture = SourceToolCapture {};
-    auto fallback_tools   = lito::system::ToolSpec {};
+    auto fallback_tools   = lito::tools::ToolSpec {};
     fallback_tools.curl   = PathBuf::from("lito-missing-curl"_str);
     fallback_tools.tar    = PathBuf::from("lito-missing-tar"_str);
     fallback_tools.bsdtar = PathBuf::from("lito-missing-bsdtar"_str);
     fallback_tools.cmake  = cmake->executable.clone();
     auto fallback_resolver =
-        lito::system::ToolResolver(*no_path_environment,
-                                   rstd::move(fallback_tools),
-                                   Some(lito::system::HostToolResolutionSink {
-                                       .context = rstd::addressof(fallback_capture),
-                                       .notify  = capture_source_tool,
-                                   }));
+        lito::tools::ToolResolver(*no_path_environment,
+                                  rstd::move(fallback_tools),
+                                  Some(lito::tools::HostToolResolutionSink {
+                                      .context = rstd::addressof(fallback_capture),
+                                      .notify  = capture_source_tool,
+                                  }));
     auto fallback_materialization = fallback_layout->source_materialization_root();
     auto fallback = lito::source::acquire_archive_frontier(rstd::move(requests),
                                                            usize(1),
@@ -333,7 +334,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_TRUE(fallback.is_ok());
     ASSERT_EQ(fallback_capture.capabilities.len(), usize(1));
     EXPECT_EQ(fallback_capture.capabilities[usize {}],
-              lito::system::HostToolCapability::ArchiveExtraction);
+              lito::tools::HostToolCapability::ArchiveExtraction);
     EXPECT_EQ(fallback_capture.providers[usize {}].as_str(), "cmake -E tar"_str);
     EXPECT_EQ(fallback_capture.candidate_missing, usize(2));
     EXPECT_EQ(fallback_capture.not_required, usize(1));
@@ -351,16 +352,16 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .sha256 = digest.clone(),
     });
     auto explicit_tar_capture = SourceToolCapture {};
-    auto explicit_tar_tools   = lito::system::ToolSpec {};
+    auto explicit_tar_tools   = lito::tools::ToolSpec {};
     explicit_tar_tools.tar    = tar->executable.clone();
-    explicit_tar_tools.mark_configured(lito::system::Tool::Tar);
+    explicit_tar_tools.mark_configured(lito::tools::Tool::Tar);
     auto explicit_tar_resolver =
-        lito::system::ToolResolver(*environment,
-                                   rstd::move(explicit_tar_tools),
-                                   Some(lito::system::HostToolResolutionSink {
-                                       .context = rstd::addressof(explicit_tar_capture),
-                                       .notify  = capture_source_tool,
-                                   }));
+        lito::tools::ToolResolver(*environment,
+                                  rstd::move(explicit_tar_tools),
+                                  Some(lito::tools::HostToolResolutionSink {
+                                      .context = rstd::addressof(explicit_tar_capture),
+                                      .notify  = capture_source_tool,
+                                  }));
     auto explicit_tar_materialization = explicit_tar_layout->source_materialization_root();
     auto explicit_tar =
         lito::source::acquire_archive_frontier(rstd::move(requests),
@@ -382,13 +383,13 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .url    = rstd::move(url),
         .sha256 = rstd::move(digest),
     });
-    auto unavailable_tools   = lito::system::ToolSpec {};
+    auto unavailable_tools   = lito::tools::ToolSpec {};
     unavailable_tools.curl   = PathBuf::from("lito-missing-curl"_str);
     unavailable_tools.tar    = PathBuf::from("lito-missing-tar"_str);
     unavailable_tools.bsdtar = PathBuf::from("lito-missing-bsdtar"_str);
     unavailable_tools.cmake  = PathBuf::from("lito-missing-cmake"_str);
     auto unavailable_resolver =
-        lito::system::ToolResolver(*no_path_environment, rstd::move(unavailable_tools));
+        lito::tools::ToolResolver(*no_path_environment, rstd::move(unavailable_tools));
     auto missing_materialization = missing_layout->source_materialization_root();
     auto unavailable = lito::source::acquire_archive_frontier(rstd::move(requests),
                                                               usize(1),
@@ -409,10 +410,10 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .sha256 =
             String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str),
     });
-    auto offline_tools = lito::system::ToolSpec {};
+    auto offline_tools = lito::tools::ToolSpec {};
     offline_tools.curl = PathBuf::from("lito-missing-curl"_str);
     auto offline_resolver =
-        lito::system::ToolResolver(*no_path_environment, rstd::move(offline_tools));
+        lito::tools::ToolResolver(*no_path_environment, rstd::move(offline_tools));
     auto offline_output = directory.join(PathBuf::from("build/offline"_str).as_path());
     auto offline =
         lito::source::acquire_archive_frontier(rstd::move(requests),

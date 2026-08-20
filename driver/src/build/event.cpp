@@ -2,7 +2,7 @@ module lito.driver;
 
 import rstd;
 import lito.core;
-import lito.toolchain;
+import lito.tools.cmake;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -39,20 +39,20 @@ auto source_observer(const Option<BuildEventSink>& observer) noexcept
     return source_observer(*observer);
 }
 
-auto build_event_kind(ToolchainEventKind kind) noexcept -> BuildEventKind {
+auto build_event_kind(lito::tools::cmake::EventKind kind) noexcept -> BuildEventKind {
     switch (kind) {
-    case ToolchainEventKind::CMakeConfigure: return BuildEventKind::CMakeConfigure;
-    case ToolchainEventKind::CMakeBuild: return BuildEventKind::CMakeBuild;
-    case ToolchainEventKind::CMakeInstall: return BuildEventKind::CMakeInstall;
-    case ToolchainEventKind::CMakeQuery: return BuildEventKind::CMakeQuery;
-    case ToolchainEventKind::CMakeQueryBuild: return BuildEventKind::CMakeQueryBuild;
-    case ToolchainEventKind::CMakeSnapshot: return BuildEventKind::CMakeSnapshot;
-    case ToolchainEventKind::CMakeReuse: return BuildEventKind::CMakeReuse;
+    case lito::tools::cmake::EventKind::Configure: return BuildEventKind::CMakeConfigure;
+    case lito::tools::cmake::EventKind::Build: return BuildEventKind::CMakeBuild;
+    case lito::tools::cmake::EventKind::Install: return BuildEventKind::CMakeInstall;
+    case lito::tools::cmake::EventKind::Query: return BuildEventKind::CMakeQuery;
+    case lito::tools::cmake::EventKind::QueryBuild: return BuildEventKind::CMakeQueryBuild;
+    case lito::tools::cmake::EventKind::Snapshot: return BuildEventKind::CMakeSnapshot;
+    case lito::tools::cmake::EventKind::Reuse: return BuildEventKind::CMakeReuse;
     }
     return BuildEventKind::CMakeConfigure;
 }
 
-void forward_toolchain_event(void* context, const ToolchainEvent& event) noexcept {
+void forward_cmake_event(void* context, const lito::tools::cmake::Event& event) noexcept {
     auto* observer = static_cast<const BuildEventSink*>(context);
     if (observer == nullptr || observer->notify == nullptr) return;
     observer->notify(observer->context,
@@ -63,11 +63,12 @@ void forward_toolchain_event(void* context, const ToolchainEvent& event) noexcep
                                   event.completed });
 }
 
-auto cmake_observer(const Option<BuildEventSink>& observer) noexcept -> Option<ToolchainEventSink> {
+auto cmake_observer(const Option<BuildEventSink>& observer) noexcept
+    -> Option<lito::tools::cmake::EventSink> {
     if (observer.is_none() || observer->notify == nullptr) return None();
-    return Some(ToolchainEventSink {
+    return Some(lito::tools::cmake::EventSink {
         .context = const_cast<BuildEventSink*>(rstd::addressof(*observer)),
-        .notify  = forward_toolchain_event,
+        .notify  = forward_cmake_event,
     });
 }
 

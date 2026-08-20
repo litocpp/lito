@@ -1,6 +1,7 @@
 export module lito.driver:command.format;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import :command.error;
 import lito.toolchain;
@@ -19,12 +20,12 @@ enum class FormatMode
 };
 
 struct FormatRequest {
-    PathBuf                        root;
-    Vec<String>                    packages;
-    ProcessEnvironmentSpec         environment;
-    ToolSpec                       tools;
-    FormatMode                     mode { FormatMode::Write };
-    Option<HostToolResolutionSink> tool_reporter;
+    PathBuf                                     root;
+    Vec<String>                                 packages;
+    ProcessEnvironmentSpec                      environment;
+    lito::tools::ToolSpec                       tools;
+    FormatMode                                  mode { FormatMode::Write };
+    Option<lito::tools::HostToolResolutionSink> tool_reporter;
 };
 
 struct FormatSummary {

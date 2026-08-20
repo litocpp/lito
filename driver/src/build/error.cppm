@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.error;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import :project.error;
 import lito.toolchain.common;
@@ -25,6 +26,7 @@ class BuildError {
               (Project, (ProjectError source;)),
               (Package, (lito::package::PackageError source;)),
               (Toolchain, (ToolchainError source;)),
+              (Tools, (lito::tools::ToolError source;)),
               (System, (SystemError source;)),
               (Cache, (CacheError source;)),
               (Module, (cpp::ModuleError source;)),
@@ -61,6 +63,13 @@ template<>
 struct Impl<convert::From<lito::ToolchainError>, lito::BuildError> {
     static auto from(lito::ToolchainError error) -> lito::BuildError {
         return lito::BuildError::Toolchain(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::tools::ToolError>, lito::BuildError> {
+    static auto from(lito::tools::ToolError error) -> lito::BuildError {
+        return lito::BuildError::Tools(rstd::move(error));
     }
 };
 
@@ -129,6 +138,10 @@ struct Impl<fmt::Display, lito::BuildError> : ImplBase<lito::BuildError> {
             return formatter.write_raw("build toolchain operation failed",
                                        sizeof("build toolchain operation failed") - 1);
         }
+        if (error.is_Tools()) {
+            return formatter.write_raw("build host tool operation failed",
+                                       sizeof("build host tool operation failed") - 1);
+        }
         if (error.is_System()) {
             return formatter.write_raw("build system operation failed",
                                        sizeof("build system operation failed") - 1);
@@ -181,6 +194,9 @@ struct Impl<error::Error, lito::BuildError> : ImplBase<lito::BuildError> {
         }
         if (error.is_Toolchain()) {
             return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
+        }
+        if (error.is_Tools()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Tools().source));
         }
         if (error.is_System()) {
             return Some(dyn<error::Error>::from_ref(error.as_System().source));

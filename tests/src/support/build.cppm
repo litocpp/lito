@@ -5,11 +5,12 @@ module;
 export module lito.test.support.build;
 
 import rstd;
+import lito.tools;
 import lito.driver;
 import lito.core;
 import lito.cpp;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.base_support;
 import lito.test.support.project;
@@ -342,16 +343,16 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 }
 
 struct CompileProgressCapture {
-    Vec<lito::BuildProgress>              values;
-    Vec<PathBuf>                          requested_tools;
-    Vec<PathBuf>                          resolved_tools;
-    Vec<lito::system::HostToolCapability> host_tools;
-    Vec<lito::BuildOptionReportDomain>    option_domains;
-    Vec<String>                           option_sources;
-    Vec<Vec<String>>                      option_arguments;
-    String                                profile;
-    Vec<lito::BuildProfileValueReport>    profile_values;
-    bool                                  missing {};
+    Vec<lito::BuildProgress>             values;
+    Vec<PathBuf>                         requested_tools;
+    Vec<PathBuf>                         resolved_tools;
+    Vec<lito::tools::HostToolCapability> host_tools;
+    Vec<lito::BuildOptionReportDomain>   option_domains;
+    Vec<String>                          option_sources;
+    Vec<Vec<String>>                     option_arguments;
+    String                               profile;
+    Vec<lito::BuildProfileValueReport>   profile_values;
+    bool                                 missing {};
 };
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
@@ -395,10 +396,10 @@ void capture_build_setup(void* raw_context, const lito::BuildSetupReport& report
     }
 }
 
-void capture_host_tool(void*                                   raw_context,
-                       const lito::system::HostToolResolution& resolution) noexcept {
+void capture_host_tool(void*                                  raw_context,
+                       const lito::tools::HostToolResolution& resolution) noexcept {
     auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
-    capture.host_tools.push(lito::system::HostToolCapability(resolution.requirement.capability));
+    capture.host_tools.push(lito::tools::HostToolCapability(resolution.requirement.capability));
 }
 
 } // namespace lito_test

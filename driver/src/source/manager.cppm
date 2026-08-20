@@ -1,22 +1,18 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.core:source.manager;
+export module lito.driver:source.manager;
 
 import rstd;
-import :source.event;
-import :source.git;
-import :source.config;
-import :source.requirement;
-import :source.resolution;
-import :source.error;
+import lito.core;
+import lito.tools;
 import lito.system;
 import :source.acquisition;
-import :source.seed;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
+using namespace lito::tools;
 using namespace rstd::literals;
 using IndexMap = rstd::collections::BTreeMap<String, usize>;
 
@@ -65,38 +61,14 @@ auto relative_path(ref<rstd::path::Path> root, ref<rstd::path::Path> target)
     return Ok(relative.is_empty() ? PathBuf::from("."_str) : rstd::move(relative));
 }
 
-auto push_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> SourceResult<empty> {
-    auto text = path.to_str();
-    if (text.is_none()) {
-        return source_failure<empty>(rstd::format("Git cache path '{}' is not valid UTF-8", path));
+template<typename T>
+auto source_tool_result(ref<str> operation, lito::tools::ToolResult<T> result) -> SourceResult<T> {
+    if (result.is_err()) {
+        return Err(SourceError::Operation(
+            String::make(operation),
+            Box<dyn<rstd::error::Error>>::make(rstd::move(result).unwrap_err())));
     }
-    arguments.push(String::make(*text));
-    return Ok(empty {});
-}
-
-auto git_output(Vec<String>                       arguments,
-                ref<str>                          operation,
-                const ResolvedProcessEnvironment& environment) -> SourceResult<String> {
-    auto output = run_command(arguments, environment);
-    if (output.is_err()) {
-        return Err(SourceError::System(String::make(operation), rstd::move(output).unwrap_err()));
-    }
-    auto value = rstd::move(output).unwrap();
-    if (value.exit_code != i32 {}) {
-        return source_failure<String>(rstd::format("{} failed with exit code {}:\n{}",
-                                                   operation,
-                                                   value.exit_code,
-                                                   value.standard_error.as_str()));
-    }
-    return Ok(trim_ascii(rstd::move(value.standard_output)));
-}
-
-auto git_status(Vec<String>                       arguments,
-                ref<str>                          operation,
-                const ResolvedProcessEnvironment& environment) -> SourceResult<empty> {
-    auto output = git_output(rstd::move(arguments), operation, environment);
-    if (output.is_err()) return Err(rstd::move(output).unwrap_err());
-    return Ok(empty {});
+    return Ok(rstd::move(result).unwrap());
 }
 
 struct ManagedSourceEntry {
@@ -113,7 +85,7 @@ class SourceManager {
     IndexMap                          roots_ { IndexMap::make() };
     IndexMap                          source_identities_ { IndexMap::make() };
     IndexMap                          source_requests_ { IndexMap::make() };
-    ToolResolver*                     resolver_ {};
+    lito::tools::ToolResolver*        resolver_ {};
     const ResolvedProcessEnvironment* environment_ {};
     SourceEventSink                   observer_;
     Option<PathBuf>                   git_;
@@ -228,26 +200,20 @@ class SourceManager {
         };
     }
 
-    auto git_command(ref<str> source = "source resolution"_str, ref<str> owner = "Git"_str)
-        -> SourceResult<Vec<String>> {
+    auto git_client(ref<str> source = "source resolution"_str, ref<str> owner = "Git"_str)
+        -> SourceResult<lito::tools::GitClient> {
         if (git_.is_none()) {
-            const auto requirement =
-                external_source_tool_requirement(HostToolCapability::GitCheckout, owner, source);
-            auto resolved = resolver_->require(Tool::Git, requirement);
+            const auto requirement = lito::tools::external_source_tool_requirement(
+                lito::tools::HostToolCapability::GitCheckout, owner, source);
+            auto resolved = resolver_->require(lito::tools::Tool::Git, requirement);
             if (resolved.is_err()) {
-                return Err(SourceError::System(String::make("resolve Git executable"_str),
-                                               rstd::move(resolved).unwrap_err()));
+                return Err(SourceError::Operation(
+                    String::make("resolve Git executable"_str),
+                    Box<dyn<rstd::error::Error>>::make(rstd::move(resolved).unwrap_err())));
             }
             git_ = Some(rstd::move(resolved).unwrap().executable);
         }
-        auto arguments = Vec<String>::make();
-        auto pushed    = push_path(arguments, git_->as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-#if defined(_WIN32)
-        arguments.push(String::make("-c"_str));
-        arguments.push(String::make("core.longPaths=true"_str));
-#endif
-        return Ok(rstd::move(arguments));
+        return Ok(lito::tools::GitClient(git_->clone(), *environment_));
     }
 
     auto emit_fetch(ref<str> source, ref<rstd::path::Path> destination) const noexcept -> void {
@@ -267,15 +233,11 @@ class SourceManager {
                                                       located->as_path(),
                                                       rstd::move(canonical).unwrap_err());
         }
-        auto arguments = rstd_try(
-            git_command(source.is_empty() ? url : source, owner.is_empty() ? "Git"_str : owner));
-        arguments.push(String::make("-C"_str));
-        rstd_try(push_path(arguments, canonical->as_path()));
-        arguments.push(String::make("rev-parse"_str));
-        arguments.push(String::make("--verify"_str));
-        arguments.push(String::make("HEAD"_str));
+        auto git = rstd_try(
+            git_client(source.is_empty() ? url : source, owner.is_empty() ? "Git"_str : owner));
         auto current = rstd_try(
-            git_output(rstd::move(arguments), "Git fetch seed inspection"_str, *environment_));
+            source_tool_result("inspect Git fetch seed"_str,
+                               git.head(canonical->as_path(), "Git fetch seed inspection"_str)));
         if (current.as_str() != commit) {
             return source_failure<Option<PathBuf>>(
                 rstd::format("Git fetch seed HEAD '{}' does not match locked commit '{}'",
@@ -442,8 +404,8 @@ class SourceManager {
                 seeds[index]->kind != ResolvedGitSeed::Kind::Patch) {
                 continue;
             }
-            const auto requirement = external_source_tool_requirement(
-                HostToolCapability::GitCheckout,
+            const auto requirement = lito::tools::external_source_tool_requirement(
+                lito::tools::HostToolCapability::GitCheckout,
                 request.owner.is_empty() ? "Git"_str : request.owner.as_str(),
                 request.name.is_empty() ? request.source.as_Git().url.as_str()
                                         : request.name.as_str());
@@ -455,9 +417,9 @@ class SourceManager {
         if (git_request.is_some() && git_.is_none()) {
             const auto& request = requests[*git_request];
             (void)rstd_try(
-                git_command(request.name.is_empty() ? request.source.as_Git().url.as_str()
-                                                    : request.name.as_str(),
-                            request.owner.is_empty() ? "Git"_str : request.owner.as_str()));
+                git_client(request.name.is_empty() ? request.source.as_Git().url.as_str()
+                                                   : request.name.as_str(),
+                           request.owner.is_empty() ? "Git"_str : request.owner.as_str()));
         }
         return Ok(rstd::move(seeds));
     }
@@ -543,103 +505,47 @@ class SourceManager {
                                               rstd::move(exists).unwrap_err());
         }
         if (! *exists) {
-            auto init = rstd_try(git_command(url));
-            init.push(String::make("init"_str));
-            init.push(String::make("--bare"_str));
-            auto path = push_path(init, repository.as_path());
-            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            auto initialized =
-                git_status(rstd::move(init), "Git cache initialization"_str, *environment_);
-            if (initialized.is_err()) return Err(rstd::move(initialized).unwrap_err());
+            auto git = rstd_try(git_client(url));
+            rstd_try(source_tool_result("initialize Git cache"_str,
+                                        git.initialize_bare(repository.as_path())));
         }
 
-        auto remote = rstd_try(git_command(url));
-        remote.push(String::make("--git-dir"_str));
-        auto path = push_path(remote, repository.as_path());
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        remote.push(String::make("config"_str));
-        remote.push(String::make("--get"_str));
-        remote.push(String::make("remote.origin.url"_str));
-        auto inspected = run_command(remote, *environment_);
-        if (inspected.is_err()) {
-            return Err(SourceError::System(String::make("Git cache remote inspection"_str),
-                                           rstd::move(inspected).unwrap_err()));
+        auto git        = rstd_try(git_client(url));
+        auto configured = rstd_try(source_tool_result("inspect Git cache remote"_str,
+                                                      git.remote_origin(repository.as_path())));
+        if (configured.is_none()) {
+            rstd_try(source_tool_result("configure Git cache remote"_str,
+                                        git.set_remote_origin(repository.as_path(), url)));
+            configured = Some(String::make(url));
         }
-        auto inspection = rstd::move(inspected).unwrap();
-        auto configured = String::make();
-        if (inspection.exit_code == i32 {}) {
-            configured = trim_ascii(rstd::move(inspection.standard_output));
-        } else {
-            auto configure = rstd_try(git_command(url));
-            configure.push(String::make("--git-dir"_str));
-            path = push_path(configure, repository.as_path());
-            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            configure.push(String::make("config"_str));
-            configure.push(String::make("remote.origin.url"_str));
-            configure.push(String::make(url));
-            auto stored = git_status(
-                rstd::move(configure), "Git cache remote configuration"_str, *environment_);
-            if (stored.is_err()) return Err(rstd::move(stored).unwrap_err());
-            configured = String::make(url);
-        }
-        if (configured.as_str() != url) {
+        if (configured->as_str() != url) {
             return source_failure<PathBuf>(rstd::format(
-                "Git cache key collision between '{}' and '{}'", configured.as_str(), url));
+                "Git cache key collision between '{}' and '{}'", configured->as_str(), url));
         }
         return Ok(rstd::move(repository));
     }
 
     auto object_exists(ref<rstd::path::Path> repository, ref<str> commit) -> SourceResult<bool> {
-        auto arguments = rstd_try(git_command());
-        arguments.push(String::make("--git-dir"_str));
-        auto path = push_path(arguments, repository);
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        arguments.push(String::make("cat-file"_str));
-        arguments.push(String::make("-e"_str));
-        arguments.push(rstd::format("{}^{{commit}}", commit));
-        auto output = run_command(arguments, *environment_);
-        if (output.is_err()) {
-            return Err(SourceError::System(String::make("Git object inspection"_str),
-                                           rstd::move(output).unwrap_err()));
-        }
-        return Ok(output->exit_code == i32 {});
+        auto git = rstd_try(git_client());
+        return source_tool_result("inspect Git object"_str, git.commit_exists(repository, commit));
     }
 
     auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision)
         -> SourceResult<String> {
         auto local_reference =
             rstd::format("refs/lito/fetch/{}", rstd::crypto::sha256_hex(revision).as_str());
-        auto arguments = rstd_try(git_command(url));
-        arguments.push(String::make("--git-dir"_str));
-        auto path = push_path(arguments, repository);
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        arguments.push(String::make("fetch"_str));
-        arguments.push(String::make("--force"_str));
-        arguments.push(String::make("--no-tags"_str));
-        arguments.push(String::make("origin"_str));
-        arguments.push(rstd::format("{}:{}", revision, local_reference.as_str()));
         auto source = rstd::format("{}#{}", url, revision);
         emit_fetch(source.as_str(), repository);
-        rstd_try(git_status(rstd::move(arguments), "Git source fetch"_str, *environment_));
+        auto git = rstd_try(git_client(url));
+        rstd_try(source_tool_result("fetch Git source"_str,
+                                    git.fetch(repository, revision, local_reference.as_str())));
         return Ok(rstd::move(local_reference));
     }
 
     auto rev_parse(ref<rstd::path::Path> repository, ref<str> revision) -> SourceResult<String> {
-        auto arguments = rstd_try(git_command());
-        arguments.push(String::make("--git-dir"_str));
-        auto path = push_path(arguments, repository);
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        arguments.push(String::make("rev-parse"_str));
-        arguments.push(String::make("--verify"_str));
-        arguments.push(rstd::format("{}^{{commit}}", revision));
-        auto commit =
-            git_output(rstd::move(arguments), "Git source revision resolution"_str, *environment_);
-        if (commit.is_err()) return Err(rstd::move(commit).unwrap_err());
-        if (commit->len() != usize(40)) {
-            return source_failure<String>(rstd::format(
-                "Git resolved '{}' to non-full object id '{}'", revision, commit->as_str()));
-        }
-        return commit;
+        auto git = rstd_try(git_client());
+        return source_tool_result("resolve Git source revision"_str,
+                                  git.rev_parse_commit(repository, revision));
     }
 
     auto resolve_commit(ref<rstd::path::Path>     repository,
@@ -691,16 +597,11 @@ class SourceManager {
         if (*exists) {
             auto reusable = rstd_try(reusable_git_checkout(layout, repository_key, url, commit));
             if (reusable.is_some()) return Ok(rstd::move(reusable).unwrap());
-            auto arguments = rstd_try(git_command());
-            arguments.push(String::make("-C"_str));
-            auto path = push_path(arguments, checkout.as_path());
-            if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-            arguments.push(String::make("rev-parse"_str));
-            arguments.push(String::make("--verify"_str));
-            arguments.push(String::make("HEAD"_str));
-            auto current =
-                git_output(rstd::move(arguments), "Git checkout inspection"_str, *environment_);
-            if (current.is_ok() && current->as_str() == commit) {
+            auto git     = rstd_try(git_client());
+            auto current = rstd_try(source_tool_result(
+                "inspect Git checkout"_str,
+                git.try_head(checkout.as_path(), "Git checkout inspection"_str)));
+            if (current.is_some() && current->as_str() == commit) {
                 rstd_try(write_git_checkout_receipt(layout, repository_key, url, commit));
                 return Ok(rstd::move(checkout));
             }
@@ -712,27 +613,11 @@ class SourceManager {
             }
         }
 
-        auto clone = rstd_try(git_command());
-        clone.push(String::make("clone"_str));
-        clone.push(String::make("--no-checkout"_str));
-        clone.push(String::make("--shared"_str));
-        auto path = push_path(clone, repository);
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        path = push_path(clone, checkout.as_path());
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        auto cloned =
-            git_status(rstd::move(clone), "Git source checkout creation"_str, *environment_);
-        if (cloned.is_err()) return Err(rstd::move(cloned).unwrap_err());
-
-        auto detach = rstd_try(git_command());
-        detach.push(String::make("-C"_str));
-        path = push_path(detach, checkout.as_path());
-        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
-        detach.push(String::make("checkout"_str));
-        detach.push(String::make("--detach"_str));
-        detach.push(String::make(commit));
-        auto checked_out = git_status(rstd::move(detach), "Git source checkout"_str, *environment_);
-        if (checked_out.is_err()) return Err(rstd::move(checked_out).unwrap_err());
+        auto git = rstd_try(git_client());
+        rstd_try(source_tool_result("create Git source checkout"_str,
+                                    git.clone_shared(repository, checkout.as_path())));
+        rstd_try(source_tool_result("checkout Git source commit"_str,
+                                    git.checkout_detached(checkout.as_path(), commit)));
         rstd_try(write_git_checkout_receipt(layout, repository_key, url, commit));
         return Ok(rstd::move(checkout));
     }
@@ -968,7 +853,7 @@ class SourceManager {
 public:
     explicit SourceManager(ref<rstd::path::Path>             graph_root,
                            SourceResolutionOptions           options,
-                           ToolResolver&                     resolver,
+                           lito::tools::ToolResolver&        resolver,
                            const ResolvedProcessEnvironment& environment,
                            SourceEventSink                   observer      = {},
                            Option<SourceCacheSession>        cache_session = None(),
@@ -1088,7 +973,7 @@ public:
                  git   = rstd::move(git)]() mutable -> SourceResult<Vec<FetchedPackageSource>> {
                     auto results = Vec<FetchedPackageSource>::with_capacity(work.len());
                     for (auto& item : work) {
-                        auto resolver   = ToolResolver(environment);
+                        auto resolver   = lito::tools::ToolResolver(environment);
                         auto item_cache = cache.is_some() ? Some(cache->clone()) : None();
                         auto item_git   = git.is_some() ? Some(git->clone()) : None();
                         auto manager    = SourceManager(graph_root.as_path(),
@@ -1214,7 +1099,7 @@ public:
                  git   = rstd::move(git)]() mutable -> SourceResult<Vec<FetchedExternalSource>> {
                     auto results = Vec<FetchedExternalSource>::with_capacity(work.len());
                     for (auto& item : work) {
-                        auto resolver   = ToolResolver(environment);
+                        auto resolver   = lito::tools::ToolResolver(environment);
                         auto item_cache = cache.is_some() ? Some(cache->clone()) : None();
                         auto item_git   = git.is_some() ? Some(git->clone()) : None();
                         auto manager    = SourceManager(graph_root.as_path(),

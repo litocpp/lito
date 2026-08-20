@@ -1,22 +1,15 @@
-export module lito.core:package.selection;
+export module lito.driver:package.selection;
 
 import rstd;
-import :source.resolution;
-import :package.graph;
-import :package.selection_error;
-import :workspace;
+import lito.core;
+import lito.tools;
 import lito.system;
-import :source.event;
-import :manifest;
-import :package.identity;
 import :package.resolver;
-import :package.runtime;
-import :package.features;
-import :package.language;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
+using namespace lito::tools;
 using namespace rstd::literals;
 using IndexMap  = rstd::collections::BTreeMap<String, usize>;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
@@ -245,7 +238,7 @@ auto resolve_package_selection_with_environment(
     PackageSelectionPurpose                   purpose,
     lito::source::SourceResolutionOptions     options,
     const TargetInfo*                         target,
-    ToolResolver&                             tool_resolver,
+    lito::tools::ToolResolver&                tool_resolver,
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
@@ -432,7 +425,7 @@ auto resolve_package_selection(const PackageSelection& selection,
     if (environment.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(environment).unwrap_err()));
     }
-    auto resolver = ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     return resolve_package_selection_with_environment(
         selection, purpose, rstd::move(options), target, resolver, *environment);
 }

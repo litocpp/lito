@@ -4,6 +4,7 @@ module;
 module lito.driver:project;
 
 import rstd;
+import lito.tools;
 import lito.core;
 import :project.error;
 import lito.cpp;
@@ -13,6 +14,7 @@ import :build.layout;
 import :dependency.catalog;
 import :dependency.preparation;
 import :dependency.external_source;
+import :package;
 import lito.toolchain;
 import lito.system;
 
@@ -52,7 +54,7 @@ auto start_project_resolution(const lito::package::PackageSelection&    selectio
                               bool                                      locked,
                               lito::source::GitResolutionMode           git,
                               const TargetInfo*                         target,
-                              ToolResolver&                             tool_resolver,
+                              lito::tools::ToolResolver&                tool_resolver,
                               const ResolvedProcessEnvironment&         environment,
                               usize                                     jobs     = usize(1),
                               BuildEventSink                            observer = {},
@@ -87,7 +89,7 @@ auto resolve_project(const lito::package::PackageSelection&         selection,
                      bool                                           locked,
                      lito::source::GitResolutionMode                git,
                      const TargetInfo*                              target,
-                     ToolResolver&                                  tool_resolver,
+                     lito::tools::ToolResolver&                     tool_resolver,
                      const ResolvedProcessEnvironment&              environment,
                      const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
                      usize                                          jobs     = usize(1),
@@ -131,7 +133,7 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
                                const lito::source::PackageSourceConfig& sources,
                                const lito::lock::LockConfig&            lock,
                                bool                                     locked,
-                               ToolResolver&                            tool_resolver,
+                               lito::tools::ToolResolver&               tool_resolver,
                                const ResolvedProcessEnvironment&        environment,
                                usize                                    jobs     = usize(1),
                                const Option<BuildEventSink>&            observer = None())
@@ -220,7 +222,7 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              const lito::source::PackageSourceConfig&       sources,
                              const lito::lock::LockConfig&                  lock,
                              const ClangToolchain&                          toolchain,
-                             ToolResolver&                                  tool_resolver,
+                             lito::tools::ToolResolver&                     tool_resolver,
                              const ResolvedProcessEnvironment&              environment,
                              const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
                              bool                                           locked,
@@ -271,7 +273,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               const lito::dependency::PkgConfigProviderConfig& pkg_config,
                               const lito::dependency::CMakeProviderConfig&     cmake,
                               const ClangToolchain&                            toolchain,
-                              ToolResolver&                                    tool_resolver,
+                              lito::tools::ToolResolver&                       tool_resolver,
                               const ResolvedProcessEnvironment&                environment,
                               usize                                            jobs,
                               const Option<BuildEventSink>&                    observer = None(),
@@ -453,7 +455,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const lito::dependency::PkgConfigProviderConfig& pkg_config,
                                     const lito::dependency::CMakeProviderConfig&     cmake,
                                     ClangToolchain                                   toolchain,
-                                    ToolResolver&                                    tool_resolver,
+                                    lito::tools::ToolResolver&                       tool_resolver,
                                     const ResolvedProcessEnvironment&                environment,
                                     usize                                            jobs,
                                     const Option<BuildEventSink>&       observer       = None(),
@@ -495,7 +497,7 @@ auto resolve_project_metadata(
     const lito::dependency::CMakeProviderConfig&     cmake,
     const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
     const ClangToolchain&                            toolchain,
-    ToolResolver&                                    tool_resolver,
+    lito::tools::ToolResolver&                       tool_resolver,
     const ResolvedProcessEnvironment&                environment,
     bool                                             locked,
     lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
@@ -542,7 +544,7 @@ auto prepare_build_project(
     const lito::dependency::PkgConfigProviderConfig& pkg_config,
     const lito::dependency::CMakeProviderConfig&     cmake,
     const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
-    ToolResolver&                                    tool_resolver,
+    lito::tools::ToolResolver&                       tool_resolver,
     const ResolvedProcessEnvironment&                environment,
     bool                                             locked,
     lito::package::PackageSelectionPurpose    purpose = lito::package::PackageSelectionPurpose::All,
@@ -551,7 +553,7 @@ auto prepare_build_project(
     Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
     const Option<BuildSetupReportSink>&       setup_reporter = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto created = ClangToolchain::create(configuration.toolchain, tool_resolver, environment);
+    auto created = ClangToolchain::create(configuration.toolchain, environment);
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
@@ -588,12 +590,12 @@ auto prepare_build_project(
 
 auto update_project_dependencies(ref<rstd::path::Path>                    root,
                                  const ProcessEnvironmentSpec&            environment_spec,
-                                 const ToolSpec&                          tools,
+                                 const lito::tools::ToolSpec&             tools,
                                  const lito::lock::LockConfig&            lock,
                                  const lito::source::PackageSourceConfig& sources,
                                  const Option<BuildEventSink>&            observer,
-                                 const Option<HostToolResolutionSink>&    tool_reporter = None())
-    -> ProjectResult<lito::lock::LockStatus> {
+                                 const Option<lito::tools::HostToolResolutionSink>& tool_reporter =
+                                     None()) -> ProjectResult<lito::lock::LockStatus> {
     if (root.is_empty()) {
         return Err(ProjectError::Message(String::make("update directory is required"_str)));
     }
@@ -601,7 +603,7 @@ auto update_project_dependencies(ref<rstd::path::Path>                    root,
         .root = PathBuf::from(root),
     };
     auto environment   = rstd_try(ResolvedProcessEnvironment::resolve(environment_spec));
-    auto tool_resolver = ToolResolver(environment, tools.clone(), tool_reporter);
+    auto tool_resolver = lito::tools::ToolResolver(environment, tools.clone(), tool_reporter);
     auto jobs          = usize(1);
     auto available     = rstd::thread::available_parallelism();
     if (available.is_ok()) jobs = available->get();

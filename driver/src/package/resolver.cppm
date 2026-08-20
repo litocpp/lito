@@ -1,25 +1,18 @@
 module;
 #include <rstd/macro.hpp>
 
-export module lito.core:package.resolver;
+export module lito.driver:package.resolver;
 
 import rstd;
-import :manifest.package;
-import :package.identity;
-import :manifest.profile;
-import :source.event;
-import :source.git;
-import :source.requirement;
-import :source.resolution;
-import :package.graph;
-import :package.error;
-import :workspace;
-import :source;
+import lito.core;
+import lito.tools;
 import lito.system;
+import :source.manager;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
+using namespace lito::tools;
 using namespace rstd::literals;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 using namespace lito;
@@ -305,7 +298,7 @@ class PackageGraphResolver {
 public:
     explicit PackageGraphResolver(ref<rstd::path::Path>                 root_directory,
                                   lito::source::SourceResolutionOptions options,
-                                  ToolResolver&                         resolver,
+                                  lito::tools::ToolResolver&            resolver,
                                   const ResolvedProcessEnvironment&     environment,
                                   usize                                 jobs,
                                   lito::source::SourceEventSink         observer)
@@ -549,7 +542,7 @@ export namespace lito::package
 
 auto resolve_package_graph_with_environment(ref<rstd::path::Path>                 requested_root,
                                             lito::source::SourceResolutionOptions options,
-                                            ToolResolver&                         tool_resolver,
+                                            lito::tools::ToolResolver&            tool_resolver,
                                             const ResolvedProcessEnvironment&     environment,
                                             usize                                 jobs = usize(1),
                                             lito::source::SourceEventSink         observer = {},
@@ -616,7 +609,7 @@ auto resolve_package_graph(ref<rstd::path::Path>                 requested_root,
     if (environment.is_err()) {
         return Err(rstd::into<PackageError>(rstd::move(environment).unwrap_err()));
     }
-    auto resolver = ToolResolver(*environment);
+    auto resolver = lito::tools::ToolResolver(*environment);
     return resolve_package_graph_with_environment(
         requested_root, rstd::move(options), resolver, *environment);
 }

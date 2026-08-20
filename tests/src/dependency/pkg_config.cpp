@@ -6,7 +6,7 @@ import lito.cpp;
 import lito.driver;
 import lito.core;
 import lito.system;
-import lito.toolchain.cmake;
+import lito.tools.cmake;
 import lito.toolchain;
 import lito.test.support;
 
@@ -276,7 +276,7 @@ visibility = "private"
 }
 
 TEST_F(PkgConfig, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingThem) {
-    auto parsed = lito::tokenize_pkg_config_fragments(
+    auto parsed = lito::tools::pkg_config::tokenize_fragments(
         "-I'/path with spaces' -DVALUE=\\\"quoted\\\" '' '$()' ';'"_str);
     ASSERT_TRUE(parsed.is_ok());
     ASSERT_EQ(parsed->len(), usize(5));
@@ -286,10 +286,10 @@ TEST_F(PkgConfig, PkgConfigFragmentTokenizerPreservesArgumentsWithoutExecutingTh
     EXPECT_EQ((*parsed)[usize(3)].as_str(), "$()"_str);
     EXPECT_EQ((*parsed)[usize(4)].as_str(), ";"_str);
 
-    EXPECT_TRUE(lito::tokenize_pkg_config_fragments("'unterminated"_str).is_err());
-    EXPECT_TRUE(lito::tokenize_pkg_config_fragments("dangling\\"_str).is_err());
+    EXPECT_TRUE(lito::tools::pkg_config::tokenize_fragments("'unterminated"_str).is_err());
+    EXPECT_TRUE(lito::tools::pkg_config::tokenize_fragments("dangling\\"_str).is_err());
 
-    auto double_quoted = lito::tokenize_pkg_config_fragments("\"double\\literal\""_str);
+    auto double_quoted = lito::tools::pkg_config::tokenize_fragments("\"double\\literal\""_str);
     ASSERT_TRUE(double_quoted.is_ok());
     ASSERT_EQ(double_quoted->len(), usize(1));
     EXPECT_EQ((*double_quoted)[usize {}].as_str(), "double\\literal"_str);
@@ -394,9 +394,9 @@ TEST_F(PkgConfig, PkgConfigProviderSupportsVersionOperatorsAndReportsDependencyC
                                                       native_platform());
     ASSERT_TRUE(failed.is_err());
     auto error = rstd::move(failed).unwrap_err();
-    ASSERT_TRUE(error.is_Message());
-    EXPECT_TRUE(error.as_Message().message.as_str().contains("incompatible"_str));
-    EXPECT_TRUE(error.as_Message().message.as_str().contains("lito-fixture"_str));
+    ASSERT_TRUE(error.is_Provider());
+    EXPECT_TRUE(error_chain_text(error).as_str().contains("incompatible"_str));
+    EXPECT_TRUE(error_chain_text(error).as_str().contains("lito-fixture"_str));
 }
 
 TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
@@ -449,10 +449,9 @@ TEST_F(PkgConfig, PkgConfigProviderFailsClosedForCrossTargetsAndMissingInputs) {
                                                               native_platform());
     ASSERT_TRUE(missing_module.is_err());
     auto module_error = rstd::move(missing_module).unwrap_err();
-    ASSERT_TRUE(module_error.is_Message());
-    EXPECT_TRUE(module_error.as_Message().message.as_str().contains("missing-module"_str));
-    EXPECT_TRUE(
-        module_error.as_Message().message.as_str().contains("lito-module-does-not-exist"_str));
+    ASSERT_TRUE(module_error.is_Provider());
+    EXPECT_TRUE(error_chain_text(module_error).as_str().contains("missing-module"_str));
+    EXPECT_TRUE(error_chain_text(module_error).as_str().contains("lito-module-does-not-exist"_str));
 }
 
 TEST_F(PkgConfig, PkgConfigProviderCachesEquivalentQueriesWithinResolution) {

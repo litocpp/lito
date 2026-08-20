@@ -6,11 +6,11 @@ export module lito.toolchain.clang:sdk;
 import rstd;
 import lito.cpp;
 import lito.core;
+import lito.tools;
 import lito.toolchain.common;
 import lito.system;
 import :sdk_catalog;
 import :toolchain;
-import :format;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -222,8 +222,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         .ld  = rstd::move(linker),
         .ar  = rstd::move(archiver),
     };
-    auto resolver  = ToolResolver(certification_environment);
-    auto toolchain = ClangToolchain::create(toolchain_spec, resolver, certification_environment);
+    auto toolchain = ClangToolchain::create(toolchain_spec, certification_environment);
     if (toolchain.is_err()) return Err(rstd::move(toolchain).unwrap_err());
     auto version_marker = rstd::format("clang version {}", expected_version);
     if (! toolchain->compiler_identity().version.as_str().contains(version_marker.as_str())) {
@@ -260,9 +259,10 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     if (! strip_version->as_str().contains("LLVM"_str)) {
         return sdk_failure<LlvmSdkCertification>("configured strip tool is not llvm-strip"_str);
     }
-    auto formatter =
-        lito::toolchain::ClangFormat::create(format.as_path(), certification_environment);
-    if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
+    auto formatter = lito::tools::ClangFormat::create(format.as_path(), certification_environment);
+    if (formatter.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(formatter).unwrap_err()));
+    }
 
     auto llvm_version_command = Vec<String>::make();
     rstd_try(lito::toolchain::command::push_path(llvm_version_command, sdk->llvm_config.as_path()));

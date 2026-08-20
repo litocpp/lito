@@ -1,7 +1,9 @@
 export module lito.driver:command.scan;
 
 import rstd;
+import lito.tools;
 import lito.core;
+import :package.selection;
 export import :command.error;
 import :build.event;
 import :build.setup_report;
@@ -15,22 +17,22 @@ export namespace lito
 {
 
 struct ScanRequest {
-    lito::package::PackageSelection           selection;
-    Vec<String>                               targets;
-    PathBuf                                   source;
-    ProcessEnvironmentSpec                    environment;
-    ToolSpec                                  tools;
-    cpp::BuildConfiguration                   configuration;
-    lito::lock::LockConfig                    lock;
-    Option<lito::manifest::BuildProfileName>  profile;
-    lito::source::PackageSourceConfig         sources;
-    lito::dependency::PkgConfigProviderConfig pkg_config;
-    lito::dependency::CMakeProviderConfig     cmake;
-    lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
-    bool                                      locked { false };
-    Option<BuildEventSink>                    observer;
-    Option<BuildSetupReportSink>              setup_reporter;
-    Option<HostToolResolutionSink>            tool_reporter;
+    lito::package::PackageSelection             selection;
+    Vec<String>                                 targets;
+    PathBuf                                     source;
+    ProcessEnvironmentSpec                      environment;
+    lito::tools::ToolSpec                       tools;
+    cpp::BuildConfiguration                     configuration;
+    lito::lock::LockConfig                      lock;
+    Option<lito::manifest::BuildProfileName>    profile;
+    lito::source::PackageSourceConfig           sources;
+    lito::dependency::PkgConfigProviderConfig   pkg_config;
+    lito::dependency::CMakeProviderConfig       cmake;
+    lito::dependency::CMakeBuildOverrideSet     cmake_build_overrides;
+    bool                                        locked { false };
+    Option<BuildEventSink>                      observer;
+    Option<BuildSetupReportSink>                setup_reporter;
+    Option<lito::tools::HostToolResolutionSink> tool_reporter;
 };
 
 struct ScanReport {

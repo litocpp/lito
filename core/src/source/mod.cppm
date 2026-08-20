@@ -7,7 +7,5 @@ export import :source.requirement;
 export import :source.resolution;
 export import :source.error;
 export import :source.event;
-export import :source.acquisition;
 export import :source.seed;
-export import :source.manager;
 export import :source.tree;

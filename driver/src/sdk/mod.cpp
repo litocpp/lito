@@ -5,6 +5,7 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.tools;
 import rstd.json;
 import lito.core;
 import lito.toolchain;
@@ -214,7 +215,7 @@ auto json_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto known_fields(const Json& value, ref<str> context, std::initializer_list<ref<str>> names)
+auto sdk_known_fields(const Json& value, ref<str> context, std::initializer_list<ref<str>> names)
     -> lito::SdkResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) return sdk_failure<empty>(rstd::format("{} must be an object", context));
@@ -232,7 +233,7 @@ auto known_fields(const Json& value, ref<str> context, std::initializer_list<ref
     return Ok(empty {});
 }
 
-auto required_member(const Json& value, ref<str> key, ref<str> context)
+auto sdk_required_member(const Json& value, ref<str> key, ref<str> context)
     -> lito::SdkResult<ref<Json>> {
     auto member = value.get(key);
     if (member.is_none()) {
@@ -241,8 +242,9 @@ auto required_member(const Json& value, ref<str> key, ref<str> context)
     return Ok(*member);
 }
 
-auto required_string(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<String> {
-    auto member = rstd_try(required_member(value, key, context));
+auto sdk_required_string(const Json& value, ref<str> key, ref<str> context)
+    -> lito::SdkResult<String> {
+    auto member = rstd_try(sdk_required_member(value, key, context));
     auto text   = member->as_str();
     if (text.is_none() || text->is_empty()) {
         return sdk_failure<String>(rstd::format("{}.{} must be a non-empty string", context, key));
@@ -250,8 +252,8 @@ auto required_string(const Json& value, ref<str> key, ref<str> context) -> lito:
     return Ok(String::make(*text));
 }
 
-auto required_u64(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<u64> {
-    auto member = rstd_try(required_member(value, key, context));
+auto sdk_required_u64(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<u64> {
+    auto member = rstd_try(sdk_required_member(value, key, context));
     auto number = member->as_u64();
     if (number.is_none()) {
         return sdk_failure<u64>(rstd::format("{}.{} must be an unsigned integer", context, key));
@@ -259,8 +261,8 @@ auto required_u64(const Json& value, ref<str> key, ref<str> context) -> lito::Sd
     return Ok(*number);
 }
 
-auto required_bool(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<bool> {
-    auto member  = rstd_try(required_member(value, key, context));
+auto sdk_required_bool(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<bool> {
+    auto member  = rstd_try(sdk_required_member(value, key, context));
     auto boolean = member->as_bool();
     if (boolean.is_none()) {
         return sdk_failure<bool>(rstd::format("{}.{} must be a boolean", context, key));
@@ -268,9 +270,9 @@ auto required_bool(const Json& value, ref<str> key, ref<str> context) -> lito::S
     return Ok(*boolean);
 }
 
-auto required_array(const Json& value, ref<str> key, ref<str> context)
+auto sdk_required_array(const Json& value, ref<str> key, ref<str> context)
     -> lito::SdkResult<ref<JsonArray>> {
-    auto member = rstd_try(required_member(value, key, context));
+    auto member = rstd_try(sdk_required_member(value, key, context));
     auto array  = member->as_array();
     if (array.is_none()) {
         return sdk_failure<ref<JsonArray>>(rstd::format("{}.{} must be an array", context, key));
@@ -377,36 +379,36 @@ auto installed_component_json(const InstalledRuntimeComponent& component) -> Jso
 }
 
 auto parse_paths(const Json& value) -> lito::SdkResult<lito::LlvmSdkPaths> {
-    rstd_try(known_fields(value,
-                          "LLVM SDK descriptor paths"_str,
-                          { "cc"_str,
-                            "cxx"_str,
-                            "linker"_str,
-                            "archiver"_str,
-                            "strip"_str,
-                            "format"_str,
-                            "llvm-config"_str,
-                            "cmake"_str,
-                            "clang-cpp"_str }));
+    rstd_try(sdk_known_fields(value,
+                              "LLVM SDK descriptor paths"_str,
+                              { "cc"_str,
+                                "cxx"_str,
+                                "linker"_str,
+                                "archiver"_str,
+                                "strip"_str,
+                                "format"_str,
+                                "llvm-config"_str,
+                                "cmake"_str,
+                                "clang-cpp"_str }));
     auto result = lito::LlvmSdkPaths {
         .cc = PathBuf::from(
-            rstd_try(required_string(value, "cc"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "cc"_str, "LLVM SDK descriptor paths"_str))),
         .cxx = PathBuf::from(
-            rstd_try(required_string(value, "cxx"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "cxx"_str, "LLVM SDK descriptor paths"_str))),
         .linker = PathBuf::from(
-            rstd_try(required_string(value, "linker"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "linker"_str, "LLVM SDK descriptor paths"_str))),
         .archiver = PathBuf::from(
-            rstd_try(required_string(value, "archiver"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "archiver"_str, "LLVM SDK descriptor paths"_str))),
         .strip = PathBuf::from(
-            rstd_try(required_string(value, "strip"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "strip"_str, "LLVM SDK descriptor paths"_str))),
         .format = PathBuf::from(
-            rstd_try(required_string(value, "format"_str, "LLVM SDK descriptor paths"_str))),
-        .llvm_config = PathBuf::from(
-            rstd_try(required_string(value, "llvm-config"_str, "LLVM SDK descriptor paths"_str))),
-        .cmake = PathBuf::from(
-            rstd_try(required_string(value, "cmake"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "format"_str, "LLVM SDK descriptor paths"_str))),
+        .llvm_config = PathBuf::from(rstd_try(
+            sdk_required_string(value, "llvm-config"_str, "LLVM SDK descriptor paths"_str))),
+        .cmake       = PathBuf::from(
+            rstd_try(sdk_required_string(value, "cmake"_str, "LLVM SDK descriptor paths"_str))),
         .clang_cpp = PathBuf::from(
-            rstd_try(required_string(value, "clang-cpp"_str, "LLVM SDK descriptor paths"_str))),
+            rstd_try(sdk_required_string(value, "clang-cpp"_str, "LLVM SDK descriptor paths"_str))),
     };
     auto valid = lito::validate_llvm_sdk_paths(result, "LLVM SDK descriptor paths"_str);
     if (valid.is_err()) return Err(lito::SdkError::Catalog(rstd::move(valid).unwrap_err()));
@@ -461,13 +463,13 @@ auto serialize_descriptor(const InstalledSdkDescriptor& descriptor) -> String {
 
 auto parse_installed_file(const Json& value, ref<str> context)
     -> lito::SdkResult<InstalledFileRecord> {
-    rstd_try(known_fields(value, context, { "path"_str, "size"_str, "sha256"_str }));
-    auto path   = rstd_try(descriptor_path(rstd_try(required_string(value, "path"_str, context)),
-                                           rstd::format("{}.path", context).as_str()));
-    auto sha256 = rstd_try(required_string(value, "sha256"_str, context));
+    rstd_try(sdk_known_fields(value, context, { "path"_str, "size"_str, "sha256"_str }));
+    auto path = rstd_try(descriptor_path(rstd_try(sdk_required_string(value, "path"_str, context)),
+                                         rstd::format("{}.path", context).as_str()));
+    auto sha256 = rstd_try(sdk_required_string(value, "sha256"_str, context));
     return Ok(InstalledFileRecord {
         .path   = rstd::move(path),
-        .size   = rstd_try(required_u64(value, "size"_str, context)),
+        .size   = rstd_try(sdk_required_u64(value, "size"_str, context)),
         .sha256 = rstd_try(
             descriptor_sha256(sha256.as_str(), rstd::format("{}.sha256", context).as_str())),
     });
@@ -475,49 +477,50 @@ auto parse_installed_file(const Json& value, ref<str> context)
 
 auto parse_installed_component(const Json& value, ref<str> context)
     -> lito::SdkResult<InstalledRuntimeComponent> {
-    rstd_try(known_fields(value,
-                          context,
-                          { "name"_str,
-                            "version"_str,
-                            "recipe"_str,
-                            "recipe-digest"_str,
-                            "source-identity"_str,
-                            "runtime"_str,
-                            "links"_str,
-                            "license"_str,
-                            "builder"_str }));
-    auto name            = rstd_try(required_string(value, "name"_str, context));
-    auto version         = rstd_try(required_string(value, "version"_str, context));
-    auto recipe          = rstd_try(required_string(value, "recipe"_str, context));
-    auto recipe_digest   = rstd_try(required_string(value, "recipe-digest"_str, context));
-    auto source_identity = rstd_try(required_string(value, "source-identity"_str, context));
+    rstd_try(sdk_known_fields(value,
+                              context,
+                              { "name"_str,
+                                "version"_str,
+                                "recipe"_str,
+                                "recipe-digest"_str,
+                                "source-identity"_str,
+                                "runtime"_str,
+                                "links"_str,
+                                "license"_str,
+                                "builder"_str }));
+    auto name            = rstd_try(sdk_required_string(value, "name"_str, context));
+    auto version         = rstd_try(sdk_required_string(value, "version"_str, context));
+    auto recipe          = rstd_try(sdk_required_string(value, "recipe"_str, context));
+    auto recipe_digest   = rstd_try(sdk_required_string(value, "recipe-digest"_str, context));
+    auto source_identity = rstd_try(sdk_required_string(value, "source-identity"_str, context));
     recipe_digest = rstd_try(descriptor_sha256(recipe_digest.as_str(),
                                                rstd::format("{}.recipe-digest", context).as_str()));
-    auto runtime_value   = rstd_try(required_member(value, "runtime"_str, context));
-    auto license_value   = rstd_try(required_member(value, "license"_str, context));
-    auto builder         = rstd_try(required_member(value, "builder"_str, context));
+    auto runtime_value   = rstd_try(sdk_required_member(value, "runtime"_str, context));
+    auto license_value   = rstd_try(sdk_required_member(value, "license"_str, context));
+    auto builder         = rstd_try(sdk_required_member(value, "builder"_str, context));
     auto builder_context = rstd::format("{}.builder", context);
-    rstd_try(known_fields(*builder,
-                          builder_context.as_str(),
-                          { "compiler-version"_str,
-                            "compiler-target"_str,
-                            "linker-family"_str,
-                            "linker-version"_str,
-                            "archiver-version"_str,
-                            "strip-version"_str,
-                            "link-identity"_str }));
-    auto link_values = rstd_try(required_array(value, "links"_str, context));
+    rstd_try(sdk_known_fields(*builder,
+                              builder_context.as_str(),
+                              { "compiler-version"_str,
+                                "compiler-target"_str,
+                                "linker-family"_str,
+                                "linker-version"_str,
+                                "archiver-version"_str,
+                                "strip-version"_str,
+                                "link-identity"_str }));
+    auto link_values = rstd_try(sdk_required_array(value, "links"_str, context));
     auto links       = Vec<InstalledLinkRecord>::with_capacity(link_values->len());
     for (usize index {}; index < link_values->len(); ++index) {
         auto link_context = rstd::format("{}.links[{}]", context, index);
-        rstd_try(known_fields(
+        rstd_try(sdk_known_fields(
             (*link_values)[index], link_context.as_str(), { "path"_str, "target"_str }));
         auto path   = rstd_try(descriptor_path(
-            rstd_try(required_string((*link_values)[index], "path"_str, link_context.as_str())),
+            rstd_try(sdk_required_string((*link_values)[index], "path"_str, link_context.as_str())),
             rstd::format("{}.path", link_context.as_str()).as_str()));
-        auto target = rstd_try(descriptor_file_name(
-            rstd_try(required_string((*link_values)[index], "target"_str, link_context.as_str())),
-            rstd::format("{}.target", link_context.as_str()).as_str()));
+        auto target = rstd_try(
+            descriptor_file_name(rstd_try(sdk_required_string(
+                                     (*link_values)[index], "target"_str, link_context.as_str())),
+                                 rstd::format("{}.target", link_context.as_str()).as_str()));
         links.push(InstalledLinkRecord {
             .path   = rstd::move(path),
             .target = rstd::move(target),
@@ -534,62 +537,64 @@ auto parse_installed_component(const Json& value, ref<str> context)
         .links   = rstd::move(links),
         .license = rstd_try(
             parse_installed_file(*license_value, rstd::format("{}.license", context).as_str())),
-        .compiler_version =
-            rstd_try(required_string(*builder, "compiler-version"_str, builder_context.as_str())),
-        .compiler_target =
-            rstd_try(required_string(*builder, "compiler-target"_str, builder_context.as_str())),
+        .compiler_version = rstd_try(
+            sdk_required_string(*builder, "compiler-version"_str, builder_context.as_str())),
+        .compiler_target = rstd_try(
+            sdk_required_string(*builder, "compiler-target"_str, builder_context.as_str())),
         .linker_family =
-            rstd_try(required_string(*builder, "linker-family"_str, builder_context.as_str())),
+            rstd_try(sdk_required_string(*builder, "linker-family"_str, builder_context.as_str())),
         .linker_version =
-            rstd_try(required_string(*builder, "linker-version"_str, builder_context.as_str())),
-        .archiver_version =
-            rstd_try(required_string(*builder, "archiver-version"_str, builder_context.as_str())),
+            rstd_try(sdk_required_string(*builder, "linker-version"_str, builder_context.as_str())),
+        .archiver_version = rstd_try(
+            sdk_required_string(*builder, "archiver-version"_str, builder_context.as_str())),
         .strip_version =
-            rstd_try(required_string(*builder, "strip-version"_str, builder_context.as_str())),
+            rstd_try(sdk_required_string(*builder, "strip-version"_str, builder_context.as_str())),
         .link_identity = rstd_try(descriptor_sha256(
-            rstd_try(required_string(*builder, "link-identity"_str, builder_context.as_str()))
+            rstd_try(sdk_required_string(*builder, "link-identity"_str, builder_context.as_str()))
                 .as_str(),
             rstd::format("{}.link-identity", builder_context.as_str()).as_str())),
     });
 }
 
 auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescriptor> {
-    rstd_try(known_fields(value,
-                          "LLVM SDK descriptor root"_str,
-                          { "schema"_str,
-                            "kind"_str,
-                            "version"_str,
-                            "host"_str,
-                            "archive"_str,
-                            "paths"_str,
-                            "certification"_str,
-                            "runtime-components"_str }));
-    auto schema = rstd_try(required_u64(value, "schema"_str, "LLVM SDK descriptor root"_str));
+    rstd_try(sdk_known_fields(value,
+                              "LLVM SDK descriptor root"_str,
+                              { "schema"_str,
+                                "kind"_str,
+                                "version"_str,
+                                "host"_str,
+                                "archive"_str,
+                                "paths"_str,
+                                "certification"_str,
+                                "runtime-components"_str }));
+    auto schema = rstd_try(sdk_required_u64(value, "schema"_str, "LLVM SDK descriptor root"_str));
     if (schema != u64(2)) {
         return sdk_failure<InstalledSdkDescriptor>(
             rstd::format("LLVM SDK descriptor schema {} is not supported", schema));
     }
-    auto kind = rstd_try(required_string(value, "kind"_str, "LLVM SDK descriptor root"_str));
+    auto kind = rstd_try(sdk_required_string(value, "kind"_str, "LLVM SDK descriptor root"_str));
     if (kind.as_str() != "lito-llvm-sdk"_str) {
         return sdk_failure<InstalledSdkDescriptor>(
             rstd::format("LLVM SDK descriptor kind '{}' is not supported", kind));
     }
-    auto version = rstd_try(required_string(value, "version"_str, "LLVM SDK descriptor root"_str));
+    auto version =
+        rstd_try(sdk_required_string(value, "version"_str, "LLVM SDK descriptor root"_str));
     auto parsed_version = lito::parse_llvm_version(version.as_str());
     if (parsed_version.is_err()) {
         return Err(lito::SdkError::Catalog(rstd::move(parsed_version).unwrap_err()));
     }
 
-    auto host_value = rstd_try(required_member(value, "host"_str, "LLVM SDK descriptor root"_str));
-    rstd_try(known_fields(
+    auto host_value =
+        rstd_try(sdk_required_member(value, "host"_str, "LLVM SDK descriptor root"_str));
+    rstd_try(sdk_known_fields(
         *host_value, "LLVM SDK descriptor host"_str, { "os"_str, "architecture"_str }));
-    auto os = rstd_try(required_string(*host_value, "os"_str, "LLVM SDK descriptor host"_str));
+    auto os = rstd_try(sdk_required_string(*host_value, "os"_str, "LLVM SDK descriptor host"_str));
     if (os.as_str() != "linux"_str && os.as_str() != "macos"_str && os.as_str() != "windows"_str) {
         return sdk_failure<InstalledSdkDescriptor>(
             rstd::format("LLVM SDK descriptor host OS '{}' is not canonical", os));
     }
-    auto architecture_text =
-        rstd_try(required_string(*host_value, "architecture"_str, "LLVM SDK descriptor host"_str));
+    auto architecture_text = rstd_try(
+        sdk_required_string(*host_value, "architecture"_str, "LLVM SDK descriptor host"_str));
     auto architecture = lito::system::canonical_architecture(architecture_text.as_str());
     if (architecture.is_err() ||
         (architecture.is_ok() && architecture->as_str() != architecture_text.as_str())) {
@@ -597,29 +602,31 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
             "LLVM SDK descriptor architecture '{}' is not canonical", architecture_text));
     }
 
-    auto archive = rstd_try(required_member(value, "archive"_str, "LLVM SDK descriptor root"_str));
-    rstd_try(known_fields(
+    auto archive =
+        rstd_try(sdk_required_member(value, "archive"_str, "LLVM SDK descriptor root"_str));
+    rstd_try(sdk_known_fields(
         *archive, "LLVM SDK descriptor archive"_str, { "url"_str, "sha256"_str, "size"_str }));
-    auto url = rstd_try(required_string(*archive, "url"_str, "LLVM SDK descriptor archive"_str));
+    auto url =
+        rstd_try(sdk_required_string(*archive, "url"_str, "LLVM SDK descriptor archive"_str));
     auto sha256 =
-        rstd_try(required_string(*archive, "sha256"_str, "LLVM SDK descriptor archive"_str));
-    auto size = rstd_try(required_u64(*archive, "size"_str, "LLVM SDK descriptor archive"_str));
+        rstd_try(sdk_required_string(*archive, "sha256"_str, "LLVM SDK descriptor archive"_str));
+    auto size = rstd_try(sdk_required_u64(*archive, "size"_str, "LLVM SDK descriptor archive"_str));
     auto archive_identity = lito::validate_llvm_sdk_archive_identity(
         url.as_str(), sha256.as_str(), size, "LLVM SDK descriptor archive"_str);
     if (archive_identity.is_err()) {
         return Err(lito::SdkError::Catalog(rstd::move(archive_identity).unwrap_err()));
     }
     auto paths_value =
-        rstd_try(required_member(value, "paths"_str, "LLVM SDK descriptor root"_str));
+        rstd_try(sdk_required_member(value, "paths"_str, "LLVM SDK descriptor root"_str));
     auto paths = rstd_try(parse_paths(*paths_value));
 
     auto certification =
-        rstd_try(required_member(value, "certification"_str, "LLVM SDK descriptor root"_str));
-    rstd_try(known_fields(
+        rstd_try(sdk_required_member(value, "certification"_str, "LLVM SDK descriptor root"_str));
+    rstd_try(sdk_known_fields(
         *certification,
         "LLVM SDK descriptor certification"_str,
         { "compiler-version"_str, "standard-library"_str, "exceptions"_str, "rtti"_str }));
-    auto compiler_version = rstd_try(required_string(
+    auto compiler_version = rstd_try(sdk_required_string(
         *certification, "compiler-version"_str, "LLVM SDK descriptor certification"_str));
     if (compiler_version.as_str() != version.as_str()) {
         return sdk_failure<InstalledSdkDescriptor>(
@@ -627,15 +634,15 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
                          compiler_version,
                          version));
     }
-    auto standard_library_text = rstd_try(required_string(
+    auto standard_library_text = rstd_try(sdk_required_string(
         *certification, "standard-library"_str, "LLVM SDK descriptor certification"_str));
     auto standard_library = lito::config::parse_standard_library(standard_library_text.as_str());
     if (standard_library.is_none()) {
         return sdk_failure<InstalledSdkDescriptor>(rstd::format(
             "LLVM SDK descriptor standard library '{}' is invalid", standard_library_text));
     }
-    auto component_values =
-        rstd_try(required_array(value, "runtime-components"_str, "LLVM SDK descriptor root"_str));
+    auto component_values = rstd_try(
+        sdk_required_array(value, "runtime-components"_str, "LLVM SDK descriptor root"_str));
     if (component_values->is_empty()) {
         return sdk_failure<InstalledSdkDescriptor>(
             "LLVM SDK descriptor runtime-components must not be empty"_str);
@@ -668,9 +675,9 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
             lito::LlvmSdkCertification {
                 .compiler_version = rstd::move(compiler_version),
                 .standard_library = *standard_library,
-                .exceptions       = rstd_try(required_bool(
+                .exceptions       = rstd_try(sdk_required_bool(
                     *certification, "exceptions"_str, "LLVM SDK descriptor certification"_str)),
-                .rtti             = rstd_try(required_bool(
+                .rtti             = rstd_try(sdk_required_bool(
                     *certification, "rtti"_str, "LLVM SDK descriptor certification"_str)),
             },
         .components = rstd::move(components),
@@ -919,21 +926,22 @@ auto active_state_json(const ActiveSdkState& state) -> Json {
 }
 
 auto parse_active_state(const Json& value) -> lito::SdkResult<ActiveSdkState> {
-    rstd_try(known_fields(
+    rstd_try(sdk_known_fields(
         value,
         "LLVM SDK activation state"_str,
         { "schema"_str, "kind"_str, "version"_str, "host"_str, "descriptor-sha256"_str }));
-    auto schema = rstd_try(required_u64(value, "schema"_str, "LLVM SDK activation state"_str));
+    auto schema = rstd_try(sdk_required_u64(value, "schema"_str, "LLVM SDK activation state"_str));
     if (schema != u64(1)) {
         return sdk_failure<ActiveSdkState>(
             rstd::format("LLVM SDK activation state schema {} is not supported", schema));
     }
-    auto kind = rstd_try(required_string(value, "kind"_str, "LLVM SDK activation state"_str));
+    auto kind = rstd_try(sdk_required_string(value, "kind"_str, "LLVM SDK activation state"_str));
     if (kind.as_str() != "lito-llvm-sdk-active"_str) {
         return sdk_failure<ActiveSdkState>(
             rstd::format("LLVM SDK activation state kind '{}' is not supported", kind));
     }
-    auto version = rstd_try(required_string(value, "version"_str, "LLVM SDK activation state"_str));
+    auto version =
+        rstd_try(sdk_required_string(value, "version"_str, "LLVM SDK activation state"_str));
     auto parsed_version = lito::parse_llvm_version(version.as_str());
     if (parsed_version.is_err()) {
         return sdk_failure<ActiveSdkState>(
@@ -949,24 +957,25 @@ auto parse_active_state(const Json& value) -> lito::SdkResult<ActiveSdkState> {
                          version,
                          canonical));
     }
-    auto host_value = rstd_try(required_member(value, "host"_str, "LLVM SDK activation state"_str));
-    rstd_try(known_fields(
+    auto host_value =
+        rstd_try(sdk_required_member(value, "host"_str, "LLVM SDK activation state"_str));
+    rstd_try(sdk_known_fields(
         *host_value, "LLVM SDK activation state host"_str, { "os"_str, "architecture"_str }));
     auto os =
-        rstd_try(required_string(*host_value, "os"_str, "LLVM SDK activation state host"_str));
+        rstd_try(sdk_required_string(*host_value, "os"_str, "LLVM SDK activation state host"_str));
     if (os.as_str() != "linux"_str && os.as_str() != "macos"_str && os.as_str() != "windows"_str) {
         return sdk_failure<ActiveSdkState>(
             rstd::format("LLVM SDK activation state host OS '{}' is not canonical", os));
     }
     auto architecture_text = rstd_try(
-        required_string(*host_value, "architecture"_str, "LLVM SDK activation state host"_str));
+        sdk_required_string(*host_value, "architecture"_str, "LLVM SDK activation state host"_str));
     auto architecture = lito::system::canonical_architecture(architecture_text.as_str());
     if (architecture.is_err() || architecture->as_str() != architecture_text.as_str()) {
         return sdk_failure<ActiveSdkState>(rstd::format(
             "LLVM SDK activation state architecture '{}' is not canonical", architecture_text));
     }
-    auto identity =
-        rstd_try(required_string(value, "descriptor-sha256"_str, "LLVM SDK activation state"_str));
+    auto identity = rstd_try(
+        sdk_required_string(value, "descriptor-sha256"_str, "LLVM SDK activation state"_str));
     return Ok(ActiveSdkState {
         .version = rstd::move(version),
         .host =
@@ -1112,12 +1121,12 @@ auto active_tool_path(ref<rstd::path::Path> prefix, ref<rstd::path::Path> relati
 
 auto active_project_defaults(ref<rstd::path::Path> prefix, const InstalledSdkDescriptor& descriptor)
     -> lito::SdkResult<lito::config::ProjectConfigDefaults> {
-    auto tools  = lito::system::ToolSpec {};
+    auto tools  = lito::tools::ToolSpec {};
     tools.strip = rstd_try(active_tool_path(prefix, descriptor.paths.strip.as_path(), "strip"_str));
-    tools.mark_configured(lito::system::Tool::Strip);
+    tools.mark_configured(lito::tools::Tool::Strip);
     tools.clang_format =
         rstd_try(active_tool_path(prefix, descriptor.paths.format.as_path(), "format"_str));
-    tools.mark_configured(lito::system::Tool::ClangFormat);
+    tools.mark_configured(lito::tools::Tool::ClangFormat);
     return Ok(lito::config::ProjectConfigDefaults {
         .tools = rstd::move(tools),
         .toolchain =
@@ -1240,18 +1249,20 @@ struct SdkAcquisitionObserver {
     Option<lito::SdkEventSink> sink;
 };
 
-void observe_acquisition(void* raw, const lito::acquisition::AcquisitionEvent& event) noexcept {
+void observe_sdk_acquisition(void*                                             raw,
+                             const lito::tools::acquisition::AcquisitionEvent& event) noexcept {
     auto& observer = *static_cast<SdkAcquisitionObserver*>(raw);
     if (observer.sink.is_none() || observer.sink->notify == nullptr) return;
-    observer.sink->notify(observer.sink->context,
-                          lito::SdkEvent {
-                              .kind = event.kind == lito::acquisition::AcquisitionEventKind::Fetch
-                                          ? lito::SdkEventKind::Fetch
-                                          : lito::SdkEventKind::Extract,
-                              .version     = observer.version,
-                              .source      = event.source,
-                              .destination = event.destination,
-                          });
+    observer.sink->notify(
+        observer.sink->context,
+        lito::SdkEvent {
+            .kind        = event.kind == lito::tools::acquisition::AcquisitionEventKind::Fetch
+                               ? lito::SdkEventKind::Fetch
+                               : lito::SdkEventKind::Extract,
+            .version     = observer.version,
+            .source      = event.source,
+            .destination = event.destination,
+        });
 }
 
 auto remove_staging(ref<rstd::path::Path> path) -> void {
@@ -1372,7 +1383,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
                                ref<rstd::path::Path>                           sdk_root,
                                const lito::SdkInstallRequest&                  request,
                                const lito::config::ToolchainSpec&              bootstrap_toolchain,
-                               lito::system::ToolResolver&                     resolver,
+                               lito::tools::ToolResolver&                      resolver,
                                const lito::system::ResolvedProcessEnvironment& environment)
     -> lito::SdkResult<InstalledRuntimeComponent> {
     auto component_recipe = lito::llvm_sdk_runtime_recipe_name(component.recipe);
@@ -1492,7 +1503,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
     auto license        = rstd_try(checked_source_file(source->materialized_root.as_path(),
                                                        recipe.license.as_path(),
                                                        "resolve libxml2 license"_str));
-    auto toolchain      = lito::ClangToolchain::create(bootstrap_toolchain, resolver, environment);
+    auto toolchain      = lito::ClangToolchain::create(bootstrap_toolchain, environment);
     if (toolchain.is_err()) {
         return Err(lito::SdkError::Toolchain(rstd::move(toolchain).unwrap_err()));
     }
@@ -1502,9 +1513,9 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
     }
     auto archiver_version = rstd_try(
         sdk_tool_version(toolchain->ar_path(), "bootstrap archiver --version"_str, environment));
-    auto strip_tool = resolver.resolve(lito::system::Tool::Strip);
+    auto strip_tool = resolver.resolve(lito::tools::Tool::Strip);
     if (strip_tool.is_err()) {
-        return Err(lito::SdkError::System(rstd::move(strip_tool).unwrap_err()));
+        return Err(lito::SdkError::Tools(rstd::move(strip_tool).unwrap_err()));
     }
     auto strip_version = rstd_try(sdk_tool_version(
         strip_tool->executable.as_path(), "bootstrap strip --version"_str, environment));
@@ -2037,7 +2048,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
     }
     auto environment = lito::system::ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) return Err(SdkError::System(rstd::move(environment).unwrap_err()));
-    auto resolver = lito::system::ToolResolver(
+    auto resolver = lito::tools::ToolResolver(
         *environment, request.tools.clone(), rstd::move(request.tool_reporter));
     auto layout = rstd_try(sdk_store_layout());
     auto lock   = rstd_try(acquire_version_lock(layout, request.version.as_str()));
@@ -2087,12 +2098,12 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
         .version = request.version.as_str(),
         .sink    = request.observer,
     };
-    auto download_requirement = lito::system::command_tool_requirement(
-        lito::system::HostToolCapability::HttpDownload, "sdk install"_str);
-    auto extraction_requirement = lito::system::command_tool_requirement(
-        lito::system::HostToolCapability::ArchiveExtraction, "sdk install"_str);
-    auto acquisitions = Vec<lito::acquisition::VerifiedArchiveRequest>::make();
-    acquisitions.push(lito::acquisition::VerifiedArchiveRequest {
+    auto download_requirement = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::HttpDownload, "sdk install"_str);
+    auto extraction_requirement = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::ArchiveExtraction, "sdk install"_str);
+    auto acquisitions = Vec<lito::tools::acquisition::VerifiedArchiveRequest>::make();
+    acquisitions.push(lito::tools::acquisition::VerifiedArchiveRequest {
         .label                  = rstd::format("llvm-sdk@{}", request.version.as_str()),
         .url                    = (**artifact).archive.url.clone(),
         .sha256                 = (**artifact).archive.sha256.clone(),
@@ -2100,32 +2111,34 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
         .download_requirement   = download_requirement.clone(),
         .extraction_requirement = extraction_requirement.clone(),
     });
-    auto files = lito::acquisition::acquire_verified_files(rstd::move(acquisitions),
-                                                           usize(1),
-                                                           resolver,
-                                                           *environment,
-                                                           false,
-                                                           lito::acquisition::AcquisitionEventSink {
-                                                               .context = rstd::addressof(observer),
-                                                               .notify  = observe_acquisition,
-                                                           });
+    auto files = lito::tools::acquisition::acquire_verified_files(
+        rstd::move(acquisitions),
+        usize(1),
+        resolver,
+        *environment,
+        false,
+        lito::tools::acquisition::AcquisitionEventSink {
+            .context = rstd::addressof(observer),
+            .notify  = observe_sdk_acquisition,
+        });
     if (files.is_err()) return Err(SdkError::Acquisition(rstd::move(files).unwrap_err()));
     auto verified_files = rstd::move(files).unwrap();
-    auto extractor = lito::acquisition::select_archive_extractor(resolver, extraction_requirement);
+    auto extractor =
+        lito::tools::acquisition::select_archive_extractor(resolver, extraction_requirement);
     if (extractor.is_err()) {
         return Err(SdkError::Acquisition(rstd::move(extractor).unwrap_err()));
     }
-    auto staging = layout.staging_area(request.version.as_str(), *host);
-    auto extracted =
-        lito::acquisition::extract_verified_archive(rstd::move(verified_files[usize {}]),
-                                                    staging.as_path(),
-                                                    Some((**artifact).archive.root.as_str()),
-                                                    *extractor,
-                                                    *environment,
-                                                    lito::acquisition::AcquisitionEventSink {
-                                                        .context = rstd::addressof(observer),
-                                                        .notify  = observe_acquisition,
-                                                    });
+    auto staging   = layout.staging_area(request.version.as_str(), *host);
+    auto extracted = lito::tools::acquisition::extract_verified_archive(
+        rstd::move(verified_files[usize {}]),
+        staging.as_path(),
+        Some((**artifact).archive.root.as_str()),
+        *extractor,
+        *environment,
+        lito::tools::acquisition::AcquisitionEventSink {
+            .context = rstd::addressof(observer),
+            .notify  = observe_sdk_acquisition,
+        });
     if (extracted.is_err()) {
         remove_staging(staging.as_path());
         return Err(SdkError::Acquisition(rstd::move(extracted).unwrap_err()));

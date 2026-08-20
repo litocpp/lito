@@ -14,7 +14,7 @@ import :install.package;
 import :build.artifact;
 import :build.result;
 import :dependency.preparation;
-import lito.toolchain.cmake;
+import :dependency.cmake;
 import lito.cpp;
 import :install.source;
 

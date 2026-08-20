@@ -5,7 +5,8 @@ export module lito.driver:dependency.preparation;
 
 import rstd;
 import lito.core;
-import lito.toolchain.cmake;
+import :dependency.cmake;
+import :source.acquisition;
 
 using namespace rstd::prelude;
 
