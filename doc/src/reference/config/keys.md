@@ -114,6 +114,10 @@ An override currently supports only `source = "installed"`:
 source = "installed"
 ```
 
+`Vulkan` must equal the `package = "Vulkan"` value of the affected
+`[external-dependencies.cmake.NAME]` declarations. It is not the manifest-local `NAME` alias. The
+override applies to every selected dependency with that CMake package identity.
+
 `tools.cmake.overrides` is forbidden in `lito-config.toml`; use `.lito/config.toml` or `-c`.
 
 ## `[build]`

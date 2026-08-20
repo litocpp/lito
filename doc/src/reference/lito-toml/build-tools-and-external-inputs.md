@@ -45,8 +45,21 @@ omits visibility. A member reference sets `workspace = true` and required `visib
 
 ## CMake external dependencies
 
-`[external-dependencies.cmake.NAME]` requires `package` and a non-empty `targets` array. Every target
-entry has `name` and `visibility`.
+`[external-dependencies.cmake.NAME]` requires `package` and a non-empty `targets` array:
+
+```toml
+[external-dependencies.cmake.vulkan]
+package = "Vulkan"
+targets = [
+  { name = "Vulkan::Vulkan", visibility = "private" },
+]
+```
+
+`NAME` is a manifest-local dependency alias. `package` is the actual CMake package identity. Generic
+integration passes it to `find_package`; an adapter receives it through
+`LITO_CMAKE_DEPENDENCY_PACKAGE`. It is also the identity matched by
+`tools.cmake.overrides.PACKAGE`, independently of the local alias. Every target entry has `name`
+and `visibility`.
 
 Optional fields are:
 
@@ -59,9 +72,10 @@ Optional fields are:
 `adapter` and `config-directory` are mutually exclusive. `cache` is used only when building a path
 or Git source.
 
-`[workspace.external-dependencies.cmake.NAME]` declares package/source/adapter/cache/config but
-omits targets. A package reference uses `workspace = true` and supplies its selected target names
-and visibility.
+`[workspace.external-dependencies.cmake.NAME]` declares `package`, `source`, `adapter`, `cache`, and
+`config-directory` but omits targets. A package reference uses `workspace = true` and supplies its
+selected target names and visibility. The package identity comes from the workspace declaration;
+the member reference does not repeat it.
 
 ### CMake asset sets
 

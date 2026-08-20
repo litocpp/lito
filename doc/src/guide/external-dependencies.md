@@ -31,6 +31,11 @@ targets = [
 ]
 ```
 
+`vulkan` is the dependency alias local to the manifest. `package = "Vulkan"` is the CMake package
+identity: generic integration passes it to `find_package(Vulkan REQUIRED)`, adapters receive it as
+`LITO_CMAKE_DEPENDENCY_PACKAGE`, and `tools.cmake.overrides` matches it globally. An override key
+therefore uses `Vulkan`, not the local `vulkan` alias.
+
 The provider may use an installed package or build a declared external source. `source` names a
 package-owned `[external-sources.NAME]`. `cache` applies only while building a path or Git source.
 `adapter` and `config-directory` are alternative ways to locate/shape package configuration and
@@ -46,8 +51,19 @@ then parses it in the C or C++ option domain selected by that package. Ambient `
 and `LDFLAGS` are removed from CMake subprocess environments; even an invocation using
 `--use-env-flags` does not leak those values into the external CMake project.
 
-Workspace declarations omit target visibility. A member referencing the workspace declaration
-supplies its selected targets and visibility.
+Workspace declarations keep the package identity and omit target visibility. A member referencing
+the workspace declaration supplies its selected targets and visibility:
+
+```toml
+[workspace.external-dependencies.cmake.vulkan]
+package = "Vulkan"
+
+[external-dependencies.cmake.vulkan]
+workspace = true
+targets = [
+  { name = "Vulkan::Vulkan", visibility = "private" },
+]
+```
 
 A CMake package or adapter can also publish runtime files as a named asset set while Lito queries
 the dependency:
