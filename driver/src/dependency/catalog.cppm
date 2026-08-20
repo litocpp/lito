@@ -27,7 +27,29 @@ struct PreparedExternalCatalog {
     cpp::ExternalUsageCatalog      usage;
     cpp::ExternalSourceRootCatalog sources;
     ExternalAssetCatalog           assets;
+    Vec<ExternalSourceProvenance>  provenance;
 };
+
+auto project_external_source_provenance(const lito::package::ResolvedPackageGraph& graph,
+                                        const cpp::ExternalSourceRootCatalog&      sources)
+    -> lito::dependency::DependencyResult<Vec<ExternalSourceProvenance>> {
+    auto result = Vec<ExternalSourceProvenance>::with_capacity(sources.sources.len());
+    for (const auto& source : sources.sources) {
+        if (source.package >= graph.packages.len()) {
+            return lito::dependency::dependency_failure<Vec<ExternalSourceProvenance>>(
+                rstd::format("external source '{}' refers to unavailable package index {}",
+                             source.name.as_str(),
+                             source.package));
+        }
+        result.push(ExternalSourceProvenance {
+            .package                = graph.packages[source.package].manifest.name.clone(),
+            .name                   = source.name.clone(),
+            .materialized_root      = source.root.clone(),
+            .stable_source_identity = source.identity.clone(),
+        });
+    }
+    return Ok(rstd::move(result));
+}
 
 auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& graph,
                                     const Vec<String>&                       selected_package_names,
@@ -36,6 +58,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                     const lito::dependency::CMakeProviderConfig&     cmake_config,
                                     const cpp::BuildConfiguration&                   configuration,
                                     const cpp::ProfileSpec&                          profile,
+                                    const LinkerIdentity&                            linker,
                                     const BuildLayout&                               layout,
                                     const BuildPlatform&                             platform,
                                     ToolResolver&                                    tool_resolver,
@@ -125,9 +148,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 .identity = source.acquired->identity.clone(),
             });
         }
+        auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));
         return Ok(PreparedExternalCatalog {
-            .usage   = rstd::move(result),
-            .sources = rstd::move(source_catalog),
+            .usage      = rstd::move(result),
+            .sources    = rstd::move(source_catalog),
+            .provenance = rstd::move(provenance),
         });
     }
     auto source_catalog  = cpp::ExternalSourceRootCatalog {};
@@ -259,9 +284,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
     }
 
     if (bindings.is_empty()) {
+        auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));
         return Ok(PreparedExternalCatalog {
-            .usage   = rstd::move(result),
-            .sources = rstd::move(source_catalog),
+            .usage      = rstd::move(result),
+            .sources    = rstd::move(source_catalog),
+            .provenance = rstd::move(provenance),
         });
     }
 
@@ -299,6 +326,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        resolved_cmake,
                                        configuration,
                                        profile,
+                                       linker,
                                        platform.compiler_default,
                                        platform.effective_target.triple.as_str(),
                                        cmake_work_root.as_path(),
@@ -367,10 +395,12 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             if (! duplicate) assets.sets.push(rstd::move(copied));
         }
     }
+    auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));
     return Ok(PreparedExternalCatalog {
-        .usage   = rstd::move(result),
-        .sources = rstd::move(source_catalog),
-        .assets  = rstd::move(assets),
+        .usage      = rstd::move(result),
+        .sources    = rstd::move(source_catalog),
+        .assets     = rstd::move(assets),
+        .provenance = rstd::move(provenance),
     });
 }
 

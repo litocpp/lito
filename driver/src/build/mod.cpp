@@ -650,8 +650,13 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             build_timing.record(BuildOperation::Strip, *stripped);
         }
-        auto link_identity = String::make("lito-built-artifact-link-v1\n"_str);
+        auto link_identity = String::make("lito-built-artifact-link-v2\n"_str);
+        link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
+        link_identity.push_ascii('\n');
         link_identity.push_str(target_identity.as_str());
+        link_identity.push_ascii('\n');
+        link_identity.push_str("lto="_str);
+        link_identity.push_str(cpp::cpp_lto_option(link_lto));
         link_identity.push_ascii('\n');
         if (install_variant == nullptr) {
             link_identity.push_str("variant=normal\n"_str);
@@ -674,29 +679,30 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
 
     return Ok(BuildSummary {
-        .package              = package.name.clone(),
-        .profile              = package_plan.profile->name.clone(),
-        .target               = String::make(toolchain.target()),
-        .language_standard    = request.configuration.language_standard.clone(),
-        .output               = PathBuf::from(layout.output()),
-        .scanned              = scans.len(),
-        .compiled             = compiled,
-        .reused               = reused,
-        .artifacts            = rstd::move(artifacts),
-        .runtime_resources    = rstd::move(runtime_resources),
-        .selected_targets     = rstd::move(selected_targets),
-        .selected_packages    = rstd::move(selected_packages),
-        .frontend             = frontend_statistics,
-        .toolchain            = toolchain.statistics(),
-        .scan_profile         = rstd::move(scan_profile),
-        .compile_execution    = compile_statistics,
-        .external_preparation = rstd::move(preparation_timing),
-        .build_timing         = rstd::move(build_timing),
-        .compile_tests        = rstd::move(compile_tests),
-        .script               = rstd::move(script_report),
-        .external_assets      = rstd::move(project.external_assets),
-        .compiler             = toolchain.compiler_identity().clone(),
-        .documentation_units  = rstd::move(documentation_units).unwrap(),
+        .package                    = package.name.clone(),
+        .profile                    = package_plan.profile->name.clone(),
+        .target                     = String::make(toolchain.target()),
+        .language_standard          = request.configuration.language_standard.clone(),
+        .output                     = PathBuf::from(layout.output()),
+        .scanned                    = scans.len(),
+        .compiled                   = compiled,
+        .reused                     = reused,
+        .artifacts                  = rstd::move(artifacts),
+        .runtime_resources          = rstd::move(runtime_resources),
+        .selected_targets           = rstd::move(selected_targets),
+        .selected_packages          = rstd::move(selected_packages),
+        .frontend                   = frontend_statistics,
+        .toolchain                  = toolchain.statistics(),
+        .scan_profile               = rstd::move(scan_profile),
+        .compile_execution          = compile_statistics,
+        .external_preparation       = rstd::move(preparation_timing),
+        .build_timing               = rstd::move(build_timing),
+        .compile_tests              = rstd::move(compile_tests),
+        .script                     = rstd::move(script_report),
+        .external_assets            = rstd::move(project.external_assets),
+        .external_source_provenance = rstd::move(project.external_source_provenance),
+        .compiler                   = toolchain.compiler_identity().clone(),
+        .documentation_units        = rstd::move(documentation_units).unwrap(),
     });
 }
 

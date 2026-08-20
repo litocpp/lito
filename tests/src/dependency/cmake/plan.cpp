@@ -45,6 +45,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                               fixture_cmake(),
                                               configuration(),
                                               default_profile(*parser),
+                                              linker_identity(),
                                               platform.compiler_default,
                                               platform.effective_target.triple.as_str(),
                                               work_root.as_path(),
@@ -66,6 +67,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                              fixture_cmake(),
                                              configuration(),
                                              default_profile(*parser),
+                                             linker_identity(),
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
                                              work_root.as_path(),
@@ -79,6 +81,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                     fixture_cmake(),
                                                     configuration(),
                                                     default_profile(*parser),
+                                                    linker_identity(),
                                                     platform.compiler_default,
                                                     platform.effective_target.triple.as_str(),
                                                     work_root.as_path());
@@ -94,6 +97,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                    fixture_cmake(),
                                                    configuration(),
                                                    default_profile(*parser),
+                                                   linker_identity(),
                                                    platform.compiler_default,
                                                    platform.effective_target.triple.as_str(),
                                                    work_root.as_path());
@@ -110,6 +114,7 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
                                                     fixture_cmake(),
                                                     configuration(),
                                                     default_profile(*parser),
+                                                    linker_identity(),
                                                     platform.compiler_default,
                                                     platform.effective_target.triple.as_str(),
                                                     work_root.as_path());

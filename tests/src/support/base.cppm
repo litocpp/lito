@@ -5,6 +5,7 @@ import lito.driver;
 import lito.cpp;
 import lito.system;
 import lito.core;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace lito::system;
@@ -65,6 +66,14 @@ auto configuration() -> lito::cpp::BuildConfiguration {
         .bmi_mode                 = lito::cpp::BmiMode::Reduced,
         .language_standard        = String::make("c++20"_str),
     };
+}
+
+auto linker_identity() -> lito::LinkerIdentity {
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {})
+            .unwrap();
+    auto build = configuration();
+    return lito::probe_linker(build.toolchain.ld.as_path(), environment).unwrap();
 }
 
 auto build_request(ref<rstd::path::Path>            root,

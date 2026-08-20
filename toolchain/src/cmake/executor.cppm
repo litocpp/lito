@@ -24,6 +24,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         const lito::dependency::CMakeProviderConfig& provider,
                         const cpp::BuildConfiguration&               configuration,
                         const cpp::ProfileSpec&                      profile,
+                        const LinkerIdentity&                        linker,
                         const TargetInfo&                            default_target,
                         ref<str>                                     effective_target,
                         ref<rstd::path::Path>                        profile_cmake_root,
@@ -39,8 +40,13 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
             requirement.alias.as_str(),
             effective_target));
     }
-    auto area = work_area(
-        requirement, provider, configuration, profile, effective_target, profile_cmake_root);
+    auto area = work_area(requirement,
+                          provider,
+                          configuration,
+                          profile,
+                          linker,
+                          effective_target,
+                          profile_cmake_root);
     if (area.is_err()) return Err(rstd::move(area).unwrap_err());
     auto operations = Vec<CMakePackageOperation>::make();
     if (requirement.source.is_Directory() && requirement.adapter.is_none()) {
@@ -57,6 +63,7 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
         .provider         = provider.clone(),
         .configuration    = configuration.clone(),
         .profile          = clone_profile(profile),
+        .linker           = linker.clone(),
         .area             = rstd::move(area).unwrap(),
         .effective_target = String::make(effective_target),
         .operations       = rstd::move(operations),
@@ -141,18 +148,22 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
         switch (operation) {
         case CMakePackageOperation::ConfigureSource:
             if (! install_current) {
-                rstd_try(with_operation_context(
-                    execute_observed(
-                        observer,
-                        ToolchainEventKind::CMakeConfigure,
-                        requirement.alias.as_str(),
-                        area.build.as_path(),
-                        [&] {
-                            return configure_source(
-                                requirement, provider, configuration, profile, area, environment);
-                        }),
-                    plan,
-                    operation));
+                rstd_try(with_operation_context(execute_observed(observer,
+                                                                 ToolchainEventKind::CMakeConfigure,
+                                                                 requirement.alias.as_str(),
+                                                                 area.build.as_path(),
+                                                                 [&] {
+                                                                     return configure_source(
+                                                                         requirement,
+                                                                         provider,
+                                                                         configuration,
+                                                                         profile,
+                                                                         plan.linker,
+                                                                         area,
+                                                                         environment);
+                                                                 }),
+                                                plan,
+                                                operation));
             }
             break;
         case CMakePackageOperation::BuildSource:
@@ -197,18 +208,22 @@ auto execute_cmake_package(const CMakePackagePlan&           plan,
             rstd_try(with_operation_context(write_probe_files(requirement, area), plan, operation));
             break;
         case CMakePackageOperation::ConfigureQuery:
-            rstd_try(with_operation_context(
-                execute_observed(
-                    observer,
-                    ToolchainEventKind::CMakeQuery,
-                    requirement.alias.as_str(),
-                    area.query_build.as_path(),
-                    [&] {
-                        return configure_probe(
-                            requirement, provider, configuration, profile, area, environment);
-                    }),
-                plan,
-                operation));
+            rstd_try(with_operation_context(execute_observed(observer,
+                                                             ToolchainEventKind::CMakeQuery,
+                                                             requirement.alias.as_str(),
+                                                             area.query_build.as_path(),
+                                                             [&] {
+                                                                 return configure_probe(
+                                                                     requirement,
+                                                                     provider,
+                                                                     configuration,
+                                                                     profile,
+                                                                     plan.linker,
+                                                                     area,
+                                                                     environment);
+                                                             }),
+                                            plan,
+                                            operation));
             break;
         case CMakePackageOperation::BuildQuery:
             rstd_try(with_operation_context(execute_observed(observer,

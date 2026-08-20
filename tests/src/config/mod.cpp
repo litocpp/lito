@@ -168,6 +168,8 @@ TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
     auto project = config("host-tool-command"_str,
                           "[tools]\n"
                           "curl = \"sdk-curl\"\n"
+                          "[toolchain]\n"
+                          "ld = \"project-linker\"\n"
                           "[lock]\n"
                           "path = 7\n"_str);
     ASSERT_TRUE(project.is_ok());
@@ -175,8 +177,17 @@ TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
         project->root.as_path(), lito::config::ProjectConfigRequest {});
     ASSERT_TRUE(command.is_ok());
     EXPECT_EQ(command->tools.curl.as_path(), PathBuf::from("sdk-curl"_str).as_path());
+    EXPECT_EQ(command->toolchain.ld.as_path(), PathBuf::from("project-linker"_str).as_path());
     EXPECT_TRUE(command->tools.explicitly_configured(lito::system::Tool::Curl));
     EXPECT_TRUE(lito::config::load_project_config(project->root.as_path()).is_err());
+
+    auto overridden = lito::config::load_host_tool_command_config(
+        project->root.as_path(),
+        lito::config::ProjectConfigRequest {
+            .overrides = strings("toolchain.ld=/usr/bin/ld"_str),
+        });
+    ASSERT_TRUE(overridden.is_ok());
+    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("/usr/bin/ld"_str).as_path());
 }
 
 TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {

@@ -178,6 +178,17 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                       const LlvmSdkPaths&               paths,
                       const ResolvedProcessEnvironment& environment)
     -> ToolchainResult<LlvmSdkCertification> {
+    auto certification_environment           = environment.without_variable("LD_LIBRARY_PATH"_str);
+    constexpr ref<str> removed_environment[] = {
+        "LD_PRELOAD"_str,
+        "LD_AUDIT"_str,
+        "DYLD_LIBRARY_PATH"_str,
+        "DYLD_FRAMEWORK_PATH"_str,
+        "DYLD_INSERT_LIBRARIES"_str,
+    };
+    for (const auto key : removed_environment) {
+        certification_environment = certification_environment.without_variable(key);
+    }
     auto canonical_prefix = rstd::fs::canonicalize(prefix);
     if (canonical_prefix.is_err()) {
         return Err(ToolchainError::Io(String::make("resolve LLVM SDK prefix"_str),
@@ -211,8 +222,8 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         .ld  = rstd::move(linker),
         .ar  = rstd::move(archiver),
     };
-    auto resolver  = ToolResolver(environment);
-    auto toolchain = ClangToolchain::create(toolchain_spec, resolver, environment);
+    auto resolver  = ToolResolver(certification_environment);
+    auto toolchain = ClangToolchain::create(toolchain_spec, resolver, certification_environment);
     if (toolchain.is_err()) return Err(rstd::move(toolchain).unwrap_err());
     auto version_marker = rstd::format("clang version {}", expected_version);
     if (! toolchain->compiler_identity().version.as_str().contains(version_marker.as_str())) {
@@ -228,7 +239,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                                      .clang_cpp   = paths.clang_cpp.clone(),
                                      .llvm_config = paths.llvm_config.clone(),
                                  },
-                                 environment);
+                                 certification_environment);
     if (sdk.is_err()) return Err(rstd::move(sdk).unwrap_err());
 
     const auto probe_llvm_tool = [&](ref<rstd::path::Path> executable,
@@ -236,7 +247,8 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         auto command = Vec<String>::make();
         rstd_try(lito::toolchain::command::push_path(command, executable));
         lito::toolchain::command::push_option(command, "--version"_str);
-        return lito::toolchain::command::tool_output(rstd::move(command), description, environment);
+        return lito::toolchain::command::tool_output(
+            rstd::move(command), description, certification_environment);
     };
     auto ar_version = probe_llvm_tool(toolchain_spec.ar.as_path(), "llvm-ar --version"_str);
     if (ar_version.is_err()) return Err(rstd::move(ar_version).unwrap_err());
@@ -248,18 +260,67 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
     if (! strip_version->as_str().contains("LLVM"_str)) {
         return sdk_failure<LlvmSdkCertification>("configured strip tool is not llvm-strip"_str);
     }
-    auto formatter = lito::toolchain::ClangFormat::create(format.as_path(), environment);
+    auto formatter =
+        lito::toolchain::ClangFormat::create(format.as_path(), certification_environment);
     if (formatter.is_err()) return Err(rstd::move(formatter).unwrap_err());
 
     auto llvm_version_command = Vec<String>::make();
     rstd_try(lito::toolchain::command::push_path(llvm_version_command, sdk->llvm_config.as_path()));
     lito::toolchain::command::push_option(llvm_version_command, "--version"_str);
     auto llvm_version = lito::toolchain::command::tool_output(
-        rstd::move(llvm_version_command), "llvm-config --version"_str, environment);
+        rstd::move(llvm_version_command), "llvm-config --version"_str, certification_environment);
     if (llvm_version.is_err()) return Err(rstd::move(llvm_version).unwrap_err());
     if (llvm_version->as_str() != expected_version) {
         return sdk_failure<LlvmSdkCertification>(rstd::format(
             "llvm-config reports '{}', expected '{}'", llvm_version->as_str(), expected_version));
+    }
+    auto probe_directory = rstd::fs::TempDir::make("lito-llvm-sdk-certify"_str);
+    if (probe_directory.is_err()) {
+        return Err(ToolchainError::Io(String::make("create LLVM SDK certification directory"_str),
+                                      rstd::env::temp_dir(),
+                                      rstd::move(probe_directory).unwrap_err()));
+    }
+    auto probe_output =
+        PathBuf::from(probe_directory->path()).join(PathBuf::from("probe"_str).as_path());
+    auto probe_command = Vec<String>::make();
+    rstd_try(lito::toolchain::command::push_path(probe_command, toolchain->cc_path()));
+    rstd_try(lito::toolchain::command::push_path_option(
+        probe_command, "-fuse-ld="_str, toolchain->linker_identity().executable.as_path()));
+    lito::toolchain::command::push_option(probe_command, "-x"_str);
+    lito::toolchain::command::push_option(probe_command, "c"_str);
+    lito::toolchain::command::push_option(probe_command, "-"_str);
+    lito::toolchain::command::push_option(probe_command, "-o"_str);
+    rstd_try(lito::toolchain::command::push_path(probe_command, probe_output.as_path()));
+    auto linked = run_command_with_input(probe_command,
+                                         "int main(void) { return 0; }\n"_str,
+                                         certification_environment,
+                                         Some(probe_directory->path()));
+    if (linked.is_err()) return Err(rstd::into<ToolchainError>(rstd::move(linked).unwrap_err()));
+    if (linked->exit_code != i32 {}) {
+        return Err(ToolchainError::Execution(String::make("LLVM SDK host ELF link"_str),
+                                             linked->exit_code,
+                                             rstd::move(linked->standard_output),
+                                             rstd::move(linked->standard_error)));
+    }
+    auto execute_command = Vec<String>::make();
+    rstd_try(lito::toolchain::command::push_path(execute_command, probe_output.as_path()));
+    auto executed =
+        run_command(execute_command, certification_environment, Some(probe_directory->path()));
+    if (executed.is_err()) {
+        return Err(rstd::into<ToolchainError>(rstd::move(executed).unwrap_err()));
+    }
+    if (executed->exit_code != i32 {}) {
+        return Err(ToolchainError::Execution(String::make("LLVM SDK host ELF probe"_str),
+                                             executed->exit_code,
+                                             rstd::move(executed->standard_output),
+                                             rstd::move(executed->standard_error)));
+    }
+    auto probe_path = PathBuf::from(probe_directory->path());
+    auto closed     = probe_directory->close();
+    if (closed.is_err()) {
+        return Err(ToolchainError::Io(String::make("remove LLVM SDK certification directory"_str),
+                                      rstd::move(probe_path),
+                                      rstd::move(closed).unwrap_err()));
     }
     return Ok(LlvmSdkCertification {
         .compiler_version = rstd::move(llvm_version).unwrap(),

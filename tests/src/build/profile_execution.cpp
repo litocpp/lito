@@ -82,3 +82,35 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     ASSERT_TRUE(plain_status->code().is_some());
     EXPECT_EQ(*plain_status->code(), i32(1));
 }
+
+TEST_F(BuildProfileExecution, GnuLdRejectsLlvmLtoBeforeCompilation) {
+#if RSTD_OS_UNIX
+    if (! rstd::fs::exists(PathBuf::from("/usr/bin/ld"_str).as_path()).unwrap()) return;
+    const ProjectFile files[] = {
+        { "lito.toml"_str,
+          "[package]\n"
+          "name = \"fixture-gnu-ld-lto\"\n"
+          "standard = \"c17\"\n"
+          "[[bin]]\n"
+          "name = \"fixture-gnu-ld-lto\"\n"
+          "link-stdlib = false\n"
+          "sources = [\"main.c\"]\n"_str },
+        { "main.c"_str, "int main(void) { return 0; }\n"_str },
+    };
+    auto project = materialize("gnu-ld-lto"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(
+        project->root.as_path(), build_root("gnu-ld-lto"_str).as_path(), Vec<String>::make());
+    request.configuration.toolchain.ld = PathBuf::from("/usr/bin/ld"_str);
+    request.configuration.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-flto=thin"_str),
+        .source    = String::make("internal SDK override"_str),
+    });
+    auto built = lito::build(request);
+    ASSERT_TRUE(built.is_err());
+    auto error = error_chain_text(built.unwrap_err());
+    EXPECT_TRUE(error.as_str().contains("GNU ld"_str));
+    EXPECT_TRUE(error.as_str().contains("-flto=thin"_str));
+    EXPECT_TRUE(error.as_str().contains("internal SDK override"_str));
+#endif
+}

@@ -46,7 +46,7 @@ public:
         }
         auto configured_compiler   = resolver.resolve(specification.cxx.as_path(), "clang++"_str);
         auto configured_c_compiler = resolver.resolve(specification.cc.as_path(), "clang"_str);
-        auto configured_linker     = resolver.resolve(specification.ld.as_path(), "LLD linker"_str);
+        auto configured_linker     = resolver.resolve(specification.ld.as_path(), "linker"_str);
         auto configured_archiver   = resolver.resolve(specification.ar.as_path(), "llvm-ar"_str);
         if (configured_compiler.is_err()) {
             return Err(rstd::into<ToolchainError>(rstd::move(configured_compiler).unwrap_err()));
@@ -67,7 +67,6 @@ public:
 
         auto compiler_command   = Vec<String>::make();
         auto c_compiler_command = Vec<String>::make();
-        auto linker_command     = Vec<String>::make();
         auto target_command     = Vec<String>::make();
         auto resource_command   = Vec<String>::make();
         auto help_command       = Vec<String>::make();
@@ -77,9 +76,6 @@ public:
         pushed = toolchain::command::push_path(c_compiler_command, c_compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(c_compiler_command, toolchain::clang_options::VERSION);
-        pushed = toolchain::command::push_path(linker_command, linker_path.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(linker_command, toolchain::clang_options::VERSION);
         pushed = toolchain::command::push_path(target_command, compiler_path.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         toolchain::command::push_option(target_command,
@@ -96,9 +92,8 @@ public:
             rstd::move(compiler_command), "clang++ --version"_str, environment);
         auto c_compiler_version = toolchain::command::tool_output(
             rstd::move(c_compiler_command), "clang --version"_str, environment);
-        auto linker_version = toolchain::command::tool_output(
-            rstd::move(linker_command), "LLD --version"_str, environment);
-        auto target = toolchain::command::tool_output(
+        auto linker_identity = probe_linker(linker_path.as_path(), environment);
+        auto target          = toolchain::command::tool_output(
             rstd::move(target_command), "clang++ target query"_str, environment);
         auto resource = toolchain::command::tool_output(
             rstd::move(resource_command), "clang++ resource query"_str, environment);
@@ -108,7 +103,7 @@ public:
         if (c_compiler_version.is_err()) {
             return Err(rstd::move(c_compiler_version).unwrap_err());
         }
-        if (linker_version.is_err()) return Err(rstd::move(linker_version).unwrap_err());
+        if (linker_identity.is_err()) return Err(rstd::move(linker_identity).unwrap_err());
         if (target.is_err()) return Err(rstd::move(target).unwrap_err());
         if (resource.is_err()) return Err(rstd::move(resource).unwrap_err());
         if (help.is_err()) return Err(rstd::move(help).unwrap_err());
@@ -117,9 +112,6 @@ public:
         }
         if (! c_compiler_version->as_str().contains("clang version"_str)) {
             return failure<ClangToolchain>("configured C compiler is not clang"_str);
-        }
-        if (! linker_version->as_str().contains("LLD"_str)) {
-            return failure<ClangToolchain>("configured linker is not LLD"_str);
         }
         auto target_info = parse_target_info(target->as_str());
         if (target_info.is_err()) {
@@ -221,7 +213,7 @@ public:
 
         return Ok(ClangToolchain { rstd::move(compiler_path),
                                    rstd::move(c_compiler_path),
-                                   rstd::move(linker_path),
+                                   rstd::move(linker_identity).unwrap(),
                                    rstd::move(archiver_path),
                                    rstd::move(resolved_resource),
                                    rstd::move(identity),
@@ -233,9 +225,10 @@ public:
     }
 
     auto compiler_identity() const -> const CompilerIdentity& { return compiler_identity_; }
+    auto linker_identity() const -> const LinkerIdentity& { return linker_identity_; }
     auto cxx_path() const -> ref<rstd::path::Path> { return compiler_.as_path(); }
     auto cc_path() const -> ref<rstd::path::Path> { return c_compiler_.as_path(); }
-    auto ld_path() const -> ref<rstd::path::Path> { return linker_.as_path(); }
+    auto ld_path() const -> ref<rstd::path::Path> { return linker_identity_.executable.as_path(); }
     auto ar_path() const -> ref<rstd::path::Path> { return archiver_.as_path(); }
     auto target() const -> ref<str> { return compiler_identity_.target.as_str(); }
     auto target_info() const -> const TargetInfo& { return target_info_; }
@@ -997,6 +990,21 @@ public:
         const lito::link::Requirements&                        link_requirements,
         const Vec<String>&                                     linker_options,
         ref<rstd::path::Path> working_directory) const -> ToolchainResult<rstd::time::Duration> {
+        if (lto.is_some() && *lto != lito::manifest::Lto::Off &&
+            ! linker_identity_.capabilities.llvm_lto) {
+            return failure<rstd::time::Duration>(
+                rstd::format("configured {} does not support LLVM LTO option '{}'",
+                             linker_family_name(linker_identity_.family),
+                             cpp::cpp_lto_option(*lto)));
+        }
+        if (linker_identity_.family == LinkerFamily::GnuLd &&
+            (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str ||
+             target.triple.as_str() != compiler_identity_.target.as_str())) {
+            return failure<rstd::time::Duration>(rstd::format(
+                "configured GNU ld is only supported for the host ELF target '{}'; requested '{}'",
+                compiler_identity_.target,
+                target.triple));
+        }
         auto parent = create_parent(output_path);
         if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
         auto command = Vec<String>::make();
@@ -1008,8 +1016,8 @@ public:
         if (target.family == TargetFamily::Windows) {
             toolchain::command::push_option(command, "-fuse-ld=lld"_str);
         } else {
-            pushed =
-                toolchain::command::push_path_option(command, "-fuse-ld="_str, linker_.as_path());
+            pushed = toolchain::command::push_path_option(
+                command, "-fuse-ld="_str, linker_identity_.executable.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
         }
         if (target.environment == TargetEnvironment::Msvc && microsoft_runtime_library.is_some() &&
@@ -1133,6 +1141,113 @@ public:
         return Ok(command_output.elapsed);
     }
 
+    auto link_elf_shared_library(const ElfSharedLibraryLinkRequest& request) const
+        -> ToolchainResult<ElfSharedLibraryArtifact> {
+        if (! linker_identity_.capabilities.elf_shared_library) {
+            return failure<ElfSharedLibraryArtifact>(
+                rstd::format("configured {} cannot link ELF shared libraries",
+                             linker_family_name(linker_identity_.family)));
+        }
+        if (target_info_.family != TargetFamily::Unix || target_info_.os.as_str() == "macos"_str) {
+            return failure<ElfSharedLibraryArtifact>(rstd::format(
+                "ELF shared-library linking requires a host ELF target; compiler target is '{}'",
+                target_info_.triple.as_str()));
+        }
+        if (request.soname.is_empty() || request.soname.as_str().contains("/"_str) ||
+            request.soname.as_str().contains("\\"_str)) {
+            return failure<ElfSharedLibraryArtifact>(
+                rstd::format("ELF SONAME '{}' must be a file name", request.soname.as_str()));
+        }
+        auto archive_metadata = rstd::fs::metadata(request.archive.path.as_path());
+        if (archive_metadata.is_err()) {
+            return Err(ToolchainError::Io(String::make("inspect ELF shared-library archive"_str),
+                                          request.archive.path.clone(),
+                                          rstd::move(archive_metadata).unwrap_err()));
+        }
+        if (! archive_metadata->is_file()) {
+            return failure<ElfSharedLibraryArtifact>(rstd::format(
+                "ELF shared-library archive '{}' must be a file", request.archive.path.as_path()));
+        }
+        auto archive_contents = rstd::fs::read(request.archive.path.as_path());
+        if (archive_contents.is_err()) {
+            return Err(ToolchainError::Io(String::make("read ELF shared-library archive"_str),
+                                          request.archive.path.clone(),
+                                          rstd::move(archive_contents).unwrap_err()));
+        }
+        auto version_script = rstd::fs::read(request.version_script.as_path());
+        if (version_script.is_err()) {
+            return Err(
+                ToolchainError::Io(String::make("read ELF shared-library version script"_str),
+                                   request.version_script.clone(),
+                                   rstd::move(version_script).unwrap_err()));
+        }
+        auto parent = create_parent(request.output.as_path());
+        if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
+        auto command = Vec<String>::make();
+        auto pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        pushed = toolchain::command::push_path_option(
+            command, "-fuse-ld="_str, linker_identity_.executable.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(command, "-shared"_str);
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        toolchain::command::push_option(command, "-soname"_str);
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        command.push(request.soname.clone());
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        toolchain::command::push_option(command, "--version-script"_str);
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        pushed = toolchain::command::push_path(command, request.version_script.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        toolchain::command::push_option(command, "--gc-sections"_str);
+        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+        toolchain::command::push_option(command, "--no-undefined"_str);
+        if (request.archive.mode == LinkArchiveMode::Whole) {
+            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(command, "--whole-archive"_str);
+        }
+        pushed = toolchain::command::push_path(command, request.archive.path.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        if (request.archive.mode == LinkArchiveMode::Whole) {
+            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
+            toolchain::command::push_option(command, "--no-whole-archive"_str);
+        }
+        toolchain::command::push_option(command, "-o"_str);
+        pushed = toolchain::command::push_path(command, request.output.as_path());
+        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        auto output = run_command(command, environment_, Some(request.working_directory.as_path()));
+        if (output.is_err()) {
+            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
+        }
+        auto command_output = rstd::move(output).unwrap();
+        if (command_output.exit_code != i32 {}) {
+            return failure<ElfSharedLibraryArtifact>(
+                rstd::format("{} failed while linking '{}'\n{}\n{}",
+                             linker_family_name(linker_identity_.family),
+                             request.output.as_path(),
+                             command_text(command).as_str(),
+                             command_output.standard_error.as_str()));
+        }
+        auto link_identity = rstd::format(
+            "lito-elf-shared-link-v2\ncompiler:{}\nlinker:{}\narchive:{}:{}:{}\narchive-mode:{}\n"
+            "soname:{}\nversion-script:{}\npolicy:gc-sections,no-undefined",
+            compiler_identity_.build_identity.as_str(),
+            linker_identity_.build_identity.as_str(),
+            request.archive.path.as_path(),
+            archive_metadata->size(),
+            rstd::crypto::sha256_hex(archive_contents->as_slice()).as_str(),
+            request.archive.mode == LinkArchiveMode::Whole ? "whole"_str : "normal"_str,
+            request.soname.as_str(),
+            rstd::crypto::sha256_hex(version_script->as_slice()).as_str());
+        return Ok(ElfSharedLibraryArtifact {
+            .file          = request.output.clone(),
+            .soname        = request.soname.clone(),
+            .link_identity = rstd::move(link_identity),
+            .elapsed       = command_output.elapsed,
+        });
+    }
+
     auto strip_artifact(ref<rstd::path::Path>     output_path,
                         ref<rstd::path::Path>     stripper,
                         lito::artifact::StripMode mode,
@@ -1155,7 +1270,7 @@ public:
 private:
     ClangToolchain(PathBuf                       compiler,
                    PathBuf                       c_compiler,
-                   PathBuf                       linker,
+                   LinkerIdentity                linker_identity,
                    PathBuf                       archiver,
                    PathBuf                       resource_dir,
                    CompilerIdentity              identity,
@@ -1166,7 +1281,7 @@ private:
                    ResolvedProcessEnvironment    environment)
         : compiler_(rstd::move(compiler)),
           c_compiler_(rstd::move(c_compiler)),
-          linker_(rstd::move(linker)),
+          linker_identity_(rstd::move(linker_identity)),
           archiver_(rstd::move(archiver)),
           resource_dir_(rstd::move(resource_dir)),
           compiler_identity_(rstd::move(identity)),
@@ -1416,7 +1531,7 @@ private:
 
     PathBuf                                                       compiler_;
     PathBuf                                                       c_compiler_;
-    PathBuf                                                       linker_;
+    LinkerIdentity                                                linker_identity_;
     PathBuf                                                       archiver_;
     PathBuf                                                       resource_dir_;
     CompilerIdentity                                              compiler_identity_;

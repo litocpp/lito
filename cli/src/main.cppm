@@ -72,15 +72,20 @@ auto build_option_domain_text(lito::BuildOptionReportDomain domain) -> ref<str> 
 }
 
 auto render_build_setup(const lito::BuildSetupReport& report) -> String {
+    auto linker_version = report.toolchain.linker_version.as_str();
+    auto newline        = linker_version.find("\n"_str);
+    if (newline.is_some()) linker_version = linker_version.split_at(*newline).get<0>();
     auto result = rstd::format("Build setup\n"
                                "  Toolchain\n"
                                "    C compiler    {}\n"
                                "    C++ compiler  {}\n"
-                               "    linker        {}\n"
+                               "    linker        {} ({}, {})\n"
                                "    archiver      {}\n",
                                tool_resolution_text(report.toolchain.cc).as_str(),
                                tool_resolution_text(report.toolchain.cxx).as_str(),
                                tool_resolution_text(report.toolchain.ld).as_str(),
+                               lito::linker_family_name(report.toolchain.linker_family),
+                               linker_version,
                                tool_resolution_text(report.toolchain.ar).as_str());
     if (! report.profile_values.is_empty()) {
         result.push_str(rstd::format("  Profile {}\n", report.profile.as_str()).as_str());
@@ -194,11 +199,17 @@ void report_host_tool_resolution(void*                                   raw_con
 }
 
 void observe_sdk(void*, const lito::SdkEvent& event) noexcept {
-    if (event.kind == lito::SdkEventKind::Fetch) {
-        rstd::io::println("[fetch] llvm-sdk@{} {}", event.version, event.source);
-        return;
+    auto label = "certify"_str;
+    switch (event.kind) {
+    case lito::SdkEventKind::Fetch: label = "fetch"_str; break;
+    case lito::SdkEventKind::Extract: label = "extract"_str; break;
+    case lito::SdkEventKind::Build: label = "build"_str; break;
+    case lito::SdkEventKind::Link: label = "link"_str; break;
+    case lito::SdkEventKind::Install: label = "install"_str; break;
+    case lito::SdkEventKind::Certify: label = "certify"_str; break;
     }
-    rstd::io::println("[extract] llvm-sdk@{} {}", event.version, event.destination);
+    rstd::io::println(
+        "[{}] llvm-sdk@{} {} {}", label, event.version, event.source, event.destination);
 }
 
 auto sdk_status_text(lito::SdkListStatus status) -> ref<str> {
@@ -507,6 +518,7 @@ extern "C++" int main() {
             .version       = rstd::move(options.version),
             .environment   = rstd::move(config.environment),
             .tools         = rstd::move(config.tools),
+            .toolchain     = rstd::move(config.toolchain),
             .tool_reporter = Some(lito::system::HostToolResolutionSink {
                 .context = rstd::addressof(event_context),
                 .notify  = report_host_tool_resolution,

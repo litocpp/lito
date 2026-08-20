@@ -457,6 +457,26 @@ auto default_toolchain() -> ToolchainSpec {
     };
 }
 
+auto configured_toolchain(const Toml& document) -> ConfigResult<ToolchainSpec> {
+    auto toolchain       = default_toolchain();
+    auto toolchain_value = config_member(document, "toolchain"_str);
+    if (toolchain_value.is_none()) return Ok(rstd::move(toolchain));
+    auto table = rstd_try(config_table(**toolchain_value, "config.toolchain"_str));
+    rstd_try(reject_config_unknown(*table, "config.toolchain"_str, toolchain_config_key));
+    return Ok(apply_toolchain_override(
+        rstd::move(toolchain),
+        ToolchainOverride {
+            .cc = rstd_try(
+                configured_tool_override(**toolchain_value, "cc"_str, "config.toolchain"_str)),
+            .cxx = rstd_try(
+                configured_tool_override(**toolchain_value, "cxx"_str, "config.toolchain"_str)),
+            .ld = rstd_try(
+                configured_tool_override(**toolchain_value, "ld"_str, "config.toolchain"_str)),
+            .ar = rstd_try(
+                configured_tool_override(**toolchain_value, "ar"_str, "config.toolchain"_str)),
+        }));
+}
+
 struct DecodedHostTools {
     ToolSpec                                  executables;
     lito::dependency::PkgConfigProviderConfig pkg_config;
@@ -742,30 +762,14 @@ auto decode_project_config(PathBuf               root,
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto toolchain                = default_toolchain();
+    auto toolchain                = rstd_try(configured_toolchain(document));
     auto tools                    = rstd_try(configured_host_tools(document, root.as_path()));
     auto standard_library         = StandardLibrary::Libcxx;
     auto standard_library_runtime = StandardLibraryRuntime::Dynamic;
     auto toolchain_value          = config_member(document, "toolchain"_str);
     if (toolchain_value.is_some()) {
-        auto table = config_table(**toolchain_value, "config.toolchain"_str);
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_config_unknown(**table, "config.toolchain"_str, toolchain_config_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
         standard_library         = rstd_try(configured_standard_library(**toolchain_value));
         standard_library_runtime = rstd_try(configured_standard_library_runtime(**toolchain_value));
-        toolchain                = apply_toolchain_override(
-            rstd::move(toolchain),
-            ToolchainOverride {
-                .cc = rstd_try(
-                    configured_tool_override(**toolchain_value, "cc"_str, "config.toolchain"_str)),
-                .cxx = rstd_try(
-                    configured_tool_override(**toolchain_value, "cxx"_str, "config.toolchain"_str)),
-                .ld = rstd_try(
-                    configured_tool_override(**toolchain_value, "ld"_str, "config.toolchain"_str)),
-                .ar = rstd_try(
-                    configured_tool_override(**toolchain_value, "ar"_str, "config.toolchain"_str)),
-            });
     }
 
     auto environment = configured_environment(document, root.as_path());
@@ -810,9 +814,11 @@ auto decode_host_tool_command_config(PathBuf root, const Toml& document)
 
     auto environment = rstd_try(configured_environment(document, root.as_path()));
     auto tools       = rstd_try(configured_host_tools(document, root.as_path()));
+    auto toolchain   = rstd_try(configured_toolchain(document));
     return Ok(HostToolCommandConfig {
         .root        = rstd::move(root),
         .environment = rstd::move(environment),
         .tools       = rstd::move(tools.executables),
+        .toolchain   = rstd::move(toolchain),
     });
 }

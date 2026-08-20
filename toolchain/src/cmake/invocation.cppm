@@ -6,6 +6,7 @@ export module lito.toolchain.cmake:invocation;
 import rstd;
 import lito.core;
 import lito.cpp;
+import lito.toolchain.common;
 import lito.system;
 import :model;
 
@@ -86,7 +87,9 @@ auto push_path_argument(Vec<String>&          arguments,
     return Ok(empty {});
 }
 
-auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration& configuration)
+auto push_cmake_toolchain(Vec<String>&                   arguments,
+                          const cpp::BuildConfiguration& configuration,
+                          const LinkerIdentity&          linker)
     -> lito::dependency::DependencyResult<empty> {
     rstd_try(push_path_argument(arguments,
                                 "-DCMAKE_C_COMPILER="_str,
@@ -96,20 +99,15 @@ auto push_cmake_toolchain(Vec<String>& arguments, const cpp::BuildConfiguration&
                                 "-DCMAKE_CXX_COMPILER="_str,
                                 configuration.toolchain.cxx.as_path(),
                                 "C++ compiler"_str));
-#if defined(_WIN32)
-    arguments.push(String::make("-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld=lld"_str));
-    arguments.push(String::make("-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld=lld"_str));
-#else
     rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_C_USING_LINKER_lito_lld=-fuse-ld="_str,
-                                configuration.toolchain.ld.as_path(),
-                                "LLD linker"_str));
+                                "-DCMAKE_C_USING_LINKER_lito_configured=-fuse-ld="_str,
+                                linker.executable.as_path(),
+                                "linker"_str));
     rstd_try(push_path_argument(arguments,
-                                "-DCMAKE_CXX_USING_LINKER_lito_lld=-fuse-ld="_str,
-                                configuration.toolchain.ld.as_path(),
-                                "LLD linker"_str));
-#endif
-    arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_lld"_str));
+                                "-DCMAKE_CXX_USING_LINKER_lito_configured=-fuse-ld="_str,
+                                linker.executable.as_path(),
+                                "linker"_str));
+    arguments.push(String::make("-DCMAKE_LINKER_TYPE=lito_configured"_str));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_AR="_str, configuration.toolchain.ar.as_path(), "archiver"_str));
     return Ok(empty {});
@@ -185,6 +183,7 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
                       const lito::dependency::CMakeProviderConfig& provider,
                       const cpp::BuildConfiguration&               configuration,
                       const cpp::ProfileSpec&                      profile,
+                      const LinkerIdentity&                        linker,
                       const CMakeWorkArea&                         area,
                       const ResolvedProcessEnvironment&            environment)
     -> lito::dependency::DependencyResult<empty> {
@@ -205,7 +204,7 @@ auto configure_source(const ResolvedCMakeDependencyRequirement&    requirement,
     rstd_try(push_cmake_search_path(arguments, provider));
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_INSTALL_PREFIX="_str, area.install.as_path(), "CMake install"_str));
-    rstd_try(push_cmake_toolchain(arguments, configuration));
+    rstd_try(push_cmake_toolchain(arguments, configuration, linker));
     auto cmake_profile = cmake_profile_configuration(profile);
     push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",
@@ -464,6 +463,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
                      const lito::dependency::CMakeProviderConfig& provider,
                      const cpp::BuildConfiguration&               configuration,
                      const cpp::ProfileSpec&                      profile,
+                     const LinkerIdentity&                        linker,
                      const CMakeWorkArea&                         area,
                      const ResolvedProcessEnvironment&            environment)
     -> lito::dependency::DependencyResult<empty> {
@@ -482,7 +482,7 @@ auto configure_probe(const ResolvedCMakeDependencyRequirement&    requirement,
     arguments.push(String::make("-G"_str));
     arguments.push(provider.generator.clone());
     rstd_try(push_cmake_search_path(arguments, provider));
-    rstd_try(push_cmake_toolchain(arguments, configuration));
+    rstd_try(push_cmake_toolchain(arguments, configuration, linker));
     auto cmake_profile = cmake_profile_configuration(profile);
     push_cmake_profile_configuration(arguments, cmake_profile, provider.generator.as_str());
     arguments.push(rstd::format("-DCMAKE_CXX_STANDARD={}",

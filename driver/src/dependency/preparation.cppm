@@ -50,6 +50,22 @@ struct PreparedExternalDependencySources {
     Vec<PreparedPackageExternalSource> sources;
 };
 
+struct ExternalSourceProvenance {
+    String  package;
+    String  name;
+    PathBuf materialized_root;
+    String  stable_source_identity;
+
+    auto clone() const -> ExternalSourceProvenance {
+        return ExternalSourceProvenance {
+            .package                = package.clone(),
+            .name                   = name.clone(),
+            .materialized_root      = materialized_root.clone(),
+            .stable_source_identity = stable_source_identity.clone(),
+        };
+    }
+};
+
 class SelectedCMakeDependencySource {
     RSTD_ENUM(SelectedCMakeDependencySource,
               (Find),

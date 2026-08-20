@@ -288,6 +288,7 @@ auto resolve_cmake_fixtures_with_provider(
                                              provider,
                                              configuration(),
                                              profile,
+                                             linker_identity(),
                                              platform.compiler_default,
                                              platform.effective_target.triple.as_str(),
                                              work_root,

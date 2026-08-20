@@ -95,6 +95,7 @@ struct HostToolCommandConfig {
     PathBuf                root;
     ProcessEnvironmentSpec environment;
     ToolSpec               tools;
+    ToolchainSpec          toolchain;
 };
 
 } // namespace lito::config

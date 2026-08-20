@@ -257,6 +257,7 @@ struct CMakePackagePlan {
     lito::dependency::CMakeProviderConfig provider;
     cpp::BuildConfiguration               configuration;
     cpp::ProfileSpec                      profile;
+    LinkerIdentity                        linker;
     CMakeWorkArea                         area;
     String                                effective_target;
     Vec<CMakePackageOperation>            operations;
@@ -346,10 +347,11 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
                const lito::dependency::CMakeProviderConfig& provider,
                const cpp::BuildConfiguration&               build,
                const cpp::ProfileSpec&                      profile,
+               const LinkerIdentity&                        linker,
                ref<str>                                     effective_target,
                ref<rstd::path::Path>                        profile_cmake_root)
     -> lito::dependency::DependencyResult<CMakeWorkArea> {
-    auto recipe = String::make("lito-cmake-install-v4\n"_str);
+    auto recipe = String::make("lito-cmake-install-v5\n"_str);
     append_identity(recipe, source_identity(requirement).as_str());
     auto executable = path_text(provider.executable.as_path(), "CMake executable"_str);
     if (executable.is_err()) return Err(rstd::move(executable).unwrap_err());
@@ -359,15 +361,13 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     if (c_compiler.is_err()) return Err(rstd::move(c_compiler).unwrap_err());
     auto archiver = path_text(build.toolchain.ar.as_path(), "archiver"_str);
     if (archiver.is_err()) return Err(rstd::move(archiver).unwrap_err());
-    auto linker = path_text(build.toolchain.ld.as_path(), "LLD linker"_str);
-    if (linker.is_err()) return Err(rstd::move(linker).unwrap_err());
     append_identity(recipe, executable->as_str());
     append_identity(recipe, provider.identity.as_str());
     append_identity(recipe, provider.generator.as_str());
     rstd_try(append_search_path_identity(recipe, provider));
     append_identity(recipe, compiler->as_str());
     append_identity(recipe, c_compiler->as_str());
-    append_identity(recipe, linker->as_str());
+    append_identity(recipe, linker.build_identity.as_str());
     append_identity(recipe, archiver->as_str());
     append_identity(recipe, effective_target);
     append_identity(recipe, cmake_build_type(profile));

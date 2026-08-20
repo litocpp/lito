@@ -23,6 +23,21 @@ struct HostToolCapture {
     Vec<String>                           providers;
 };
 
+TEST_F(SystemProcess, ResolvedEnvironmentCanRemoveInheritedVariables) {
+    EnvironmentVariableGuard inherited("LITO_TEST_REMOVED_VARIABLE"_str, "present"_str);
+    auto                     environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    auto resolver = lito::system::ToolResolver(*environment);
+    auto env_tool = resolver.resolve(PathBuf::from("env"_str).as_path(), "env"_str);
+    ASSERT_TRUE(env_tool.is_ok());
+    auto scrubbed  = environment->without_variable("LITO_TEST_REMOVED_VARIABLE"_str);
+    auto arguments = strings(env_tool->executable.as_path().to_str().unwrap());
+    auto output    = lito::system::run_command(arguments, scrubbed);
+    ASSERT_TRUE(output.is_ok());
+    EXPECT_FALSE(output->standard_output.as_str().contains("LITO_TEST_REMOVED_VARIABLE="_str));
+}
+
 void capture_host_tool_resolution(void*                                   raw_context,
                                   const lito::system::HostToolResolution& resolution) noexcept {
     if (resolution.kind != lito::system::HostToolResolution::Kind::Selected) return;

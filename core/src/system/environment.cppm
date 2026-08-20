@@ -170,14 +170,25 @@ public:
     auto executable_extensions() const noexcept -> const Vec<rstd::ffi::OsString>& {
         return executable_extensions_;
     }
+    auto removed_variables() const noexcept -> const Vec<String>& { return removed_variables_; }
+    auto without_variable(ref<str> key) const -> ResolvedProcessEnvironment {
+        auto result = clone();
+        for (const auto& existing : result.removed_variables_) {
+            if (existing.as_str() == key) return result;
+        }
+        result.removed_variables_.push(String::make(key));
+        return result;
+    }
     auto clone() const -> ResolvedProcessEnvironment {
         auto extensions = Vec<rstd::ffi::OsString>::with_capacity(executable_extensions_.len());
         for (const auto& extension : executable_extensions_) {
             extensions.push(rstd::ffi::OsString::from(extension.as_os_str()));
         }
-        return ResolvedProcessEnvironment(as<Clone>(directories_).clone(),
-                                          rstd::ffi::OsString::from(child_path_.as_os_str()),
-                                          rstd::move(extensions));
+        auto result = ResolvedProcessEnvironment(as<Clone>(directories_).clone(),
+                                                 rstd::ffi::OsString::from(child_path_.as_os_str()),
+                                                 rstd::move(extensions));
+        result.removed_variables_ = removed_variables_.clone();
+        return result;
     }
 
 private:
@@ -191,6 +202,7 @@ private:
     Vec<PathBuf>             directories_;
     rstd::ffi::OsString      child_path_;
     Vec<rstd::ffi::OsString> executable_extensions_;
+    Vec<String>              removed_variables_;
 };
 
 struct ResolvedTool {

@@ -1,0 +1,26 @@
+{
+  "packages": [
+    {
+      "dependencies": [],
+      "externals": [
+        {
+          "name": "libxml2",
+          "source": {
+            "kind": "archive",
+            "sha256": "277294cb33119ab71b2bc81f2f445e9bc9435b893ad15bb2cd2b0e859a0ee84a",
+            "url": "https://download.gnome.org/sources/libxml2/2.13/libxml2-2.13.8.tar.xz"
+          }
+        }
+      ],
+      "manifest": "lito.toml",
+      "name": "lito-llvm-sdk-libxml2",
+      "runtime-dependencies": [],
+      "source": {
+        "kind": "path",
+        "path": "."
+      },
+      "version": "2.13.8"
+    }
+  ],
+  "version": 2
+}

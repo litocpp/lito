@@ -85,16 +85,55 @@ struct LlvmSdkArchive {
     }
 };
 
+enum class LlvmSdkRuntimeRecipe
+{
+    Libxml2_2_13_8_MinimalElfV1,
+};
+
+constexpr auto llvm_sdk_runtime_recipe_name(LlvmSdkRuntimeRecipe recipe) noexcept -> ref<str> {
+    switch (recipe) {
+    case LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1:
+        return "libxml2-2.13.8-minimal-elf-v1"_str;
+    }
+    return ""_str;
+}
+
+struct LlvmSdkRuntimeComponent {
+    String               name;
+    String               version;
+    LlvmSdkRuntimeRecipe recipe { LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1 };
+    PathBuf              file;
+    String               soname;
+    Vec<PathBuf>         links;
+    PathBuf              license;
+
+    auto clone() const -> LlvmSdkRuntimeComponent {
+        return LlvmSdkRuntimeComponent {
+            .name    = name.clone(),
+            .version = version.clone(),
+            .recipe  = recipe,
+            .file    = file.clone(),
+            .soname  = soname.clone(),
+            .links   = links.clone(),
+            .license = license.clone(),
+        };
+    }
+};
+
 struct LlvmSdkArtifact {
-    lito::system::HostInfo host;
-    LlvmSdkArchive         archive;
-    LlvmSdkPaths           paths;
+    lito::system::HostInfo       host;
+    LlvmSdkArchive               archive;
+    LlvmSdkPaths                 paths;
+    Vec<LlvmSdkRuntimeComponent> runtime_components;
 
     auto clone() const -> LlvmSdkArtifact {
+        auto components = Vec<LlvmSdkRuntimeComponent>::with_capacity(runtime_components.len());
+        for (const auto& component : runtime_components) components.push(component.clone());
         return LlvmSdkArtifact {
-            .host    = host.clone(),
-            .archive = archive.clone(),
-            .paths   = paths.clone(),
+            .host               = host.clone(),
+            .archive            = archive.clone(),
+            .paths              = paths.clone(),
+            .runtime_components = rstd::move(components),
         };
     }
 };
@@ -384,15 +423,108 @@ auto parse_paths(const Json& value, ref<str> context) -> LlvmSdkCatalogResult<Ll
     return Ok(rstd::move(paths));
 }
 
+auto parse_runtime_component(const Json& value, ref<str> context)
+    -> LlvmSdkCatalogResult<LlvmSdkRuntimeComponent> {
+    rstd_try(
+        known_fields(value, context, { "name"_str, "version"_str, "recipe"_str, "runtime"_str }));
+    auto name        = rstd_try(required_string(value, "name"_str, context));
+    auto version     = rstd_try(required_string(value, "version"_str, context));
+    auto recipe_text = rstd_try(required_string(value, "recipe"_str, context));
+    if (! single_component(name.as_str())) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(
+            rstd::format("{}.name must be one normal component", context));
+    }
+    rstd_try(parse_llvm_version(version.as_str()));
+    auto recipe = Option<LlvmSdkRuntimeRecipe> {};
+    if (recipe_text.as_str() ==
+        llvm_sdk_runtime_recipe_name(LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1)) {
+        recipe = Some(LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1);
+    }
+    if (recipe.is_none()) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(
+            rstd::format("{}.recipe '{}' is unknown", context, recipe_text.as_str()));
+    }
+    auto runtime         = rstd_try(required_member(value, "runtime"_str, context));
+    auto runtime_context = rstd::format("{}.runtime", context);
+    rstd_try(known_fields(*runtime,
+                          runtime_context.as_str(),
+                          { "file"_str, "soname"_str, "links"_str, "license"_str }));
+    auto file    = rstd_try(required_string(*runtime, "file"_str, runtime_context.as_str()));
+    auto soname  = rstd_try(required_string(*runtime, "soname"_str, runtime_context.as_str()));
+    auto license = rstd_try(required_string(*runtime, "license"_str, runtime_context.as_str()));
+    if (! normal_relative_path(file.as_str()) || ! file.as_str().starts_with("lib/"_str)) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(
+            rstd::format("{}.file must be a normal path under lib", runtime_context.as_str()));
+    }
+    if (! single_component(soname.as_str())) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(
+            rstd::format("{}.soname must be a file name", runtime_context.as_str()));
+    }
+    if (! normal_relative_path(license.as_str()) ||
+        ! license.as_str().starts_with("share/licenses/"_str)) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(rstd::format(
+            "{}.license must be a normal path under share/licenses", runtime_context.as_str()));
+    }
+    auto link_values = rstd_try(required_array(*runtime, "links"_str, runtime_context.as_str()));
+    if (link_values->is_empty()) {
+        return catalog_failure<LlvmSdkRuntimeComponent>(
+            rstd::format("{}.links must not be empty", runtime_context.as_str()));
+    }
+    auto links = Vec<PathBuf>::with_capacity(link_values->len());
+    for (usize index {}; index < link_values->len(); ++index) {
+        auto text = (*link_values)[index].as_str();
+        if (text.is_none() || ! normal_relative_path(*text) || ! text->starts_with("lib/"_str)) {
+            return catalog_failure<LlvmSdkRuntimeComponent>(rstd::format(
+                "{}.links[{}] must be a normal path under lib", runtime_context.as_str(), index));
+        }
+        auto path = PathBuf::from(*text);
+        for (const auto& existing : links) {
+            if (existing.as_path() == path.as_path()) {
+                return catalog_failure<LlvmSdkRuntimeComponent>(rstd::format(
+                    "{}.links repeats '{}'", runtime_context.as_str(), path.as_path()));
+            }
+        }
+        links.push(rstd::move(path));
+    }
+    return Ok(LlvmSdkRuntimeComponent {
+        .name    = rstd::move(name),
+        .version = rstd::move(version),
+        .recipe  = *recipe,
+        .file    = PathBuf::from(rstd::move(file)),
+        .soname  = rstd::move(soname),
+        .links   = rstd::move(links),
+        .license = PathBuf::from(rstd::move(license)),
+    });
+}
+
 auto parse_artifact(const Json& value, ref<str> context) -> LlvmSdkCatalogResult<LlvmSdkArtifact> {
-    rstd_try(known_fields(value, context, { "host"_str, "archive"_str, "paths"_str }));
+    rstd_try(known_fields(
+        value, context, { "host"_str, "archive"_str, "paths"_str, "runtime-components"_str }));
     auto host    = rstd_try(required_member(value, "host"_str, context));
     auto archive = rstd_try(required_member(value, "archive"_str, context));
     auto paths   = rstd_try(required_member(value, "paths"_str, context));
+    auto values  = rstd_try(required_array(value, "runtime-components"_str, context));
+    if (values->is_empty()) {
+        return catalog_failure<LlvmSdkArtifact>(
+            rstd::format("{}.runtime-components must not be empty", context));
+    }
+    auto components = Vec<LlvmSdkRuntimeComponent>::with_capacity(values->len());
+    for (usize index {}; index < values->len(); ++index) {
+        auto component = rstd_try(parse_runtime_component(
+            (*values)[index], rstd::format("{}.runtime-components[{}]", context, index).as_str()));
+        for (const auto& existing : components) {
+            if (existing.name == component.name.as_str() || existing.recipe == component.recipe) {
+                return catalog_failure<LlvmSdkArtifact>(
+                    rstd::format("{}.runtime-components repeats name or recipe", context));
+            }
+        }
+        components.push(rstd::move(component));
+    }
     return Ok(LlvmSdkArtifact {
         .host    = rstd_try(parse_host(*host, rstd::format("{}.host", context).as_str())),
         .archive = rstd_try(parse_archive(*archive, rstd::format("{}.archive", context).as_str())),
         .paths   = rstd_try(parse_paths(*paths, rstd::format("{}.paths", context).as_str())),
+        .runtime_components = rstd::move(components),
     });
 }
 

@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import lito.toolchain;
+import :build.error;
 
 using namespace rstd::prelude;
 
@@ -18,6 +19,8 @@ class SdkError {
               (Catalog, (LlvmSdkCatalogError source;)),
               (Acquisition, (lito::acquisition::AcquisitionError source;)),
               (Toolchain, (ToolchainError source;)),
+              (Build, (BuildError source;)),
+              (SourceTree, (lito::source::SourceTreeError source;)),
               (Platform, (lito::system::PlatformError source;)),
               (System, (lito::system::SystemError source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
@@ -32,6 +35,10 @@ enum class SdkEventKind
 {
     Fetch,
     Extract,
+    Build,
+    Link,
+    Install,
+    Certify,
 };
 
 struct SdkEvent {
@@ -71,6 +78,7 @@ struct SdkInstallRequest {
     String                                       version;
     lito::system::ProcessEnvironmentSpec         environment;
     lito::system::ToolSpec                       tools;
+    lito::config::ToolchainSpec                  toolchain;
     Option<lito::system::HostToolResolutionSink> tool_reporter;
     Option<SdkEventSink>                         observer;
 };
@@ -103,8 +111,16 @@ struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
                                        sizeof("LLVM SDK acquisition failed") - 1);
         }
         if (error.is_Toolchain()) {
-            return formatter.write_raw("LLVM SDK certification failed",
-                                       sizeof("LLVM SDK certification failed") - 1);
+            return formatter.write_raw("LLVM SDK toolchain operation failed",
+                                       sizeof("LLVM SDK toolchain operation failed") - 1);
+        }
+        if (error.is_Build()) {
+            return formatter.write_raw("LLVM SDK component build failed",
+                                       sizeof("LLVM SDK component build failed") - 1);
+        }
+        if (error.is_SourceTree()) {
+            return formatter.write_raw("LLVM SDK recipe materialization failed",
+                                       sizeof("LLVM SDK recipe materialization failed") - 1);
         }
         if (error.is_Platform()) {
             return formatter.write_raw("LLVM SDK host detection failed",
@@ -144,6 +160,10 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
         }
         if (error.is_Toolchain()) {
             return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
+        }
+        if (error.is_Build()) return Some(dyn<error::Error>::from_ref(error.as_Build().source));
+        if (error.is_SourceTree()) {
+            return Some(dyn<error::Error>::from_ref(error.as_SourceTree().source));
         }
         if (error.is_Platform()) {
             return Some(dyn<error::Error>::from_ref(error.as_Platform().source));

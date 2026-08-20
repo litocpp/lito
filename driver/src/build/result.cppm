@@ -37,6 +37,7 @@ struct BuildSummary {
     Vec<CompileTestExecution>           compile_tests;
     BuildScriptReport                   script;
     ExternalAssetCatalog                external_assets;
+    Vec<ExternalSourceProvenance>       external_source_provenance;
     CompilerIdentity                    compiler;
     Vec<DocumentationBuildUnit>         documentation_units;
 };

@@ -8,6 +8,7 @@ lito.lock
 /tenon.lock
 demo/**/build/
 tests/fixtures/**/build/
+data/sdk/*/*/build/
 **/lito.lock.tmp.*
 **/tenon.lock.tmp.*
 doc/frontend/node_modules/

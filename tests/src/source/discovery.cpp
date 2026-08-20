@@ -20,6 +20,48 @@ auto discovery_sources(ref<str> source) -> Vec<PathBuf> {
     return result;
 }
 
+TEST_F(SourceDiscovery, BuildSummaryProjectsResolvedExternalSourceProvenance) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str,
+          R"toml([package]
+name = "fixture-external-source-provenance"
+version = "0.1.0"
+standard = "c17"
+
+[external-sources.upstream]
+path = "upstream"
+
+[source-groups.runtime]
+external-source = "upstream"
+sources = ["value.c"]
+
+[lib]
+name = "fixture-external-source-provenance"
+archive = "fixture-external-source-provenance"
+source-groups = ["runtime"]
+)toml"_str },
+        { "upstream/value.c"_str, "int fixture_value(void) { return 7; }\n"_str },
+    };
+    auto project = materialize("external-source-provenance"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto built = lito::build(build_request(project->root.as_path(),
+                                           build_root("external-source-provenance"_str).as_path(),
+                                           Vec<String>::make(),
+                                           build_profile("release"_str)));
+    ASSERT_TRUE(built.is_ok());
+    ASSERT_EQ(built->external_source_provenance.len(), usize(1));
+    const auto& source = built->external_source_provenance[usize {}];
+    EXPECT_EQ(source.package.as_str(), "fixture-external-source-provenance"_str);
+    EXPECT_EQ(source.name.as_str(), "upstream"_str);
+    auto source_name = source.materialized_root.as_path().file_name();
+    ASSERT_TRUE(source_name.is_some());
+    auto source_name_text = source_name->to_str();
+    ASSERT_TRUE(source_name_text.is_some());
+    EXPECT_EQ(*source_name_text, "upstream"_str);
+    EXPECT_TRUE(
+        source.stable_source_identity.as_str().starts_with("lito-package-external-v1\n"_str));
+}
+
 TEST_F(SourceDiscovery, InvalidExplicitSourcesAreRejectedByDiscoveryOwner) {
     struct ExplicitSourceCase {
         ref<str> name;

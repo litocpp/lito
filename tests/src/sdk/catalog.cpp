@@ -45,6 +45,15 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
     ASSERT_TRUE(artifact.is_some());
     EXPECT_EQ((**artifact).archive.sha256.as_str(),
               "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"_str);
+    ASSERT_EQ((**artifact).runtime_components.len(), usize(1));
+    const auto& libxml2 = (**artifact).runtime_components[usize {}];
+    EXPECT_EQ(libxml2.name.as_str(), "libxml2"_str);
+    EXPECT_EQ(libxml2.version.as_str(), "2.13.8"_str);
+    EXPECT_EQ(lito::llvm_sdk_runtime_recipe_name(libxml2.recipe),
+              "libxml2-2.13.8-minimal-elf-v1"_str);
+    EXPECT_EQ(libxml2.file.as_path(),
+              rstd::path::PathBuf::from("lib/libxml2.so.2.13.8"_str).as_path());
+    EXPECT_EQ(libxml2.soname.as_str(), "libxml2.so.2"_str);
 
     host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
     EXPECT_TRUE(lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host).is_none());
@@ -87,6 +96,17 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
                                       catalog_json_string("../bin/clang"_str)));
     EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/paths/cxx"_str,
                                       catalog_json_string("bin/clang"_str)));
+    EXPECT_TRUE(rejects_catalog_value("/releases/0/artifacts/0/runtime-components/0/recipe"_str,
+                                      catalog_json_string("unknown-recipe"_str)));
+    EXPECT_TRUE(
+        rejects_catalog_value("/releases/0/artifacts/0/runtime-components/0/runtime/file"_str,
+                              catalog_json_string("../libxml2.so.2"_str)));
+    EXPECT_TRUE(
+        rejects_catalog_value("/releases/0/artifacts/0/runtime-components/0/runtime/soname"_str,
+                              catalog_json_string("lib/libxml2.so.2"_str)));
+    EXPECT_TRUE(
+        rejects_catalog_value("/releases/0/artifacts/0/runtime-components/0/runtime/links/0"_str,
+                              catalog_json_string("../libxml2.so.2"_str)));
 
     auto unknown              = catalog_document();
     unknown["unexpected"_str] = Json::Bool(true);
@@ -107,4 +127,14 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
     (**values).push((**values)[usize {}].clone());
     EXPECT_TRUE(
         lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_host).as_str()).is_err());
+
+    auto duplicate_component = catalog_document();
+    auto components =
+        duplicate_component.pointer_mut("/releases/0/artifacts/0/runtime-components"_str);
+    ASSERT_TRUE(components.is_some());
+    auto component_values = (**components).as_array_mut();
+    ASSERT_TRUE(component_values.is_some());
+    (**component_values).push((**component_values)[usize {}].clone());
+    EXPECT_TRUE(
+        lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_component).as_str()).is_err());
 }

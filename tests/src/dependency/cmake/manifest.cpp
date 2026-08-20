@@ -542,6 +542,7 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
                                                 fixture_cmake(),
                                                 configuration(),
                                                 default_profile(*parser),
+                                                linker_identity(),
                                                 cross_platform.compiler_default,
                                                 cross_platform.effective_target.triple.as_str(),
                                                 build_root("cross-cmake"_str).as_path());

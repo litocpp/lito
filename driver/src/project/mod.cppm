@@ -152,18 +152,20 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
 }
 
 struct PreparedBuildProject {
-    ClangToolchain       toolchain;
-    BuildPlatform        platform;
-    BuildLayout          layout;
-    cpp::PackageMetadata metadata;
-    ExternalAssetCatalog external_assets;
+    ClangToolchain                toolchain;
+    BuildPlatform                 platform;
+    BuildLayout                   layout;
+    cpp::PackageMetadata          metadata;
+    ExternalAssetCatalog          external_assets;
+    Vec<ExternalSourceProvenance> external_source_provenance;
 };
 
 struct ResolvedProjectMetadata {
-    BuildPlatform        platform;
-    BuildLayout          layout;
-    cpp::PackageMetadata metadata;
-    ExternalAssetCatalog external_assets;
+    BuildPlatform                 platform;
+    BuildLayout                   layout;
+    cpp::PackageMetadata          metadata;
+    ExternalAssetCatalog          external_assets;
+    Vec<ExternalSourceProvenance> external_source_provenance;
 };
 
 struct ResolvedProjectSession {
@@ -171,6 +173,47 @@ struct ResolvedProjectSession {
     cpp::ParsedGlobalBuildOptions build_arguments;
     BuildPlatform                 platform;
 };
+
+auto lto_is_enabled(const Option<lito::manifest::Lto>& value) noexcept -> bool {
+    return value.is_some() && *value != lito::manifest::Lto::Off;
+}
+
+auto validate_linker_profile(const ClangToolchain&                            toolchain,
+                             const cpp::ProfileSpec&                          profile,
+                             const BuildPlatform&                             platform,
+                             const lito::package::EffectiveLanguageStandards& standards)
+    -> ProjectResult<empty> {
+    const auto& linker = toolchain.linker_identity();
+    if (linker.family != LinkerFamily::GnuLd) return Ok(empty {});
+    const auto& target = platform.effective_target;
+    if (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str ||
+        target.triple.as_str() != toolchain.target()) {
+        return Err(ProjectError::Message(rstd::format(
+            "configured GNU ld is only supported for the host ELF target '{}'; effective target "
+            "is '{}'",
+            toolchain.target(),
+            target.triple.as_str())));
+    }
+    const auto reject_lto = [&](ref<str>                           field,
+                                const Option<lito::manifest::Lto>& value,
+                                const Option<String>&              source) -> ProjectResult<empty> {
+        if (! lto_is_enabled(value)) return Ok(empty {});
+        return Err(ProjectError::Message(
+            rstd::format("configured GNU ld does not support LLVM LTO '{}' selected for {} by {}",
+                         cpp::cpp_lto_option(value),
+                         field,
+                         source.is_some() ? source->as_str() : profile.name.as_str())));
+    };
+    if (standards.c.is_some()) {
+        rstd_try(
+            reject_lto("C compilation"_str, profile.c.common.codegen.lto, profile.c_sources.lto));
+    }
+    if (standards.cpp.is_some()) {
+        rstd_try(reject_lto(
+            "C++ compilation"_str, profile.cpp.common.codegen.lto, profile.cpp_sources.lto));
+    }
+    return reject_lto("linking"_str, profile.link_lto, profile.link_lto_source);
+}
 
 auto resolve_project_session(const lito::package::PackageSelection&         selection,
                              const cpp::BuildConfiguration&                 configuration,
@@ -252,6 +295,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                             profile,
                                                             rstd::move(session.build_arguments)));
     const auto& target    = session.platform.effective_target;
+    rstd_try(
+        validate_linker_profile(toolchain, resolved_profile, session.platform, project.standards));
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
         target.environment != TargetEnvironment::Msvc) {
         return Err(ProjectError::Message(rstd::format(
@@ -368,6 +413,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   cmake,
                                                                   resolved_configuration,
                                                                   resolved_profile,
+                                                                  toolchain.linker_identity(),
                                                                   *layout,
                                                                   session.platform,
                                                                   tool_resolver,
@@ -376,6 +422,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   observer,
                                                                   sources));
     auto assets         = rstd::move(external_usage.assets);
+    auto provenance     = rstd::move(external_usage.provenance);
     auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
                                                             project.selected_package_names,
                                                             project.selected_targets,
@@ -389,10 +436,11 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         return Err(rstd::into<ProjectError>(rstd::move(metadata).unwrap_err()));
     }
     return Ok(ResolvedProjectMetadata {
-        .platform        = rstd::move(session.platform),
-        .layout          = rstd::move(layout).unwrap(),
-        .metadata        = rstd::move(metadata).unwrap(),
-        .external_assets = rstd::move(assets),
+        .platform                   = rstd::move(session.platform),
+        .layout                     = rstd::move(layout).unwrap(),
+        .metadata                   = rstd::move(metadata).unwrap(),
+        .external_assets            = rstd::move(assets),
+        .external_source_provenance = rstd::move(provenance),
     });
 }
 
@@ -426,11 +474,12 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
-        .toolchain       = rstd::move(toolchain),
-        .platform        = rstd::move(resolved.platform),
-        .layout          = rstd::move(resolved.layout),
-        .metadata        = rstd::move(resolved.metadata),
-        .external_assets = rstd::move(resolved.external_assets),
+        .toolchain                  = rstd::move(toolchain),
+        .platform                   = rstd::move(resolved.platform),
+        .layout                     = rstd::move(resolved.layout),
+        .metadata                   = rstd::move(resolved.metadata),
+        .external_assets            = rstd::move(resolved.external_assets),
+        .external_source_provenance = rstd::move(resolved.external_source_provenance),
     });
 }
 
@@ -527,11 +576,12 @@ auto prepare_build_project(
     if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
     auto resolved_metadata = rstd::move(metadata).unwrap();
     return Ok(PreparedBuildProject {
-        .toolchain       = rstd::move(toolchain),
-        .platform        = rstd::move(resolved_metadata.platform),
-        .layout          = rstd::move(resolved_metadata.layout),
-        .metadata        = rstd::move(resolved_metadata.metadata),
-        .external_assets = rstd::move(resolved_metadata.external_assets),
+        .toolchain                  = rstd::move(toolchain),
+        .platform                   = rstd::move(resolved_metadata.platform),
+        .layout                     = rstd::move(resolved_metadata.layout),
+        .metadata                   = rstd::move(resolved_metadata.metadata),
+        .external_assets            = rstd::move(resolved_metadata.external_assets),
+        .external_source_provenance = rstd::move(resolved_metadata.external_source_provenance),
     });
 }
 

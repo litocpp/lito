@@ -1,0 +1,16 @@
+#ifndef __XML_VERSION_H__
+#define __XML_VERSION_H__
+
+#define LIBXML_DOTTED_VERSION "@VERSION@"
+#define LIBXML_VERSION @VERSION_NUMBER@
+#define LIBXML_VERSION_STRING "@VERSION_NUMBER@"
+#define LIBXML_VERSION_EXTRA ""
+#define LIBXML_TEST_VERSION xmlCheckVersion(@VERSION_NUMBER@);
+
+#define LIBXML_TREE_ENABLED
+#define LIBXML_PUSH_ENABLED
+#define LIBXML_OUTPUT_ENABLED
+
+#include <libxml/xmlexports.h>
+
+#endif

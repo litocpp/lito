@@ -63,6 +63,7 @@ auto apply_command_environment(rstd::process::Command&           command,
                                const ResolvedProcessEnvironment& environment,
                                Option<ref<CommandEnvironment>>   overrides = None()) -> void {
     command.env("PATH"_str, environment.child_path());
+    for (const auto& key : environment.removed_variables()) command.env_remove(key.as_str());
     if (overrides.is_none()) return;
     if ((*overrides)->clear) command.env_clear().env("PATH"_str, environment.child_path());
     for (const auto& entry : (*overrides)->entries) {

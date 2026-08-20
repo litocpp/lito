@@ -22,6 +22,8 @@ struct BuildToolchainReport {
     BuildToolResolution cxx;
     BuildToolResolution ld;
     BuildToolResolution ar;
+    LinkerFamily        linker_family { LinkerFamily::Lld };
+    String              linker_version;
 };
 
 enum class BuildOptionReportDomain
@@ -79,6 +81,8 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                                              .executable = PathBuf::from(resolved.ld_path()) },
                 .ar  = BuildToolResolution { .requested  = requested.ar.clone(),
                                              .executable = PathBuf::from(resolved.ar_path()) },
+                .linker_family  = resolved.linker_identity().family,
+                .linker_version = resolved.linker_identity().version.clone(),
             },
         .profile = profile.name.clone(),
     };

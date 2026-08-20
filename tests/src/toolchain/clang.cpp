@@ -494,7 +494,83 @@ TEST(ClangToolchain, RejectsNonLldLinkers) {
     ASSERT_TRUE(created.is_err());
     auto error = rstd::move(created).unwrap_err();
     ASSERT_TRUE(error.is_Message());
-    EXPECT_TRUE(error.as_Message().message.as_str().contains("not LLD"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("unsupported"_str));
+}
+
+TEST(LinkerIdentity, StrictlyClassifiesLldAndGnuLdVersionSignatures) {
+#if RSTD_OS_UNIX
+    struct SignatureCase {
+        ref<str>                   name;
+        ref<str>                   version;
+        Option<lito::LinkerFamily> family;
+    };
+    constexpr SignatureCase cases[] = {
+        { "lld"_str, "LLD 22.1.8"_str, Some(lito::LinkerFamily::Lld) },
+        { "gnu-ld"_str, "GNU ld (GNU Binutils) 2.47"_str, Some(lito::LinkerFamily::GnuLd) },
+        { "gold"_str, "GNU gold (GNU Binutils 2.47) 1.16"_str, None() },
+        { "mold"_str, "mold 2.40.0 (compatible with GNU ld)"_str, None() },
+        { "clang"_str, "clang version 22.1.8"_str, None() },
+    };
+    auto directory = rstd::fs::TempDir::make("lito-linker-probe-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto environment =
+        lito::system::ResolvedProcessEnvironment::resolve(lito::system::ProcessEnvironmentSpec {});
+    ASSERT_TRUE(environment.is_ok());
+    for (const auto& item : cases) {
+        auto executable = PathBuf::from(directory->path()).join(PathBuf::from(item.name).as_path());
+        auto script     = rstd::format("#!/bin/sh\nprintf '%s\\n' '{}'\n", item.version);
+        ASSERT_TRUE(rstd::fs::write(executable.as_path(), script.as_str().as_bytes()).is_ok());
+        ASSERT_TRUE(rstd::fs::set_permissions(executable.as_path(),
+                                              rstd::fs::Permissions::from_mode(u32(0755)))
+                        .is_ok());
+        auto identity = lito::probe_linker(executable.as_path(), *environment);
+        if (item.family.is_some()) {
+            ASSERT_TRUE(identity.is_ok());
+            EXPECT_EQ(identity->family, *item.family);
+        } else {
+            EXPECT_TRUE(identity.is_err());
+        }
+    }
+#endif
+}
+
+TEST(ClangToolchain, LinksTypedElfSharedLibraryWithGnuLd) {
+#if RSTD_OS_UNIX
+    if (! rstd::fs::exists(PathBuf::from("/usr/bin/ld"_str).as_path()).unwrap()) return;
+    auto build_configuration         = configuration();
+    build_configuration.toolchain.ld = PathBuf::from("/usr/bin/ld"_str);
+    auto created                     = ClangToolchain::create(build_configuration.toolchain);
+    ASSERT_TRUE(created.is_ok());
+    EXPECT_EQ(created->linker_identity().family, lito::LinkerFamily::GnuLd);
+    auto directory = rstd::fs::TempDir::make("lito-elf-shared-link-test"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto archive =
+        PathBuf::from(directory->path()).join(PathBuf::from("libfixture.a"_str).as_path());
+    auto archived = created->archive(archive.as_path(), Vec<PathBuf>::make(), directory->path());
+    ASSERT_TRUE(archived.is_ok());
+    auto version_script =
+        PathBuf::from(directory->path()).join(PathBuf::from("fixture.map"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(version_script.as_path(), "LITO_1 { global: *; };\n"_str.as_bytes())
+                    .is_ok());
+    auto output =
+        PathBuf::from(directory->path()).join(PathBuf::from("libfixture.so.1"_str).as_path());
+    auto linked = created->link_elf_shared_library(lito::ElfSharedLibraryLinkRequest {
+        .output = output.clone(),
+        .archive =
+            lito::LinkArchive {
+                .path = archive.clone(),
+                .mode = lito::LinkArchiveMode::Whole,
+            },
+        .soname            = String::make("libfixture.so.1"_str),
+        .version_script    = version_script.clone(),
+        .working_directory = PathBuf::from(directory->path()),
+    });
+    ASSERT_TRUE(linked.is_ok());
+    EXPECT_EQ(linked->file.as_path(), output.as_path());
+    EXPECT_EQ(linked->soname.as_str(), "libfixture.so.1"_str);
+    EXPECT_TRUE(linked->link_identity.as_str().contains("GNU ld"_str));
+    EXPECT_TRUE(rstd::fs::exists(output.as_path()).unwrap());
+#endif
 }
 
 TEST(ClangToolchain, DoesNotPublishOneOutputWhenAnotherIsMissing) {
