@@ -12,7 +12,7 @@ VERSION_PATTERN = re.compile(r"(?:0|[1-9][0-9]*)\.(?:0|[1-9][0-9]*)\.(?:0|[1-9][
 
 
 def fail(message: str) -> None:
-    print(f"update-llvm-sdk-catalog: {message}", file=sys.stderr)
+    print(f"update-llvm-sdk: {message}", file=sys.stderr)
     raise SystemExit(1)
 
 
@@ -89,7 +89,7 @@ def catalog_candidate(version: str, document: dict) -> dict:
 
 def main() -> None:
     if len(sys.argv) != 2 or VERSION_PATTERN.fullmatch(sys.argv[1]) is None:
-        fail("usage: update-llvm-sdk-catalog MAJOR.MINOR.PATCH")
+        fail("usage: update-llvm-sdk MAJOR.MINOR.PATCH")
     version = sys.argv[1]
     candidate = catalog_candidate(version, release(version))
     json.dump(candidate, sys.stdout, indent=2)
