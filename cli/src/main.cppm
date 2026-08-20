@@ -201,21 +201,23 @@ void report_host_tool_resolution(void*                                  raw_cont
         return;
     }
     if (resolution.executable.is_none()) return;
-    auto selected = resolution.requested.as_path() == resolution.executable->as_path()
-                        ? rstd::format("{}", resolution.executable->as_path())
-                        : rstd::format("{} -> {}",
-                                       resolution.requested.as_path(),
-                                       resolution.executable->as_path());
+    auto selected  = resolution.requested.as_path() == resolution.executable->as_path()
+                         ? rstd::format("{}", resolution.executable->as_path())
+                         : rstd::format("{} -> {}",
+                                        resolution.requested.as_path(),
+                                        resolution.executable->as_path());
+    auto requested = resolution.requested.as_path().to_str();
+    if (requested.is_none() || *requested != resolution.provider.as_str()) {
+        selected = rstd::format("{} {}", resolution.provider.as_str(), selected.as_str());
+    }
     if (context.standard_error) {
         rstd::io::eprintln(
-            "[tool] {} {} {}",
+            "[tool] {} {}",
             lito::tools::host_tool_capability_name(resolution.requirement.capability),
-            resolution.provider.as_str(),
             selected.as_str());
     } else {
-        rstd::io::println("[tool] {} {} {}",
+        rstd::io::println("[tool] {} {}",
                           lito::tools::host_tool_capability_name(resolution.requirement.capability),
-                          resolution.provider.as_str(),
                           selected.as_str());
     }
 }
