@@ -25,7 +25,7 @@ namespace lito
 {
 
 inline constexpr auto LITODOC_REPOSITORY = "https://github.com/litocpp/litodoc.git"_str;
-inline constexpr auto LITODOC_COMMIT     = "30ba17f5fa23b307640b5eba1d7175368dc551ce"_str;
+inline constexpr auto LITODOC_COMMIT     = "e8ee37d340037a2802174ddd9796c3f90da0e097"_str;
 
 template<typename T>
 auto doc_tool_failure(String message) -> DocResult<T> {
@@ -81,7 +81,7 @@ auto parse_capabilities(String                  text,
         (**clang_build).as_str().is_none() ||
         ! json_protocol_contains(*parsed, "extract_protocols"_str, u64(1)) ||
         ! json_protocol_contains(*parsed, "site_manifest_versions"_str, u64(1)) ||
-        ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(3)) ||
+        ! json_protocol_contains(*parsed, "data_api_versions"_str, u64(4)) ||
         ! json_feature_contains(*parsed, "embedded-default-frontend"_str) ||
         ! json_feature_contains(*parsed, "package-publications-v1"_str)) {
         return Err(DocError::Protocol(PathBuf::from(executable),
