@@ -63,12 +63,13 @@ struct BuildSetupReportSink {
 namespace lito
 {
 
-auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
-                             const lito::config::ToolchainSpec&       requested,
-                             const ClangToolchain&                    resolved,
-                             const lito::config::ProjectBuildOptions& options,
-                             lito::config::StandardLibraryRuntime     standard_library_runtime,
-                             const lito::cpp::ProfileSpec&            profile) -> void {
+auto emit_build_setup_report(const Option<BuildSetupReportSink>&              reporter,
+                             const lito::config::ToolchainSpec&               requested,
+                             const ClangToolchain&                            resolved,
+                             const lito::config::ProjectBuildOptions&         options,
+                             const lito::package::EffectiveLanguageStandards& standards,
+                             lito::config::StandardLibraryRuntime standard_library_runtime,
+                             const lito::cpp::ProfileSpec&        profile) -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
         .toolchain =
@@ -123,25 +124,31 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
         }
         append_value("NDEBUG"_str, ndebug_value, sources.ndebug);
     };
-    append_codegen(BuildOptionReportDomain::Cpp,
-                   profile.cpp.common.codegen,
-                   profile.cpp_sources,
-                   profile.cpp_ndebug);
-    append_codegen(
-        BuildOptionReportDomain::C, profile.c.common.codegen, profile.c_sources, profile.c_ndebug);
-    auto profile_source = rstd::format("profile '{}'", profile.name.as_str());
-    report.profile_values.push(BuildProfileValueReport {
-        .domain = BuildOptionReportDomain::Cpp,
-        .field  = String::make("exceptions"_str),
-        .value  = String::make(profile.cpp.language.exceptions ? "enabled"_str : "disabled"_str),
-        .source = profile_source.clone(),
-    });
-    report.profile_values.push(BuildProfileValueReport {
-        .domain = BuildOptionReportDomain::Cpp,
-        .field  = String::make("RTTI"_str),
-        .value  = String::make(profile.cpp.language.rtti ? "enabled"_str : "disabled"_str),
-        .source = rstd::move(profile_source),
-    });
+    if (standards.cpp.is_some()) {
+        append_codegen(BuildOptionReportDomain::Cpp,
+                       profile.cpp.common.codegen,
+                       profile.cpp_sources,
+                       profile.cpp_ndebug);
+        auto profile_source = rstd::format("profile '{}'", profile.name.as_str());
+        report.profile_values.push(BuildProfileValueReport {
+            .domain = BuildOptionReportDomain::Cpp,
+            .field  = String::make("exceptions"_str),
+            .value = String::make(profile.cpp.language.exceptions ? "enabled"_str : "disabled"_str),
+            .source = profile_source.clone(),
+        });
+        report.profile_values.push(BuildProfileValueReport {
+            .domain = BuildOptionReportDomain::Cpp,
+            .field  = String::make("RTTI"_str),
+            .value  = String::make(profile.cpp.language.rtti ? "enabled"_str : "disabled"_str),
+            .source = rstd::move(profile_source),
+        });
+    }
+    if (standards.c.is_some()) {
+        append_codegen(BuildOptionReportDomain::C,
+                       profile.c.common.codegen,
+                       profile.c_sources,
+                       profile.c_ndebug);
+    }
     const auto append_microsoft_runtime =
         [&report](BuildOptionReportDomain                                domain,
                   const Option<lito::compiler::MicrosoftRuntimeLibrary>& runtime) {
@@ -155,32 +162,40 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                 .source = String::make("effective toolchain policy"_str),
             });
         };
-    append_microsoft_runtime(BuildOptionReportDomain::Cpp,
-                             profile.cpp.common.microsoft_runtime_library);
-    append_microsoft_runtime(BuildOptionReportDomain::C,
-                             profile.c.common.microsoft_runtime_library);
-    report.profile_values.push(BuildProfileValueReport {
-        .domain = BuildOptionReportDomain::Link,
-        .field  = String::make("standard library"_str),
-        .value =
-            String::make(lito::config::standard_library_name(profile.cpp.abi.standard_library)),
-        .source = String::make("toolchain.stdlib"_str),
-    });
-    report.profile_values.push(BuildProfileValueReport {
-        .domain = BuildOptionReportDomain::Link,
-        .field  = String::make("standard library runtime"_str),
-        .value =
-            String::make(lito::config::standard_library_runtime_name(standard_library_runtime)),
-        .source = String::make("toolchain.stdlib-runtime"_str),
-    });
+    if (standards.cpp.is_some()) {
+        append_microsoft_runtime(BuildOptionReportDomain::Cpp,
+                                 profile.cpp.common.microsoft_runtime_library);
+        report.profile_values.push(BuildProfileValueReport {
+            .domain = BuildOptionReportDomain::Link,
+            .field  = String::make("standard library"_str),
+            .value =
+                String::make(lito::config::standard_library_name(profile.cpp.abi.standard_library)),
+            .source = String::make("toolchain.stdlib"_str),
+        });
+        report.profile_values.push(BuildProfileValueReport {
+            .domain = BuildOptionReportDomain::Link,
+            .field  = String::make("standard library runtime"_str),
+            .value =
+                String::make(lito::config::standard_library_runtime_name(standard_library_runtime)),
+            .source = String::make("toolchain.stdlib-runtime"_str),
+        });
+    }
+    if (standards.c.is_some()) {
+        append_microsoft_runtime(BuildOptionReportDomain::C,
+                                 profile.c.common.microsoft_runtime_library);
+    }
     report.profile_values.push(BuildProfileValueReport {
         .domain = BuildOptionReportDomain::Link,
         .field  = String::make("LTO"_str),
         .value  = profile.link_lto.is_some()
                       ? String::make(lito::cpp::cpp_lto_option(profile.link_lto))
                       : String::make("per-language"_str),
-        .source = profile.link_lto_source.is_some() ? profile.link_lto_source->clone()
-                                                    : String::make("C/C++ compile settings"_str),
+        .source = profile.link_lto_source.is_some()
+                      ? profile.link_lto_source->clone()
+                      : String::make(standards.c.is_some() && standards.cpp.is_some()
+                                         ? "C/C++ compile settings"_str
+                                         : (standards.c.is_some() ? "C compile settings"_str
+                                                                  : "C++ compile settings"_str)),
     });
     auto strip_value  = String::make("compiler default"_str);
     auto strip_source = Option<String> {};

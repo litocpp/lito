@@ -355,6 +355,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                             configuration.toolchain,
                             toolchain,
                             configuration.global_options,
+                            project.standards,
                             resolved_configuration.standard_library_runtime,
                             resolved_profile);
     auto layout = BuildLayout::create(

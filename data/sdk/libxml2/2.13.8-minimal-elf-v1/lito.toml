@@ -72,10 +72,6 @@ private-include-directories = [
 private-definitions = ['SYSCONFDIR="/etc"']
 options = ["-fPIC", "-ffunction-sections", "-fdata-sections"]
 
-[profile]
-exceptions = false
-rtti = false
-
 [profile.sdk]
 inherits = "release"
 opt-level = "z"

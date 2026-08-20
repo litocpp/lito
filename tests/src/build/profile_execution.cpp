@@ -99,6 +99,47 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     EXPECT_EQ(*plain_status->code(), i32(1));
 }
 
+TEST_F(BuildProfileExecution, COnlyBuildReportsOnlyApplicableProfileSettings) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str,
+          "[package]\n"
+          "name = \"fixture-c-only-profile-report\"\n"
+          "version = \"0.1.0\"\n"
+          "standard = \"c17\"\n"
+          "[lib]\n"
+          "name = \"fixture-c-only-profile-report\"\n"
+          "archive = \"fixture_c_only_profile_report\"\n"
+          "sources = [\"value.c\"]\n"_str },
+        { "value.c"_str, "int fixture_c_only_profile_report(void) { return 0; }\n"_str },
+    };
+    auto project = materialize("c-only-profile-report"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request           = build_request(project->root.as_path(),
+                                           build_root("c-only-profile-report"_str).as_path(),
+                                           Vec<String>::make());
+    auto report            = CompileProgressCapture {};
+    request.setup_reporter = Some(lito::BuildSetupReportSink {
+        .context = rstd::addressof(report),
+        .notify  = capture_build_setup,
+    });
+    auto built             = lito::build(request);
+    ASSERT_TRUE(built.is_ok());
+
+    auto reported_c_optimization = false;
+    for (const auto& value : report.profile_values) {
+        EXPECT_NE(value.domain, lito::BuildOptionReportDomain::Cpp);
+        if (value.domain == lito::BuildOptionReportDomain::C &&
+            value.field.as_str() == "optimization"_str) {
+            reported_c_optimization = true;
+        }
+        if (value.domain == lito::BuildOptionReportDomain::Link) {
+            EXPECT_NE(value.field.as_str(), "standard library"_str);
+            EXPECT_NE(value.field.as_str(), "standard library runtime"_str);
+        }
+    }
+    EXPECT_TRUE(reported_c_optimization);
+}
+
 TEST_F(BuildProfileExecution, GnuLdRejectsLlvmLtoBeforeCompilation) {
 #if RSTD_OS_UNIX
     if (! rstd::fs::exists(PathBuf::from("/usr/bin/ld"_str).as_path()).unwrap()) return;
