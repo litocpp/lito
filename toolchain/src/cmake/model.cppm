@@ -336,6 +336,7 @@ auto clone_profile(const cpp::ProfileSpec& profile) -> cpp::ProfileSpec {
         .linker_strip          = profile.linker_strip,
         .c_sources             = profile.c_sources.clone(),
         .cpp_sources           = profile.cpp_sources.clone(),
+        .cpp_language_sources  = profile.cpp_language_sources.clone(),
         .strip_source          = profile.strip_source.clone(),
         .link_lto_source       = profile.link_lto_source.clone(),
         .linker_strip_source   = profile.linker_strip_source.clone(),

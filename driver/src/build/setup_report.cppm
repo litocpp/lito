@@ -129,18 +129,17 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                        profile.cpp.common.codegen,
                        profile.cpp_sources,
                        profile.cpp_ndebug);
-        auto profile_source = rstd::format("profile '{}'", profile.name.as_str());
         report.profile_values.push(BuildProfileValueReport {
             .domain = BuildOptionReportDomain::Cpp,
             .field  = String::make("exceptions"_str),
             .value = String::make(profile.cpp.language.exceptions ? "enabled"_str : "disabled"_str),
-            .source = profile_source.clone(),
+            .source = profile.cpp_language_sources.exceptions.clone(),
         });
         report.profile_values.push(BuildProfileValueReport {
             .domain = BuildOptionReportDomain::Cpp,
             .field  = String::make("RTTI"_str),
             .value  = String::make(profile.cpp.language.rtti ? "enabled"_str : "disabled"_str),
-            .source = rstd::move(profile_source),
+            .source = profile.cpp_language_sources.rtti.clone(),
         });
     }
     if (standards.c.is_some()) {

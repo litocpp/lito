@@ -34,6 +34,10 @@ protected:
     }
 };
 
+auto profile_bool(const lito::manifest::BooleanProfileSetting& setting) -> bool {
+    return setting.default_value();
+}
+
 TEST_F(BuildProfile, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
     auto default_project = profile_project("defaults"_str);
     ASSERT_TRUE(default_project.is_ok());
@@ -42,8 +46,8 @@ TEST_F(BuildProfile, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
     auto default_profile =
         lito::manifest::resolve_build_profile(defaults->profile, build_profile("debug"_str));
     ASSERT_TRUE(default_profile.is_ok());
-    EXPECT_TRUE(default_profile->exceptions);
-    EXPECT_TRUE(default_profile->rtti);
+    EXPECT_TRUE(profile_bool(default_profile->exceptions));
+    EXPECT_TRUE(profile_bool(default_profile->rtti));
 
     auto disabled_project = manifest_project("disabled"_str, R"toml([package]
 name = "fixture-profile-disabled"
@@ -64,8 +68,8 @@ rtti = false
     auto disabled_profile =
         lito::manifest::resolve_build_profile(disabled->profile, build_profile("release"_str));
     ASSERT_TRUE(disabled_profile.is_ok());
-    EXPECT_FALSE(disabled_profile->exceptions);
-    EXPECT_FALSE(disabled_profile->rtti);
+    EXPECT_FALSE(profile_bool(disabled_profile->exceptions));
+    EXPECT_FALSE(profile_bool(disabled_profile->rtti));
 
     const ProjectFile workspace_files[] = {
         {
@@ -101,8 +105,10 @@ sources = ["main.cpp"]
     auto workspace_profile =
         lito::manifest::resolve_build_profile(workspace->profile, build_profile("plain"_str));
     ASSERT_TRUE(workspace_profile.is_ok());
-    EXPECT_TRUE(workspace_profile->exceptions);
-    EXPECT_FALSE(workspace_profile->rtti);
+    EXPECT_TRUE(workspace_profile->exceptions.is_delegated());
+    EXPECT_TRUE(workspace_profile->rtti.is_delegated());
+    EXPECT_TRUE(profile_bool(workspace_profile->exceptions));
+    EXPECT_FALSE(profile_bool(workspace_profile->rtti));
 
     const ProjectFile dependency_files[] = {
         {
@@ -147,8 +153,8 @@ rtti = false
     auto dependency_profile =
         lito::manifest::resolve_build_profile(dependency->profile, build_profile("debug"_str));
     ASSERT_TRUE(dependency_profile.is_ok());
-    EXPECT_TRUE(dependency_profile->exceptions);
-    EXPECT_TRUE(dependency_profile->rtti);
+    EXPECT_TRUE(profile_bool(dependency_profile->exceptions));
+    EXPECT_TRUE(profile_bool(dependency_profile->rtti));
 }
 
 TEST_F(BuildProfile, BaseProfileIsInheritedAndSelectableProfilesCanOverrideIt) {
@@ -185,14 +191,22 @@ exceptions = true
     ASSERT_TRUE(plain.is_ok());
     ASSERT_TRUE(release.is_ok());
     ASSERT_TRUE(perf.is_ok());
-    EXPECT_FALSE(debug->exceptions);
-    EXPECT_FALSE(debug->rtti);
-    EXPECT_FALSE(plain->exceptions);
-    EXPECT_FALSE(plain->rtti);
-    EXPECT_FALSE(release->exceptions);
-    EXPECT_TRUE(release->rtti);
-    EXPECT_TRUE(perf->exceptions);
-    EXPECT_TRUE(perf->rtti);
+    EXPECT_FALSE(debug->exceptions.is_delegated());
+    EXPECT_FALSE(debug->rtti.is_delegated());
+    EXPECT_FALSE(profile_bool(debug->exceptions));
+    EXPECT_FALSE(profile_bool(debug->rtti));
+    EXPECT_TRUE(plain->exceptions.is_delegated());
+    EXPECT_TRUE(plain->rtti.is_delegated());
+    EXPECT_FALSE(profile_bool(plain->exceptions));
+    EXPECT_FALSE(profile_bool(plain->rtti));
+    EXPECT_FALSE(release->exceptions.is_delegated());
+    EXPECT_FALSE(release->rtti.is_delegated());
+    EXPECT_FALSE(profile_bool(release->exceptions));
+    EXPECT_TRUE(profile_bool(release->rtti));
+    EXPECT_FALSE(perf->exceptions.is_delegated());
+    EXPECT_FALSE(perf->rtti.is_delegated());
+    EXPECT_TRUE(profile_bool(perf->exceptions));
+    EXPECT_TRUE(profile_bool(perf->rtti));
 }
 
 TEST_F(BuildProfile, LegacyDottedProfilePolicyMapsToBaseAndConflictsAreRejected) {
@@ -215,8 +229,8 @@ sources = ["main.cpp"]
     auto legacy =
         lito::manifest::resolve_build_profile(legacy_graph->profile, build_profile("release"_str));
     ASSERT_TRUE(legacy.is_ok());
-    EXPECT_FALSE(legacy->exceptions);
-    EXPECT_FALSE(legacy->rtti);
+    EXPECT_FALSE(profile_bool(legacy->exceptions));
+    EXPECT_FALSE(profile_bool(legacy->rtti));
 
     auto conflict_project = manifest_project("profile-base-conflict"_str, R"toml([package]
 name = "fixture-profile-base-conflict"
@@ -343,6 +357,67 @@ TEST_F(BuildProfile, GlobalCOptionsRemainInTheCLanguageDomain) {
     EXPECT_FALSE(profile->cpp_link_requirements.posix_threads);
     ASSERT_EQ(profile->c_link_requirements.thread_sources.len(), usize(1));
     EXPECT_EQ(profile->c_link_requirements.thread_sources[usize {}].as_str(), "CFLAGS"_str);
+}
+
+TEST_F(BuildProfile, ExceptionFlagsRespectLanguageOwnership) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+
+    auto equivalent = configuration();
+    equivalent.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fexceptions"_str, "-frtti"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto equivalent_profile = lito::cpp::make_profile_spec(
+        equivalent, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(equivalent_profile.is_ok());
+    EXPECT_TRUE(equivalent_profile->cpp.language.exceptions);
+    EXPECT_TRUE(equivalent_profile->cpp.language.rtti);
+
+    auto conflicting = configuration();
+    conflicting.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fno-exceptions"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto conflicting_profile = lito::cpp::make_profile_spec(
+        conflicting, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(conflicting_profile.is_err());
+    auto conflict = rstd::move(conflicting_profile).unwrap_err();
+    ASSERT_TRUE(conflict.is_Message());
+    EXPECT_TRUE(conflict.as_Message().message.as_str().contains("sets exceptions"_str));
+    EXPECT_TRUE(conflict.as_Message().message.as_str().contains("selected profile 'debug'"_str));
+
+    auto plain_project = lito::manifest::ProjectProfile {
+        .base =
+            lito::manifest::BaseProfileDefinition {
+                .exceptions = Some<bool>(false),
+                .rtti       = Some<bool>(false),
+            },
+    };
+    auto plain_override = configuration();
+    plain_override.global_options.cpp.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fexceptions"_str, "-frtti"_str),
+        .source    = String::make("CXXFLAGS"_str),
+    });
+    auto plain_profile = lito::cpp::make_profile_spec(
+        plain_override, plain_project, build_profile("plain"_str), *parser);
+    ASSERT_TRUE(plain_profile.is_ok());
+    EXPECT_TRUE(plain_profile->cpp.language.exceptions);
+    EXPECT_TRUE(plain_profile->cpp.language.rtti);
+    EXPECT_EQ(plain_profile->cpp_language_sources.exceptions.as_str(), "CXXFLAGS"_str);
+    EXPECT_EQ(plain_profile->cpp_language_sources.rtti.as_str(), "CXXFLAGS"_str);
+
+    auto c_flags = configuration();
+    c_flags.global_options.c.push(lito::config::BuildOptionInput {
+        .arguments = strings("-fexceptions"_str),
+        .source    = String::make("CFLAGS"_str),
+    });
+    auto c_profile = lito::cpp::make_profile_spec(
+        c_flags, lito::manifest::ProjectProfile {}, build_profile("debug"_str), *parser);
+    ASSERT_TRUE(c_profile.is_ok());
+    ASSERT_EQ(c_profile->c.vendor.len(), usize(1));
+    EXPECT_EQ(c_profile->c.vendor[usize {}].value.as_str(), "-fexceptions"_str);
+    EXPECT_EQ(c_profile->c.vendor[usize {}].effect, lito::c::CVendorOptionEffect::Codegen);
 }
 
 TEST_F(BuildProfile, GlobalLanguageAndLinkOptionsHaveIndependentIdentities) {

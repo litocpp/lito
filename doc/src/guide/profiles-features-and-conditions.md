@@ -10,10 +10,11 @@ the build and BMI identities when they affect compilation.
 for build-oriented commands other than `install`. `release` uses optimization level 3, no debug
 information, no stripping, and no LTO. It also defines `NDEBUG` and is the default for `install`.
 
-`plain` delegates optimization, debug information, LTO, `NDEBUG`, and link-time stripping to global
-build inputs. An unspecified field uses the compiler default: Lito does not translate it to `-O0`,
-`-g0`, or `-fno-lto`. `plain` does not delegate the language standard, target, sysroot, standard
-library, exceptions, RTTI, BMI policy, or PIC.
+`plain` delegates optimization, debug information, LTO, `NDEBUG`, link-time stripping, exceptions,
+and RTTI to global build inputs. An unspecified code-generation field uses the compiler default:
+Lito does not translate it to `-O0`, `-g0`, or `-fno-lto`. Exceptions and RTTI instead retain the
+values inherited from `base` as fallbacks. `plain` does not delegate the language standard, target,
+sysroot, standard library, BMI policy, or PIC.
 
 Every selectable profile inherits exception and RTTI policy from the non-selectable `base` profile:
 
@@ -24,9 +25,10 @@ rtti = false
 ```
 
 `base` cannot be selected or used as an explicit `inherits` target. A built-in or custom profile
-may override either setting; the selected result still applies consistently to the complete build
-graph. The legacy `profile.exceptions` and `profile.rtti` spellings remain accepted for this
-version but are deprecated.
+may fix either setting. Otherwise `plain` and profiles inheriting it allow global C++ build inputs
+to override the inherited fallback; the effective result still applies consistently to the
+complete build graph. The legacy `profile.exceptions` and `profile.rtti` spellings remain accepted
+for this version but are deprecated.
 
 Create a named profile by inheriting an existing one:
 
@@ -50,8 +52,9 @@ lto = "thin"
 
 ## Project build options
 
-Profiles own optimization, debug information, stripping, LTO, exceptions, and RTTI. Project config
-can add options without moving that policy into package manifests:
+Profiles own fixed optimization, debug information, stripping, LTO, exceptions, and RTTI settings.
+Project config can provide fields delegated by `plain` without moving that policy into package
+manifests:
 
 ```toml
 [build]
@@ -69,12 +72,15 @@ one invocation; ambient values are otherwise ignored. With `plain`, these inputs
 delegated code-generation fields:
 
 ```sh
-CFLAGS="-O2 -g" CXXFLAGS="-O2 -g" LDFLAGS="-Wl,-z,relro" \
+CFLAGS="-O2 -g -fexceptions" CXXFLAGS="-O2 -g -fexceptions -frtti" \
+  LDFLAGS="-Wl,-z,relro" \
   lito --use-env-flags build --profile plain
 ```
 
-For `debug`, `release`, or a fixed field in a custom profile, an equal typed value is normalized and
-a different value remains an error. Package `usage.options` cannot provide delegated profile fields.
+For `debug`, `release`, or a field explicitly fixed by a `plain`-derived profile, an equal typed
+value is normalized and a different value remains an error. C `-fexceptions` is a C code-generation
+option and does not modify the C++ exception policy. Package `usage.options` cannot provide
+delegated profile fields.
 
 ## Package features
 

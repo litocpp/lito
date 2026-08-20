@@ -36,6 +36,18 @@ struct CodegenSettingSources {
     }
 };
 
+struct CppLanguageSettingSources {
+    String exceptions;
+    String rtti;
+
+    auto clone() const -> CppLanguageSettingSources {
+        return CppLanguageSettingSources {
+            .exceptions = exceptions.clone(),
+            .rtti       = rtti.clone(),
+        };
+    }
+};
+
 struct ProfileSpec {
     String                             name;
     lito::manifest::BuildProfileFamily family { lito::manifest::BuildProfileFamily::Debug };
@@ -51,6 +63,7 @@ struct ProfileSpec {
     Option<lito::artifact::StripMode>  linker_strip;
     CodegenSettingSources              c_sources;
     CodegenSettingSources              cpp_sources;
+    CppLanguageSettingSources          cpp_language_sources;
     Option<String>                     strip_source;
     Option<String>                     link_lto_source;
     Option<String>                     linker_strip_source;
@@ -95,6 +108,34 @@ auto profile_failure(String message) -> lito::manifest::BuildProfileResult<T> {
 
 auto occurrence_option(const Vec<String>& tokens) -> ref<str> {
     return tokens.is_empty() ? "<structured compiler option>"_str : tokens[usize {}].as_str();
+}
+
+auto language_setting_text(bool enabled) noexcept -> ref<str> {
+    return enabled ? "enabled"_str : "disabled"_str;
+}
+
+auto merge_cpp_language_setting(const lito::manifest::BooleanProfileSetting& policy,
+                                bool&                                        effective,
+                                String&                                      effective_source,
+                                bool                                         requested_value,
+                                ref<str>                                     field,
+                                ref<str>                                     profile_name,
+                                ref<str>                                     option,
+                                ref<str> source) -> lito::manifest::BuildProfileResult<empty> {
+    if (! policy.is_delegated() && policy.default_value() != requested_value) {
+        return profile_failure<empty>(
+            rstd::format("compiler option '{}' from {} sets {} to '{}', but the selected profile "
+                         "'{}' fixes it to '{}'",
+                         option,
+                         source,
+                         field,
+                         language_setting_text(requested_value),
+                         profile_name,
+                         language_setting_text(policy.default_value())));
+    }
+    effective = requested_value;
+    if (policy.is_delegated()) effective_source = String::make(source);
+    return Ok(empty {});
 }
 
 auto profile_setting_text(lito::manifest::Optimization value) -> ref<str> {
@@ -404,6 +445,13 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     -> lito::manifest::BuildProfileResult<ProfileSpec> {
     auto selected =
         rstd_try(lito::manifest::resolve_build_profile(project_profile, selected_profile));
+    auto profile_source       = rstd::format("profile '{}'", selected.name.as_str());
+    auto cpp_exceptions       = selected.exceptions.default_value();
+    auto cpp_rtti             = selected.rtti.default_value();
+    auto cpp_language_sources = CppLanguageSettingSources {
+        .exceptions = profile_source.clone(),
+        .rtti       = rstd::move(profile_source),
+    };
     auto cpp_sources = CodegenSettingSources {};
     auto c_sources   = CodegenSettingSources {};
     auto cpp_codegen = fixed_codegen(selected, cpp_sources);
@@ -436,12 +484,32 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
                     merge_codegen_setting(selected, cpp_codegen, cpp_sources, setting, occurrence));
                 consume = true;
             }
-            RSTD_CASE(OwnedSetting, setting) {
-                static_cast<void>(setting);
-                return profile_failure<ProfileSpec>(
-                    rstd::format("compiler option '{}' from {} overrides a Lito-owned setting",
-                                 occurrence_option(occurrence.raw_tokens),
-                                 occurrence.source.as_str()));
+            RSTD_CASE(OwnedSetting, setting, enabled) {
+                if (enabled.is_none()) {
+                    return profile_failure<ProfileSpec>(
+                        rstd::format("compiler option '{}' from {} overrides a Lito-owned setting",
+                                     occurrence_option(occurrence.raw_tokens),
+                                     occurrence.source.as_str()));
+                }
+                auto        field            = "RTTI"_str;
+                const auto* policy           = rstd::addressof(selected.rtti);
+                auto*       effective        = rstd::addressof(cpp_rtti);
+                auto*       effective_source = rstd::addressof(cpp_language_sources.rtti);
+                if (setting == CppOwnedSetting::Exceptions) {
+                    field            = "exceptions"_str;
+                    policy           = rstd::addressof(selected.exceptions);
+                    effective        = rstd::addressof(cpp_exceptions);
+                    effective_source = rstd::addressof(cpp_language_sources.exceptions);
+                }
+                rstd_try(merge_cpp_language_setting(*policy,
+                                                    *effective,
+                                                    *effective_source,
+                                                    *enabled,
+                                                    field,
+                                                    selected.name.as_str(),
+                                                    occurrence_option(occurrence.raw_tokens),
+                                                    occurrence.source.as_str()));
+                consume = true;
             }
             RSTD_CASE(IncludeDirectory, value) {
                 static_cast<void>(value);
@@ -611,8 +679,8 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     cpp_layer.arguments = rstd::move(cpp_arguments);
     auto cpp_result     = make_cpp_options(configuration.language_standard.as_str(),
                                            configuration.standard_library,
-                                           selected.exceptions,
-                                           selected.rtti,
+                                           cpp_exceptions,
+                                           cpp_rtti,
                                            rstd::move(cpp_codegen),
                                            rstd::move(cpp_layer));
     if (cpp_result.is_err()) {
@@ -638,6 +706,7 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
         .linker_strip          = linker_strip,
         .c_sources             = rstd::move(c_sources),
         .cpp_sources           = rstd::move(cpp_sources),
+        .cpp_language_sources  = rstd::move(cpp_language_sources),
         .strip_source          = selected.strip.fixed.is_some() && linker_strip.is_none()
                                      ? Some(rstd::format("profile '{}'", selected.name.as_str()))
                                      : None(),

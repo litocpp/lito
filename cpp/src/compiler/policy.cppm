@@ -202,8 +202,9 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
                 static_cast<void>(setting);
                 return option_error("invalid prevalidated Lito-owned codegen option"_str);
             }
-            RSTD_CASE(OwnedSetting, setting) {
+            RSTD_CASE(OwnedSetting, setting, enabled) {
                 static_cast<void>(setting);
+                static_cast<void>(enabled);
                 return option_error("invalid prevalidated Lito-owned compiler option"_str);
             }
             RSTD_CASE(Family, domain, family, value) {

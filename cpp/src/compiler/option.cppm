@@ -257,7 +257,7 @@ class CppCompilerArgument : public DefaultInClass<CppCompilerArgument, Clone> {
               (IncludeDirectory, (CppIncludeDirectory directory;)),
               (Common, (lito::compiler::CommonCompilerArgument argument;)),
               (CodegenSetting, (lito::compiler::CodegenCompilerSetting setting;)),
-              (OwnedSetting, (CppOwnedSetting setting;)),
+              (OwnedSetting, (CppOwnedSetting setting; Option<bool> enabled;)),
               (Family, (CppOptionFamilyDomain domain; String family; String value;)),
               (Instrumentation, (String value;)),
               (SymbolVisibility, (CppSymbolVisibility value;)),
@@ -347,8 +347,8 @@ inline auto CppCompilerArgument::clone() const -> CppCompilerArgument {
         RSTD_CASE(CodegenSetting, setting) {
             return CppCompilerArgument::CodegenSetting(as<Clone>(setting).clone());
         }
-        RSTD_CASE(OwnedSetting, setting) {
-            return CppCompilerArgument::OwnedSetting(setting);
+        RSTD_CASE(OwnedSetting, setting, enabled) {
+            return CppCompilerArgument::OwnedSetting(setting, enabled.clone());
         }
         RSTD_CASE(Family, domain, family, value) {
             return CppCompilerArgument::Family(domain, family.clone(), value.clone());

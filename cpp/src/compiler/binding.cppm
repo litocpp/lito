@@ -102,6 +102,17 @@ auto owned_setting(CppCompilerArgumentKind kind) noexcept -> CppOwnedSetting {
     }
 }
 
+auto owned_setting_enabled(CppCompilerArgumentKind      kind,
+                           const CompilerArgumentMatch& matched) noexcept -> Option<bool> {
+    if (kind == CppCompilerArgumentKind::OwnedRtti) {
+        return Some<bool>(matched.spelling.as_str() == "-frtti"_str);
+    }
+    if (kind == CppCompilerArgumentKind::OwnedExceptions) {
+        return Some<bool>(matched.spelling.as_str() == "-fexceptions"_str);
+    }
+    return None();
+}
+
 auto invalid_codegen_setting(const CompilerArgumentMatch& matched,
                              ref<str>                     source,
                              ref<str>                     expected)
@@ -256,7 +267,8 @@ auto make_cpp_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
     case CppCompilerArgumentKind::OwnedRtti:
     case CppCompilerArgumentKind::OwnedExceptions:
-        return Ok(CppCompilerArgument::OwnedSetting(owned_setting(kind)));
+        return Ok(CppCompilerArgument::OwnedSetting(owned_setting(kind),
+                                                    owned_setting_enabled(kind, matched)));
     case CppCompilerArgumentKind::OwnedOptimization:
     case CppCompilerArgumentKind::OwnedDebugInfo:
     case CppCompilerArgumentKind::OwnedLto:
@@ -434,13 +446,14 @@ auto make_c_compiler_argument(const CompilerArgumentMatch&      matched,
     case CppCompilerArgumentKind::OwnedStandardLibrary:
     case CppCompilerArgumentKind::OwnedBmiRepresentation:
     case CppCompilerArgumentKind::OwnedRtti:
-    case CppCompilerArgumentKind::OwnedExceptions:
         return Err(CompilerOptionError::Message(
             rstd::format("{} arguments {}..{}: compiler option '{}' overrides a Lito-owned setting",
                          source,
                          matched.range.begin,
                          matched.range.end,
                          matched.raw_tokens[usize {}].as_str())));
+    case CppCompilerArgumentKind::OwnedExceptions:
+        return Ok(c_vendor_argument(matched, lito::c::CVendorOptionEffect::Codegen));
     case CppCompilerArgumentKind::OwnedOptimization:
     case CppCompilerArgumentKind::OwnedDebugInfo:
     case CppCompilerArgumentKind::OwnedLto:

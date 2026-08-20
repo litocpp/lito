@@ -83,6 +83,22 @@ struct ProfileSetting {
     auto is_delegated() const noexcept -> bool { return fixed.is_none(); }
 };
 
+struct BooleanProfileSetting {
+    bool value { true };
+    bool delegated { false };
+
+    static auto with_value(bool value) -> BooleanProfileSetting {
+        return BooleanProfileSetting { .value = value };
+    }
+
+    static auto delegated_with_fallback(bool value) -> BooleanProfileSetting {
+        return BooleanProfileSetting { .value = value, .delegated = true };
+    }
+
+    auto is_delegated() const noexcept -> bool { return delegated; }
+    auto default_value() const noexcept -> bool { return value; }
+};
+
 struct BuildProfileDefinition {
     BuildProfileName                  name;
     Option<BuildProfileName>          inherits;
@@ -116,8 +132,8 @@ struct BaseProfileDefinition {
 struct ResolvedBuildProfile {
     BuildProfileName                          name;
     BuildProfileFamily                        family { BuildProfileFamily::Debug };
-    bool                                      exceptions { true };
-    bool                                      rtti { true };
+    BooleanProfileSetting                     exceptions;
+    BooleanProfileSetting                     rtti;
     ProfileSetting<Optimization>              optimization;
     ProfileSetting<DebugInfo>                 debug_info;
     ProfileSetting<lito::artifact::StripMode> strip;
@@ -234,8 +250,10 @@ auto inherited_cycle(const Vec<String>& path, ref<str> name) -> Option<String> {
 auto apply_definition(ResolvedBuildProfile profile, const BuildProfileDefinition& value)
     -> ResolvedBuildProfile {
     profile.name = value.name.clone();
-    if (value.exceptions.is_some()) profile.exceptions = *value.exceptions;
-    if (value.rtti.is_some()) profile.rtti = *value.rtti;
+    if (value.exceptions.is_some()) {
+        profile.exceptions = BooleanProfileSetting::with_value(*value.exceptions);
+    }
+    if (value.rtti.is_some()) profile.rtti = BooleanProfileSetting::with_value(*value.rtti);
     if (value.optimization.is_some()) {
         profile.optimization = ProfileSetting<Optimization>::with_value(*value.optimization);
     }
@@ -278,8 +296,8 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
         auto       profile = ResolvedBuildProfile {
             .name       = BuildProfileName { .value = String::make(name) },
             .family     = BuildProfileFamily::Plain,
-            .exceptions = base.exceptions,
-            .rtti       = base.rtti,
+            .exceptions = BooleanProfileSetting::with_value(base.exceptions),
+            .rtti       = BooleanProfileSetting::with_value(base.rtti),
         };
         if (name == "debug"_str) {
             profile.family       = BuildProfileFamily::Debug;
@@ -297,6 +315,9 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
                 lito::artifact::StripMode::None);
             profile.lto    = ProfileSetting<Lto>::with_value(Lto::Off);
             profile.ndebug = ProfileSetting<bool>::with_value(true);
+        } else {
+            profile.exceptions = BooleanProfileSetting::delegated_with_fallback(base.exceptions);
+            profile.rtti       = BooleanProfileSetting::delegated_with_fallback(base.rtti);
         }
         if (declared.is_some()) profile = apply_definition(rstd::move(profile), **declared);
         return Ok(rstd::move(profile));

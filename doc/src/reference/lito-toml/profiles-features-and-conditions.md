@@ -14,7 +14,8 @@ replacement cannot both be declared in one manifest.
 by `debug`, `release`, `plain`, and all custom profiles. It cannot declare `inherits`, cannot be used
 as an explicit parent, and cannot be selected with `--profile`.
 
-A selectable profile may override either setting. The resolved setting applies to the complete
+A selectable profile may fix either setting. `plain` otherwise treats the inherited values as
+fallbacks that global C++ build inputs may override. The effective setting applies to the complete
 package graph and participates in compiler, BMI, and artifact identities.
 
 ## `[profile.NAME]`
@@ -31,12 +32,12 @@ package graph and participates in compiler, BMI, and artifact identities.
 Boolean `debug = true` means full debug information. Boolean `strip = true` strips symbols. Boolean
 `lto = true` means fat LTO.
 
-The built-in `plain` profile inherits exceptions and RTTI from `base`, and leaves optimization,
-debug information, strip, LTO, and `NDEBUG` delegated. Custom profiles may use
-`inherits = "plain"` and fix only selected fields. If a delegated field is not supplied by global
-build configuration or explicitly enabled environment flags, Lito does not emit a compiler option
-for it. This does not delegate other Lito-owned C/C++ contracts, and package usage cannot set these
-fields.
+The built-in `plain` profile delegates exceptions, RTTI, optimization, debug information, strip,
+LTO, and `NDEBUG`. Custom profiles may use `inherits = "plain"` and fix only selected fields. For
+exceptions and RTTI, the values inherited from `base` remain the fallback when global C++ build
+configuration or explicitly enabled `CXXFLAGS` do not provide an option. Other unspecified
+delegated fields remain at the compiler default. This does not delegate other Lito-owned C/C++
+contracts, and package usage cannot set these fields.
 
 The built-in defaults are described in
 [Profiles, features, and conditions](../../guide/profiles-features-and-conditions.md).

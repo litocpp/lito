@@ -51,7 +51,7 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     auto plain_request = build_request(
         directory.as_path(), output.as_path(), Vec<String>::make(), build_profile("plain"_str));
     plain_request.configuration.global_options.cpp.push(lito::config::BuildOptionInput {
-        .arguments = strings("-O2"_str, "-g"_str),
+        .arguments = strings("-O2"_str, "-g"_str, "-fno-exceptions"_str, "-fno-rtti"_str),
         .source    = String::make("CXXFLAGS"_str),
     });
     auto plain_report            = CompileProgressCapture {};
@@ -69,14 +69,14 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
         if (value.domain == lito::BuildOptionReportDomain::Cpp &&
             value.field.as_str() == "exceptions"_str) {
             reported_exceptions = true;
-            EXPECT_EQ(value.value.as_str(), "enabled"_str);
-            EXPECT_EQ(value.source.as_str(), "profile 'plain'"_str);
+            EXPECT_EQ(value.value.as_str(), "disabled"_str);
+            EXPECT_EQ(value.source.as_str(), "CXXFLAGS"_str);
         }
         if (value.domain == lito::BuildOptionReportDomain::Cpp &&
             value.field.as_str() == "RTTI"_str) {
             reported_rtti = true;
-            EXPECT_EQ(value.value.as_str(), "enabled"_str);
-            EXPECT_EQ(value.source.as_str(), "profile 'plain'"_str);
+            EXPECT_EQ(value.value.as_str(), "disabled"_str);
+            EXPECT_EQ(value.source.as_str(), "CXXFLAGS"_str);
         }
         if (value.domain != lito::BuildOptionReportDomain::Cpp ||
             value.field.as_str() != "optimization"_str) {
