@@ -121,19 +121,17 @@ struct LlvmSdkRuntimeComponent {
 };
 
 struct LlvmSdkArtifact {
-    lito::system::HostInfo       host;
-    LlvmSdkArchive               archive;
-    LlvmSdkPaths                 paths;
-    Vec<LlvmSdkRuntimeComponent> runtime_components;
+    lito::system::HostInfo host;
+    LlvmSdkArchive         archive;
+    LlvmSdkPaths           paths;
+    Vec<String>            runtime_components;
 
     auto clone() const -> LlvmSdkArtifact {
-        auto components = Vec<LlvmSdkRuntimeComponent>::with_capacity(runtime_components.len());
-        for (const auto& component : runtime_components) components.push(component.clone());
         return LlvmSdkArtifact {
             .host               = host.clone(),
             .archive            = archive.clone(),
             .paths              = paths.clone(),
-            .runtime_components = rstd::move(components),
+            .runtime_components = runtime_components.clone(),
         };
     }
 };
@@ -155,7 +153,8 @@ struct LlvmSdkRelease {
 };
 
 struct LlvmSdkCatalog {
-    Vec<LlvmSdkRelease> releases;
+    Vec<LlvmSdkRuntimeComponent> runtime_components;
+    Vec<LlvmSdkRelease>          releases;
 };
 
 auto parse_llvm_version(ref<str> value) -> LlvmSdkCatalogResult<LlvmVersion>;
@@ -170,6 +169,8 @@ auto find_llvm_sdk_release(const LlvmSdkCatalog& catalog, ref<str> version)
     -> Option<ref<LlvmSdkRelease>>;
 auto find_llvm_sdk_artifact(const LlvmSdkRelease& release, const lito::system::HostInfo& host)
     -> Option<ref<LlvmSdkArtifact>>;
+auto find_llvm_sdk_runtime_component(const LlvmSdkCatalog& catalog, ref<str> name)
+    -> Option<ref<LlvmSdkRuntimeComponent>>;
 auto llvm_version_less(const LlvmVersion& left, const LlvmVersion& right) noexcept -> bool;
 
 } // namespace lito
@@ -497,7 +498,20 @@ auto parse_runtime_component(const Json& value, ref<str> context)
     });
 }
 
-auto parse_artifact(const Json& value, ref<str> context) -> LlvmSdkCatalogResult<LlvmSdkArtifact> {
+auto find_runtime_component(const Vec<LlvmSdkRuntimeComponent>& components, ref<str> name)
+    -> Option<ref<LlvmSdkRuntimeComponent>> {
+    for (const auto& component : components) {
+        if (component.name.as_str() == name) {
+            return Some(ref<LlvmSdkRuntimeComponent>::from_raw_parts(rstd::addressof(component)));
+        }
+    }
+    return None();
+}
+
+auto parse_artifact(const Json&                         value,
+                    ref<str>                            context,
+                    const Vec<LlvmSdkRuntimeComponent>& available_components)
+    -> LlvmSdkCatalogResult<LlvmSdkArtifact> {
     rstd_try(known_fields(
         value, context, { "host"_str, "archive"_str, "paths"_str, "runtime-components"_str }));
     auto host    = rstd_try(required_member(value, "host"_str, context));
@@ -508,17 +522,27 @@ auto parse_artifact(const Json& value, ref<str> context) -> LlvmSdkCatalogResult
         return catalog_failure<LlvmSdkArtifact>(
             rstd::format("{}.runtime-components must not be empty", context));
     }
-    auto components = Vec<LlvmSdkRuntimeComponent>::with_capacity(values->len());
+    auto components = Vec<String>::with_capacity(values->len());
     for (usize index {}; index < values->len(); ++index) {
-        auto component = rstd_try(parse_runtime_component(
-            (*values)[index], rstd::format("{}.runtime-components[{}]", context, index).as_str()));
+        auto component = (*values)[index].as_str();
+        if (component.is_none() || component->is_empty()) {
+            return catalog_failure<LlvmSdkArtifact>(rstd::format(
+                "{}.runtime-components[{}] must be a non-empty string", context, index));
+        }
+        if (find_runtime_component(available_components, *component).is_none()) {
+            return catalog_failure<LlvmSdkArtifact>(
+                rstd::format("{}.runtime-components[{}] references unknown component '{}'",
+                             context,
+                             index,
+                             *component));
+        }
         for (const auto& existing : components) {
-            if (existing.name == component.name.as_str() || existing.recipe == component.recipe) {
+            if (existing.as_str() == *component) {
                 return catalog_failure<LlvmSdkArtifact>(
-                    rstd::format("{}.runtime-components repeats name or recipe", context));
+                    rstd::format("{}.runtime-components repeats '{}'", context, *component));
             }
         }
-        components.push(rstd::move(component));
+        components.push(String::make(*component));
     }
     return Ok(LlvmSdkArtifact {
         .host    = rstd_try(parse_host(*host, rstd::format("{}.host", context).as_str())),
@@ -528,7 +552,10 @@ auto parse_artifact(const Json& value, ref<str> context) -> LlvmSdkCatalogResult
     });
 }
 
-auto parse_release(const Json& value, usize index) -> LlvmSdkCatalogResult<LlvmSdkRelease> {
+auto parse_release(const Json&                         value,
+                   usize                               index,
+                   const Vec<LlvmSdkRuntimeComponent>& runtime_components)
+    -> LlvmSdkCatalogResult<LlvmSdkRelease> {
     auto context = rstd::format("LLVM SDK catalog release {}", index);
     rstd_try(known_fields(
         value, context.as_str(), { "version"_str, "upstream-tag"_str, "artifacts"_str }));
@@ -548,8 +575,8 @@ auto parse_release(const Json& value, usize index) -> LlvmSdkCatalogResult<LlvmS
     auto artifacts = Vec<LlvmSdkArtifact>::with_capacity(values->len());
     for (usize artifact_index {}; artifact_index < values->len(); ++artifact_index) {
         auto artifact_context = rstd::format("{}.artifacts[{}]", context.as_str(), artifact_index);
-        auto artifact =
-            rstd_try(parse_artifact((*values)[artifact_index], artifact_context.as_str()));
+        auto artifact         = rstd_try(parse_artifact(
+            (*values)[artifact_index], artifact_context.as_str(), runtime_components));
         for (const auto& existing : artifacts) {
             if (existing.host.os == artifact.host.os.as_str() &&
                 existing.host.architecture == artifact.host.architecture) {
@@ -577,7 +604,7 @@ auto parse_release(const Json& value, usize index) -> LlvmSdkCatalogResult<LlvmS
 }
 
 static constexpr unsigned char EMBEDDED_LLVM_SDK_CATALOG[] = {
-#embed "../../../data/llvm-sdk-catalog.json"
+#embed "../../../data/llvm-sdk.json"
 };
 
 } // namespace lito
@@ -617,22 +644,42 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
     auto parsed = rstd::json::from_str(text);
     if (parsed.is_err()) return Err(LlvmSdkCatalogError::Json(rstd::move(parsed).unwrap_err()));
     auto document = rstd::move(parsed).unwrap();
-    rstd_try(known_fields(
-        document, "LLVM SDK catalog root"_str, { "schema"_str, "kind"_str, "releases"_str }));
+    rstd_try(known_fields(document,
+                          "LLVM SDK catalog root"_str,
+                          { "schema"_str, "kind"_str, "runtime-components"_str, "releases"_str }));
     auto schema = rstd_try(required_u64(document, "schema"_str, "LLVM SDK catalog root"_str));
     if (schema != u64(1)) {
         return catalog_failure<LlvmSdkCatalog>(
             rstd::format("LLVM SDK catalog schema {} is not supported", schema));
     }
     auto kind = rstd_try(required_string(document, "kind"_str, "LLVM SDK catalog root"_str));
-    if (kind.as_str() != "lito-llvm-sdk-catalog"_str) {
+    if (kind.as_str() != "lito-llvm-sdk"_str) {
         return catalog_failure<LlvmSdkCatalog>(
             rstd::format("LLVM SDK catalog kind '{}' is not supported", kind));
+    }
+    auto component_values =
+        rstd_try(required_array(document, "runtime-components"_str, "LLVM SDK catalog root"_str));
+    if (component_values->is_empty()) {
+        return catalog_failure<LlvmSdkCatalog>(
+            String::make("LLVM SDK catalog runtime-components must not be empty"_str));
+    }
+    auto runtime_components = Vec<LlvmSdkRuntimeComponent>::with_capacity(component_values->len());
+    for (usize index {}; index < component_values->len(); ++index) {
+        auto component = rstd_try(parse_runtime_component(
+            (*component_values)[index],
+            rstd::format("LLVM SDK catalog runtime-components[{}]", index).as_str()));
+        for (const auto& existing : runtime_components) {
+            if (existing.name == component.name.as_str() || existing.recipe == component.recipe) {
+                return catalog_failure<LlvmSdkCatalog>(
+                    String::make("LLVM SDK catalog runtime-components repeats name or recipe"_str));
+            }
+        }
+        runtime_components.push(rstd::move(component));
     }
     auto values   = rstd_try(required_array(document, "releases"_str, "LLVM SDK catalog root"_str));
     auto releases = Vec<LlvmSdkRelease>::with_capacity(values->len());
     for (usize index {}; index < values->len(); ++index) {
-        auto release = rstd_try(parse_release((*values)[index], index));
+        auto release = rstd_try(parse_release((*values)[index], index, runtime_components));
         for (const auto& existing : releases) {
             if (existing.version.text == release.version.text.as_str()) {
                 return catalog_failure<LlvmSdkCatalog>(rstd::format(
@@ -645,7 +692,10 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
                                    [](const LlvmSdkRelease& left, const LlvmSdkRelease& right) {
                                        return llvm_version_less(right.version, left.version);
                                    });
-    return Ok(LlvmSdkCatalog { .releases = rstd::move(releases) });
+    return Ok(LlvmSdkCatalog {
+        .runtime_components = rstd::move(runtime_components),
+        .releases           = rstd::move(releases),
+    });
 }
 
 auto validate_llvm_sdk_archive_identity(ref<str> url, ref<str> sha256, u64 size, ref<str> context)
@@ -718,6 +768,11 @@ auto find_llvm_sdk_artifact(const LlvmSdkRelease& release, const lito::system::H
         }
     }
     return None();
+}
+
+auto find_llvm_sdk_runtime_component(const LlvmSdkCatalog& catalog, ref<str> name)
+    -> Option<ref<LlvmSdkRuntimeComponent>> {
+    return find_runtime_component(catalog.runtime_components, name);
 }
 
 } // namespace lito

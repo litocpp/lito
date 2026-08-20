@@ -693,6 +693,7 @@ auto paths_equal(const lito::LlvmSdkPaths& left, const lito::LlvmSdkPaths& right
 }
 
 auto descriptor_matches(const InstalledSdkDescriptor& descriptor,
+                        const lito::LlvmSdkCatalog&   catalog,
                         const lito::LlvmSdkRelease&   release,
                         const lito::LlvmSdkArtifact&  artifact) -> bool {
     if (descriptor.version != release.version.text.as_str() ||
@@ -706,22 +707,26 @@ auto descriptor_matches(const InstalledSdkDescriptor& descriptor,
     }
     auto recipe = libxml2_recipe();
     if (recipe.is_err()) return false;
-    for (const auto& expected : artifact.runtime_components) {
+    for (const auto& reference : artifact.runtime_components) {
+        auto expected = lito::find_llvm_sdk_runtime_component(catalog, reference.as_str());
+        if (expected.is_none()) return false;
         const InstalledRuntimeComponent* installed = nullptr;
         for (const auto& candidate : descriptor.components) {
-            if (candidate.name == expected.name.as_str()) installed = rstd::addressof(candidate);
+            if (candidate.name == (**expected).name.as_str()) {
+                installed = rstd::addressof(candidate);
+            }
         }
-        if (installed == nullptr || installed->version != expected.version.as_str() ||
-            installed->recipe != lito::llvm_sdk_runtime_recipe_name(expected.recipe) ||
+        if (installed == nullptr || installed->version != (**expected).version.as_str() ||
+            installed->recipe != lito::llvm_sdk_runtime_recipe_name((**expected).recipe) ||
             installed->recipe_digest != recipe->digest.as_str() ||
-            installed->runtime.path.as_path() != expected.file.as_path() ||
-            installed->license.path.as_path() != expected.license.as_path() ||
-            installed->links.len() != expected.links.len()) {
+            installed->runtime.path.as_path() != (**expected).file.as_path() ||
+            installed->license.path.as_path() != (**expected).license.as_path() ||
+            installed->links.len() != (**expected).links.len()) {
             return false;
         }
-        for (usize index {}; index < expected.links.len(); ++index) {
-            auto expected_target = PathBuf::from(expected.file.as_path().file_name().unwrap());
-            if (installed->links[index].path.as_path() != expected.links[index].as_path() ||
+        for (usize index {}; index < (**expected).links.len(); ++index) {
+            auto expected_target = PathBuf::from((**expected).file.as_path().file_name().unwrap());
+            if (installed->links[index].path.as_path() != (**expected).links[index].as_path() ||
                 installed->links[index].target.as_path() != expected_target.as_path()) {
                 return false;
             }
@@ -1367,7 +1372,7 @@ auto list_llvm_sdks() -> SdkResult<SdkListSummary> {
         if (existing->status != SdkListStatus::Invalid) {
             auto descriptor = load_descriptor(existing->prefix->as_path());
             if (descriptor.is_err() || descriptor->is_none() ||
-                ! descriptor_matches(**descriptor, release, **artifact)) {
+                ! descriptor_matches(**descriptor, *catalog, release, **artifact)) {
                 existing->status = SdkListStatus::Invalid;
                 existing->issue =
                     Some(String::make("installed artifact identity differs from catalog"_str));
@@ -1427,7 +1432,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
             return sdk_failure<SdkInstallSummary>(rstd::format(
                 "LLVM SDK destination '{}' exists without sdk.json", prefix.as_path()));
         }
-        if (! descriptor_matches(*descriptor, **release, **artifact)) {
+        if (! descriptor_matches(*descriptor, *catalog, **release, **artifact)) {
             return sdk_failure<SdkInstallSummary>(rstd::format(
                 "LLVM SDK destination '{}' conflicts with the catalog artifact", prefix.as_path()));
         }
@@ -1513,8 +1518,14 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
                                                    .ld = Some(PathBuf::from("/usr/bin/ld"_str)),
                                                });
     auto installed_components = Vec<InstalledRuntimeComponent>::make();
-    for (const auto& component : (**artifact).runtime_components) {
-        auto installed = install_runtime_component(component,
+    for (const auto& reference : (**artifact).runtime_components) {
+        auto component = lito::find_llvm_sdk_runtime_component(*catalog, reference.as_str());
+        if (component.is_none()) {
+            remove_staging(staging.as_path());
+            return sdk_failure<SdkInstallSummary>(rstd::format(
+                "LLVM SDK artifact references unknown runtime component '{}'", reference));
+        }
+        auto installed = install_runtime_component(**component,
                                                    *recipe,
                                                    request.version.as_str(),
                                                    extracted->root.as_path(),

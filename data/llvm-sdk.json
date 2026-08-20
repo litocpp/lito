@@ -1,6 +1,19 @@
 {
   "schema": 1,
-  "kind": "lito-llvm-sdk-catalog",
+  "kind": "lito-llvm-sdk",
+  "runtime-components": [
+    {
+      "name": "libxml2",
+      "version": "2.13.8",
+      "recipe": "libxml2-2.13.8-minimal-elf-v1",
+      "runtime": {
+        "file": "lib/libxml2.so.2.13.8",
+        "soname": "libxml2.so.2",
+        "links": ["lib/libxml2.so.2"],
+        "license": "share/licenses/libxml2/Copyright"
+      }
+    }
+  ],
   "releases": [
     {
       "version": "22.1.8",
@@ -29,19 +42,7 @@
             "cmake": "lib/cmake",
             "clang-cpp": "lib/libclang-cpp.so"
           },
-          "runtime-components": [
-            {
-              "name": "libxml2",
-              "version": "2.13.8",
-              "recipe": "libxml2-2.13.8-minimal-elf-v1",
-              "runtime": {
-                "file": "lib/libxml2.so.2.13.8",
-                "soname": "libxml2.so.2",
-                "links": ["lib/libxml2.so.2"],
-                "license": "share/licenses/libxml2/Copyright"
-              }
-            }
-          ]
+          "runtime-components": ["libxml2"]
         }
       ]
     }
