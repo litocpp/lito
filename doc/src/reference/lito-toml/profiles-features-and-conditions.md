@@ -2,15 +2,26 @@
 
 ## `[profile]`
 
-`exceptions` and `rtti` are project-wide booleans and both default to `true`.
+The table contains the non-selectable `base` profile and selectable profile definitions.
 
-Any other valid key defines a named build profile. Profile names contain ASCII letters, digits,
-`-`, or `_`, and cannot be `exceptions` or `rtti`.
+The legacy `profile.exceptions` and `profile.rtti` boolean fields both default to `true`. They remain
+accepted for compatibility but are deprecated; use `[profile.base]` instead. A legacy field and its
+replacement cannot both be declared in one manifest.
+
+## `[profile.base]`
+
+`exceptions` and `rtti` are booleans and both default to `true`. `base` is the common root inherited
+by `debug`, `release`, `plain`, and all custom profiles. It cannot declare `inherits`, cannot be used
+as an explicit parent, and cannot be selected with `--profile`.
+
+A selectable profile may override either setting. The resolved setting applies to the complete
+package graph and participates in compiler, BMI, and artifact identities.
 
 ## `[profile.NAME]`
 
 - `inherits` names a parent. It is required for custom profiles and forbidden for built-in `debug`,
   `release`, and `plain`.
+- `exceptions` and `rtti` are booleans inherited from the parent profile.
 - `opt-level` is integer `0`, `1`, `2`, or `3`, or string `"s"` or `"z"`.
 - `debug` is boolean; integer `0`, `1`, or `2`; or `"none"`, `"line-directives-only"`,
   `"line-tables-only"`, `"limited"`, or `"full"`.
@@ -20,11 +31,12 @@ Any other valid key defines a named build profile. Profile names contain ASCII l
 Boolean `debug = true` means full debug information. Boolean `strip = true` strips symbols. Boolean
 `lto = true` means fat LTO.
 
-The built-in `plain` profile leaves optimization, debug information, strip, LTO, and `NDEBUG`
-delegated. Custom profiles may use `inherits = "plain"` and fix only selected fields. If a delegated
-field is not supplied by global build configuration or explicitly enabled environment flags, Lito
-does not emit a compiler option for it. This does not delegate other Lito-owned C/C++ contracts, and
-package usage cannot set these fields.
+The built-in `plain` profile inherits exceptions and RTTI from `base`, and leaves optimization,
+debug information, strip, LTO, and `NDEBUG` delegated. Custom profiles may use
+`inherits = "plain"` and fix only selected fields. If a delegated field is not supplied by global
+build configuration or explicitly enabled environment flags, Lito does not emit a compiler option
+for it. This does not delegate other Lito-owned C/C++ contracts, and package usage cannot set these
+fields.
 
 The built-in defaults are described in
 [Profiles, features, and conditions](../../guide/profiles-features-and-conditions.md).

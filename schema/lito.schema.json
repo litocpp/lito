@@ -1452,6 +1452,12 @@
           "pattern": "^[A-Za-z0-9_-]+$",
           "description": "The parent profile name. Required for custom profiles and forbidden for the built-in debug, release, and plain profiles."
         },
+        "exceptions": {
+          "type": "boolean"
+        },
+        "rtti": {
+          "type": "boolean"
+        },
         "opt-level": {
           "oneOf": [
             {
@@ -1510,8 +1516,9 @@
       },
       "additionalProperties": false
     },
-    "projectProfile": {
+    "baseBuildProfile": {
       "type": "object",
+      "description": "The non-selectable common root inherited by every build profile.",
       "properties": {
         "exceptions": {
           "type": "boolean",
@@ -1522,8 +1529,29 @@
           "default": true
         }
       },
+      "additionalProperties": false
+    },
+    "projectProfile": {
+      "type": "object",
+      "properties": {
+        "base": {
+          "$ref": "#/definitions/baseBuildProfile"
+        },
+        "exceptions": {
+          "type": "boolean",
+          "default": true,
+          "deprecated": true,
+          "description": "Deprecated compatibility spelling; use profile.base.exceptions."
+        },
+        "rtti": {
+          "type": "boolean",
+          "default": true,
+          "deprecated": true,
+          "description": "Deprecated compatibility spelling; use profile.base.rtti."
+        }
+      },
       "patternProperties": {
-        "^(?!exceptions$|rtti$)[A-Za-z0-9_-]+$": {
+        "^(?!base$|exceptions$|rtti$)[A-Za-z0-9_-]+$": {
           "$ref": "#/definitions/buildProfile"
         }
       },

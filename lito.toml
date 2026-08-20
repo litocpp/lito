@@ -46,7 +46,7 @@ git = "https://github.com/litocpp/rstd.git"
 [workspace.dependencies.rstd-test]
 git = "https://github.com/litocpp/rstd.git"
 
-[profile]
+[profile.base]
 exceptions = false
 rtti = false
 

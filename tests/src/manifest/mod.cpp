@@ -307,17 +307,17 @@ inherits = "second"
 [profile.second]
 inherits = "first"
 )lito"_str },
-    { "manifest-profile-nested"_str, R"lito([package]
-name = "fixture-profile-nested"
+    { "manifest-profile-base-inherits"_str, R"lito([package]
+name = "fixture-profile-base-inherits"
 version = "0.1.0"
 
 [[bin]]
 link-stdlib = false
-name = "profile-nested"
+name = "profile-base-inherits"
 sources = ["main.cpp"]
 
-[profile.debug]
-exceptions = false
+[profile.base]
+inherits = "debug"
 )lito"_str },
     { "manifest-profile-type"_str, R"lito([package]
 name = "fixture-profile-type"

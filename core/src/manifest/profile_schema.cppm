@@ -16,7 +16,17 @@ using namespace lito::manifest;
 
 auto build_profile_key(ref<str> key) -> bool {
     return key == "inherits"_str || key == "opt-level"_str || key == "debug"_str ||
-           key == "strip"_str || key == "lto"_str;
+           key == "strip"_str || key == "lto"_str || key == "exceptions"_str || key == "rtti"_str;
+}
+
+auto base_profile_key(ref<str> key) -> bool {
+    return key == "exceptions"_str || key == "rtti"_str;
+}
+
+auto parse_profile_bool(const Toml& value, ref<str> context) -> ManifestSchemaResult<bool> {
+    auto parsed = value.as_bool();
+    if (parsed.is_some()) return Ok(*parsed);
+    return manifest_schema_failure<bool>(rstd::format("{} must be a bool", context));
 }
 
 auto parse_profile_optimization(const Toml& value, ref<str> context)
@@ -109,6 +119,12 @@ auto parse_build_profile(ref<str> name, const Toml& value)
     auto inherits = member(value, "inherits"_str);
     if (inherits.is_some()) {
         auto text = (**inherits).as_str();
+        if (text.is_some() && *text == "base"_str) {
+            return manifest_schema_failure<BuildProfileDefinition>(rstd::format(
+                "{}.inherits cannot name the non-selectable base profile; inherit debug, release, "
+                "or plain instead",
+                context.as_str()));
+        }
         if (text.is_none() || ! valid_build_profile_name(*text)) {
             return manifest_schema_failure<BuildProfileDefinition>(
                 rstd::format("{}.inherits must name a valid build profile", context.as_str()));
@@ -116,6 +132,16 @@ auto parse_build_profile(ref<str> name, const Toml& value)
         result.inherits = Some(BuildProfileName {
             .value = String::make(*text),
         });
+    }
+    auto exceptions = member(value, "exceptions"_str);
+    if (exceptions.is_some()) {
+        result.exceptions = Some(rstd_try(parse_profile_bool(
+            **exceptions, rstd::format("{}.exceptions", context.as_str()).as_str())));
+    }
+    auto rtti = member(value, "rtti"_str);
+    if (rtti.is_some()) {
+        result.rtti = Some(rstd_try(
+            parse_profile_bool(**rtti, rstd::format("{}.rtti", context.as_str()).as_str())));
     }
     auto optimization = member(value, "opt-level"_str);
     if (optimization.is_some()) {
@@ -140,34 +166,62 @@ auto parse_build_profile(ref<str> name, const Toml& value)
     return Ok(rstd::move(result));
 }
 
+auto parse_base_profile(const Toml& value) -> ManifestSchemaResult<BaseProfileDefinition> {
+    auto table = table_value(value, "manifest.profile.base"_str);
+    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
+    if (member(value, "inherits"_str).is_some()) {
+        return manifest_schema_failure<BaseProfileDefinition>(
+            "manifest.profile.base cannot declare inherits"_str);
+    }
+    rstd_try(reject_unknown(**table, "manifest.profile.base"_str, base_profile_key));
+
+    auto result     = BaseProfileDefinition {};
+    auto exceptions = member(value, "exceptions"_str);
+    if (exceptions.is_some()) {
+        result.exceptions = Some(
+            rstd_try(parse_profile_bool(**exceptions, "manifest.profile.base.exceptions"_str)));
+    }
+    auto rtti = member(value, "rtti"_str);
+    if (rtti.is_some()) {
+        result.rtti = Some(rstd_try(parse_profile_bool(**rtti, "manifest.profile.base.rtti"_str)));
+    }
+    return Ok(result);
+}
+
 auto parse_project_profile(Option<ref<Toml>> value)
     -> ManifestSchemaResult<Option<ProjectProfile>> {
     if (value.is_none()) return Ok(Option<ProjectProfile> {});
     auto table = table_value(**value, "manifest.profile"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
 
-    auto profile    = ProjectProfile {};
+    auto profile      = ProjectProfile {};
+    auto base_profile = member(**value, "base"_str);
+    if (base_profile.is_some()) {
+        profile.base = rstd_try(parse_base_profile(**base_profile));
+    }
     auto exceptions = member(**value, "exceptions"_str);
     if (exceptions.is_some()) {
-        auto parsed = (**exceptions).as_bool();
-        if (parsed.is_none()) {
+        if (profile.base.exceptions.is_some()) {
             return manifest_schema_failure<Option<ProjectProfile>>(
-                "manifest.profile.exceptions must be a bool"_str);
+                "manifest.profile.exceptions conflicts with manifest.profile.base.exceptions"_str);
         }
-        profile.exceptions = *parsed;
+        profile.base.exceptions =
+            Some(rstd_try(parse_profile_bool(**exceptions, "manifest.profile.exceptions"_str)));
     }
     auto rtti = member(**value, "rtti"_str);
     if (rtti.is_some()) {
-        auto parsed = (**rtti).as_bool();
-        if (parsed.is_none()) {
+        if (profile.base.rtti.is_some()) {
             return manifest_schema_failure<Option<ProjectProfile>>(
-                "manifest.profile.rtti must be a bool"_str);
+                "manifest.profile.rtti conflicts with manifest.profile.base.rtti"_str);
         }
-        profile.rtti = *parsed;
+        profile.base.rtti = Some(rstd_try(parse_profile_bool(**rtti, "manifest.profile.rtti"_str)));
     }
     auto keys = (**table).keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if ((**key).as_str() == "exceptions"_str || (**key).as_str() == "rtti"_str) continue;
+        if ((**key).as_str() == "base"_str || (**key).as_str() == "exceptions"_str ||
+            (**key).as_str() == "rtti"_str) {
+            continue;
+        }
         auto item = (**table).get((**key).as_str());
         profile.build_profiles.push(rstd_try(parse_build_profile((**key).as_str(), **item)));
     }

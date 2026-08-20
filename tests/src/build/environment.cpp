@@ -97,7 +97,7 @@ extern "C" auto fixture_environment_two() -> int {
     EXPECT_EQ(progress.option_sources[usize(1)].as_str(), "CFLAGS"_str);
     EXPECT_EQ(progress.option_sources[usize(2)].as_str(), "config.build.linker-options"_str);
     EXPECT_EQ(progress.profile.as_str(), "debug"_str);
-    ASSERT_EQ(progress.profile_values.len(), usize(14));
+    ASSERT_EQ(progress.profile_values.len(), usize(16));
     EXPECT_FALSE(progress.missing);
     ASSERT_EQ(progress.values.len(), usize(2));
     EXPECT_EQ(progress.values[usize {}].current, usize(1));

@@ -611,8 +611,8 @@ auto make_profile_spec(const BuildConfiguration&               configuration,
     cpp_layer.arguments = rstd::move(cpp_arguments);
     auto cpp_result     = make_cpp_options(configuration.language_standard.as_str(),
                                            configuration.standard_library,
-                                           project_profile.exceptions,
-                                           project_profile.rtti,
+                                           selected.exceptions,
+                                           selected.rtti,
                                            rstd::move(cpp_codegen),
                                            rstd::move(cpp_layer));
     if (cpp_result.is_err()) {

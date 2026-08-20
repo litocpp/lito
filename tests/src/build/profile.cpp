@@ -39,8 +39,11 @@ TEST_F(BuildProfile, ProjectProfileDefaultsAndRootOwnershipAreTyped) {
     ASSERT_TRUE(default_project.is_ok());
     auto defaults = lito::package::resolve_package_graph(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
-    EXPECT_TRUE(defaults->profile.exceptions);
-    EXPECT_TRUE(defaults->profile.rtti);
+    auto default_profile =
+        lito::manifest::resolve_build_profile(defaults->profile, build_profile("debug"_str));
+    ASSERT_TRUE(default_profile.is_ok());
+    EXPECT_TRUE(default_profile->exceptions);
+    EXPECT_TRUE(default_profile->rtti);
 
     auto disabled_project = manifest_project("disabled"_str, R"toml([package]
 name = "fixture-profile-disabled"
@@ -58,8 +61,11 @@ rtti = false
     ASSERT_TRUE(disabled_project.is_ok());
     auto disabled = lito::package::resolve_package_graph(disabled_project->root.as_path());
     ASSERT_TRUE(disabled.is_ok());
-    EXPECT_FALSE(disabled->profile.exceptions);
-    EXPECT_FALSE(disabled->profile.rtti);
+    auto disabled_profile =
+        lito::manifest::resolve_build_profile(disabled->profile, build_profile("release"_str));
+    ASSERT_TRUE(disabled_profile.is_ok());
+    EXPECT_FALSE(disabled_profile->exceptions);
+    EXPECT_FALSE(disabled_profile->rtti);
 
     const ProjectFile workspace_files[] = {
         {
@@ -92,8 +98,11 @@ sources = ["main.cpp"]
     ASSERT_TRUE(workspace_project.is_ok());
     auto workspace = lito::package::resolve_package_graph(workspace_project->root.as_path());
     ASSERT_TRUE(workspace.is_ok());
-    EXPECT_TRUE(workspace->profile.exceptions);
-    EXPECT_FALSE(workspace->profile.rtti);
+    auto workspace_profile =
+        lito::manifest::resolve_build_profile(workspace->profile, build_profile("plain"_str));
+    ASSERT_TRUE(workspace_profile.is_ok());
+    EXPECT_TRUE(workspace_profile->exceptions);
+    EXPECT_FALSE(workspace_profile->rtti);
 
     const ProjectFile dependency_files[] = {
         {
@@ -135,16 +144,119 @@ rtti = false
     auto dependency_root = dependency_project->root.join(PathBuf::from("root"_str).as_path());
     auto dependency      = lito::package::resolve_package_graph(dependency_root.as_path());
     ASSERT_TRUE(dependency.is_ok());
-    EXPECT_TRUE(dependency->profile.exceptions);
-    EXPECT_TRUE(dependency->profile.rtti);
+    auto dependency_profile =
+        lito::manifest::resolve_build_profile(dependency->profile, build_profile("debug"_str));
+    ASSERT_TRUE(dependency_profile.is_ok());
+    EXPECT_TRUE(dependency_profile->exceptions);
+    EXPECT_TRUE(dependency_profile->rtti);
+}
+
+TEST_F(BuildProfile, BaseProfileIsInheritedAndSelectableProfilesCanOverrideIt) {
+    auto project = manifest_project("base-profile"_str, R"toml([package]
+name = "fixture-base-profile"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "base-profile"
+sources = ["main.cpp"]
+
+[profile.base]
+exceptions = false
+rtti = false
+
+[profile.release]
+rtti = true
+
+[profile.perf]
+inherits = "release"
+exceptions = true
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+
+    auto debug = lito::manifest::resolve_build_profile(graph->profile, build_profile("debug"_str));
+    auto plain = lito::manifest::resolve_build_profile(graph->profile, build_profile("plain"_str));
+    auto release =
+        lito::manifest::resolve_build_profile(graph->profile, build_profile("release"_str));
+    auto perf = lito::manifest::resolve_build_profile(graph->profile, build_profile("perf"_str));
+    ASSERT_TRUE(debug.is_ok());
+    ASSERT_TRUE(plain.is_ok());
+    ASSERT_TRUE(release.is_ok());
+    ASSERT_TRUE(perf.is_ok());
+    EXPECT_FALSE(debug->exceptions);
+    EXPECT_FALSE(debug->rtti);
+    EXPECT_FALSE(plain->exceptions);
+    EXPECT_FALSE(plain->rtti);
+    EXPECT_FALSE(release->exceptions);
+    EXPECT_TRUE(release->rtti);
+    EXPECT_TRUE(perf->exceptions);
+    EXPECT_TRUE(perf->rtti);
+}
+
+TEST_F(BuildProfile, LegacyDottedProfilePolicyMapsToBaseAndConflictsAreRejected) {
+    auto legacy_project =
+        manifest_project("legacy-dotted-profile"_str, R"toml(profile.exceptions = false
+profile.rtti = false
+
+[package]
+name = "fixture-legacy-dotted-profile"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "legacy-dotted-profile"
+sources = ["main.cpp"]
+)toml"_str);
+    ASSERT_TRUE(legacy_project.is_ok());
+    auto legacy_graph = lito::package::resolve_package_graph(legacy_project->root.as_path());
+    ASSERT_TRUE(legacy_graph.is_ok());
+    auto legacy =
+        lito::manifest::resolve_build_profile(legacy_graph->profile, build_profile("release"_str));
+    ASSERT_TRUE(legacy.is_ok());
+    EXPECT_FALSE(legacy->exceptions);
+    EXPECT_FALSE(legacy->rtti);
+
+    auto conflict_project = manifest_project("profile-base-conflict"_str, R"toml([package]
+name = "fixture-profile-base-conflict"
+version = "0.1.0"
+
+[[bin]]
+link-stdlib = false
+name = "profile-base-conflict"
+sources = ["main.cpp"]
+
+[profile]
+exceptions = false
+
+[profile.base]
+exceptions = false
+)toml"_str);
+    ASSERT_TRUE(conflict_project.is_ok());
+    auto loaded = lito::manifest::load_manifest_document(conflict_project->root.as_path());
+    ASSERT_TRUE(loaded.is_err());
+    auto error = rstd::move(loaded).unwrap_err();
+    ASSERT_TRUE(error.is_File());
+    const auto& cause = error.as_File().source.cause;
+    ASSERT_TRUE(cause.is_Schema());
+    const auto& schema = cause.as_Schema().source;
+    ASSERT_TRUE(schema.is_InvalidValue());
+    EXPECT_TRUE(
+        schema.as_InvalidValue().reason.as_str().contains("manifest.profile.exceptions"_str));
+    EXPECT_TRUE(
+        schema.as_InvalidValue().reason.as_str().contains("manifest.profile.base.exceptions"_str));
 }
 
 TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto project = lito::manifest::ProjectProfile {
-        .exceptions = false,
-        .rtti       = false,
+        .base =
+            lito::manifest::BaseProfileDefinition {
+                .exceptions = Some<bool>(false),
+                .rtti       = Some<bool>(false),
+            },
     };
     auto debug =
         lito::cpp::make_profile_spec(configuration(), project, build_profile("debug"_str), *parser);
@@ -443,6 +555,23 @@ TEST_F(BuildProfile, FixedProfilesDeduplicateEqualCodegenAndRejectDifferentValue
 }
 
 TEST_F(BuildProfile, BuildProfileCatalogRejectsUnknownParentsAndCycles) {
+    auto selected_base = lito::manifest::parse_build_profile("base"_str);
+    ASSERT_TRUE(selected_base.is_err());
+    EXPECT_TRUE(selected_base.unwrap_err().as_Message().message.as_str().contains(
+        "cannot be selected"_str));
+
+    auto inherited_base = lito::manifest::ProjectProfile {};
+    inherited_base.build_profiles.push(lito::manifest::BuildProfileDefinition {
+        .name     = build_profile("base-child"_str),
+        .inherits = Some(lito::manifest::BuildProfileName {
+            .value = String::make("base"_str),
+        }),
+    });
+    auto inherited_base_result = lito::manifest::validate_build_profiles(inherited_base);
+    ASSERT_TRUE(inherited_base_result.is_err());
+    EXPECT_TRUE(inherited_base_result.unwrap_err().as_Message().message.as_str().contains(
+        "cannot be selected or inherited"_str));
+
     auto missing_parent = lito::manifest::ProjectProfile {};
     missing_parent.build_profiles.push(lito::manifest::BuildProfileDefinition {
         .name = build_profile("no-parent"_str),

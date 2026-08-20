@@ -15,13 +15,18 @@ build inputs. An unspecified field uses the compiler default: Lito does not tran
 `-g0`, or `-fno-lto`. `plain` does not delegate the language standard, target, sysroot, standard
 library, exceptions, RTTI, BMI policy, or PIC.
 
-Project-wide exception and RTTI policy is declared at the top of `[profile]`:
+Every selectable profile inherits exception and RTTI policy from the non-selectable `base` profile:
 
 ```toml
-[profile]
+[profile.base]
 exceptions = false
 rtti = false
 ```
+
+`base` cannot be selected or used as an explicit `inherits` target. A built-in or custom profile
+may override either setting; the selected result still applies consistently to the complete build
+graph. The legacy `profile.exceptions` and `profile.rtti` spellings remain accepted for this
+version but are deprecated.
 
 Create a named profile by inheriting an existing one:
 
@@ -32,7 +37,8 @@ debug = "line-tables-only"
 lto = "thin"
 ```
 
-Built-in `debug`, `release`, and `plain` may be customized directly but cannot declare `inherits`.
+Built-in `debug`, `release`, and `plain` inherit `base`; they may be customized directly but cannot
+declare `inherits`.
 Every other profile must inherit another profile, and inheritance cycles are rejected. A packaging
 profile can keep selected fields fixed while delegating the others:
 

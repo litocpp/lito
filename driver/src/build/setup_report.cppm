@@ -129,6 +129,19 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&      reporter,
                    profile.cpp_ndebug);
     append_codegen(
         BuildOptionReportDomain::C, profile.c.common.codegen, profile.c_sources, profile.c_ndebug);
+    auto profile_source = rstd::format("profile '{}'", profile.name.as_str());
+    report.profile_values.push(BuildProfileValueReport {
+        .domain = BuildOptionReportDomain::Cpp,
+        .field  = String::make("exceptions"_str),
+        .value  = String::make(profile.cpp.language.exceptions ? "enabled"_str : "disabled"_str),
+        .source = profile_source.clone(),
+    });
+    report.profile_values.push(BuildProfileValueReport {
+        .domain = BuildOptionReportDomain::Cpp,
+        .field  = String::make("RTTI"_str),
+        .value  = String::make(profile.cpp.language.rtti ? "enabled"_str : "disabled"_str),
+        .source = rstd::move(profile_source),
+    });
     const auto append_microsoft_runtime =
         [&report](BuildOptionReportDomain                                domain,
                   const Option<lito::compiler::MicrosoftRuntimeLibrary>& runtime) {

@@ -63,7 +63,21 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
     ASSERT_TRUE(plain.is_ok());
     EXPECT_EQ(plain_report.profile.as_str(), "plain"_str);
     auto reported_optimization = false;
+    auto reported_exceptions   = false;
+    auto reported_rtti         = false;
     for (const auto& value : plain_report.profile_values) {
+        if (value.domain == lito::BuildOptionReportDomain::Cpp &&
+            value.field.as_str() == "exceptions"_str) {
+            reported_exceptions = true;
+            EXPECT_EQ(value.value.as_str(), "enabled"_str);
+            EXPECT_EQ(value.source.as_str(), "profile 'plain'"_str);
+        }
+        if (value.domain == lito::BuildOptionReportDomain::Cpp &&
+            value.field.as_str() == "RTTI"_str) {
+            reported_rtti = true;
+            EXPECT_EQ(value.value.as_str(), "enabled"_str);
+            EXPECT_EQ(value.source.as_str(), "profile 'plain'"_str);
+        }
         if (value.domain != lito::BuildOptionReportDomain::Cpp ||
             value.field.as_str() != "optimization"_str) {
             continue;
@@ -73,6 +87,8 @@ TEST_F(BuildProfileExecution, BuildProfileOwnsOptimizationAndDebugDefinitions) {
         EXPECT_EQ(value.source.as_str(), "CXXFLAGS"_str);
     }
     EXPECT_TRUE(reported_optimization);
+    EXPECT_TRUE(reported_exceptions);
+    EXPECT_TRUE(reported_rtti);
     auto plain_executable = executable(*plain);
     ASSERT_TRUE(plain_executable.is_some());
     auto plain_status = rstd::process::Command::make((*plain_executable).as_os_str())

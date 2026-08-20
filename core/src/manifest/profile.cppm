@@ -86,6 +86,8 @@ struct ProfileSetting {
 struct BuildProfileDefinition {
     BuildProfileName                  name;
     Option<BuildProfileName>          inherits;
+    Option<bool>                      exceptions;
+    Option<bool>                      rtti;
     Option<Optimization>              optimization;
     Option<DebugInfo>                 debug_info;
     Option<lito::artifact::StripMode> strip;
@@ -94,6 +96,8 @@ struct BuildProfileDefinition {
     auto clone() const -> BuildProfileDefinition {
         auto result = BuildProfileDefinition {
             .name         = name.clone(),
+            .exceptions   = exceptions,
+            .rtti         = rtti,
             .optimization = optimization,
             .debug_info   = debug_info,
             .strip        = strip,
@@ -104,9 +108,16 @@ struct BuildProfileDefinition {
     }
 };
 
+struct BaseProfileDefinition {
+    Option<bool> exceptions;
+    Option<bool> rtti;
+};
+
 struct ResolvedBuildProfile {
     BuildProfileName                          name;
     BuildProfileFamily                        family { BuildProfileFamily::Debug };
+    bool                                      exceptions { true };
+    bool                                      rtti { true };
     ProfileSetting<Optimization>              optimization;
     ProfileSetting<DebugInfo>                 debug_info;
     ProfileSetting<lito::artifact::StripMode> strip;
@@ -115,16 +126,14 @@ struct ResolvedBuildProfile {
 };
 
 struct ProjectProfile {
-    bool                        exceptions { true };
-    bool                        rtti { true };
+    BaseProfileDefinition       base;
     Vec<BuildProfileDefinition> build_profiles;
 
     auto clone() const -> ProjectProfile {
         auto profiles = Vec<BuildProfileDefinition>::with_capacity(build_profiles.len());
         for (const auto& profile : build_profiles) profiles.push(profile.clone());
         return ProjectProfile {
-            .exceptions     = exceptions,
-            .rtti           = rtti,
+            .base           = base,
             .build_profiles = rstd::move(profiles),
         };
     }
@@ -172,7 +181,10 @@ export namespace lito::manifest
 {
 
 auto valid_build_profile_name(ref<str> value) noexcept -> bool {
-    if (value.is_empty() || value == "exceptions"_str || value == "rtti"_str) return false;
+    if (value.is_empty() || value == "base"_str || value == "exceptions"_str ||
+        value == "rtti"_str) {
+        return false;
+    }
     for (const auto character : value) {
         const auto ascii = character.to_primitive();
         if (! ((ascii >= 'a' && ascii <= 'z') || (ascii >= 'A' && ascii <= 'Z') ||
@@ -222,6 +234,8 @@ auto inherited_cycle(const Vec<String>& path, ref<str> name) -> Option<String> {
 auto apply_definition(ResolvedBuildProfile profile, const BuildProfileDefinition& value)
     -> ResolvedBuildProfile {
     profile.name = value.name.clone();
+    if (value.exceptions.is_some()) profile.exceptions = *value.exceptions;
+    if (value.rtti.is_some()) profile.rtti = *value.rtti;
     if (value.optimization.is_some()) {
         profile.optimization = ProfileSetting<Optimization>::with_value(*value.optimization);
     }
@@ -235,8 +249,24 @@ auto apply_definition(ResolvedBuildProfile profile, const BuildProfileDefinition
     return profile;
 }
 
+struct ResolvedBaseProfile {
+    bool exceptions { true };
+    bool rtti { true };
+};
+
+auto resolve_base_profile(const ProjectProfile& project) -> ResolvedBaseProfile {
+    auto profile = ResolvedBaseProfile {};
+    if (project.base.exceptions.is_some()) profile.exceptions = *project.base.exceptions;
+    if (project.base.rtti.is_some()) profile.rtti = *project.base.rtti;
+    return profile;
+}
+
 auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> path)
     -> BuildProfileResult<ResolvedBuildProfile> {
+    if (name == "base"_str) {
+        return build_profile_failure<ResolvedBuildProfile>(String::make(
+            "profile 'base' is the common profile root and cannot be selected or inherited"_str));
+    }
     auto cycle = inherited_cycle(path, name);
     if (cycle.is_some())
         return build_profile_failure<ResolvedBuildProfile>(rstd::move(cycle).unwrap());
@@ -244,12 +274,12 @@ auto resolve_profile(const ProjectProfile& project, ref<str> name, Vec<String> p
 
     auto declared = definition(project, name);
     if (name == "debug"_str || name == "release"_str || name == "plain"_str) {
-        auto profile = ResolvedBuildProfile {
-            .name =
-                BuildProfileName {
-                    .value = String::make(name),
-                },
-            .family = BuildProfileFamily::Plain,
+        const auto base    = resolve_base_profile(project);
+        auto       profile = ResolvedBuildProfile {
+            .name       = BuildProfileName { .value = String::make(name) },
+            .family     = BuildProfileFamily::Plain,
+            .exceptions = base.exceptions,
+            .rtti       = base.rtti,
         };
         if (name == "debug"_str) {
             profile.family       = BuildProfileFamily::Debug;
@@ -303,6 +333,10 @@ struct Impl<convert::TryFrom<ref<str>>, lito::manifest::BuildProfileName> {
     using Error = lito::manifest::BuildProfileError;
 
     static auto try_from(ref<str> name) -> Result<lito::manifest::BuildProfileName, Error> {
+        if (name == "base"_str) {
+            return Err(lito::manifest::BuildProfileError::Message(String::make(
+                "profile 'base' is the common profile root and cannot be selected"_str)));
+        }
         if (! lito::manifest::valid_build_profile_name(name)) {
             return Err(lito::manifest::BuildProfileError::Message(rstd::format(
                 "invalid profile '{}'; expected ASCII letters, digits, '-' or '_'", name)));
@@ -357,6 +391,10 @@ auto validate_build_profiles(const ProjectProfile& project) -> BuildProfileResul
 
 auto resolve_build_profile(const ProjectProfile& project, const BuildProfileName& name)
     -> BuildProfileResult<ResolvedBuildProfile> {
+    if (name.as_str() == "base"_str) {
+        return build_profile_failure<ResolvedBuildProfile>(
+            String::make("profile 'base' is the common profile root and cannot be selected"_str));
+    }
     rstd_try(validate_build_profiles(project));
     return resolve_profile(project, name.as_str(), Vec<String>::make());
 }

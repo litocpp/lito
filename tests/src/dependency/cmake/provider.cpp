@@ -182,13 +182,17 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
     EXPECT_EQ(third_count->as_str(), "configure\nconfigure\n"_str);
 #endif
 
-    auto disabled_profile = lito::cpp::make_profile_spec(configuration(),
-                                                         lito::manifest::ProjectProfile {
-                                                             .exceptions = false,
-                                                             .rtti       = false,
-                                                         },
-                                                         build_profile("debug"_str),
-                                                         *parser);
+    auto disabled_profile =
+        lito::cpp::make_profile_spec(configuration(),
+                                     lito::manifest::ProjectProfile {
+                                         .base =
+                                             lito::manifest::BaseProfileDefinition {
+                                                 .exceptions = Some<bool>(false),
+                                                 .rtti       = Some<bool>(false),
+                                             },
+                                     },
+                                     build_profile("debug"_str),
+                                     *parser);
     ASSERT_TRUE(disabled_profile.is_ok());
     auto profile_variant = resolve_cmake_fixtures(declarations,
                                                   *disabled_profile,
