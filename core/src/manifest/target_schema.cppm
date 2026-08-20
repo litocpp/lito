@@ -442,20 +442,45 @@ auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
     if (value.is_none()) return Ok(Option<PackageTargetManifest> {});
     auto table = rstd_try(table_value(**value, "manifest.lib"_str));
     rstd_try(reject_unknown(*table, "manifest.lib"_str, library_key));
-    auto name    = rstd_try(required_string(**value, "name"_str, "manifest.lib"_str));
-    auto archive = rstd_try(required_string(**value, "archive"_str, "manifest.lib"_str));
+    auto name = rstd_try(required_string(**value, "name"_str, "manifest.lib"_str));
     if (! package_name_is_valid(name.as_str())) {
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib.name must be a valid target name"_str);
     }
-    if (! valid_artifact_name(archive.as_str())) {
+    auto kind     = rstd_try(optional_string(**value, "kind"_str, "manifest.lib"_str));
+    auto archive  = rstd_try(optional_string(**value, "archive"_str, "manifest.lib"_str));
+    auto artifact = rstd_try(optional_string(**value, "artifact"_str, "manifest.lib"_str));
+    if (archive.is_some() == artifact.is_some()) {
         return manifest_schema_failure<Option<PackageTargetManifest>>(
-            "manifest.lib.archive must be a safe artifact basename"_str);
+            "manifest.lib must contain exactly one of 'archive' or 'artifact'"_str);
+    }
+    auto output = LibraryOutput::Static(String::make());
+    if (kind.is_none() || kind->as_str() == "static"_str) {
+        if (archive.is_none()) {
+            return manifest_schema_failure<Option<PackageTargetManifest>>(
+                "manifest.lib static output requires 'archive'"_str);
+        }
+        output = LibraryOutput::Static(rstd::move(archive).unwrap());
+    } else if (kind->as_str() == "shared"_str) {
+        if (artifact.is_none()) {
+            return manifest_schema_failure<Option<PackageTargetManifest>>(
+                "manifest.lib shared output requires 'artifact'"_str);
+        }
+        output = LibraryOutput::Shared(rstd::move(artifact).unwrap());
+    } else {
+        return manifest_schema_failure<Option<PackageTargetManifest>>(
+            "manifest.lib.kind must be 'static' or 'shared'"_str);
+    }
+    auto artifact_name = output.is_Static() ? output.as_Static().artifact.as_str()
+                                            : output.as_Shared().artifact.as_str();
+    if (! valid_artifact_name(artifact_name)) {
+        return manifest_schema_failure<Option<PackageTargetManifest>>(
+            "manifest.lib output must be a safe artifact basename"_str);
     }
     auto source = rstd_try(parse_target_source(
         **value, "manifest.lib"_str, language == PackageLanguage::Cpp, language));
     return Ok(Some(
-        PackageTargetManifest::Library(rstd::move(name), rstd::move(archive), rstd::move(source))));
+        PackageTargetManifest::Library(rstd::move(name), rstd::move(output), rstd::move(source))));
 }
 
 auto parse_runtime_resources(Option<ref<Toml>> value, ref<str> context)

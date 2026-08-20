@@ -141,4 +141,36 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_EQ(find_generic->tool.operations[usize(3)], lito::CMakePackageOperation::ReadUsage);
     EXPECT_NE(find_adapter->tool.area.query_root.as_path(),
               find_generic->tool.area.query_root.as_path());
+
+    auto android = lito::AndroidCmakeProjection {
+        .toolchain_file =
+            project->root.join(PathBuf::from("android.toolchain.cmake"_str).as_path()),
+        .abi              = String::make("arm64-v8a"_str),
+        .platform         = String::make("android-21"_str),
+        .standard_library = String::make("c++_shared"_str),
+        .identity         = String::make("android-cmake-fixture-v1"_str),
+    };
+    auto android_plan = lito::plan_cmake_package(*requirement,
+                                                 fixture_cmake(),
+                                                 configuration(),
+                                                 default_profile(*parser),
+                                                 linker_identity(),
+                                                 platform.compiler_default,
+                                                 "aarch64-linux-android21"_str,
+                                                 work_root.as_path(),
+                                                 usize(1),
+                                                 Some(rstd::move(android)));
+    ASSERT_TRUE(android_plan.is_ok());
+    ASSERT_TRUE(android_plan->tool.toolchain.target.is_some());
+    EXPECT_EQ(android_plan->tool.toolchain.target->file.as_path(),
+              project->root.join(PathBuf::from("android.toolchain.cmake"_str).as_path()).as_path());
+    ASSERT_EQ(android_plan->tool.toolchain.target->cache.len(), usize(3));
+    EXPECT_EQ(android_plan->tool.toolchain.target->cache[usize {}].name.as_str(),
+              "ANDROID_ABI"_str);
+    EXPECT_EQ(android_plan->tool.toolchain.target->cache[usize {}].value.as_str(), "arm64-v8a"_str);
+    EXPECT_EQ(android_plan->tool.toolchain.target->cache[usize(1)].value.as_str(),
+              "android-21"_str);
+    EXPECT_EQ(android_plan->tool.toolchain.target->cache[usize(2)].value.as_str(),
+              "c++_shared"_str);
+    EXPECT_NE(android_plan->tool.area.root.as_path(), find_generic->tool.area.root.as_path());
 }

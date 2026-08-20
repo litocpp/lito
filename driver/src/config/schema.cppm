@@ -82,7 +82,11 @@ auto environment_config_key(ref<str> key) -> bool {
 
 auto toolchain_config_key(ref<str> key) -> bool {
     return key == "cc"_str || key == "cxx"_str || key == "ld"_str || key == "ar"_str ||
-           key == "stdlib"_str || key == "stdlib-runtime"_str;
+           key == "stdlib"_str || key == "stdlib-runtime"_str || key == "sdk"_str;
+}
+
+auto toolchain_sdk_config_key(ref<str> key) -> bool {
+    return key == "kind"_str || key == "version"_str || key == "path"_str;
 }
 
 auto tools_config_key(ref<str> key) -> bool {
@@ -92,7 +96,12 @@ auto tools_config_key(ref<str> key) -> bool {
 }
 
 auto build_config_key(ref<str> key) -> bool {
-    return key == "options"_str || key == "linker-options"_str || key == "c"_str;
+    return key == "options"_str || key == "linker-options"_str || key == "c"_str ||
+           key == "target"_str;
+}
+
+auto build_target_config_key(ref<str> key) -> bool {
+    return key == "kind"_str || key == "abi"_str || key == "min-api"_str;
 }
 
 auto c_build_config_key(ref<str> key) -> bool {
@@ -165,6 +174,60 @@ auto configured_tool_override(const Toml& toolchain_value, ref<str> key, ref<str
     return Ok(Some(rstd_try(configured_executable(**value, field.as_str()))));
 }
 
+auto required_config_string(const Toml& value, ref<str> key, ref<str> context)
+    -> ConfigResult<String> {
+    auto member = config_member(value, key);
+    if (member.is_none()) {
+        return config_failure<String>(rstd::format("{} is missing '{}'", context, key));
+    }
+    auto text = (**member).as_str();
+    if (text.is_none() || text->is_empty()) {
+        return config_failure<String>(
+            rstd::format("{}.{} must be a non-empty string", context, key));
+    }
+    return Ok(String::make(*text));
+}
+
+auto configured_toolchain_sdk(const Toml& toolchain_value)
+    -> ConfigResult<Option<ToolchainSdkSelection>> {
+    auto value = config_member(toolchain_value, "sdk"_str);
+    if (value.is_none()) return Ok(Option<ToolchainSdkSelection> {});
+    auto table = rstd_try(config_table(**value, "config.toolchain.sdk"_str));
+    rstd_try(reject_config_unknown(*table, "config.toolchain.sdk"_str, toolchain_sdk_config_key));
+    auto kind_text =
+        rstd_try(required_config_string(**value, "kind"_str, "config.toolchain.sdk"_str));
+    auto kind = parse_sdk_kind(kind_text.as_str());
+    if (kind.is_none()) {
+        return config_failure<Option<ToolchainSdkSelection>>(
+            "config.toolchain.sdk.kind must be 'llvm' or 'android-ndk'"_str);
+    }
+    auto version = config_member(**value, "version"_str);
+    auto path    = config_member(**value, "path"_str);
+    if (version.is_some() == path.is_some()) {
+        return config_failure<Option<ToolchainSdkSelection>>(
+            "config.toolchain.sdk must contain exactly one of 'version' or 'path'"_str);
+    }
+    if (version.is_some()) {
+        auto text = (**version).as_str();
+        if (text.is_none() || text->is_empty()) {
+            return config_failure<Option<ToolchainSdkSelection>>(
+                "config.toolchain.sdk.version must be a non-empty string"_str);
+        }
+        return Ok(Some(ToolchainSdkSelection::Managed(*kind, String::make(*text))));
+    }
+    auto text = (**path).as_str();
+    if (text.is_none() || text->is_empty()) {
+        return config_failure<Option<ToolchainSdkSelection>>(
+            "config.toolchain.sdk.path must be a non-empty absolute path"_str);
+    }
+    auto directory = PathBuf::from(*text);
+    if (! directory.as_path().is_absolute()) {
+        return config_failure<Option<ToolchainSdkSelection>>(
+            "config.toolchain.sdk.path must be absolute"_str);
+    }
+    return Ok(Some(ToolchainSdkSelection::Directory(*kind, rstd::move(directory))));
+}
+
 auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<StandardLibrary> {
     auto value = config_member(toolchain_value, "stdlib"_str);
     if (value.is_none()) return Ok(StandardLibrary::Libcxx);
@@ -189,12 +252,36 @@ auto configured_standard_library_runtime(const Toml& toolchain_value)
     }
     auto parsed = parse_standard_library_runtime(*text);
     if (parsed.is_some()) return Ok(*parsed);
-    if (*text == "static"_str) {
-        return config_failure<StandardLibraryRuntime>(
-            "config.toolchain.stdlib-runtime 'static' is not supported yet; expected 'dynamic'"_str);
-    }
     return config_failure<StandardLibraryRuntime>(
-        "config.toolchain.stdlib-runtime must be 'dynamic'"_str);
+        "config.toolchain.stdlib-runtime must be 'dynamic' or 'static'"_str);
+}
+
+auto configured_build_target(const Toml& document) -> ConfigResult<BuildTargetRequest> {
+    auto build = config_member(document, "build"_str);
+    if (build.is_none()) return Ok(BuildTargetRequest::Default());
+    auto target = config_member(**build, "target"_str);
+    if (target.is_none()) return Ok(BuildTargetRequest::Default());
+    auto table = rstd_try(config_table(**target, "config.build.target"_str));
+    rstd_try(reject_config_unknown(*table, "config.build.target"_str, build_target_config_key));
+    auto kind = rstd_try(required_config_string(**target, "kind"_str, "config.build.target"_str));
+    if (kind.as_str() != "android"_str) {
+        return config_failure<BuildTargetRequest>("config.build.target.kind must be 'android'"_str);
+    }
+    auto abi = rstd_try(required_config_string(**target, "abi"_str, "config.build.target"_str));
+    auto minimum_api = config_member(**target, "min-api"_str);
+    if (minimum_api.is_none()) {
+        return config_failure<BuildTargetRequest>("config.build.target is missing 'min-api'"_str);
+    }
+    auto integer = (**minimum_api).as_integer();
+    if (integer.is_none() || integer->to_primitive() <= 0 ||
+        integer->to_primitive() > u32::MAX.to_primitive()) {
+        return config_failure<BuildTargetRequest>(
+            "config.build.target.min-api must be a positive 32-bit integer"_str);
+    }
+    return Ok(BuildTargetRequest::Android(AndroidTargetRequest {
+        .abi         = rstd::move(abi),
+        .minimum_api = u32(integer->to_primitive()),
+    }));
 }
 
 auto configured_build_option_input(Option<ref<Toml>> value, ref<str> context)
@@ -465,6 +552,7 @@ auto configured_toolchain(const Toml& document, ToolchainSpec toolchain)
                 configured_tool_override(**toolchain_value, "ld"_str, "config.toolchain"_str)),
             .ar = rstd_try(
                 configured_tool_override(**toolchain_value, "ar"_str, "config.toolchain"_str)),
+            .sdk = rstd_try(configured_toolchain_sdk(**toolchain_value)),
         }));
 }
 
@@ -786,9 +874,11 @@ auto decode_project_config(PathBuf               root,
     auto install       = configured_install(document, root.as_path());
     auto doc           = configured_doc(document, root.as_path());
     auto build_options = configured_build_options(document);
+    auto build_target  = configured_build_target(document);
     if (install.is_err()) return Err(rstd::move(install).unwrap_err());
     if (doc.is_err()) return Err(rstd::move(doc).unwrap_err());
     if (build_options.is_err()) return Err(rstd::move(build_options).unwrap_err());
+    if (build_target.is_err()) return Err(rstd::move(build_target).unwrap_err());
     auto effective_build_options = rstd::move(build_options).unwrap();
     rstd_try(append_environment_build_options(effective_build_options, environment_flags));
 
@@ -801,6 +891,7 @@ auto decode_project_config(PathBuf               root,
         .standard_library         = standard_library,
         .standard_library_runtime = standard_library_runtime,
         .build_options            = rstd::move(effective_build_options),
+        .build_target             = rstd::move(build_target).unwrap(),
         .sources                  = rstd::move(sources).unwrap(),
         .pkg_config               = rstd::move(tools.pkg_config),
         .cmake                    = rstd::move(tools.cmake),

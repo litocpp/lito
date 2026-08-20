@@ -150,6 +150,7 @@ struct SdkListOptions {};
 
 struct SdkInstallOptions {
     String version;
+    bool   accept_license { false };
 };
 
 struct SdkActivateOptions {
@@ -174,13 +175,19 @@ class ConfigCommand {
               (Unset, (ConfigUnsetOptions options;)))
 };
 
-class SdkCommand {
-    RSTD_ENUM(SdkCommand,
+class SdkActionCommand {
+    RSTD_ENUM(SdkActionCommand,
               (List, (SdkListOptions options;)),
               (Install, (SdkInstallOptions options;)),
               (Activate, (SdkActivateOptions options;)),
               (Deactivate, (SdkDeactivateOptions options;)),
               (Uninstall, (SdkUninstallOptions options;)))
+};
+
+class SdkCommand {
+    RSTD_ENUM(SdkCommand,
+              (Llvm, (SdkActionCommand command;)),
+              (AndroidNdk, (SdkActionCommand command;)))
 };
 
 class CliCommand {
@@ -444,8 +451,9 @@ struct SdkListSchema {
 };
 
 struct SdkInstallSchema {
-    CommandKey     command;
-    ArgKey<String> version;
+    CommandKey           command;
+    ArgKey<String>       version;
+    Option<ArgKey<bool>> accept_license;
 
     auto decode(const Matches& matches) const -> Result<SdkInstallOptions, CliDecodeError>;
 };
@@ -470,13 +478,21 @@ struct SdkUninstallSchema {
     auto decode(const Matches& matches) const -> Result<SdkUninstallOptions, CliDecodeError>;
 };
 
-struct SdkSchema {
+struct SdkKindSchema {
     CommandKey          command;
     SdkListSchema       list;
     SdkInstallSchema    install;
     SdkActivateSchema   activate;
     SdkDeactivateSchema deactivate;
     SdkUninstallSchema  uninstall;
+
+    auto decode(const Matches& matches) const -> Result<SdkActionCommand, CliDecodeError>;
+};
+
+struct SdkSchema {
+    CommandKey    command;
+    SdkKindSchema llvm;
+    SdkKindSchema android_ndk;
 
     auto decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError>;
 };
@@ -961,43 +977,51 @@ auto make_config_definition() -> CommandDefinition<ConfigSchema> {
     };
 }
 
-auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
+auto make_sdk_kind_definition(ref<str> name, ref<str> display, bool license_required)
+    -> CommandDefinition<SdkKindSchema> {
     auto list_command = Command::make("list"_str);
-    list_command.about("List LLVM SDKs for the current host"_str);
+    list_command.about(rstd::format("List {} SDKs for the current host", display).as_str());
     auto list_key = list_command.key();
 
     auto install_command = Command::make("install"_str);
-    install_command.about("Install an LLVM SDK"_str);
-    auto install_key = install_command.key();
-    auto version     = install_command.add_arg(Arg<String>::value("version"_str, string_parser())
-                                                   .value_name("VERSION"_str)
-                                                   .help("Exact LLVM version to install"_str)
-                                                   .required());
+    install_command.about(rstd::format("Install an {} SDK", display).as_str());
+    auto install_key    = install_command.key();
+    auto version        = install_command.add_arg(Arg<String>::value("version"_str, string_parser())
+                                                      .value_name("VERSION"_str)
+                                                      .help("Exact SDK version to install"_str)
+                                                      .required());
+    auto accept_license = Option<ArgKey<bool>> {};
+    if (license_required) {
+        accept_license = Some(
+            install_command.add_arg(Arg<bool>::flag("accept-license"_str)
+                                        .long_name("accept-license"_str)
+                                        .help("Accept the cataloged Android SDK License"_str)));
+    }
 
     auto activate_command = Command::make("activate"_str);
-    activate_command.about("Activate an installed LLVM SDK"_str);
+    activate_command.about(rstd::format("Activate an installed {} SDK", display).as_str());
     auto activate_key = activate_command.key();
     auto activate_version =
         activate_command.add_arg(Arg<String>::value("version"_str, string_parser())
                                      .value_name("VERSION"_str)
-                                     .help("Exact LLVM version to activate"_str)
+                                     .help("Exact SDK version to activate"_str)
                                      .required());
 
     auto deactivate_command = Command::make("deactivate"_str);
-    deactivate_command.about("Clear the active LLVM SDK"_str);
+    deactivate_command.about(rstd::format("Clear the active {} SDK", display).as_str());
     auto deactivate_key = deactivate_command.key();
 
     auto uninstall_command = Command::make("uninstall"_str);
-    uninstall_command.about("Uninstall an LLVM SDK"_str);
+    uninstall_command.about(rstd::format("Uninstall an {} SDK", display).as_str());
     auto uninstall_key = uninstall_command.key();
     auto uninstall_version =
         uninstall_command.add_arg(Arg<String>::value("version"_str, string_parser())
                                       .value_name("VERSION"_str)
-                                      .help("Exact LLVM version to uninstall"_str)
+                                      .help("Exact SDK version to uninstall"_str)
                                       .required());
 
-    auto command = Command::make("sdk"_str);
-    command.about("Manage LLVM SDKs"_str);
+    auto command = Command::make(name);
+    command.about(rstd::format("Manage {} SDKs", display).as_str());
     command.require_subcommand();
     auto key = command.key();
     command.add_subcommand(rstd::move(list_command));
@@ -1006,10 +1030,15 @@ auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
     command.add_subcommand(rstd::move(deactivate_command));
     command.add_subcommand(rstd::move(uninstall_command));
     return {
-        SdkSchema {
+        SdkKindSchema {
             .command = key,
             .list    = SdkListSchema { .command = list_key },
-            .install = SdkInstallSchema { .command = install_key, .version = version },
+            .install =
+                SdkInstallSchema {
+                    .command        = install_key,
+                    .version        = version,
+                    .accept_license = rstd::move(accept_license),
+                },
             .activate =
                 SdkActivateSchema {
                     .command = activate_key,
@@ -1021,6 +1050,25 @@ auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
                     .command = uninstall_key,
                     .version = uninstall_version,
                 },
+        },
+        rstd::move(command),
+    };
+}
+
+auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
+    auto llvm    = make_sdk_kind_definition("llvm"_str, "LLVM"_str, false);
+    auto android = make_sdk_kind_definition("android-ndk"_str, "Android NDK"_str, true);
+    auto command = Command::make("sdk"_str);
+    command.about("Manage SDK distributions"_str);
+    command.require_subcommand();
+    auto key = command.key();
+    command.add_subcommand(rstd::move(llvm.command));
+    command.add_subcommand(rstd::move(android.command));
+    return {
+        SdkSchema {
+            .command     = key,
+            .llvm        = rstd::move(llvm.schema),
+            .android_ndk = rstd::move(android.schema),
         },
         rstd::move(command),
     };
@@ -1454,8 +1502,11 @@ auto SdkListSchema::decode(const Matches&) const -> Result<SdkListOptions, CliDe
 
 auto SdkInstallSchema::decode(const Matches& matches) const
     -> Result<SdkInstallOptions, CliDecodeError> {
+    auto accepted = false;
+    if (accept_license.is_some()) accepted = rstd_try(flag_value(matches, *accept_license));
     return Ok(SdkInstallOptions {
-        .version = rstd_try(required_string(matches, version, "version"_str)),
+        .version        = rstd_try(required_string(matches, version, "version"_str)),
+        .accept_license = accepted,
     });
 }
 
@@ -1478,21 +1529,32 @@ auto SdkUninstallSchema::decode(const Matches& matches) const
     });
 }
 
-auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError> {
+auto SdkKindSchema::decode(const Matches& matches) const
+    -> Result<SdkActionCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(list.command); child.is_some()) {
-        return Ok(SdkCommand::List(rstd_try(list.decode(**child))));
+        return Ok(SdkActionCommand::List(rstd_try(list.decode(**child))));
     }
     if (auto child = matches.subcommand_matches(install.command); child.is_some()) {
-        return Ok(SdkCommand::Install(rstd_try(install.decode(**child))));
+        return Ok(SdkActionCommand::Install(rstd_try(install.decode(**child))));
     }
     if (auto child = matches.subcommand_matches(activate.command); child.is_some()) {
-        return Ok(SdkCommand::Activate(rstd_try(activate.decode(**child))));
+        return Ok(SdkActionCommand::Activate(rstd_try(activate.decode(**child))));
     }
     if (auto child = matches.subcommand_matches(deactivate.command); child.is_some()) {
-        return Ok(SdkCommand::Deactivate(rstd_try(deactivate.decode(**child))));
+        return Ok(SdkActionCommand::Deactivate(rstd_try(deactivate.decode(**child))));
     }
     if (auto child = matches.subcommand_matches(uninstall.command); child.is_some()) {
-        return Ok(SdkCommand::Uninstall(rstd_try(uninstall.decode(**child))));
+        return Ok(SdkActionCommand::Uninstall(rstd_try(uninstall.decode(**child))));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
+}
+
+auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError> {
+    if (auto child = matches.subcommand_matches(llvm.command); child.is_some()) {
+        return Ok(SdkCommand::Llvm(rstd_try(llvm.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(android_ndk.command); child.is_some()) {
+        return Ok(SdkCommand::AndroidNdk(rstd_try(android_ndk.decode(**child))));
     }
     return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
 }

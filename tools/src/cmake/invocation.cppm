@@ -77,6 +77,16 @@ auto push_path_argument(Vec<String>&          arguments,
 
 auto push_cmake_toolchain(Vec<String>& arguments, const ToolchainConfiguration& toolchain)
     -> lito::tools::ToolResult<empty> {
+    if (toolchain.target.is_some()) {
+        rstd_try(push_path_argument(arguments,
+                                    "-DCMAKE_TOOLCHAIN_FILE="_str,
+                                    toolchain.target->file.as_path(),
+                                    "CMake toolchain file"_str));
+        for (const auto& entry : toolchain.target->cache) {
+            arguments.push(rstd::format("-D{}={}", entry.name.as_str(), entry.value.as_str()));
+        }
+        return Ok(empty {});
+    }
     rstd_try(push_path_argument(
         arguments, "-DCMAKE_C_COMPILER="_str, toolchain.cc.as_path(), "C compiler"_str));
     rstd_try(push_path_argument(

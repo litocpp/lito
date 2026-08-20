@@ -6,7 +6,7 @@ export module lito.driver:project.error;
 import rstd;
 import lito.core;
 import lito.system;
-import lito.toolchain.common;
+import lito.toolchain;
 import lito.cpp;
 import :build.layout_error;
 
@@ -24,6 +24,7 @@ class ProjectError {
               (Dependency, (lito::dependency::DependencyError source;)),
               (System, (SystemError source;)),
               (Toolchain, (ToolchainError source;)),
+              (AndroidNdk, (AndroidNdkError source;)),
               (Lock, (lito::lock::LockError source;)),
               (Platform, (PlatformError source;)),
               (Profile, (lito::manifest::BuildProfileError source;)),
@@ -71,6 +72,13 @@ template<>
 struct Impl<convert::From<lito::ToolchainError>, lito::ProjectError> {
     static auto from(lito::ToolchainError error) -> lito::ProjectError {
         return lito::ProjectError::Toolchain(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::AndroidNdkError>, lito::ProjectError> {
+    static auto from(lito::AndroidNdkError error) -> lito::ProjectError {
+        return lito::ProjectError::AndroidNdk(rstd::move(error));
     }
 };
 
@@ -126,6 +134,10 @@ struct Impl<fmt::Display, lito::ProjectError> : ImplBase<lito::ProjectError> {
             return formatter.write_raw("project toolchain resolution failed",
                                        sizeof("project toolchain resolution failed") - 1);
         }
+        if (error.is_AndroidNdk()) {
+            return formatter.write_raw("Android NDK resolution failed",
+                                       sizeof("Android NDK resolution failed") - 1);
+        }
         if (error.is_Lock()) {
             return formatter.write_raw("project lock operation failed",
                                        sizeof("project lock operation failed") - 1);
@@ -171,6 +183,9 @@ struct Impl<error::Error, lito::ProjectError> : ImplBase<lito::ProjectError> {
         }
         if (error.is_Toolchain()) {
             return Some(dyn<error::Error>::from_ref(error.as_Toolchain().source));
+        }
+        if (error.is_AndroidNdk()) {
+            return Some(dyn<error::Error>::from_ref(error.as_AndroidNdk().source));
         }
         if (error.is_Lock()) {
             return Some(dyn<error::Error>::from_ref(error.as_Lock().source));

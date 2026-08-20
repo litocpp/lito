@@ -16,6 +16,7 @@ export namespace lito::cpp
 enum class ArtifactKind
 {
     StaticLibrary,
+    SharedLibrary,
     TestAttachmentArchive,
     Executable,
     TestExecutable,

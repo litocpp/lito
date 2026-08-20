@@ -46,8 +46,19 @@ struct BuildProfileValueReport {
     String                  source;
 };
 
+struct BuildTargetReport {
+    String          host;
+    String          effective;
+    Option<String>  android_abi;
+    Option<u32>     android_minimum_api;
+    Option<String>  sdk_kind;
+    Option<String>  sdk_version;
+    Option<PathBuf> sysroot;
+};
+
 struct BuildSetupReport {
     BuildToolchainReport         toolchain;
+    BuildTargetReport            target;
     String                       profile;
     Vec<BuildProfileValueReport> profile_values;
     Vec<BuildOptionReport>       options;
@@ -69,7 +80,8 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                              const lito::config::ProjectBuildOptions&         options,
                              const lito::package::EffectiveLanguageStandards& standards,
                              lito::config::StandardLibraryRuntime standard_library_runtime,
-                             const lito::cpp::ProfileSpec&        profile) -> void {
+                             const lito::cpp::ProfileSpec&        profile,
+                             const BuildPlatform&                 platform) -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
         .toolchain =
@@ -84,6 +96,17 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                                              .executable = PathBuf::from(resolved.ar_path()) },
                 .linker_family  = resolved.linker_identity().family,
                 .linker_version = resolved.linker_identity().version.clone(),
+            },
+        .target =
+            BuildTargetReport {
+                .host = rstd::format(
+                    "{}-{}", platform.host.architecture.as_str(), platform.host.os.as_str()),
+                .effective           = platform.effective_target.triple.clone(),
+                .android_abi         = as<Clone>(platform.android_abi).clone(),
+                .android_minimum_api = platform.android_minimum_api,
+                .sdk_kind            = as<Clone>(platform.sdk_kind).clone(),
+                .sdk_version         = as<Clone>(platform.sdk_version).clone(),
+                .sysroot             = as<Clone>(platform.sysroot).clone(),
             },
         .profile = profile.name.clone(),
     };

@@ -44,6 +44,11 @@ struct InstallArtifactRecipe {
     Vec<RuntimeSearchReference> runtime_search;
 };
 
+struct InstallTargetRuntimeRecipe {
+    String  name;
+    PathBuf destination;
+};
+
 struct InstallStripRecipe {
     lito::artifact::StripMode mode { lito::artifact::StripMode::None };
     Vec<PathBuf>              files;
@@ -77,6 +82,7 @@ struct InstallRecipe {
     String                              version;
     PathBuf                             root;
     Vec<InstallArtifactRecipe>          artifacts;
+    Vec<InstallTargetRuntimeRecipe>     target_runtimes;
     Vec<InstallExternalAssetRecipe>     external_assets;
     Vec<InstallFileRecipe>              files;
     Vec<InstallTemplateRecipe>          templates;

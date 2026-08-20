@@ -31,6 +31,18 @@ auto json_u64(u64 value) -> Json {
     return Json::Number(rstd::json::Number::from_u64(value));
 }
 
+auto android_catalog_document() -> Json {
+    return rstd::json::from_str(lito::embedded_android_ndk_catalog_text()).unwrap();
+}
+
+auto rejects_android_catalog_value(ref<str> pointer, Json value) -> bool {
+    auto document = android_catalog_document();
+    auto target   = document.pointer_mut(pointer);
+    if (target.is_none()) return false;
+    **target = rstd::move(value);
+    return lito::parse_android_ndk_catalog(rstd::json::to_string(document).as_str()).is_err();
+}
+
 TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
     auto catalog = lito::load_embedded_llvm_sdk_catalog();
     ASSERT_TRUE(catalog.is_ok());
@@ -149,4 +161,72 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
     (**reference_values).push((**reference_values)[usize {}].clone());
     EXPECT_TRUE(
         lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_reference).as_str()).is_err());
+}
+
+TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
+    auto catalog = lito::load_embedded_android_ndk_catalog();
+    ASSERT_TRUE(catalog.is_ok());
+    ASSERT_EQ(catalog->releases.len(), usize(1));
+    EXPECT_EQ(catalog->license.id.as_str(), "android-sdk-license"_str);
+    EXPECT_EQ(catalog->license.sha256.as_str(),
+              "efa8d9576e4816922a4676b8b9f8040f05fa22e371fbac5042c4551b08d5a43e"_str);
+    EXPECT_EQ(catalog->releases[usize {}].revision.text.as_str(), "29.0.14206865"_str);
+    EXPECT_EQ(catalog->releases[usize {}].release_name.as_str(), "r29"_str);
+
+    auto host = lito::system::HostInfo {
+        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .os           = String::make("linux"_str),
+    };
+    auto artifact = lito::find_android_ndk_artifact(catalog->releases[usize {}], host);
+    ASSERT_TRUE(artifact.is_some());
+    EXPECT_EQ((**artifact).archive.sha256.as_str(),
+              "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf"_str);
+    EXPECT_EQ((**artifact).archive.size, u64(783549481));
+    EXPECT_EQ((**artifact).archive.root.as_str(), "android-ndk-r29"_str);
+}
+
+TEST(AndroidNdkCatalog, RevisionAndRepositorySchemaAreStrict) {
+    auto revision = lito::parse_android_ndk_revision("29.0.14206865"_str);
+    ASSERT_TRUE(revision.is_ok());
+    EXPECT_EQ(revision->major, u64(29));
+    EXPECT_EQ(revision->minor, u64 {});
+    EXPECT_EQ(revision->build, u64(14206865));
+    constexpr ref<str> invalid[] = {
+        "r29"_str,     "29"_str,      "29.0"_str,    "29.0.1.0"_str,
+        "029.0.1"_str, "29.00.1"_str, "29.0.01"_str, "29.0.x"_str,
+    };
+    for (const auto value : invalid) EXPECT_TRUE(lito::parse_android_ndk_revision(value).is_err());
+
+    EXPECT_TRUE(rejects_android_catalog_value("/schema"_str, json_u64(u64(2))));
+    EXPECT_TRUE(rejects_android_catalog_value("/kind"_str,
+                                              catalog_json_string("lito-android-ndk-catalog"_str)));
+    EXPECT_TRUE(
+        rejects_android_catalog_value("/releases/0/revision"_str, catalog_json_string("r29"_str)));
+    EXPECT_TRUE(rejects_android_catalog_value(
+        "/releases/0/artifacts/0/archive/url"_str,
+        catalog_json_string("https://example.test/android-ndk.zip"_str)));
+    EXPECT_TRUE(rejects_android_catalog_value(
+        "/releases/0/artifacts/0/archive/sha256"_str,
+        catalog_json_string(
+            "4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str)));
+    EXPECT_TRUE(rejects_android_catalog_value("/releases/0/artifacts/0/archive/root"_str,
+                                              catalog_json_string("../ndk"_str)));
+    EXPECT_TRUE(rejects_android_catalog_value(
+        "/license/url"_str, catalog_json_string("https://example.test/license"_str)));
+
+    auto duplicate_release = android_catalog_document();
+    auto releases          = duplicate_release["releases"_str].as_array_mut();
+    ASSERT_TRUE(releases.is_some());
+    (**releases).push((**releases)[usize {}].clone());
+    EXPECT_TRUE(lito::parse_android_ndk_catalog(rstd::json::to_string(duplicate_release).as_str())
+                    .is_err());
+
+    auto duplicate_host = android_catalog_document();
+    auto artifacts      = duplicate_host.pointer_mut("/releases/0/artifacts"_str);
+    ASSERT_TRUE(artifacts.is_some());
+    auto artifact_values = (**artifacts).as_array_mut();
+    ASSERT_TRUE(artifact_values.is_some());
+    (**artifact_values).push((**artifact_values)[usize {}].clone());
+    EXPECT_TRUE(
+        lito::parse_android_ndk_catalog(rstd::json::to_string(duplicate_host).as_str()).is_err());
 }

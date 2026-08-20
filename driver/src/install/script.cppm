@@ -1,6 +1,5 @@
 module;
 #include <rstd/macro.hpp>
-#include <initializer_list>
 
 export module lito.driver:install.script;
 
@@ -85,8 +84,7 @@ auto strip_files(const luato::Table& root) -> luato::Result<Vec<PathBuf>> {
     return Ok(rstd::move(result));
 }
 
-auto known_fields(luato::Table& table, std::initializer_list<ref<str>> names)
-    -> luato::Result<empty> {
+auto known_fields(luato::Table& table, initializer_list<ref<str>> names) -> luato::Result<empty> {
     auto known = Vec<String>::with_capacity(usize(names.size()));
     for (auto name : names) known.push(String::make(name));
     return table.reject_unknown_fields(known.as_slice());
@@ -164,6 +162,7 @@ public:
         }
         rstd_try(known_fields(table,
                               { "artifacts"_str,
+                                "target_runtimes"_str,
                                 "external_assets"_str,
                                 "files"_str,
                                 "templates"_str,
@@ -186,10 +185,13 @@ public:
                     known_fields(item, { "target"_str, "destination"_str, "runtime_search"_str }));
                 auto target = rstd_try(item.required<luato::Table>("target"_str));
                 rstd_try(known_fields(target, { "kind"_str, "name"_str }));
-                auto kind = rstd_try(target.required<String>("kind"_str));
-                if (kind != "bin"_str) {
+                auto kind        = rstd_try(target.required<String>("kind"_str));
+                auto target_kind = lito::package::PackageTargetKind::Binary;
+                if (kind == "lib"_str) {
+                    target_kind = lito::package::PackageTargetKind::Library;
+                } else if (kind != "bin"_str) {
                     return Err(luato::Error::binding(
-                        String::make("install artifact target.kind must be 'bin'"_str)));
+                        String::make("install artifact target.kind must be 'bin' or 'lib'"_str)));
                 }
                 auto name = rstd_try(target.required<String>("name"_str));
                 auto destination =
@@ -230,11 +232,33 @@ public:
                     .target =
                         lito::package::PackageTargetId {
                             .package = package_.name.clone(),
-                            .kind    = lito::package::PackageTargetKind::Binary,
+                            .kind    = target_kind,
                             .name    = rstd::move(name),
                         },
                     .destination    = rstd::move(destination),
                     .runtime_search = rstd::move(runtime_search),
+                });
+                return Ok(empty {});
+            }));
+        rstd_try(parse_array(
+            table, "target_runtimes"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
+                rstd_try(known_fields(item, { "name"_str, "destination"_str }));
+                auto name = rstd_try(item.required<String>("name"_str));
+                if (name.is_empty()) {
+                    return Err(luato::Error::binding(
+                        String::make("target runtime name must not be empty"_str)));
+                }
+                for (const auto& existing : recipe.target_runtimes) {
+                    if (existing.name == name.as_str()) {
+                        return Err(luato::Error::binding(
+                            rstd::format("target runtime '{}' is declared more than once", name)));
+                    }
+                }
+                recipe.target_runtimes.push(InstallTargetRuntimeRecipe {
+                    .name = rstd::move(name),
+                    .destination =
+                        rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
+                                             "target runtime destination"_str)),
                 });
                 return Ok(empty {});
             }));

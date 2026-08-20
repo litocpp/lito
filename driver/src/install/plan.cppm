@@ -106,9 +106,12 @@ auto artifact_for(const BuildSummary&                   summary,
         }
         result = rstd::addressof(artifact);
     }
-    if (result == nullptr || result->kind != cpp::ArtifactKind::Executable) {
+    const auto expected_kind = target.kind == lito::package::PackageTargetKind::Library
+                                   ? cpp::ArtifactKind::SharedLibrary
+                                   : cpp::ArtifactKind::Executable;
+    if (result == nullptr || result->kind != expected_kind) {
         return materialize_failure<const BuiltArtifact*>(
-            rstd::format("build did not return an executable artifact for '{}'",
+            rstd::format("build did not return the installable artifact for '{}'",
                          lito::package::package_target_id_text(target)));
     }
     return Ok(result);
@@ -175,6 +178,29 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                     .link_production = rstd::move(production),
                     .relative_destination = artifact.destination.clone(),
                 }));
+        }
+        for (const auto& requested : recipe.target_runtimes) {
+            const BuiltTargetRuntime* resolved = nullptr;
+            for (const auto& runtime : build.target_runtimes) {
+                if (runtime.name != requested.name.as_str()) continue;
+                if (resolved != nullptr) {
+                    return materialize_failure<InstallPlan>(rstd::format(
+                        "build returned duplicate target runtime '{}'", requested.name));
+                }
+                resolved = rstd::addressof(runtime);
+            }
+            if (resolved == nullptr) {
+                return materialize_failure<InstallPlan>(
+                    rstd::format("build did not return target runtime '{}'", requested.name));
+            }
+            rstd_try(
+                append_entry(entries,
+                             InstallEntry {
+                                 .origin = InstallEntryOrigin::TargetRuntime(
+                                     resolved->name.clone(), resolved->identity.clone()),
+                                 .payload = InstallEntryPayload::CopyFile(resolved->path.clone()),
+                                 .relative_destination = requested.destination.clone(),
+                             }));
         }
         for (const auto& requested : recipe.external_assets) {
             auto set = build.external_assets.resolve(requested.dependency.as_str(),

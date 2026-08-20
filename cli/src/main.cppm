@@ -88,6 +88,28 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
                                lito::linker_family_name(report.toolchain.linker_family),
                                linker_version,
                                tool_resolution_text(report.toolchain.ar).as_str());
+    result.push_str(rstd::format("  Target\n    host           {}\n    effective      {}\n",
+                                 report.target.host.as_str(),
+                                 report.target.effective.as_str())
+                        .as_str());
+    if (report.target.android_abi.is_some()) {
+        result.push_str(rstd::format("    Android ABI    {}\n    minimum API    {}\n",
+                                     report.target.android_abi->as_str(),
+                                     *report.target.android_minimum_api)
+                            .as_str());
+    }
+    if (report.target.sdk_kind.is_some()) {
+        result.push_str(rstd::format("    SDK            {} {}\n",
+                                     report.target.sdk_kind->as_str(),
+                                     report.target.sdk_version.is_some()
+                                         ? report.target.sdk_version->as_str()
+                                         : "<external>"_str)
+                            .as_str());
+    }
+    if (report.target.sysroot.is_some()) {
+        result.push_str(
+            rstd::format("    sysroot        {}\n", report.target.sysroot->as_path()).as_str());
+    }
     if (! report.profile_values.is_empty()) {
         result.push_str(rstd::format("  Profile {}\n", report.profile.as_str()).as_str());
         auto label_width = usize {};
@@ -208,8 +230,12 @@ void observe_sdk(void*, const lito::SdkEvent& event) noexcept {
     case lito::SdkEventKind::Install: label = "install"_str; break;
     case lito::SdkEventKind::Certify: label = "certify"_str; break;
     }
-    rstd::io::println(
-        "[{}] llvm-sdk@{} {} {}", label, event.version, event.source, event.destination);
+    rstd::io::println("[{}] {}@{} {} {}",
+                      label,
+                      lito::config::sdk_kind_name(event.sdk),
+                      event.version,
+                      event.source,
+                      event.destination);
 }
 
 auto sdk_status_text(lito::SdkListStatus status) -> ref<str> {
@@ -233,9 +259,9 @@ void append_column(String& output, ref<str> value, usize width) {
     for (auto padding = value.len(); padding < width; ++padding) output.push_ascii(' ');
 }
 
-void render_sdk_list(const lito::SdkListSummary& summary) {
+void render_sdk_list(const lito::SdkListSummary& summary, ref<str> sdk_name) {
     if (summary.entries.is_empty()) {
-        rstd::io::println("no LLVM SDKs are available for {}", summary.host);
+        rstd::io::println("no {} releases are available for {}", sdk_name, summary.host);
         if (summary.active_issue.is_some()) {
             rstd::io::println("active SDK state: {}", *summary.active_issue);
         }
@@ -337,8 +363,8 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
 auto build_configuration(lito::config::ToolchainSpec          toolchain,
                          lito::config::StandardLibrary        standard_library,
                          lito::config::StandardLibraryRuntime standard_library_runtime,
-                         lito::config::ProjectBuildOptions    options)
-    -> lito::cpp::BuildConfiguration {
+                         lito::config::ProjectBuildOptions    options,
+                         lito::config::BuildTargetRequest target) -> lito::cpp::BuildConfiguration {
     return lito::cpp::BuildConfiguration {
         .toolchain                = rstd::move(toolchain),
         .standard_library         = standard_library,
@@ -346,11 +372,13 @@ auto build_configuration(lito::config::ToolchainSpec          toolchain,
         .bmi_mode                 = lito::cpp::BmiMode::Reduced,
         .language_standard        = String::make("c++20"_str),
         .global_options           = rstd::move(options),
+        .target                   = rstd::move(target),
     };
 }
 
 struct ArtifactCounts {
     usize archives {};
+    usize shared_libraries {};
     usize executables {};
     usize tests {};
     usize benchmarks {};
@@ -362,6 +390,7 @@ auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     for (const auto& artifact : summary.artifacts) {
         switch (artifact.kind) {
         case lito::cpp::ArtifactKind::StaticLibrary: ++counts.archives; break;
+        case lito::cpp::ArtifactKind::SharedLibrary: ++counts.shared_libraries; break;
         case lito::cpp::ArtifactKind::TestAttachmentArchive: ++counts.archives; break;
         case lito::cpp::ArtifactKind::Executable: ++counts.executables; break;
         case lito::cpp::ArtifactKind::TestExecutable: ++counts.tests; break;
@@ -503,22 +532,26 @@ extern "C++" int main() {
         return 0;
     }
     if (invocation.command.is_Sdk()) {
-        auto command = rstd::move(invocation.command).as_Sdk().command;
+        auto       sdk_command = rstd::move(invocation.command).as_Sdk().command;
+        const auto android     = sdk_command.is_AndroidNdk();
+        auto       command     = android ? rstd::move(sdk_command).as_AndroidNdk().command
+                                         : rstd::move(sdk_command).as_Llvm().command;
+        const auto sdk_name    = android ? "Android NDK"_str : "LLVM SDK"_str;
         if (command.is_List()) {
-            auto result = lito::list_llvm_sdks();
+            auto result = android ? lito::list_android_ndks() : lito::list_llvm_sdks();
             if (result.is_err()) {
                 auto error = rstd::move(result).unwrap_err();
                 report_error(error);
                 return 1;
             }
-            render_sdk_list(*result);
+            render_sdk_list(*result, sdk_name);
             return 0;
         }
         if (command.is_Activate()) {
             auto options = rstd::move(command).as_Activate().options;
-            auto result  = lito::activate_llvm_sdk(lito::SdkActivateRequest {
-                .version = rstd::move(options.version),
-            });
+            auto request = lito::SdkActivateRequest { .version = rstd::move(options.version) };
+            auto result  = android ? lito::activate_android_ndk(rstd::move(request))
+                                   : lito::activate_llvm_sdk(rstd::move(request));
             if (result.is_err()) {
                 auto error = rstd::move(result).unwrap_err();
                 report_error(error);
@@ -526,12 +559,14 @@ extern "C++" int main() {
             }
             auto summary = rstd::move(result).unwrap();
             if (summary.unchanged) {
-                rstd::io::println("LLVM SDK {} for {} is already active at {}",
+                rstd::io::println("{} {} for {} is already active at {}",
+                                  sdk_name,
                                   summary.version,
                                   summary.host,
                                   summary.prefix.as_path());
             } else {
-                rstd::io::println("activated LLVM SDK {} for {} at {}",
+                rstd::io::println("activated {} {} for {} at {}",
+                                  sdk_name,
                                   summary.version,
                                   summary.host,
                                   summary.prefix.as_path());
@@ -539,7 +574,7 @@ extern "C++" int main() {
             return 0;
         }
         if (command.is_Deactivate()) {
-            auto result = lito::deactivate_llvm_sdk();
+            auto result = android ? lito::deactivate_android_ndk() : lito::deactivate_llvm_sdk();
             if (result.is_err()) {
                 auto error = rstd::move(result).unwrap_err();
                 report_error(error);
@@ -547,20 +582,20 @@ extern "C++" int main() {
             }
             auto summary = rstd::move(result).unwrap();
             if (summary.unchanged) {
-                rstd::io::println("no LLVM SDK is active");
+                rstd::io::println("no {} is active", sdk_name);
             } else if (summary.invalid_state) {
-                rstd::io::println("cleared invalid LLVM SDK activation state");
+                rstd::io::println("cleared invalid {} activation state", sdk_name);
             } else {
                 rstd::io::println(
-                    "deactivated LLVM SDK {} for {}", *summary.version, *summary.host);
+                    "deactivated {} {} for {}", sdk_name, *summary.version, *summary.host);
             }
             return 0;
         }
         if (command.is_Uninstall()) {
             auto options = rstd::move(command).as_Uninstall().options;
-            auto result  = lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
-                .version = rstd::move(options.version),
-            });
+            auto request = lito::SdkUninstallRequest { .version = rstd::move(options.version) };
+            auto result  = android ? lito::uninstall_android_ndk(rstd::move(request))
+                                   : lito::uninstall_llvm_sdk(rstd::move(request));
             if (result.is_err()) {
                 auto error = rstd::move(result).unwrap_err();
                 report_error(error);
@@ -569,17 +604,20 @@ extern "C++" int main() {
             auto summary = rstd::move(result).unwrap();
             auto status  = summary.was_active ? "uninstalled active"_str : "uninstalled"_str;
             if (summary.recovered) {
-                rstd::io::println("completed interrupted LLVM SDK {} removal from {}",
+                rstd::io::println("completed interrupted {} {} removal from {}",
+                                  sdk_name,
                                   summary.version,
                                   summary.prefix.as_path());
             } else if (summary.invalid_entry) {
-                rstd::io::println("{} invalid LLVM SDK {} from {}",
+                rstd::io::println("{} invalid {} {} from {}",
                                   status,
+                                  sdk_name,
                                   summary.version,
                                   summary.prefix.as_path());
             } else {
-                rstd::io::println("{} LLVM SDK {} for {} from {}",
+                rstd::io::println("{} {} {} for {} from {}",
                                   status,
+                                  sdk_name,
                                   summary.version,
                                   *summary.host,
                                   summary.prefix.as_path());
@@ -601,27 +639,36 @@ extern "C++" int main() {
         }
         auto config        = rstd::move(loaded).unwrap();
         auto event_context = EventContext {};
-        auto result        = lito::install_llvm_sdk(lito::SdkInstallRequest {
-            .version       = rstd::move(options.version),
-            .environment   = rstd::move(config.environment),
-            .tools         = rstd::move(config.tools),
-            .toolchain     = rstd::move(config.toolchain),
-            .tool_reporter = Some(lito::tools::HostToolResolutionSink {
-                .context = rstd::addressof(event_context),
-                .notify  = report_host_tool_resolution,
-            }),
-            .observer      = Some(lito::SdkEventSink {
-                .notify = observe_sdk,
-            }),
+        auto reporter      = Some(lito::tools::HostToolResolutionSink {
+            .context = rstd::addressof(event_context),
+            .notify  = report_host_tool_resolution,
         });
+        auto observer      = Some(lito::SdkEventSink { .notify = observe_sdk });
+        auto result        = android ? lito::install_android_ndk(lito::AndroidNdkInstallRequest {
+                                           .version        = rstd::move(options.version),
+                                           .accept_license = options.accept_license,
+                                           .environment    = rstd::move(config.environment),
+                                           .tools          = rstd::move(config.tools),
+                                           .tool_reporter  = rstd::move(reporter),
+                                           .observer       = rstd::move(observer),
+                                       })
+                                     : lito::install_llvm_sdk(lito::SdkInstallRequest {
+                                           .version       = rstd::move(options.version),
+                                           .environment   = rstd::move(config.environment),
+                                           .tools         = rstd::move(config.tools),
+                                           .toolchain     = rstd::move(config.toolchain),
+                                           .tool_reporter = rstd::move(reporter),
+                                           .observer      = rstd::move(observer),
+                                       });
         if (result.is_err()) {
             auto error = rstd::move(result).unwrap_err();
             report_error(error);
             return 1;
         }
         auto summary = rstd::move(result).unwrap();
-        rstd::io::println("{} LLVM SDK {} for {} at {}",
+        rstd::io::println("{} {} {} for {} at {}",
                           summary.reused ? "reused"_str : "installed"_str,
+                          sdk_name,
                           summary.version,
                           summary.host,
                           summary.prefix.as_path());
@@ -665,7 +712,23 @@ extern "C++" int main() {
         report_error(error);
         return 1;
     }
-    auto project = rstd::move(loaded_config).unwrap();
+    auto       project        = rstd::move(loaded_config).unwrap();
+    auto       active_android = Option<lito::AndroidNdkLease> {};
+    const auto build_command  = invocation.command.is_Build() || invocation.command.is_Install() ||
+                                invocation.command.is_Test() || invocation.command.is_Bench() ||
+                                invocation.command.is_Doc() || invocation.command.is_Scan();
+    if (build_command && project.build_target.is_Android() && project.toolchain.sdk.is_none()) {
+        auto active_android_result = lito::acquire_active_android_ndk();
+        if (active_android_result.is_err()) {
+            auto error = rstd::move(active_android_result).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        active_android = rstd::move(active_android_result).unwrap();
+        if (active_android.is_some()) {
+            project.toolchain.sdk = active_android->project_defaults().toolchain.sdk;
+        }
+    }
 
     if (invocation.command.is_Lock()) {
         auto command = rstd::move(invocation.command).as_Lock().command;
@@ -711,19 +774,20 @@ extern "C++" int main() {
             .source      = rstd::move(install_source).unwrap(),
             .destination = rstd::move(destination).unwrap(),
         };
-        request.binaries             = rstd::move(options.binaries);
-        request.force                = options.force;
-        request.build.selection.root = project.root.clone();
-        request.build.environment    = rstd::move(project.environment);
-        request.build.tools          = rstd::move(project.tools);
-        request.build.configuration  = build_configuration(rstd::move(project.toolchain),
-                                                           project.standard_library,
-                                                           project.standard_library_runtime,
-                                                           rstd::move(project.build_options));
-        request.build.lock           = rstd::move(project.lock);
-        request.build.sources        = rstd::move(project.sources);
-        request.build.pkg_config     = rstd::move(project.pkg_config);
-        request.build.cmake          = rstd::move(project.cmake);
+        request.binaries                    = rstd::move(options.binaries);
+        request.force                       = options.force;
+        request.build.selection.root        = project.root.clone();
+        request.build.environment           = rstd::move(project.environment);
+        request.build.tools                 = rstd::move(project.tools);
+        request.build.configuration         = build_configuration(rstd::move(project.toolchain),
+                                                                  project.standard_library,
+                                                                  project.standard_library_runtime,
+                                                                  rstd::move(project.build_options),
+                                                                  rstd::move(project.build_target));
+        request.build.lock                  = rstd::move(project.lock);
+        request.build.sources               = rstd::move(project.sources);
+        request.build.pkg_config            = rstd::move(project.pkg_config);
+        request.build.cmake                 = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
         request.build.selection.packages    = rstd::move(options.packages);
         request.build.selection.features    = rstd::move(options.features);
@@ -858,7 +922,8 @@ extern "C++" int main() {
         request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                             project.standard_library,
                                                             project.standard_library_runtime,
-                                                            rstd::move(project.build_options));
+                                                            rstd::move(project.build_options),
+                                                            rstd::move(project.build_target));
         request.lock                  = rstd::move(project.lock);
         request.sources               = rstd::move(project.sources);
         request.pkg_config            = rstd::move(project.pkg_config);
@@ -917,7 +982,8 @@ extern "C++" int main() {
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
-                                                           rstd::move(project.build_options));
+                                                           rstd::move(project.build_options),
+                                                           rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
@@ -1004,7 +1070,8 @@ extern "C++" int main() {
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
-                                                           rstd::move(project.build_options));
+                                                           rstd::move(project.build_options),
+                                                           rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
@@ -1129,7 +1196,8 @@ extern "C++" int main() {
         request.build.configuration  = build_configuration(rstd::move(project.toolchain),
                                                            project.standard_library,
                                                            project.standard_library_runtime,
-                                                           rstd::move(project.build_options));
+                                                           rstd::move(project.build_options),
+                                                           rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
         request.build.pkg_config     = rstd::move(project.pkg_config);
@@ -1228,7 +1296,8 @@ extern "C++" int main() {
     request.configuration         = build_configuration(rstd::move(project.toolchain),
                                                         project.standard_library,
                                                         project.standard_library_runtime,
-                                                        rstd::move(project.build_options));
+                                                        rstd::move(project.build_options),
+                                                        rstd::move(project.build_target));
     request.lock                  = rstd::move(project.lock);
     request.sources               = rstd::move(project.sources);
     request.pkg_config            = rstd::move(project.pkg_config);
@@ -1255,7 +1324,7 @@ extern "C++" int main() {
     auto summary = rstd::move(result).unwrap();
     auto counts  = artifact_counts(summary);
     rstd::io::println("built {} ({}) in {}: {} scanned, {} compiled, {} reused, "
-                      "{} archives, {} executables, {} tests",
+                      "{} archives, {} shared libraries, {} executables, {} tests",
                       summary.package.as_str(),
                       summary.profile.as_str(),
                       summary.output.as_path(),
@@ -1263,6 +1332,7 @@ extern "C++" int main() {
                       summary.compiled,
                       summary.reused,
                       counts.archives,
+                      counts.shared_libraries,
                       counts.executables,
                       counts.tests + summary.compile_tests.len());
     auto emitted = lito::timing_output::emit(summary, timing);

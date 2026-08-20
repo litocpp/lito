@@ -43,12 +43,31 @@ struct Provider {
     Vec<PathBuf> search_paths;
 };
 
+struct TargetToolchainConfiguration : DefaultInClass<TargetToolchainConfiguration, Clone> {
+    PathBuf         file;
+    Vec<CacheEntry> cache;
+    String          identity;
+
+    auto clone() const -> TargetToolchainConfiguration {
+        auto entries = Vec<CacheEntry>::with_capacity(cache.len());
+        for (const auto& entry : cache) {
+            entries.push(CacheEntry { .name = entry.name.clone(), .value = entry.value.clone() });
+        }
+        return TargetToolchainConfiguration {
+            .file     = file.clone(),
+            .cache    = rstd::move(entries),
+            .identity = identity.clone(),
+        };
+    }
+};
+
 struct ToolchainConfiguration {
-    PathBuf cc;
-    PathBuf cxx;
-    PathBuf linker;
-    String  linker_identity;
-    PathBuf archiver;
+    PathBuf                              cc;
+    PathBuf                              cxx;
+    PathBuf                              linker;
+    String                               linker_identity;
+    PathBuf                              archiver;
+    Option<TargetToolchainConfiguration> target;
 };
 
 struct ProfileConfiguration {

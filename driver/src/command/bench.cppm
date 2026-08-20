@@ -1,3 +1,6 @@
+module;
+#include <rstd/macro.hpp>
+
 export module lito.driver:command.bench;
 
 import rstd;
@@ -66,6 +69,7 @@ auto bench(BenchRequest request) -> CommandResult<BenchSummary> {
 
     auto executions = Vec<BenchExecution>::with_capacity(selected.len());
     if (! request.no_run) {
+        rstd_try(ensure_artifact_runner(summary.platform, "bench"_str));
         for (const auto* artifact : selected) {
             if (request.observer.is_some() && request.observer->notify != nullptr) {
                 request.observer->notify(request.observer->context,

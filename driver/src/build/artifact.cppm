@@ -27,6 +27,12 @@ struct BuiltRuntimeResource {
     Vec<PathBuf>                   files;
 };
 
+struct BuiltTargetRuntime {
+    String  name;
+    PathBuf path;
+    String  identity;
+};
+
 struct CompileTestExecution {
     String                             package;
     String                             name;

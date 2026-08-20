@@ -275,15 +275,19 @@
     },
     "libraryTarget": {
       "type": "object",
-      "required": [
-        "name",
-        "archive"
-      ],
+      "required": ["name"],
       "properties": {
         "name": {
           "$ref": "#/definitions/packageName"
         },
+        "kind": {
+          "enum": ["static", "shared"],
+          "default": "static"
+        },
         "archive": {
+          "$ref": "#/definitions/artifactName"
+        },
+        "artifact": {
           "$ref": "#/definitions/artifactName"
         },
         "module": {
@@ -302,6 +306,24 @@
       "allOf": [
         {
           "$ref": "#/definitions/targetSources"
+        },
+        {
+          "oneOf": [
+            {
+              "required": ["archive"],
+              "not": { "required": ["artifact"] },
+              "properties": {
+                "kind": { "enum": ["static"] }
+              }
+            },
+            {
+              "required": ["kind", "artifact"],
+              "not": { "required": ["archive"] },
+              "properties": {
+                "kind": { "enum": ["shared"] }
+              }
+            }
+          ]
         }
       ],
       "additionalProperties": false

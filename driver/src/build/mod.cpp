@@ -197,8 +197,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                              metadata.default_profile.as_str(),
                              profile.as_str()));
         }
-        auto requested_layout = BuildLayout::resolve(
-            metadata.root.as_path(), request.output.as_path(), metadata.default_profile.as_str());
+        auto requested_layout = BuildLayout::resolve(metadata.root.as_path(),
+                                                     request.output.as_path(),
+                                                     metadata.default_profile.as_str(),
+                                                     project.platform.output_key.as_str());
         auto canonical_output = rstd::fs::canonicalize(requested_layout.output());
         if (canonical_output.is_err()) {
             return Err(BuildError::System(
@@ -291,7 +293,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     auto needs_strip_tool = false;
     for (const auto target : selected->target_order) {
         const auto kind = metadata.targets[target].artifact_kind;
-        if (kind == cpp::ArtifactKind::Executable || kind == cpp::ArtifactKind::TestExecutable ||
+        if (kind == cpp::ArtifactKind::SharedLibrary || kind == cpp::ArtifactKind::Executable ||
+            kind == cpp::ArtifactKind::TestExecutable ||
             kind == cpp::ArtifactKind::BenchmarkExecutable) {
             needs_strip_tool = true;
             break;
@@ -307,9 +310,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
     }
     auto native_target_plan = rstd::move(resolved).unwrap();
-    auto stripper           = Option<PathBuf> {};
+    auto stripper           = as<Clone>(project.target_stripper).clone();
     if (needs_strip_tool &&
-        metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None) {
+        metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None &&
+        stripper.is_none()) {
         const auto tool_requirement = lito::tools::build_profile_tool_requirement(
             lito::tools::HostToolCapability::ArtifactStripping,
             metadata.profiles[native_target_plan.profile].name.as_str(),
@@ -402,8 +406,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(convention_valid).unwrap_err()));
     }
 
+    auto bmi_format         = toolchain.bmi_format(project.platform);
     auto resolved_semantics = profiler.measure(ScanProbe::ModuleGraph, [&] {
-        return cpp::resolve_semantic_build(package_plan, units, scans, toolchain.bmi_format());
+        return cpp::resolve_semantic_build(package_plan, units, scans, bmi_format);
     });
     if (resolved_semantics.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(resolved_semantics).unwrap_err()));
@@ -444,9 +449,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     frontend_statistics.persistent_fingerprint_wait   = scan_cache_statistics.fingerprint_wait;
     analysis_service.release_source_cache();
 
-    auto cache = CompileCacheSession::create(cache_environment, layout.output());
-    auto materialized =
-        materialize_compile_plan(package, layout, toolchain, units, scans, semantic_graph);
+    auto cache        = CompileCacheSession::create(cache_environment, layout.output());
+    auto materialized = materialize_compile_plan(
+        package, layout, toolchain, bmi_format, units, scans, semantic_graph);
     if (materialized.is_err()) {
         return Err(rstd::move(materialized).unwrap_err());
     }
@@ -491,9 +496,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
 
     auto artifacts     = Vec<BuiltArtifact>::make();
-    auto archive_paths = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
+    auto library_paths = Vec<Option<PathBuf>>::with_capacity(package.targets.len());
     for (auto target = cpp::TargetId {}; target < package.targets.len(); ++target) {
-        archive_paths.emplace_back(None());
+        library_paths.emplace_back(None());
     }
     for (auto target : package_plan.target_order) {
         const auto& target_spec = package.targets[target];
@@ -516,7 +521,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             return Err(rstd::into<BuildError>(rstd::move(archived).unwrap_err()));
         }
         build_timing.record(BuildOperation::Archive, *archived);
-        archive_paths[target] = Some(archive_path.clone());
+        library_paths[target] = Some(archive_path.clone());
         artifacts.push(BuiltArtifact {
             .target        = target_spec.id.clone(),
             .kind          = target_spec.artifact_kind,
@@ -543,7 +548,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     ! (candidate_spec.test_attachment->test_target == target_spec.id)) {
                     continue;
                 }
-                if (archive_paths[candidate].is_none()) {
+                if (library_paths[candidate].is_none()) {
                     return build_failure<BuildSummary>(
                         rstd::format("test target '{}' has no attachment archive for '{}'",
                                      lito::package::package_target_id_text(target_spec.id).as_str(),
@@ -552,7 +557,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                          .as_str()));
                 }
                 link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
-                    .path = (*archive_paths[candidate]).clone(),
+                    .path = (*library_paths[candidate]).clone(),
                     .mode = LinkArchiveMode::Whole,
                 }));
             }
@@ -565,18 +570,24 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             auto        dependency      = input.as_Target().target;
             const auto& dependency_spec = package.targets[dependency];
-            if (dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary ||
-                archive_paths[dependency].is_none()) {
+            if ((dependency_spec.artifact_kind != cpp::ArtifactKind::StaticLibrary &&
+                 dependency_spec.artifact_kind != cpp::ArtifactKind::SharedLibrary) ||
+                library_paths[dependency].is_none()) {
                 return build_failure<BuildSummary>(rstd::format(
                     "executable target '{}' depends on unavailable "
                     "library target '{}'",
                     lito::package::package_target_id_text(target_spec.id).as_str(),
                     lito::package::package_target_id_text(dependency_spec.id).as_str()));
             }
-            link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
-                .path = (*archive_paths[dependency]).clone(),
-                .mode = LinkArchiveMode::Normal,
-            }));
+            if (dependency_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
+                link_inputs.push(
+                    ResolvedLinkInput::SharedLibrary((*library_paths[dependency]).clone()));
+            } else {
+                link_inputs.push(ResolvedLinkInput::Archive(LinkArchive {
+                    .path = (*library_paths[dependency]).clone(),
+                    .mode = LinkArchiveMode::Normal,
+                }));
+            }
         }
         const RequestedArtifactLinkVariant* install_variant = nullptr;
         for (const auto& requested : request.artifact_link_variants) {
@@ -590,7 +601,9 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         auto link_requirements = package_plan.link_requirements[target].clone();
         auto executable_path =
-            layout.executable(target_spec.id, target_spec.artifact_name.as_str());
+            target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary
+                ? layout.shared_library(target_spec.id, target_spec.artifact_name.as_str())
+                : layout.executable(target_spec.id, target_spec.artifact_name.as_str());
         if (install_variant != nullptr) {
             lito::link::replace_runtime_search_paths(link_requirements,
                                                      install_variant->policy.runtime_search,
@@ -618,22 +631,42 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             target_spec.language == lito::manifest::PackageLanguage::C
                 ? package_plan.profile->c.common.microsoft_runtime_library
                 : package_plan.profile->cpp.common.microsoft_runtime_library;
-        auto linked = toolchain.link_executable(executable_path.as_path(),
-                                                objects,
-                                                link_inputs,
-                                                target_spec.language,
-                                                package_plan.profile->cpp.abi.standard_library,
-                                                microsoft_runtime_library,
-                                                project.platform.effective_target,
-                                                target_spec.link_stdlib,
-                                                link_lto,
-                                                link_requirements,
-                                                package_plan.linker_options[target],
-                                                target_spec.root.as_path());
+        auto link_context = LinkTargetContext {
+            .platform                  = project.platform.clone(),
+            .language                  = target_spec.language,
+            .standard_library          = package_plan.profile->cpp.abi.standard_library,
+            .standard_library_runtime  = request.configuration.standard_library_runtime,
+            .microsoft_runtime_library = microsoft_runtime_library,
+            .link_standard_library     = target_spec.link_stdlib,
+        };
+        auto linked = [&] {
+            if (target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
+                link_context.soname = Some(target_spec.artifact_name.clone());
+                return toolchain.link_shared_library(executable_path.as_path(),
+                                                     objects,
+                                                     link_inputs,
+                                                     rstd::move(link_context),
+                                                     link_lto,
+                                                     link_requirements,
+                                                     package_plan.linker_options[target],
+                                                     target_spec.root.as_path());
+            }
+            return toolchain.link_executable(executable_path.as_path(),
+                                             objects,
+                                             link_inputs,
+                                             link_context,
+                                             link_lto,
+                                             link_requirements,
+                                             package_plan.linker_options[target],
+                                             target_spec.root.as_path());
+        }();
         if (linked.is_err()) {
             return Err(rstd::into<BuildError>(rstd::move(linked).unwrap_err()));
         }
         build_timing.record(BuildOperation::Link, *linked);
+        if (target_spec.artifact_kind == cpp::ArtifactKind::SharedLibrary) {
+            library_paths[target] = Some(executable_path.clone());
+        }
         if (package_plan.profile->strip != lito::artifact::StripMode::None) {
             if (stripper.is_none()) {
                 return build_failure<BuildSummary>("strip tool was not resolved"_str);
@@ -653,6 +686,23 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
         auto link_identity = String::make("lito-built-artifact-link-v2\n"_str);
         link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
+        link_identity.push_ascii('\n');
+        link_identity.push_str("target="_str);
+        link_identity.push_str(project.platform.effective_target.triple.as_str());
+        link_identity.push_ascii('\n');
+        link_identity.push_str("sysroot="_str);
+        if (project.platform.sysroot.is_some()) {
+            link_identity.push_str(project.platform.sysroot->as_path().to_string_lossy().as_str());
+        }
+        link_identity.push_ascii('\n');
+        link_identity.push_str("sdk="_str);
+        if (project.platform.sdk_identity.is_some()) {
+            link_identity.push_str(project.platform.sdk_identity->as_str());
+        }
+        link_identity.push_ascii('\n');
+        link_identity.push_str("stdlib-runtime="_str);
+        link_identity.push_str(lito::config::standard_library_runtime_name(
+            request.configuration.standard_library_runtime));
         link_identity.push_ascii('\n');
         link_identity.push_str(target_identity.as_str());
         link_identity.push_ascii('\n');
@@ -682,7 +732,8 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     return Ok(BuildSummary {
         .package                    = package.name.clone(),
         .profile                    = package_plan.profile->name.clone(),
-        .target                     = String::make(toolchain.target()),
+        .target                     = project.platform.effective_target.triple.clone(),
+        .platform                   = project.platform.clone(),
         .language_standard          = request.configuration.language_standard.clone(),
         .output                     = PathBuf::from(layout.output()),
         .scanned                    = scans.len(),
@@ -690,6 +741,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         .reused                     = reused,
         .artifacts                  = rstd::move(artifacts),
         .runtime_resources          = rstd::move(runtime_resources),
+        .target_runtimes            = rstd::move(project.target_runtimes),
         .selected_targets           = rstd::move(selected_targets),
         .selected_packages          = rstd::move(selected_packages),
         .frontend                   = frontend_statistics,

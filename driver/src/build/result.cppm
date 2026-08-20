@@ -19,6 +19,7 @@ struct BuildSummary {
     String                              package;
     String                              profile;
     String                              target;
+    lito::system::BuildPlatform         platform;
     String                              language_standard;
     PathBuf                             output;
     usize                               scanned {};
@@ -26,6 +27,7 @@ struct BuildSummary {
     usize                               reused {};
     Vec<BuiltArtifact>                  artifacts;
     Vec<BuiltRuntimeResource>           runtime_resources;
+    Vec<BuiltTargetRuntime>             target_runtimes;
     Vec<lito::package::PackageTargetId> selected_targets;
     Vec<cpp::SelectedPackageMetadata>   selected_packages;
     frontend::FrontendStatistics        frontend;

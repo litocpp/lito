@@ -201,6 +201,9 @@ auto install_entry_origin_text(const InstallEntryOrigin& origin) -> String {
     if (origin.is_BuildArtifact()) {
         return lito::package::package_target_id_text(origin.as_BuildArtifact().target);
     }
+    if (origin.is_TargetRuntime()) {
+        return rstd::format("target-runtime:{}", origin.as_TargetRuntime().name.as_str());
+    }
     if (origin.is_ExternalAsset()) {
         return rstd::format("{}:{}/{}",
                             origin.as_ExternalAsset().dependency.as_str(),

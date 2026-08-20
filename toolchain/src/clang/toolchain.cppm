@@ -244,6 +244,15 @@ public:
     auto target_info() const -> const TargetInfo& { return target_info_; }
     auto resource_dir() const -> ref<rstd::path::Path> { return resource_dir_.as_path(); }
     auto bmi_format() const -> const cpp::BmiFormatIdentity& { return bmi_format_; }
+    auto bmi_format(const BuildPlatform& platform) const -> cpp::BmiFormatIdentity {
+        auto result   = bmi_format_.clone();
+        result.target = platform.effective_target.triple.clone();
+        if (platform.sdk_identity.is_some()) {
+            result.resource_environment.push_str("\nsdk-identity="_str);
+            result.resource_environment.push_str(platform.sdk_identity->as_str());
+        }
+        return result;
+    }
     auto capabilities() const noexcept -> const cpp::CppToolchainCapabilities& {
         return capabilities_;
     }
@@ -987,19 +996,19 @@ public:
         return Ok(command_output.elapsed);
     }
 
-    auto link_executable(
-        ref<rstd::path::Path>                                  output_path,
-        const Vec<PathBuf>&                                    objects,
-        const Vec<ResolvedLinkInput>&                          inputs,
-        lito::manifest::PackageLanguage                        language,
-        lito::config::StandardLibrary                          standard_library,
-        const Option<lito::compiler::MicrosoftRuntimeLibrary>& microsoft_runtime_library,
-        const TargetInfo&                                      target,
-        bool                                                   link_stdlib,
-        const Option<lito::manifest::Lto>&                     lto,
-        const lito::link::Requirements&                        link_requirements,
-        const Vec<String>&                                     linker_options,
-        ref<rstd::path::Path> working_directory) const -> ToolchainResult<rstd::time::Duration> {
+    auto link_executable(ref<rstd::path::Path>              output_path,
+                         const Vec<PathBuf>&                objects,
+                         const Vec<ResolvedLinkInput>&      inputs,
+                         const LinkTargetContext&           context,
+                         const Option<lito::manifest::Lto>& lto,
+                         const lito::link::Requirements&    link_requirements,
+                         const Vec<String>&                 linker_options,
+                         ref<rstd::path::Path>              working_directory) const
+        -> ToolchainResult<rstd::time::Duration> {
+        const auto& target                    = context.platform.effective_target;
+        const auto  language                  = context.language;
+        const auto  standard_library          = context.standard_library;
+        const auto& microsoft_runtime_library = context.microsoft_runtime_library;
         if (lto.is_some() && *lto != lito::manifest::Lto::Off &&
             ! linker_identity_.capabilities.llvm_lto) {
             return failure<rstd::time::Duration>(
@@ -1023,12 +1032,35 @@ public:
                                                          ? c_compiler_.as_path()
                                                          : compiler_.as_path());
         if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        if (context.platform.intent == BuildTargetIntent::ExplicitTarget) {
+            command.push(rstd::format("--target={}", target.triple.as_str()));
+        }
+        if (context.platform.sysroot.is_some()) {
+            pushed = toolchain::command::push_path_option(
+                command, "--sysroot="_str, context.platform.sysroot->as_path());
+            if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        }
         if (target.family == TargetFamily::Windows) {
             toolchain::command::push_option(command, "-fuse-ld=lld"_str);
         } else {
             pushed = toolchain::command::push_path_option(
                 command, "-fuse-ld="_str, linker_identity_.executable.as_path());
             if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
+        }
+        if (context.output == LinkOutputKind::SharedLibrary) {
+            if (target.family != TargetFamily::Unix || target.os.as_str() == "macos"_str) {
+                return failure<rstd::time::Duration>(
+                    rstd::format("ELF shared-library output is unsupported for target '{}'",
+                                 target.triple.as_str()));
+            }
+            if (context.soname.is_none() || context.soname->is_empty() ||
+                context.soname->as_str().contains("/"_str) ||
+                context.soname->as_str().contains("\\"_str)) {
+                return failure<rstd::time::Duration>(
+                    "ELF shared-library output requires a safe SONAME"_str);
+            }
+            toolchain::command::push_option(command, "-shared"_str);
+            command.push(rstd::format("-Wl,-soname,{}", context.soname->as_str()));
         }
         if (target.environment == TargetEnvironment::Msvc && microsoft_runtime_library.is_some() &&
             lito::compiler::microsoft_runtime_library_is_dynamic(*microsoft_runtime_library)) {
@@ -1042,9 +1074,13 @@ public:
         }
         if (language == lito::manifest::PackageLanguage::Cpp) {
             auto stdlib_link_option = toolchain::clang_options::standard_library_linker_option(
-                standard_library, target, link_stdlib);
+                standard_library, target, context.link_standard_library);
             if (! stdlib_link_option.is_empty()) {
                 toolchain::command::push_option(command, stdlib_link_option);
+            }
+            if (context.link_standard_library && target.os.as_str() == "android"_str &&
+                context.standard_library_runtime == lito::config::StandardLibraryRuntime::Static) {
+                toolchain::command::push_option(command, "-static-libstdc++"_str);
             }
         }
         auto lto_option = cpp::cpp_lto_option(lto);
@@ -1067,6 +1103,12 @@ public:
                 for (const auto& token : input.as_External().arguments.tokens) {
                     command.push(token.clone());
                 }
+                continue;
+            }
+            if (input.is_SharedLibrary()) {
+                pushed = toolchain::command::push_path(command,
+                                                       input.as_SharedLibrary().library.as_path());
+                if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
                 continue;
             }
             const auto& archive = input.as_Archive().archive;
@@ -1151,6 +1193,26 @@ public:
         return Ok(command_output.elapsed);
     }
 
+    auto link_shared_library(ref<rstd::path::Path>              output_path,
+                             const Vec<PathBuf>&                objects,
+                             const Vec<ResolvedLinkInput>&      inputs,
+                             LinkTargetContext                  context,
+                             const Option<lito::manifest::Lto>& lto,
+                             const lito::link::Requirements&    link_requirements,
+                             const Vec<String>&                 linker_options,
+                             ref<rstd::path::Path>              working_directory) const
+        -> ToolchainResult<rstd::time::Duration> {
+        context.output = LinkOutputKind::SharedLibrary;
+        return link_executable(output_path,
+                               objects,
+                               inputs,
+                               context,
+                               lto,
+                               link_requirements,
+                               linker_options,
+                               working_directory);
+    }
+
     auto link_elf_shared_library(const ElfSharedLibraryLinkRequest& request) const
         -> ToolchainResult<ElfSharedLibraryArtifact> {
         if (! linker_identity_.capabilities.elf_shared_library) {
@@ -1191,54 +1253,43 @@ public:
                                    request.version_script.clone(),
                                    rstd::move(version_script).unwrap_err()));
         }
-        auto parent = create_parent(request.output.as_path());
-        if (parent.is_err()) return Err(rstd::move(parent).unwrap_err());
-        auto command = Vec<String>::make();
-        auto pushed  = toolchain::command::push_path(command, c_compiler_.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        pushed = toolchain::command::push_path_option(
-            command, "-fuse-ld="_str, linker_identity_.executable.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(command, "-shared"_str);
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        toolchain::command::push_option(command, "-soname"_str);
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        command.push(request.soname.clone());
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        toolchain::command::push_option(command, "--version-script"_str);
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        pushed = toolchain::command::push_path(command, request.version_script.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        toolchain::command::push_option(command, "--gc-sections"_str);
-        toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-        toolchain::command::push_option(command, "--no-undefined"_str);
-        if (request.archive.mode == LinkArchiveMode::Whole) {
-            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-            toolchain::command::push_option(command, "--whole-archive"_str);
+        auto host = detect_host_info();
+        if (host.is_err()) {
+            return Err(ToolchainError::Platform(rstd::move(host).unwrap_err()));
         }
-        pushed = toolchain::command::push_path(command, request.archive.path.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        if (request.archive.mode == LinkArchiveMode::Whole) {
-            toolchain::command::push_option(command, toolchain::clang_options::LINKER_ARGUMENT);
-            toolchain::command::push_option(command, "--no-whole-archive"_str);
+        auto platform = resolve_build_platform(*host, target_info_, None());
+        if (platform.is_err()) {
+            return Err(ToolchainError::Platform(rstd::move(platform).unwrap_err()));
         }
-        toolchain::command::push_option(command, "-o"_str);
-        pushed = toolchain::command::push_path(command, request.output.as_path());
-        if (pushed.is_err()) return Err(rstd::move(pushed).unwrap_err());
-        auto output = run_command(command, environment_, Some(request.working_directory.as_path()));
-        if (output.is_err()) {
-            return Err(rstd::into<ToolchainError>(rstd::move(output).unwrap_err()));
-        }
-        auto command_output = rstd::move(output).unwrap();
-        if (command_output.exit_code != i32 {}) {
+        auto version_script_text = request.version_script.as_path().to_str();
+        if (version_script_text.is_none()) {
             return failure<ElfSharedLibraryArtifact>(
-                rstd::format("{} failed while linking '{}'\n{}\n{}",
-                             linker_family_name(linker_identity_.family),
-                             request.output.as_path(),
-                             command_text(command).as_str(),
-                             command_output.standard_error.as_str()));
+                rstd::format("ELF version script path '{}' is not valid UTF-8",
+                             request.version_script.as_path()));
         }
+        auto inputs = Vec<ResolvedLinkInput>::make();
+        inputs.push(ResolvedLinkInput::Archive(LinkArchive {
+            .path = request.archive.path.clone(),
+            .mode = request.archive.mode,
+        }));
+        auto linker_options = Vec<String>::make();
+        linker_options.push(rstd::format("-Wl,--version-script={}", *version_script_text));
+        linker_options.push(String::make("-Wl,--gc-sections"_str));
+        linker_options.push(String::make("-Wl,--no-undefined"_str));
+        auto linked = link_shared_library(request.output.as_path(),
+                                          Vec<PathBuf>::make(),
+                                          inputs,
+                                          LinkTargetContext {
+                                              .platform = rstd::move(platform).unwrap(),
+                                              .language = lito::manifest::PackageLanguage::C,
+                                              .link_standard_library = false,
+                                              .soname                = Some(request.soname.clone()),
+                                          },
+                                          None(),
+                                          lito::link::Requirements {},
+                                          linker_options,
+                                          request.working_directory.as_path());
+        if (linked.is_err()) return Err(rstd::move(linked).unwrap_err());
         auto link_identity = rstd::format(
             "lito-elf-shared-link-v2\ncompiler:{}\nlinker:{}\narchive:{}:{}:{}\narchive-mode:{}\n"
             "soname:{}\nversion-script:{}\npolicy:gc-sections,no-undefined",
@@ -1254,7 +1305,7 @@ public:
             .file          = request.output.clone(),
             .soname        = request.soname.clone(),
             .link_identity = rstd::move(link_identity),
-            .elapsed       = command_output.elapsed,
+            .elapsed       = *linked,
         });
     }
 

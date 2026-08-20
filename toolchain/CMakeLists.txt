@@ -7,6 +7,10 @@ target_sources(
          TYPE
          CXX_MODULES
          FILES
+         src/android/certification.cppm
+         src/android/mod.cppm
+         src/android/ndk.cppm
+         src/android/sdk_catalog.cppm
          src/clang/arguments.cppm
          src/clang/compile_executor.cppm
          src/clang/mod.cppm

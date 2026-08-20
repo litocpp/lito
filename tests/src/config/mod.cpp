@@ -165,6 +165,48 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
 }
 
+TEST_F(Config, AndroidTargetAndSdkSelectionAreTyped) {
+    auto project = config("android-target"_str, R"toml([build.target]
+kind = "android"
+abi = "arm64-v8a"
+min-api = 21
+
+[toolchain]
+stdlib-runtime = "static"
+
+[toolchain.sdk]
+kind = "android-ndk"
+version = "29.0.14206865"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_TRUE(loaded->build_target.is_Android());
+    EXPECT_EQ(loaded->build_target.as_Android().target.abi.as_str(), "arm64-v8a"_str);
+    EXPECT_EQ(loaded->build_target.as_Android().target.minimum_api, u32(21));
+    EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Static);
+    ASSERT_TRUE(loaded->toolchain.sdk.is_some());
+    ASSERT_TRUE(loaded->toolchain.sdk->is_Managed());
+    EXPECT_EQ(loaded->toolchain.sdk->as_Managed().kind, lito::config::SdkKind::AndroidNdk);
+    EXPECT_EQ(loaded->toolchain.sdk->as_Managed().version.as_str(), "29.0.14206865"_str);
+
+    constexpr ref<str> invalid[] = {
+        "[build.target]\nkind = \"android\"\nabi = \"arm64-v8a\"\n"_str,
+        "[build.target]\nkind = \"android\"\nmin-api = 21\n"_str,
+        "[build.target]\nkind = \"android\"\nabi = \"arm64-v8a\"\nmin-api = \"21\"\n"_str,
+        "[toolchain.sdk]\nkind = \"android-ndk\"\n"_str,
+        "[toolchain.sdk]\nkind = \"android-ndk\"\nversion = \"29.0.14206865\"\npath = \"/tmp/ndk\"\n"_str,
+        "[toolchain.sdk]\nkind = \"android-ndk\"\npath = \"relative/ndk\"\n"_str,
+    };
+    auto index = usize {};
+    for (const auto contents : invalid) {
+        auto invalid_project = config(rstd::format("android-invalid-{}", index).as_str(), contents);
+        ASSERT_TRUE(invalid_project.is_ok());
+        EXPECT_TRUE(lito::config::load_project_config(invalid_project->root.as_path()).is_err());
+        ++index;
+    }
+}
+
 TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
     auto project = config("caller-tool-defaults"_str,
                           "[toolchain]\n"
@@ -598,8 +640,8 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                                               .mode = lito::config::ConfigLoadMode::LocalDisabled,
                                               .overrides = rstd::move(static_runtime),
                                           });
-    ASSERT_TRUE(unsupported.is_err());
-    EXPECT_TRUE(error_chain_text(unsupported.unwrap_err()).as_str().contains("not supported"_str));
+    ASSERT_TRUE(unsupported.is_ok());
+    EXPECT_EQ(unsupported->standard_library_runtime, lito::config::StandardLibraryRuntime::Static);
 
     auto patch_directory = directory.join(PathBuf::from("rstd-patch"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(patch_directory.as_path()).is_ok());

@@ -10,7 +10,7 @@ import lito.tools.cmake;
 import lito.core;
 import lito.cpp;
 import lito.system;
-import lito.toolchain.common;
+import lito.toolchain;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -63,7 +63,8 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         const TargetInfo&                            default_target,
                         ref<str>                                     effective_target,
                         ref<rstd::path::Path>                        profile_cmake_root,
-                        usize                                        jobs = usize(1))
+                        usize                                        jobs    = usize(1),
+                        const Option<AndroidCmakeProjection>&        android = None())
     -> lito::dependency::DependencyResult<CMakePackagePlan>;
 
 auto execute_cmake_package(const CMakePackagePlan&                      plan,
@@ -141,15 +142,38 @@ auto cmake_provider(const lito::dependency::CMakeProviderConfig& provider)
     };
 }
 
-auto cmake_toolchain(const cpp::BuildConfiguration& configuration, const LinkerIdentity& linker)
+auto cmake_toolchain(const cpp::BuildConfiguration&        configuration,
+                     const LinkerIdentity&                 linker,
+                     const Option<AndroidCmakeProjection>& android)
     -> lito::tools::cmake::ToolchainConfiguration {
-    return lito::tools::cmake::ToolchainConfiguration {
+    auto result = lito::tools::cmake::ToolchainConfiguration {
         .cc              = configuration.toolchain.cc.clone(),
         .cxx             = configuration.toolchain.cxx.clone(),
         .linker          = linker.executable.clone(),
         .linker_identity = linker.build_identity.clone(),
         .archiver        = configuration.toolchain.ar.clone(),
     };
+    if (android.is_some()) {
+        auto cache = Vec<lito::tools::cmake::CacheEntry>::make();
+        cache.push(lito::tools::cmake::CacheEntry {
+            .name  = String::make("ANDROID_ABI"_str),
+            .value = android->abi.clone(),
+        });
+        cache.push(lito::tools::cmake::CacheEntry {
+            .name  = String::make("ANDROID_PLATFORM"_str),
+            .value = android->platform.clone(),
+        });
+        cache.push(lito::tools::cmake::CacheEntry {
+            .name  = String::make("ANDROID_STL"_str),
+            .value = android->standard_library.clone(),
+        });
+        result.target = Some(lito::tools::cmake::TargetToolchainConfiguration {
+            .file     = android->toolchain_file.clone(),
+            .cache    = rstd::move(cache),
+            .identity = android->identity.clone(),
+        });
+    }
+    return result;
 }
 
 auto cmake_profile_configuration(const cpp::ProfileSpec& profile)
@@ -259,21 +283,24 @@ auto plan_cmake_package(const ResolvedCMakeDependencyRequirement&    requirement
                         const TargetInfo&                            default_target,
                         ref<str>                                     effective_target,
                         ref<rstd::path::Path>                        profile_cmake_root,
-                        usize jobs) -> lito::dependency::DependencyResult<CMakePackagePlan> {
-    if (effective_target != default_target.triple.as_str()) {
+                        usize                                        jobs,
+                        const Option<AndroidCmakeProjection>&        android)
+    -> lito::dependency::DependencyResult<CMakePackagePlan> {
+    if (effective_target != default_target.triple.as_str() && android.is_none()) {
         return lito::dependency::dependency_failure<CMakePackagePlan>(rstd::format(
             "CMake dependency '{}' cannot resolve cross target '{}' without an explicit CMake "
             "toolchain file",
             requirement.alias.as_str(),
             effective_target));
     }
-    auto planned = lito::tools::cmake::plan_cmake_package(cmake_request(requirement),
-                                                          cmake_provider(provider),
-                                                          cmake_toolchain(configuration, linker),
-                                                          cmake_profile_configuration(profile),
-                                                          effective_target,
-                                                          profile_cmake_root,
-                                                          jobs);
+    auto planned =
+        lito::tools::cmake::plan_cmake_package(cmake_request(requirement),
+                                               cmake_provider(provider),
+                                               cmake_toolchain(configuration, linker, android),
+                                               cmake_profile_configuration(profile),
+                                               effective_target,
+                                               profile_cmake_root,
+                                               jobs);
     if (planned.is_err()) {
         return Err(cmake_error("plan CMake dependency"_str, rstd::move(planned).unwrap_err()));
     }

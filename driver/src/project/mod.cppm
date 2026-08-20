@@ -11,10 +11,12 @@ import lito.cpp;
 import :build.event;
 import :build.setup_report;
 import :build.layout;
+import :build.artifact;
 import :dependency.catalog;
 import :dependency.preparation;
 import :dependency.external_source;
 import :package;
+import :sdk;
 import lito.toolchain;
 import lito.system;
 
@@ -160,6 +162,9 @@ struct PreparedBuildProject {
     cpp::PackageMetadata          metadata;
     ExternalAssetCatalog          external_assets;
     Vec<ExternalSourceProvenance> external_source_provenance;
+    Vec<BuiltTargetRuntime>       target_runtimes;
+    Option<PathBuf>               target_stripper;
+    Option<AndroidNdkLease>       android_sdk;
 };
 
 struct ResolvedProjectMetadata {
@@ -171,10 +176,83 @@ struct ResolvedProjectMetadata {
 };
 
 struct ResolvedProjectSession {
-    ProjectResolution             project;
-    cpp::ParsedGlobalBuildOptions build_arguments;
-    BuildPlatform                 platform;
+    ProjectResolution              project;
+    cpp::ParsedGlobalBuildOptions  build_arguments;
+    BuildPlatform                  platform;
+    Option<AndroidCmakeProjection> android_cmake;
 };
+
+struct ConfiguredToolchainSelection {
+    lito::config::ToolchainSpec      tools;
+    Option<ResolvedAndroidToolchain> android;
+    Option<HostInfo>                 host;
+    Option<AndroidNdkLease>          android_sdk;
+};
+
+auto resolve_configured_toolchain(const cpp::BuildConfiguration&    configuration,
+                                  const ResolvedProcessEnvironment& environment)
+    -> ProjectResult<ConfiguredToolchainSelection> {
+    if (configuration.target.is_Default()) {
+        return Ok(ConfiguredToolchainSelection {
+            .tools = configuration.toolchain.clone(),
+        });
+    }
+    if (configuration.standard_library != lito::config::StandardLibrary::Libcxx) {
+        return Err(ProjectError::Message(
+            rstd::format("Android target requires standard library 'libc++'; configured '{}'",
+                         lito::config::standard_library_name(configuration.standard_library))));
+    }
+    if (configuration.toolchain.sdk.is_none()) {
+        return Err(ProjectError::Message(
+            String::make("Android target requires toolchain.sdk with kind 'android-ndk'"_str)));
+    }
+    const auto& selection = *configuration.toolchain.sdk;
+    if (selection.kind() != lito::config::SdkKind::AndroidNdk) {
+        return Err(ProjectError::Message(
+            rstd::format("Android target requires SDK kind 'android-ndk'; configured '{}'",
+                         lito::config::sdk_kind_name(selection.kind()))));
+    }
+    auto host  = rstd_try(detect_host_info());
+    auto lease = Option<AndroidNdkLease> {};
+    auto root  = PathBuf {};
+    if (selection.is_Managed()) {
+        auto acquired = acquire_android_ndk(selection.as_Managed().version.as_str());
+        if (acquired.is_err()) {
+            return Err(
+                ProjectError::Message(rstd::format("cannot acquire managed Android NDK {}: {}",
+                                                   selection.as_Managed().version.as_str(),
+                                                   rstd::move(acquired).unwrap_err())));
+        }
+        lease = Some(rstd::move(acquired).unwrap());
+        root  = PathBuf::from(lease->root());
+    } else {
+        root = selection.as_Directory().path.clone();
+    }
+    auto distribution = open_android_ndk(root.as_path(), host);
+    if (distribution.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(distribution).unwrap_err()));
+    }
+    if (selection.is_Directory()) {
+        auto certified = certify_android_ndk(*distribution, environment);
+        if (certified.is_err()) {
+            return Err(rstd::into<ProjectError>(rstd::move(certified).unwrap_err()));
+        }
+    }
+    auto android = resolve_android_toolchain(rstd::move(distribution).unwrap(),
+                                             configuration.target.as_Android().target,
+                                             configuration.standard_library_runtime);
+    if (android.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(android).unwrap_err()));
+    }
+    auto resolved = rstd::move(android).unwrap();
+    auto tools    = resolved.tools.clone();
+    return Ok(ConfiguredToolchainSelection {
+        .tools       = rstd::move(tools),
+        .android     = Some(rstd::move(resolved)),
+        .host        = Some(rstd::move(host)),
+        .android_sdk = rstd::move(lease),
+    });
+}
 
 auto lto_is_enabled(const Option<lito::manifest::Lto>& value) noexcept -> bool {
     return value.is_some() && *value != lito::manifest::Lto::Off;
@@ -229,21 +307,65 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                              lito::package::PackageSelectionPurpose         purpose,
                              usize                                          jobs,
                              const Option<BuildEventSink>&                  observer = None(),
-                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
+                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None(),
+                             const BuildPlatform*          prepared_platform         = nullptr,
+                             const AndroidCmakeProjection* android_cmake             = nullptr)
     -> ProjectResult<ResolvedProjectSession> {
     auto build_arguments =
         rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
-    auto host     = rstd_try(detect_host_info());
-    auto platform = rstd_try(resolve_build_platform(
-        host, toolchain.target_info(), cpp::explicit_cpp_target(build_arguments.cpp)));
-    auto c_target = cpp::explicit_c_target(build_arguments.c);
-    if (c_target.is_some() && c_target->value != platform.effective_target.triple.as_str()) {
+    auto cpp_target = cpp::explicit_cpp_target_options(build_arguments.cpp);
+    auto c_target   = cpp::explicit_c_target_options(build_arguments.c);
+    auto platform   = BuildPlatform {};
+    if (prepared_platform != nullptr) {
+        const auto reject_raw =
+            [](ref<str>                          language,
+               const cpp::ExplicitTargetOptions& options) -> ProjectResult<empty> {
+            if (options.target.is_some()) {
+                return Err(ProjectError::Message(
+                    rstd::format("{} target '{}' from {} conflicts with typed config.build.target",
+                                 language,
+                                 options.target->value,
+                                 options.target->source)));
+            }
+            if (options.sysroot.is_some()) {
+                return Err(ProjectError::Message(
+                    rstd::format("{} sysroot '{}' from {} conflicts with typed config.build.target",
+                                 language,
+                                 options.sysroot->value,
+                                 options.sysroot->source)));
+            }
+            return Ok(empty {});
+        };
+        rstd_try(reject_raw("C++"_str, cpp_target));
+        rstd_try(reject_raw("C"_str, c_target));
+        platform = prepared_platform->clone();
+    } else {
+        auto host = rstd_try(detect_host_info());
+        platform  = rstd_try(resolve_build_platform(
+            host,
+            toolchain.target_info(),
+            cpp_target.target.is_some() ? Some(cpp_target.target->value) : Option<ref<str>> {},
+            cpp_target.sysroot.is_some() ? Some(cpp_target.sysroot->value) : Option<ref<str>> {}));
+    }
+    if (c_target.target.is_some() &&
+        c_target.target->value != platform.effective_target.triple.as_str()) {
         return Err(ProjectError::Message(rstd::format(
             "C build target '{}' from {} conflicts with the C++-owned effective target '{}'; "
             "configure the project target through build.options",
-            c_target->value,
-            c_target->source,
+            c_target.target->value,
+            c_target.target->source,
             platform.effective_target.triple.as_str())));
+    }
+    if (c_target.sysroot.is_some()) {
+        auto expected =
+            platform.sysroot.is_some() ? platform.sysroot->as_path().to_str() : Option<ref<str>> {};
+        if (expected.is_none() || c_target.sysroot->value != *expected) {
+            return Err(ProjectError::Message(rstd::format(
+                "C sysroot '{}' from {} conflicts with the C++-owned effective sysroot '{}'",
+                c_target.sysroot->value,
+                c_target.sysroot->source,
+                expected.is_some() ? *expected : "<none>"_str)));
+        }
     }
     auto project = rstd_try(resolve_project(selection,
                                             purpose,
@@ -262,6 +384,8 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
         .project         = rstd::move(project),
         .build_arguments = rstd::move(build_arguments),
         .platform        = rstd::move(platform),
+        .android_cmake   = android_cmake != nullptr ? Some(android_cmake->clone())
+                                                    : Option<AndroidCmakeProjection> {},
     });
 }
 
@@ -296,7 +420,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                             project.graph.profile,
                                                             profile,
                                                             rstd::move(session.build_arguments)));
-    const auto& target    = session.platform.effective_target;
+    rstd_try(cpp::apply_build_platform(resolved_profile, session.platform));
+    const auto& target = session.platform.effective_target;
     rstd_try(
         validate_linker_profile(toolchain, resolved_profile, session.platform, project.standards));
     if (resolved_configuration.standard_library == lito::config::StandardLibrary::Msvc &&
@@ -310,6 +435,18 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         return Err(ProjectError::Message(rstd::format(
             "standard library 'libstdc++' is not supported for Windows MSVC target '{}'",
             target.triple.as_str())));
+    }
+    if (target.os.as_str() == "android"_str &&
+        resolved_configuration.standard_library != lito::config::StandardLibrary::Libcxx) {
+        return Err(ProjectError::Message(
+            rstd::format("Android target '{}' only supports standard library 'libc++'",
+                         target.triple.as_str())));
+    }
+    if (target.os.as_str() != "android"_str && resolved_configuration.standard_library_runtime ==
+                                                   lito::config::StandardLibraryRuntime::Static) {
+        return Err(ProjectError::Message(
+            rstd::format("static standard-library runtime is not supported for target '{}'",
+                         target.triple.as_str())));
     }
     auto normalize_microsoft_runtime =
         [&target](lito::compiler::CommonCompileOptions& options) -> ProjectResult<empty> {
@@ -359,9 +496,12 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                             configuration.global_options,
                             project.standards,
                             resolved_configuration.standard_library_runtime,
-                            resolved_profile);
-    auto layout = BuildLayout::create(
-        project.graph.root_directory.as_path(), requested_output, resolved_profile.name.as_str());
+                            resolved_profile,
+                            session.platform);
+    auto layout = BuildLayout::create(project.graph.root_directory.as_path(),
+                                      requested_output,
+                                      resolved_profile.name.as_str(),
+                                      session.platform.output_key.as_str());
     if (layout.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(layout).unwrap_err()));
     }
@@ -423,7 +563,8 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                                                                   environment,
                                                                   jobs,
                                                                   observer,
-                                                                  sources));
+                                                                  sources,
+                                                                  session.android_cmake));
     auto assets         = rstd::move(external_usage.assets);
     auto provenance     = rstd::move(external_usage.provenance);
     auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
@@ -483,6 +624,9 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
         .metadata                   = rstd::move(resolved.metadata),
         .external_assets            = rstd::move(resolved.external_assets),
         .external_source_provenance = rstd::move(resolved.external_source_provenance),
+        .target_runtimes            = Vec<BuiltTargetRuntime>::make(),
+        .target_stripper            = None(),
+        .android_sdk                = None(),
     });
 }
 
@@ -553,39 +697,72 @@ auto prepare_build_project(
     Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
     const Option<BuildSetupReportSink>&       setup_reporter = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto created = ClangToolchain::create(configuration.toolchain, environment);
+    auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
+    auto target_runtimes = Vec<BuiltTargetRuntime>::make();
+    auto target_stripper = Option<PathBuf> {};
+    if (selected.android.is_some() && selected.android->shared_runtime.is_some()) {
+        target_runtimes.push(BuiltTargetRuntime {
+            .name     = selected.android->shared_runtime->name.clone(),
+            .path     = selected.android->shared_runtime->path.clone(),
+            .identity = selected.android->shared_runtime->identity.clone(),
+        });
+    }
+    if (selected.android.is_some()) {
+        target_stripper = Some(selected.android->distribution.paths().strip.clone());
+    }
+    auto resolved_configuration      = configuration.clone();
+    resolved_configuration.toolchain = selected.tools.clone();
+    auto created = ClangToolchain::create(resolved_configuration.toolchain, environment);
     if (created.is_err()) {
         return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
     }
-    auto toolchain = rstd::move(created).unwrap();
-    auto metadata  = resolve_project_metadata(selection,
-                                              configuration,
-                                              profile,
-                                              requested_output,
-                                              sources,
-                                              lock,
-                                              pkg_config,
-                                              cmake,
-                                              cmake_build_overrides,
-                                              toolchain,
-                                              tool_resolver,
-                                              environment,
-                                              locked,
-                                              purpose,
-                                              jobs,
-                                              observer,
-                                              setup_reporter,
-                                              rstd::move(catalog));
-    if (metadata.is_err()) return Err(rstd::move(metadata).unwrap_err());
-    auto resolved_metadata = rstd::move(metadata).unwrap();
-    return Ok(PreparedBuildProject {
-        .toolchain                  = rstd::move(toolchain),
-        .platform                   = rstd::move(resolved_metadata.platform),
-        .layout                     = rstd::move(resolved_metadata.layout),
-        .metadata                   = rstd::move(resolved_metadata.metadata),
-        .external_assets            = rstd::move(resolved_metadata.external_assets),
-        .external_source_provenance = rstd::move(resolved_metadata.external_source_provenance),
-    });
+    auto toolchain        = rstd::move(created).unwrap();
+    auto platform         = Option<BuildPlatform> {};
+    auto cmake_projection = Option<AndroidCmakeProjection> {};
+    if (selected.android.is_some()) {
+        auto& android = *selected.android;
+        auto  resolved =
+            resolve_android_build_platform(*selected.host, toolchain.target_info(), android.target);
+        resolved.sdk_version  = Some(android.distribution.revision().text.clone());
+        resolved.sdk_identity = Some(String::make(android.distribution.identity()));
+        platform              = Some(rstd::move(resolved));
+        cmake_projection      = Some(android.cmake.clone());
+    }
+    auto session = resolve_project_session(
+        selection,
+        resolved_configuration,
+        sources,
+        lock,
+        toolchain,
+        tool_resolver,
+        environment,
+        cmake_build_overrides,
+        locked,
+        purpose,
+        jobs,
+        observer,
+        rstd::move(catalog),
+        platform.is_some() ? rstd::addressof(*platform) : nullptr,
+        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr);
+    if (session.is_err()) return Err(rstd::move(session).unwrap_err());
+    auto prepared = prepare_resolved_build_project(rstd::move(session).unwrap(),
+                                                   resolved_configuration,
+                                                   profile,
+                                                   requested_output,
+                                                   sources,
+                                                   pkg_config,
+                                                   cmake,
+                                                   rstd::move(toolchain),
+                                                   tool_resolver,
+                                                   environment,
+                                                   jobs,
+                                                   observer,
+                                                   setup_reporter);
+    if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
+    prepared->target_runtimes = rstd::move(target_runtimes);
+    prepared->target_stripper = rstd::move(target_stripper);
+    prepared->android_sdk     = rstd::move(selected.android_sdk);
+    return prepared;
 }
 
 auto update_project_dependencies(ref<rstd::path::Path>                    root,

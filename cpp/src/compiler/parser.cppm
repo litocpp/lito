@@ -129,34 +129,63 @@ auto CppArgumentParser::parse_c(const Vec<String>& arguments, ref<str> source) c
     return Ok(rstd::move(result));
 }
 
-auto explicit_cpp_target(const CppArgumentLayer& arguments) -> Option<ref<str>> {
-    auto result = Option<ref<str>> {};
-    for (const auto& occurrence : arguments.occurrences) {
-        if (! occurrence.argument.is_Common()) continue;
-        const auto& common = occurrence.argument.as_Common().argument;
-        if (common.is_Target()) result = Some(common.as_Target().value.as_str());
-    }
-    return result;
-}
-
-struct ExplicitCTarget {
+struct ExplicitTargetOption {
     ref<str> value;
     ref<str> source;
 };
 
-auto explicit_c_target(const lito::c::CArgumentLayer& arguments) -> Option<ExplicitCTarget> {
-    auto result = Option<ExplicitCTarget> {};
+struct ExplicitTargetOptions {
+    Option<ExplicitTargetOption> target;
+    Option<ExplicitTargetOption> sysroot;
+};
+
+auto explicit_cpp_target_options(const CppArgumentLayer& arguments) -> ExplicitTargetOptions {
+    auto result = ExplicitTargetOptions {};
     for (const auto& occurrence : arguments.occurrences) {
         if (! occurrence.argument.is_Common()) continue;
         const auto& common = occurrence.argument.as_Common().argument;
         if (common.is_Target()) {
-            result = Some(ExplicitCTarget {
+            result.target = Some(ExplicitTargetOption {
                 .value  = common.as_Target().value.as_str(),
+                .source = occurrence.source.as_str(),
+            });
+        } else if (common.is_Sysroot()) {
+            result.sysroot = Some(ExplicitTargetOption {
+                .value  = common.as_Sysroot().value.as_str(),
                 .source = occurrence.source.as_str(),
             });
         }
     }
     return result;
+}
+
+auto explicit_cpp_target(const CppArgumentLayer& arguments) -> Option<ref<str>> {
+    auto options = explicit_cpp_target_options(arguments);
+    return options.target.is_some() ? Some(options.target->value) : Option<ref<str>> {};
+}
+
+auto explicit_c_target_options(const lito::c::CArgumentLayer& arguments) -> ExplicitTargetOptions {
+    auto result = ExplicitTargetOptions {};
+    for (const auto& occurrence : arguments.occurrences) {
+        if (! occurrence.argument.is_Common()) continue;
+        const auto& common = occurrence.argument.as_Common().argument;
+        if (common.is_Target()) {
+            result.target = Some(ExplicitTargetOption {
+                .value  = common.as_Target().value.as_str(),
+                .source = occurrence.source.as_str(),
+            });
+        } else if (common.is_Sysroot()) {
+            result.sysroot = Some(ExplicitTargetOption {
+                .value  = common.as_Sysroot().value.as_str(),
+                .source = occurrence.source.as_str(),
+            });
+        }
+    }
+    return result;
+}
+
+auto explicit_c_target(const lito::c::CArgumentLayer& arguments) -> Option<ExplicitTargetOption> {
+    return explicit_c_target_options(arguments).target;
 }
 
 } // namespace lito::cpp

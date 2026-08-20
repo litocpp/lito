@@ -419,3 +419,60 @@ TEST_F(SdkStore, UninstallClearsActiveStateAndRemovesInvalidOwnedEntries) {
     EXPECT_TRUE(recovered->recovered);
     EXPECT_FALSE(rstd::fs::exists(tombstone.as_path()).unwrap());
 }
+
+TEST_F(SdkStore, AndroidInstallRequiresLicenseAcceptanceBeforeStoreMutation) {
+    auto directory = cache_root("android-license"_str);
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+
+    auto rejected = lito::install_android_ndk(lito::AndroidNdkInstallRequest {
+        .version = String::make("29.0.14206865"_str),
+    });
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_TRUE(
+        rstd::format("{}", rejected.unwrap_err()).as_str().contains("--accept-license"_str));
+    auto store = data_home.join(PathBuf::from("lito/android-ndk"_str).as_path());
+    EXPECT_FALSE(rstd::fs::exists(store.as_path()).unwrap());
+}
+
+TEST_F(SdkStore, AndroidUninstallOnlyRemovesOwnedStoreEntries) {
+    auto directory = cache_root("android-uninstall"_str);
+    auto data_home = directory.join(PathBuf::from("data"_str).as_path());
+    auto data_text = data_home.as_path().to_str();
+    ASSERT_TRUE(data_text.is_some());
+    EnvironmentVariableGuard xdg_data_home("XDG_DATA_HOME"_str, *data_text);
+
+    auto invalid = data_home.join(PathBuf::from("lito/android-ndk/28.0.13004108"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(invalid.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::write(invalid.join(PathBuf::from("partial"_str).as_path()).as_path(),
+                                "partial"_str.as_bytes())
+                    .is_ok());
+    auto removed = lito::uninstall_android_ndk(lito::SdkUninstallRequest {
+        .version = String::make("28.0.13004108"_str),
+    });
+    ASSERT_TRUE(removed.is_ok());
+    EXPECT_TRUE(removed->invalid_entry);
+    EXPECT_FALSE(rstd::fs::exists(invalid.as_path()).unwrap());
+
+    auto outside = data_home.join(PathBuf::from("outside-android-ndk"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(outside.as_path()).is_ok());
+    auto linked = data_home.join(PathBuf::from("lito/android-ndk/27.2.12479018"_str).as_path());
+    ASSERT_TRUE(rstd::fs::soft_link(outside.as_path(), linked.as_path()).is_ok());
+    EXPECT_TRUE(lito::uninstall_android_ndk(lito::SdkUninstallRequest {
+                                                .version = String::make("27.2.12479018"_str),
+                                            })
+                    .is_err());
+    EXPECT_TRUE(rstd::fs::exists(outside.as_path()).unwrap());
+
+    auto tombstone =
+        data_home.join(PathBuf::from("lito/android-ndk/.removing/26.1.10909125"_str).as_path());
+    ASSERT_TRUE(rstd::fs::create_dir_all(tombstone.as_path()).is_ok());
+    auto recovered = lito::uninstall_android_ndk(lito::SdkUninstallRequest {
+        .version = String::make("26.1.10909125"_str),
+    });
+    ASSERT_TRUE(recovered.is_ok());
+    EXPECT_TRUE(recovered->recovered);
+    EXPECT_FALSE(rstd::fs::exists(tombstone.as_path()).unwrap());
+}

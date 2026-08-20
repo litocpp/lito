@@ -228,6 +228,7 @@ auto clone_toolchain(const ToolchainConfiguration& toolchain) -> ToolchainConfig
         .linker          = toolchain.linker.clone(),
         .linker_identity = toolchain.linker_identity.clone(),
         .archiver        = toolchain.archiver.clone(),
+        .target          = as<Clone>(toolchain.target).clone(),
     };
 }
 
@@ -267,6 +268,18 @@ auto work_area(const Request&                requirement,
     append_identity(recipe, c_compiler->as_str());
     append_identity(recipe, toolchain.linker_identity.as_str());
     append_identity(recipe, archiver->as_str());
+    if (toolchain.target.is_some()) {
+        auto file = path_text(toolchain.target->file.as_path(), "CMake toolchain file"_str);
+        if (file.is_err()) return Err(rstd::move(file).unwrap_err());
+        append_identity(recipe, file->as_str());
+        append_identity(recipe, toolchain.target->identity.as_str());
+        for (const auto& entry : toolchain.target->cache) {
+            append_identity(recipe, entry.name.as_str());
+            append_identity(recipe, entry.value.as_str());
+        }
+    } else {
+        append_identity(recipe, "native-toolchain"_str);
+    }
     append_identity(recipe, effective_target);
     append_identity(recipe, profile.build_type.as_str());
     append_identity(recipe, profile.cxx_standard.as_str());

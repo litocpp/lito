@@ -672,6 +672,59 @@ archive = "fixture.convention.markers"
               lito::manifest::SourceDiscoveryMode::Module);
 }
 
+TEST_F(Manifest, LibraryOutputDistinguishesStaticArchivesAndSharedArtifacts) {
+    auto shared_project = manifest("shared-library"_str, R"toml([package]
+name = "fixture-shared-library"
+version = "0.1.0"
+
+[lib]
+name = "fixture-shared-library"
+kind = "shared"
+artifact = "fixture_shared"
+module = "fixture.shared_library"
+)toml"_str);
+    ASSERT_TRUE(shared_project.is_ok());
+    auto shared = lito::manifest::load_package_manifest(shared_project->root.as_path());
+    ASSERT_TRUE(shared.is_ok());
+    ASSERT_EQ(shared->targets.len(), usize(1));
+    ASSERT_TRUE(shared->targets[usize {}].is_Library());
+    EXPECT_TRUE(shared->targets[usize {}].as_Library().output.is_Shared());
+    EXPECT_EQ(shared->targets[usize {}].as_Library().output.as_Shared().artifact.as_str(),
+              "fixture_shared"_str);
+
+    constexpr ref<str> invalid[] = {
+        R"toml([package]
+name = "fixture-shared-archive"
+[lib]
+name = "fixture-shared-archive"
+kind = "shared"
+archive = "fixture"
+)toml"_str,
+        R"toml([package]
+name = "fixture-static-artifact"
+[lib]
+name = "fixture-static-artifact"
+kind = "static"
+artifact = "fixture"
+)toml"_str,
+        R"toml([package]
+name = "fixture-two-library-outputs"
+[lib]
+name = "fixture-two-library-outputs"
+archive = "fixture"
+artifact = "fixture"
+)toml"_str,
+    };
+    auto index = usize {};
+    for (const auto contents : invalid) {
+        auto project =
+            manifest(rstd::format("invalid-library-output-{}", index).as_str(), contents);
+        ASSERT_TRUE(project.is_ok());
+        EXPECT_TRUE(lito::manifest::load_package_manifest(project->root.as_path()).is_err());
+        ++index;
+    }
+}
+
 TEST_F(Manifest, PackageStandardDefaultsToCpp20AndAcceptsExplicitCpp) {
     auto implicit_project = manifest("implicit-cpp20-standard"_str, R"toml([package]
 name = "fixture-implicit-cpp20-standard"

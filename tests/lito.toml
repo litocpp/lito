@@ -66,6 +66,7 @@ sources = [
   "src/system/process.cpp",
   "src/toolchain/clang.cpp",
   "src/toolchain/clang_builtin_context.cpp",
+  "src/toolchain/android.cpp",
   "src/workspace/convention.cpp",
   "src/workspace/manifest.cpp",
 ]

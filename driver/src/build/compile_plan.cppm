@@ -227,6 +227,7 @@ auto materialize_documentation_units(const cpp::PackageSpec&                    
 auto materialize_compile_plan(const cpp::PackageSpec&                package,
                               const BuildLayout&                     layout,
                               const ClangToolchain&                  toolchain,
+                              const cpp::BmiFormatIdentity&          bmi_format,
                               Vec<cpp::PreparedUnit>&                units,
                               const Vec<cpp::ScanResult>&            scans,
                               const cpp::ResolvedSemanticBuildGraph& semantics)
@@ -256,8 +257,8 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
         }
     }
 
-    auto format_identity = cpp::bmi_format_identity(toolchain.bmi_format());
-    auto format_key      = cpp::bmi_format_key(toolchain.bmi_format());
+    auto format_identity = cpp::bmi_format_identity(bmi_format);
+    auto format_key      = cpp::bmi_format_key(bmi_format);
     for (auto unit : semantics.compile_order) {
         if (unit >= units.len()) {
             return compile_failure<CompilePlan>("compile order contains an invalid unit"_str);
@@ -339,7 +340,7 @@ auto materialize_compile_plan(const cpp::PackageSpec&                package,
                     .logical_name        = scan_cpp->provided->logical_name.clone(),
                     .provider_identity   = rstd::move(provider_identity),
                     .key                 = rstd::move(key),
-                    .format              = as<Clone>(toolchain.bmi_format()).clone(),
+                    .format              = bmi_format.clone(),
                     .request             = cpp_context.bmi,
                     .path                = rstd::move(bmi_path),
                     .direct_dependencies = rstd::move(direct),

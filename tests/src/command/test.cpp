@@ -510,3 +510,19 @@ sources = ["main.cpp"]
     auto dependency = lito::build(request);
     EXPECT_TRUE(dependency.is_err());
 }
+
+TEST(TestCommandRunner, AndroidArtifactsRequireAnExplicitRunner) {
+    auto platform = lito::system::BuildPlatform {};
+    platform.effective_target =
+        lito::system::parse_target_info("aarch64-linux-android21"_str).unwrap();
+    platform.android_abi = Some(String::make("arm64-v8a"_str));
+
+    auto rejected = lito::ensure_artifact_runner(platform, "test"_str);
+    ASSERT_TRUE(rejected.is_err());
+    EXPECT_TRUE(rstd::format("{}", rejected.unwrap_err())
+                    .as_str()
+                    .contains("without a configured target runner"_str));
+
+    platform.android_abi = None();
+    EXPECT_TRUE(lito::ensure_artifact_runner(platform, "test"_str).is_ok());
+}

@@ -10,6 +10,7 @@ export module lito.system:platform;
 import rstd;
 
 using namespace rstd::prelude;
+using PathBuf = rstd::path::PathBuf;
 using namespace rstd::literals;
 
 export namespace lito::system
@@ -111,6 +112,30 @@ struct BuildPlatform {
     TargetInfo        effective_target;
     BuildTargetIntent intent { BuildTargetIntent::Native };
     bool              cross { false };
+    Option<PathBuf>   sysroot;
+    Option<String>    android_abi;
+    Option<u32>       android_minimum_api;
+    Option<String>    sdk_kind;
+    Option<String>    sdk_version;
+    Option<String>    sdk_identity;
+    String            output_key;
+
+    auto clone() const -> BuildPlatform {
+        return BuildPlatform {
+            .host                = host.clone(),
+            .compiler_default    = compiler_default.clone(),
+            .effective_target    = effective_target.clone(),
+            .intent              = intent,
+            .cross               = cross,
+            .sysroot             = as<Clone>(sysroot).clone(),
+            .android_abi         = as<Clone>(android_abi).clone(),
+            .android_minimum_api = android_minimum_api,
+            .sdk_kind            = as<Clone>(sdk_kind).clone(),
+            .sdk_version         = as<Clone>(sdk_version).clone(),
+            .sdk_identity        = as<Clone>(sdk_identity).clone(),
+            .output_key          = output_key.clone(),
+        };
+    }
 };
 
 struct TargetPredicate {
@@ -316,7 +341,8 @@ auto detect_host_info() -> PlatformResult<HostInfo> {
 
 auto resolve_build_platform(const HostInfo&   host,
                             const TargetInfo& compiler_default,
-                            Option<ref<str>>  explicit_target) -> PlatformResult<BuildPlatform> {
+                            Option<ref<str>>  explicit_target,
+                            Option<ref<str>>  explicit_sysroot) -> PlatformResult<BuildPlatform> {
     auto effective = compiler_default.clone();
     auto intent    = BuildTargetIntent::Native;
     if (explicit_target.is_some()) {
@@ -334,13 +360,27 @@ auto resolve_build_platform(const HostInfo&   host,
             host.os.as_str()));
     }
     auto cross = host.architecture != effective.architecture || host.os != effective.os.as_str();
+    auto output_key = String::make();
+    if (intent == BuildTargetIntent::ExplicitTarget) {
+        output_key = String::make("target-"_str);
+        output_key.push_str(rstd::crypto::sha256_hex(effective.triple.as_str()).as_str());
+    }
     return Ok(BuildPlatform {
         .host             = host.clone(),
         .compiler_default = compiler_default.clone(),
         .effective_target = rstd::move(effective),
         .intent           = intent,
         .cross            = cross,
+        .sysroot          = explicit_sysroot.is_some() ? Some(PathBuf::from(**explicit_sysroot))
+                                                       : Option<PathBuf> {},
+        .output_key       = rstd::move(output_key),
     });
+}
+
+auto resolve_build_platform(const HostInfo&   host,
+                            const TargetInfo& compiler_default,
+                            Option<ref<str>>  explicit_target) -> PlatformResult<BuildPlatform> {
+    return resolve_build_platform(host, compiler_default, explicit_target, None());
 }
 
 } // namespace lito::system

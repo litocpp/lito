@@ -107,7 +107,8 @@ class BuildLayout {
 public:
     static auto resolve(ref<rstd::path::Path> owner_root,
                         ref<rstd::path::Path> requested_output,
-                        ref<str>              profile) -> BuildLayout {
+                        ref<str>              profile,
+                        ref<str>              target_output_key = ""_str) -> BuildLayout {
         auto output = PathBuf::make();
         if (requested_output.is_empty()) {
             auto build = join(owner_root, "build"_str);
@@ -117,13 +118,26 @@ public:
         } else {
             output = PathBuf::from(owner_root).join(requested_output);
         }
+        if (! target_output_key.is_empty()) {
+            output = join(join(output.as_path(), "targets"_str).as_path(), target_output_key);
+        }
         return BuildLayout(rstd::move(output));
     }
 
     static auto create(ref<rstd::path::Path> owner_root,
                        ref<rstd::path::Path> requested_output,
-                       ref<str>              profile) -> BuildLayoutResult<BuildLayout> {
-        auto layout  = resolve(owner_root, requested_output, profile);
+                       ref<str>              profile,
+                       ref<str> target_output_key = ""_str) -> BuildLayoutResult<BuildLayout> {
+        if (! target_output_key.is_empty()) {
+            auto component = PathBuf::from(target_output_key);
+            auto parts     = component.as_path().components();
+            auto first     = parts.next();
+            if (first.is_none() || ! first->is_normal() || parts.next().is_some()) {
+                return layout_failure<BuildLayout>(rstd::format(
+                    "target output key '{}' is not a normal path component", target_output_key));
+            }
+        }
+        auto layout  = resolve(owner_root, requested_output, profile, target_output_key);
         auto created = rstd::fs::create_dir_all(layout.output());
         if (created.is_err()) {
             return io_failure<BuildLayout>(
@@ -326,6 +340,13 @@ public:
     }
 
     auto archive(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
+        -> PathBuf {
+        auto directory =
+            join(join(output_.as_path(), "lib"_str).as_path(), target.package.as_str());
+        return directory.join(PathBuf::from(artifact_name).as_path());
+    }
+
+    auto shared_library(const lito::package::PackageTargetId& target, ref<str> artifact_name) const
         -> PathBuf {
         auto directory =
             join(join(output_.as_path(), "lib"_str).as_path(), target.package.as_str());

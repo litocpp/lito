@@ -20,6 +20,7 @@ struct BuildConfiguration {
     String                   language_standard;
     Option<lito::manifest::CStandard> c_standard;
     lito::config::ProjectBuildOptions global_options;
+    lito::config::BuildTargetRequest  target;
 
     auto clone() const -> BuildConfiguration {
         return BuildConfiguration {
@@ -31,6 +32,7 @@ struct BuildConfiguration {
             .language_standard        = language_standard.clone(),
             .c_standard               = c_standard,
             .global_options           = global_options.clone(),
+            .target                   = as<Clone>(target).clone(),
         };
     }
 };

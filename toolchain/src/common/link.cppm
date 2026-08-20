@@ -27,6 +27,25 @@ struct LinkArchive {
     LinkArchiveMode mode { LinkArchiveMode::Normal };
 };
 
+enum class LinkOutputKind
+{
+    Executable,
+    SharedLibrary,
+};
+
+struct LinkTargetContext {
+    lito::system::BuildPlatform          platform;
+    lito::manifest::PackageLanguage      language { lito::manifest::PackageLanguage::Cpp };
+    lito::config::StandardLibrary        standard_library { lito::config::StandardLibrary::Libcxx };
+    lito::config::StandardLibraryRuntime standard_library_runtime {
+        lito::config::StandardLibraryRuntime::Dynamic
+    };
+    Option<lito::compiler::MicrosoftRuntimeLibrary> microsoft_runtime_library;
+    bool                                            link_standard_library { true };
+    LinkOutputKind                                  output { LinkOutputKind::Executable };
+    Option<String>                                  soname;
+};
+
 struct ElfSharedLibraryLinkRequest {
     PathBuf     output;
     LinkArchive archive;
@@ -83,6 +102,7 @@ struct LinkerIdentity {
 class ResolvedLinkInput {
     RSTD_ENUM(ResolvedLinkInput,
               (Archive, (LinkArchive archive;)),
+              (SharedLibrary, (PathBuf library;)),
               (External, (lito::link::ArgumentSequence arguments;)))
 };
 

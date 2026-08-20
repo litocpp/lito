@@ -65,9 +65,13 @@ struct RuntimeResourceManifest {
     PathBuf             path;
 };
 
+class LibraryOutput {
+    RSTD_ENUM(LibraryOutput, (Static, (String artifact;)), (Shared, (String artifact;)))
+};
+
 class PackageTargetManifest {
     RSTD_ENUM(PackageTargetManifest,
-              (Library, (String name; String archive; TargetSourceManifest source;)),
+              (Library, (String name; LibraryOutput output; TargetSourceManifest source;)),
               (Binary,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<RuntimeResourceManifest>                   resources;)),
@@ -108,8 +112,16 @@ auto package_target_source(PackageTargetManifest& target) noexcept -> TargetSour
 }
 
 auto package_target_artifact_name(const PackageTargetManifest& target) noexcept -> ref<str> {
-    if (target.is_Library()) return target.as_Library().archive.as_str();
+    if (target.is_Library()) {
+        const auto& output = target.as_Library().output;
+        return output.is_Static() ? output.as_Static().artifact.as_str()
+                                  : output.as_Shared().artifact.as_str();
+    }
     return package_target_name(target);
+}
+
+auto package_library_is_shared(const PackageTargetManifest& target) noexcept -> bool {
+    return target.is_Library() && target.as_Library().output.is_Shared();
 }
 
 auto package_target_links_stdlib(const PackageTargetManifest& target) noexcept -> bool {

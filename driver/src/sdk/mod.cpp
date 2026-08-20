@@ -1,5 +1,4 @@
 module;
-#include <initializer_list>
 #include <rstd/macro.hpp>
 
 module lito.driver;
@@ -215,7 +214,7 @@ auto json_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto sdk_known_fields(const Json& value, ref<str> context, std::initializer_list<ref<str>> names)
+auto sdk_known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> lito::SdkResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) return sdk_failure<empty>(rstd::format("{} must be an object", context));
@@ -817,10 +816,10 @@ auto certification_matches(const lito::LlvmSdkCertification& left,
            left.rtti == right.rtti;
 }
 
-auto sdk_store_layout() -> lito::SdkResult<SdkStoreLayout> {
+auto sdk_store_layout(ref<str> kind) -> lito::SdkResult<SdkStoreLayout> {
     auto data = lito::system::LitoDataRoot::resolve();
     if (data.is_err()) return Err(lito::SdkError::System(rstd::move(data).unwrap_err()));
-    auto root = PathBuf::from(data->root()).join(PathBuf::from("llvm"_str).as_path());
+    auto root = PathBuf::from(data->root()).join(PathBuf::from(kind).as_path());
     return Ok(SdkStoreLayout {
         .root     = root.clone(),
         .locks    = root.join(PathBuf::from(".locks"_str).as_path()),
@@ -839,16 +838,16 @@ auto ensure_store(const SdkStoreLayout& layout) -> lito::SdkResult<empty> {
         auto created = rstd::fs::create_dir_all(directory);
         if (created.is_err()) {
             return sdk_io_failure<empty>(
-                "create LLVM SDK store"_str, directory, rstd::move(created).unwrap_err());
+                "create SDK store"_str, directory, rstd::move(created).unwrap_err());
         }
         auto metadata = rstd::fs::symlink_metadata(directory);
         if (metadata.is_err()) {
             return sdk_io_failure<empty>(
-                "inspect LLVM SDK store"_str, directory, rstd::move(metadata).unwrap_err());
+                "inspect SDK store"_str, directory, rstd::move(metadata).unwrap_err());
         }
         if (! metadata->is_dir() || metadata->is_symlink()) {
             return sdk_failure<empty>(
-                rstd::format("LLVM SDK store '{}' must be a real directory", directory));
+                rstd::format("SDK store '{}' must be a real directory", directory));
         }
     }
     return Ok(empty {});
@@ -859,25 +858,23 @@ auto acquire_store_lock(ref<rstd::path::Path> path, ref<str> name, rstd::fs::Fil
     auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(path);
     if (opened.is_err()) {
         return sdk_io_failure<rstd::fs::FileLock>(
-            rstd::format("open LLVM SDK {} lock", name).as_str(),
-            path,
-            rstd::move(opened).unwrap_err());
+            rstd::format("open SDK {} lock", name).as_str(), path, rstd::move(opened).unwrap_err());
     }
     auto metadata = rstd::fs::symlink_metadata(path);
     if (metadata.is_err()) {
         return sdk_io_failure<rstd::fs::FileLock>(
-            rstd::format("inspect LLVM SDK {} lock", name).as_str(),
+            rstd::format("inspect SDK {} lock", name).as_str(),
             path,
             rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_file() || metadata->is_symlink()) {
         return sdk_failure<rstd::fs::FileLock>(
-            rstd::format("LLVM SDK {} lock '{}' must be an ordinary file", name, path));
+            rstd::format("SDK {} lock '{}' must be an ordinary file", name, path));
     }
     auto locked = rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), mode);
     if (locked.is_err()) {
         return sdk_io_failure<rstd::fs::FileLock>(
-            rstd::format("lock LLVM SDK {}", name).as_str(), path, rstd::move(locked).unwrap_err());
+            rstd::format("lock SDK {}", name).as_str(), path, rstd::move(locked).unwrap_err());
     }
     return Ok(rstd::move(locked).unwrap());
 }
@@ -1245,6 +1242,7 @@ auto cleanup_removing_entry(const SdkStoreLayout& layout, ref<str> version)
 }
 
 struct SdkAcquisitionObserver {
+    lito::config::SdkKind      sdk { lito::config::SdkKind::Llvm };
     ref<str>                   version;
     Option<lito::SdkEventSink> sink;
 };
@@ -1256,6 +1254,7 @@ void observe_sdk_acquisition(void*                                             r
     observer.sink->notify(
         observer.sink->context,
         lito::SdkEvent {
+            .sdk         = observer.sdk,
             .kind        = event.kind == lito::tools::acquisition::AcquisitionEventKind::Fetch
                                ? lito::SdkEventKind::Fetch
                                : lito::SdkEventKind::Extract,
@@ -1274,10 +1273,12 @@ auto emit_sdk_event(const Option<lito::SdkEventSink>& observer,
                     lito::SdkEventKind                kind,
                     ref<str>                          version,
                     ref<str>                          source,
-                    ref<rstd::path::Path>             destination) -> void {
+                    ref<rstd::path::Path>             destination,
+                    lito::config::SdkKind             sdk = lito::config::SdkKind::Llvm) -> void {
     if (observer.is_none() || observer->notify == nullptr) return;
     observer->notify(observer->context,
                      lito::SdkEvent {
+                         .sdk         = sdk,
                          .kind        = kind,
                          .version     = version,
                          .source      = source,
@@ -1794,7 +1795,7 @@ auto list_llvm_sdks() -> SdkResult<SdkListSummary> {
     if (catalog.is_err()) return Err(SdkError::Catalog(rstd::move(catalog).unwrap_err()));
     auto host = lito::system::detect_host_info();
     if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
-    auto layout    = rstd_try(sdk_store_layout());
+    auto layout    = rstd_try(sdk_store_layout("llvm"_str));
     auto installed = rstd_try(scan_installed(layout, *host));
     auto active    = rstd_try(active_list_selection(layout, *host));
 
@@ -1860,7 +1861,7 @@ auto activate_llvm_sdk(SdkActivateRequest request) -> SdkResult<SdkActivateSumma
     (void)rstd_try(canonical_sdk_version(request.version.as_str()));
     auto host = lito::system::detect_host_info();
     if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
-    auto layout      = rstd_try(sdk_store_layout());
+    auto layout      = rstd_try(sdk_store_layout("llvm"_str));
     auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
     (void)active_lock;
     auto current = rstd_try(inspect_active_state(layout));
@@ -1895,7 +1896,7 @@ auto activate_llvm_sdk(SdkActivateRequest request) -> SdkResult<SdkActivateSumma
 }
 
 auto deactivate_llvm_sdk() -> SdkResult<SdkDeactivateSummary> {
-    auto layout      = rstd_try(sdk_store_layout());
+    auto layout      = rstd_try(sdk_store_layout("llvm"_str));
     auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
     (void)active_lock;
     auto current = rstd_try(inspect_active_state(layout));
@@ -1922,7 +1923,7 @@ auto deactivate_llvm_sdk() -> SdkResult<SdkDeactivateSummary> {
 }
 
 auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>> {
-    auto layout = rstd_try(sdk_store_layout());
+    auto layout = rstd_try(sdk_store_layout("llvm"_str));
     if (! rstd_try(active_marker_present(layout))) return Ok(None());
     auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Shared));
     (void)active_lock;
@@ -1945,7 +1946,7 @@ auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>> {
 
 auto uninstall_llvm_sdk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary> {
     (void)rstd_try(canonical_sdk_version(request.version.as_str()));
-    auto layout      = rstd_try(sdk_store_layout());
+    auto layout      = rstd_try(sdk_store_layout("llvm"_str));
     auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
     (void)active_lock;
     auto version_lock = rstd_try(
@@ -2050,7 +2051,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
     if (environment.is_err()) return Err(SdkError::System(rstd::move(environment).unwrap_err()));
     auto resolver = lito::tools::ToolResolver(
         *environment, request.tools.clone(), rstd::move(request.tool_reporter));
-    auto layout = rstd_try(sdk_store_layout());
+    auto layout = rstd_try(sdk_store_layout("llvm"_str));
     auto lock   = rstd_try(acquire_version_lock(layout, request.version.as_str()));
     (void)lock;
     (void)rstd_try(cleanup_removing_entry(layout, request.version.as_str()));
@@ -2223,6 +2224,900 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
         return error;
     }
     remove_staging(staging.as_path());
+    return Ok(SdkInstallSummary {
+        .version = rstd::move(request.version),
+        .host    = host_text(*host),
+        .prefix  = rstd::move(prefix),
+    });
+}
+
+namespace
+{
+
+struct AndroidInstalledDescriptor {
+    String                  revision;
+    lito::system::HostInfo  host;
+    String                  url;
+    String                  sha256;
+    u64                     size {};
+    String                  root;
+    String                  license_id;
+    String                  license_sha256;
+    String                  distribution_identity;
+    AndroidNdkCertification certification;
+    String                  identity;
+};
+
+struct AndroidActiveState {
+    String                 revision;
+    lito::system::HostInfo host;
+    String                 descriptor_sha256;
+};
+
+struct AndroidActiveInspection {
+    bool                       exists { false };
+    bool                       removable { false };
+    Option<AndroidActiveState> state;
+    Option<String>             issue;
+};
+
+struct ResolvedAndroidInstallation {
+    AndroidInstalledDescriptor descriptor;
+    PathBuf                    prefix;
+    PathBuf                    root;
+};
+
+auto canonical_android_revision(ref<str> value) -> lito::SdkResult<lito::AndroidNdkRevision> {
+    auto parsed = lito::parse_android_ndk_revision(value);
+    if (parsed.is_err()) return Err(lito::SdkError::AndroidNdk(rstd::move(parsed).unwrap_err()));
+    if (parsed->text.as_str() != value) {
+        return sdk_failure<lito::AndroidNdkRevision>(
+            rstd::format("Android NDK revision '{}' is not canonical", value));
+    }
+    return Ok(rstd::move(parsed).unwrap());
+}
+
+auto android_descriptor_payload(const AndroidInstalledDescriptor& descriptor) -> String {
+    return rstd::format("lito-android-ndk-sdk-v1\n"
+                        "revision={}\nhost={}-{}\nurl={}\nsha256={}\nsize={}\nroot={}\n"
+                        "license={}@{}\ndistribution={}\ncertification={}\n",
+                        descriptor.revision.as_str(),
+                        descriptor.host.os.as_str(),
+                        descriptor.host.architecture.as_str(),
+                        descriptor.url.as_str(),
+                        descriptor.sha256.as_str(),
+                        descriptor.size,
+                        descriptor.root.as_str(),
+                        descriptor.license_id.as_str(),
+                        descriptor.license_sha256.as_str(),
+                        descriptor.distribution_identity.as_str(),
+                        descriptor.certification.identity.as_str());
+}
+
+auto android_descriptor_json(const AndroidInstalledDescriptor& descriptor) -> Json {
+    auto host = JsonMap::make();
+    host.insert(String::make("os"_str), json_string(descriptor.host.os.as_str()));
+    host.insert(String::make("architecture"_str),
+                json_string(descriptor.host.architecture.as_str()));
+    auto archive = JsonMap::make();
+    archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
+    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.as_str()));
+    archive.insert(String::make("size"_str),
+                   Json::Number(rstd::json::Number::from_u64(descriptor.size)));
+    archive.insert(String::make("root"_str), json_string(descriptor.root.as_str()));
+    auto license = JsonMap::make();
+    license.insert(String::make("id"_str), json_string(descriptor.license_id.as_str()));
+    license.insert(String::make("sha256"_str), json_string(descriptor.license_sha256.as_str()));
+    auto certification = JsonMap::make();
+    certification.insert(String::make("compiler-version"_str),
+                         json_string(descriptor.certification.compiler_version.as_str()));
+    certification.insert(String::make("linker-version"_str),
+                         json_string(descriptor.certification.linker_version.as_str()));
+    certification.insert(String::make("target"_str),
+                         json_string(descriptor.certification.target.as_str()));
+    certification.insert(String::make("identity"_str),
+                         json_string(descriptor.certification.identity.as_str()));
+    auto root = JsonMap::make();
+    root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert(String::make("kind"_str), json_string("lito-android-ndk-sdk"_str));
+    root.insert(String::make("revision"_str), json_string(descriptor.revision.as_str()));
+    root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
+    root.insert(String::make("archive"_str), Json::Object(rstd::move(archive)));
+    root.insert(String::make("license"_str), Json::Object(rstd::move(license)));
+    root.insert(String::make("distribution-identity"_str),
+                json_string(descriptor.distribution_identity.as_str()));
+    root.insert(String::make("certification"_str), Json::Object(rstd::move(certification)));
+    root.insert(String::make("identity"_str), json_string(descriptor.identity.as_str()));
+    return Json::Object(rstd::move(root));
+}
+
+auto serialize_android_descriptor(const AndroidInstalledDescriptor& descriptor) -> String {
+    auto text = rstd::json::to_string(android_descriptor_json(descriptor),
+                                      rstd::json::FormatOptions {
+                                          .pretty = true,
+                                          .indent = usize(2),
+                                      });
+    text.push_ascii('\n');
+    return text;
+}
+
+auto parse_android_host(const Json& value, ref<str> context)
+    -> lito::SdkResult<lito::system::HostInfo> {
+    rstd_try(sdk_known_fields(value, context, { "os"_str, "architecture"_str }));
+    auto os        = rstd_try(sdk_required_string(value, "os"_str, context));
+    auto arch      = rstd_try(sdk_required_string(value, "architecture"_str, context));
+    auto canonical = lito::system::canonical_architecture(arch.as_str());
+    if (canonical.is_err())
+        return Err(lito::SdkError::Platform(rstd::move(canonical).unwrap_err()));
+    if (os != "linux"_str || canonical->as_str() != "x86_64"_str || arch != "x86_64"_str) {
+        return sdk_failure<lito::system::HostInfo>(
+            rstd::format("{} identifies unsupported host {}-{}", context, os, arch));
+    }
+    return Ok(lito::system::HostInfo {
+        .architecture = rstd::move(canonical).unwrap(),
+        .os           = rstd::move(os),
+    });
+}
+
+auto parse_android_descriptor(const Json& value) -> lito::SdkResult<AndroidInstalledDescriptor> {
+    const auto context = "Android NDK descriptor root"_str;
+    rstd_try(sdk_known_fields(value,
+                              context,
+                              { "schema"_str,
+                                "kind"_str,
+                                "revision"_str,
+                                "host"_str,
+                                "archive"_str,
+                                "license"_str,
+                                "distribution-identity"_str,
+                                "certification"_str,
+                                "identity"_str }));
+    if (rstd_try(sdk_required_u64(value, "schema"_str, context)) != u64(1)) {
+        return sdk_failure<AndroidInstalledDescriptor>(
+            "Android NDK descriptor schema must be 1"_str);
+    }
+    auto kind = rstd_try(sdk_required_string(value, "kind"_str, context));
+    if (kind != "lito-android-ndk-sdk"_str) {
+        return sdk_failure<AndroidInstalledDescriptor>(
+            "Android NDK descriptor kind is invalid"_str);
+    }
+    auto revision = rstd_try(sdk_required_string(value, "revision"_str, context));
+    (void)rstd_try(canonical_android_revision(revision.as_str()));
+    auto host_value = rstd_try(sdk_required_member(value, "host"_str, context));
+    auto archive    = rstd_try(sdk_required_member(value, "archive"_str, context));
+    rstd_try(sdk_known_fields(*archive,
+                              "Android NDK descriptor archive"_str,
+                              { "url"_str, "sha256"_str, "size"_str, "root"_str }));
+    auto license = rstd_try(sdk_required_member(value, "license"_str, context));
+    rstd_try(sdk_known_fields(
+        *license, "Android NDK descriptor license"_str, { "id"_str, "sha256"_str }));
+    auto certification = rstd_try(sdk_required_member(value, "certification"_str, context));
+    rstd_try(sdk_known_fields(
+        *certification,
+        "Android NDK descriptor certification"_str,
+        { "compiler-version"_str, "linker-version"_str, "target"_str, "identity"_str }));
+    auto result = AndroidInstalledDescriptor {
+        .revision = rstd::move(revision),
+        .host     = rstd_try(parse_android_host(*host_value, "Android NDK descriptor host"_str)),
+        .url      = rstd_try(
+            sdk_required_string(*archive, "url"_str, "Android NDK descriptor archive"_str)),
+        .sha256 = rstd_try(descriptor_sha256(
+            rstd_try(
+                sdk_required_string(*archive, "sha256"_str, "Android NDK descriptor archive"_str))
+                .as_str(),
+            "Android NDK descriptor archive sha256"_str)),
+        .size =
+            rstd_try(sdk_required_u64(*archive, "size"_str, "Android NDK descriptor archive"_str)),
+        .root = rstd_try(
+            sdk_required_string(*archive, "root"_str, "Android NDK descriptor archive"_str)),
+        .license_id =
+            rstd_try(sdk_required_string(*license, "id"_str, "Android NDK descriptor license"_str)),
+        .license_sha256        = rstd_try(descriptor_sha256(
+            rstd_try(
+                sdk_required_string(*license, "sha256"_str, "Android NDK descriptor license"_str))
+                .as_str(),
+            "Android NDK descriptor license sha256"_str)),
+        .distribution_identity = rstd_try(descriptor_sha256(
+            rstd_try(sdk_required_string(value, "distribution-identity"_str, context)).as_str(),
+            "Android NDK descriptor distribution identity"_str)),
+        .certification =
+            AndroidNdkCertification {
+                .compiler_version =
+                    rstd_try(sdk_required_string(*certification,
+                                                 "compiler-version"_str,
+                                                 "Android NDK descriptor certification"_str)),
+                .linker_version =
+                    rstd_try(sdk_required_string(*certification,
+                                                 "linker-version"_str,
+                                                 "Android NDK descriptor certification"_str)),
+                .target   = rstd_try(sdk_required_string(
+                    *certification, "target"_str, "Android NDK descriptor certification"_str)),
+                .identity = rstd_try(descriptor_sha256(
+                    rstd_try(sdk_required_string(*certification,
+                                                 "identity"_str,
+                                                 "Android NDK descriptor certification"_str))
+                        .as_str(),
+                    "Android NDK descriptor certification identity"_str)),
+            },
+        .identity = rstd_try(descriptor_sha256(
+            rstd_try(sdk_required_string(value, "identity"_str, context)).as_str(),
+            "Android NDK descriptor identity"_str)),
+    };
+    auto expected = rstd::crypto::sha256_hex(android_descriptor_payload(result).as_str());
+    if (result.identity != expected.as_str()) {
+        return sdk_failure<AndroidInstalledDescriptor>(
+            "Android NDK descriptor identity does not match its contents"_str);
+    }
+    return Ok(rstd::move(result));
+}
+
+auto load_android_descriptor(ref<rstd::path::Path> prefix)
+    -> lito::SdkResult<Option<AndroidInstalledDescriptor>> {
+    auto path     = PathBuf::from(prefix).join(PathBuf::from("sdk.json"_str).as_path());
+    auto metadata = rstd::fs::symlink_metadata(path.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(None());
+        }
+        return sdk_io_failure<Option<AndroidInstalledDescriptor>>(
+            "inspect Android NDK descriptor"_str, path.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_file() || metadata->is_symlink()) {
+        return sdk_failure<Option<AndroidInstalledDescriptor>>(
+            rstd::format("Android NDK descriptor '{}' must be an ordinary file", path.as_path()));
+    }
+    auto text = rstd::fs::read_to_string(path.as_path());
+    if (text.is_err()) {
+        return sdk_io_failure<Option<AndroidInstalledDescriptor>>(
+            "read Android NDK descriptor"_str, path.as_path(), rstd::move(text).unwrap_err());
+    }
+    auto parsed = rstd::json::from_str(text->as_str());
+    if (parsed.is_err()) {
+        return Err(
+            lito::SdkError::Json(PathBuf::from(path.as_path()), rstd::move(parsed).unwrap_err()));
+    }
+    return Ok(Some(rstd_try(parse_android_descriptor(*parsed))));
+}
+
+auto android_descriptor_matches(const AndroidInstalledDescriptor& descriptor,
+                                const lito::AndroidNdkCatalog&    catalog,
+                                const lito::AndroidNdkRelease&    release,
+                                const lito::AndroidNdkArtifact&   artifact) -> bool {
+    return descriptor.revision == release.revision.text.as_str() &&
+           descriptor.host.os == artifact.host.os.as_str() &&
+           descriptor.host.architecture == artifact.host.architecture &&
+           descriptor.url == artifact.archive.url.as_str() &&
+           descriptor.sha256 == artifact.archive.sha256.as_str() &&
+           descriptor.size == artifact.archive.size &&
+           descriptor.root == artifact.archive.root.as_str() &&
+           descriptor.license_id == catalog.license.id.as_str() &&
+           descriptor.license_sha256 == catalog.license.sha256.as_str();
+}
+
+auto resolve_android_installation(const SdkStoreLayout&         layout,
+                                  ref<str>                      revision,
+                                  const lito::system::HostInfo& host)
+    -> lito::SdkResult<ResolvedAndroidInstallation> {
+    (void)rstd_try(canonical_android_revision(revision));
+    auto prefix   = layout.version(revision);
+    auto metadata = rstd::fs::symlink_metadata(prefix.as_path());
+    if (metadata.is_err()) {
+        return sdk_io_failure<ResolvedAndroidInstallation>(
+            "inspect Android NDK prefix"_str, prefix.as_path(), rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<ResolvedAndroidInstallation>(
+            rstd::format("Android NDK prefix '{}' must be a real directory", prefix.as_path()));
+    }
+    auto loaded = rstd_try(load_android_descriptor(prefix.as_path()));
+    if (loaded.is_none()) {
+        return sdk_failure<ResolvedAndroidInstallation>(
+            rstd::format("Android NDK prefix '{}' is missing sdk.json", prefix.as_path()));
+    }
+    auto descriptor = rstd::move(loaded).unwrap();
+    if (descriptor.revision != revision || descriptor.host.os != host.os.as_str() ||
+        descriptor.host.architecture != host.architecture) {
+        return sdk_failure<ResolvedAndroidInstallation>(
+            rstd::format("Android NDK {} descriptor does not match current host {}",
+                         revision,
+                         host_text(host).as_str()));
+    }
+    auto root         = prefix.join(PathBuf::from(descriptor.root.as_str()).as_path());
+    auto distribution = lito::open_android_ndk(root.as_path(), host);
+    if (distribution.is_err()) {
+        return Err(lito::SdkError::AndroidNdk(rstd::move(distribution).unwrap_err()));
+    }
+    if (distribution->revision().text != revision ||
+        distribution->identity() != descriptor.distribution_identity.as_str()) {
+        return sdk_failure<ResolvedAndroidInstallation>(
+            rstd::format("Android NDK {} installed metadata differs from sdk.json", revision));
+    }
+    return Ok(ResolvedAndroidInstallation {
+        .descriptor = rstd::move(descriptor),
+        .prefix     = rstd::move(prefix),
+        .root       = rstd::move(root),
+    });
+}
+
+auto android_active_json(const AndroidActiveState& state) -> Json {
+    auto host = JsonMap::make();
+    host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
+    host.insert(String::make("architecture"_str), json_string(state.host.architecture.as_str()));
+    auto root = JsonMap::make();
+    root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert(String::make("kind"_str), json_string("lito-android-ndk-active"_str));
+    root.insert(String::make("revision"_str), json_string(state.revision.as_str()));
+    root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
+    root.insert(String::make("descriptor-sha256"_str),
+                json_string(state.descriptor_sha256.as_str()));
+    return Json::Object(rstd::move(root));
+}
+
+auto parse_android_active(const Json& value) -> lito::SdkResult<AndroidActiveState> {
+    const auto context = "Android NDK activation state"_str;
+    rstd_try(sdk_known_fields(
+        value,
+        context,
+        { "schema"_str, "kind"_str, "revision"_str, "host"_str, "descriptor-sha256"_str }));
+    if (rstd_try(sdk_required_u64(value, "schema"_str, context)) != u64(1)) {
+        return sdk_failure<AndroidActiveState>("Android NDK activation schema must be 1"_str);
+    }
+    auto kind = rstd_try(sdk_required_string(value, "kind"_str, context));
+    if (kind != "lito-android-ndk-active"_str) {
+        return sdk_failure<AndroidActiveState>("Android NDK activation kind is invalid"_str);
+    }
+    auto revision = rstd_try(sdk_required_string(value, "revision"_str, context));
+    (void)rstd_try(canonical_android_revision(revision.as_str()));
+    auto host = rstd_try(sdk_required_member(value, "host"_str, context));
+    return Ok(AndroidActiveState {
+        .revision          = rstd::move(revision),
+        .host              = rstd_try(parse_android_host(*host, "Android NDK activation host"_str)),
+        .descriptor_sha256 = rstd_try(descriptor_sha256(
+            rstd_try(sdk_required_string(value, "descriptor-sha256"_str, context)).as_str(),
+            "Android NDK activation descriptor identity"_str)),
+    });
+}
+
+auto inspect_android_active(const SdkStoreLayout& layout)
+    -> lito::SdkResult<AndroidActiveInspection> {
+    auto metadata = rstd::fs::symlink_metadata(layout.active.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(AndroidActiveInspection {});
+        }
+        return sdk_io_failure<AndroidActiveInspection>(
+            "inspect Android NDK activation state"_str, layout.active.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_file() || metadata->is_symlink()) {
+        return Ok(AndroidActiveInspection {
+            .exists = true,
+            .issue  = Some(rstd::format("activation state '{}' must be an ordinary file",
+                                        layout.active.as_path())),
+        });
+    }
+    auto text = rstd::fs::read_to_string(layout.active.as_path());
+    if (text.is_err()) {
+        return sdk_io_failure<AndroidActiveInspection>("read Android NDK activation state"_str,
+                                                       layout.active.as_path(),
+                                                       rstd::move(text).unwrap_err());
+    }
+    auto parsed = rstd::json::from_str(text->as_str());
+    if (parsed.is_err()) {
+        return Ok(AndroidActiveInspection {
+            .exists    = true,
+            .removable = true,
+            .issue     = Some(rstd::format("cannot parse Android NDK activation state: {}",
+                                           rstd::move(parsed).unwrap_err())),
+        });
+    }
+    auto state = parse_android_active(*parsed);
+    if (state.is_err()) {
+        return Ok(AndroidActiveInspection {
+            .exists    = true,
+            .removable = true,
+            .issue     = Some(rstd::format("{}", rstd::move(state).unwrap_err())),
+        });
+    }
+    return Ok(AndroidActiveInspection {
+        .exists    = true,
+        .removable = true,
+        .state     = Some(rstd::move(state).unwrap()),
+    });
+}
+
+auto write_android_active(const SdkStoreLayout& layout, const AndroidActiveState& state)
+    -> lito::SdkResult<empty> {
+    auto text = rstd::json::to_string(android_active_json(state),
+                                      rstd::json::FormatOptions {
+                                          .pretty = true,
+                                          .indent = usize(2),
+                                      });
+    text.push_ascii('\n');
+    auto written = rstd::fs::write_atomic(layout.active.as_path(), text.as_str().as_bytes());
+    if (written.is_err()) {
+        return sdk_io_failure<empty>("write Android NDK activation state"_str,
+                                     layout.active.as_path(),
+                                     rstd::move(written).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto remove_android_active(const SdkStoreLayout& layout) -> lito::SdkResult<empty> {
+    auto removed = rstd::fs::remove_file(layout.active.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<empty>("remove Android NDK activation state"_str,
+                                     layout.active.as_path(),
+                                     rstd::move(removed).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto make_android_lease(ResolvedAndroidInstallation installation, rstd::fs::FileLock lock)
+    -> lito::AndroidNdkLease {
+    return lito::AndroidNdkLease(installation.descriptor.revision.clone(),
+                                 host_text(installation.descriptor.host),
+                                 rstd::move(installation.prefix),
+                                 rstd::move(installation.root),
+                                 installation.descriptor.distribution_identity.clone(),
+                                 rstd::move(lock));
+}
+
+auto remove_android_tombstone(const SdkStoreLayout& layout, ref<str> revision)
+    -> lito::SdkResult<bool> {
+    auto path     = layout.removing_area(revision);
+    auto metadata = rstd::fs::symlink_metadata(path.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(false);
+        }
+        return sdk_io_failure<bool>(
+            "inspect Android NDK tombstone"_str, path.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<bool>(
+            rstd::format("Android NDK tombstone '{}' must be a real directory", path.as_path()));
+    }
+    auto removed = rstd::fs::remove_dir_all(path.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<bool>(
+            "remove Android NDK tombstone"_str, path.as_path(), rstd::move(removed).unwrap_err());
+    }
+    return Ok(true);
+}
+
+} // namespace
+
+AndroidNdkLease::AndroidNdkLease(String             version,
+                                 String             host,
+                                 PathBuf            prefix,
+                                 PathBuf            root,
+                                 String             identity,
+                                 rstd::fs::FileLock lock) noexcept
+    : m_version(rstd::move(version)),
+      m_host(rstd::move(host)),
+      m_prefix(rstd::move(prefix)),
+      m_root(rstd::move(root)),
+      m_identity(rstd::move(identity)),
+      m_lock(rstd::move(lock)) {
+}
+
+auto AndroidNdkLease::project_defaults() const -> lito::config::ProjectConfigDefaults {
+    auto toolchain = lito::config::ToolchainSpec {};
+    toolchain.sdk  = Some(lito::config::ToolchainSdkSelection::Managed(
+        lito::config::SdkKind::AndroidNdk, m_version.clone()));
+    return lito::config::ProjectConfigDefaults {
+        .toolchain = rstd::move(toolchain),
+    };
+}
+
+auto acquire_android_ndk(ref<str> version) -> SdkResult<AndroidNdkLease> {
+    (void)rstd_try(canonical_android_revision(version));
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto layout = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto lock   = rstd_try(acquire_version_lock(layout, version, rstd::fs::FileLockMode::Shared));
+    auto installation = rstd_try(resolve_android_installation(layout, version, *host));
+    return Ok(make_android_lease(rstd::move(installation), rstd::move(lock)));
+}
+
+auto acquire_active_android_ndk() -> SdkResult<Option<AndroidNdkLease>> {
+    auto layout  = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto present = rstd::fs::symlink_metadata(layout.active.as_path());
+    if (present.is_err()) {
+        auto error = rstd::move(present).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(None());
+        }
+        return sdk_io_failure<Option<AndroidNdkLease>>(
+            "inspect Android NDK activation state"_str, layout.active.as_path(), rstd::move(error));
+    }
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Shared));
+    (void)active_lock;
+    auto inspection = rstd_try(inspect_android_active(layout));
+    if (inspection.issue.is_some() || inspection.state.is_none()) {
+        return sdk_failure<Option<AndroidNdkLease>>(
+            inspection.issue.is_some()
+                ? rstd::move(inspection.issue).unwrap()
+                : String::make("Android NDK activation state is missing"_str));
+    }
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    if (inspection.state->host.os != host->os.as_str() ||
+        inspection.state->host.architecture != host->architecture) {
+        return sdk_failure<Option<AndroidNdkLease>>(
+            rstd::format("active Android NDK is for {}, current host is {}",
+                         host_text(inspection.state->host).as_str(),
+                         host_text(*host).as_str()));
+    }
+    auto lock = rstd_try(acquire_version_lock(
+        layout, inspection.state->revision.as_str(), rstd::fs::FileLockMode::Shared));
+    auto installation =
+        rstd_try(resolve_android_installation(layout, inspection.state->revision.as_str(), *host));
+    if (installation.descriptor.identity != inspection.state->descriptor_sha256.as_str()) {
+        return sdk_failure<Option<AndroidNdkLease>>(
+            "active Android NDK descriptor differs from activation state"_str);
+    }
+    return Ok(Some(make_android_lease(rstd::move(installation), rstd::move(lock))));
+}
+
+auto list_android_ndks() -> SdkResult<SdkListSummary> {
+    auto catalog = load_embedded_android_ndk_catalog();
+    if (catalog.is_err()) return Err(SdkError::AndroidCatalog(rstd::move(catalog).unwrap_err()));
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto layout          = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto active          = Option<String> {};
+    auto active_issue    = Option<String> {};
+    auto active_metadata = rstd::fs::symlink_metadata(layout.active.as_path());
+    if (active_metadata.is_ok()) {
+        auto lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Shared));
+        (void)lock;
+        auto inspection = rstd_try(inspect_android_active(layout));
+        if (inspection.issue.is_some())
+            active_issue = rstd::move(inspection.issue);
+        else if (inspection.state.is_some())
+            active = Some(inspection.state->revision.clone());
+    } else {
+        auto error = rstd::move(active_metadata).unwrap_err();
+        if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return sdk_io_failure<SdkListSummary>("inspect Android NDK activation state"_str,
+                                                  layout.active.as_path(),
+                                                  rstd::move(error));
+        }
+    }
+
+    auto entries = Vec<SdkListEntry>::make();
+    for (const auto& release : catalog->releases) {
+        auto artifact = find_android_ndk_artifact(release, *host);
+        if (artifact.is_none()) continue;
+        auto entry = SdkListEntry {
+            .version = release.revision.text.clone(),
+            .host    = host_text(*host),
+            .status  = SdkListStatus::Available,
+            .active  = active.is_some() && *active == release.revision.text.as_str(),
+        };
+        auto prefix   = layout.version(release.revision.text.as_str());
+        auto metadata = rstd::fs::symlink_metadata(prefix.as_path());
+        if (metadata.is_ok()) {
+            entry.prefix = Some(prefix.clone());
+            auto resolved =
+                resolve_android_installation(layout, release.revision.text.as_str(), *host);
+            if (resolved.is_err()) {
+                entry.status = SdkListStatus::Invalid;
+                entry.issue  = Some(rstd::format("{}", rstd::move(resolved).unwrap_err()));
+            } else if (! android_descriptor_matches(
+                           resolved->descriptor, *catalog, release, **artifact)) {
+                entry.status = SdkListStatus::Invalid;
+                entry.issue =
+                    Some(String::make("installed artifact identity differs from catalog"_str));
+            } else {
+                entry.status = SdkListStatus::Installed;
+            }
+        } else {
+            auto error = rstd::move(metadata).unwrap_err();
+            if (error.kind() !=
+                rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+                return sdk_io_failure<SdkListSummary>(
+                    "inspect Android NDK entry"_str, prefix.as_path(), rstd::move(error));
+            }
+        }
+        entries.push(rstd::move(entry));
+    }
+    return Ok(SdkListSummary {
+        .host         = host_text(*host),
+        .entries      = rstd::move(entries),
+        .active_issue = rstd::move(active_issue),
+    });
+}
+
+auto activate_android_ndk(SdkActivateRequest request) -> SdkResult<SdkActivateSummary> {
+    (void)rstd_try(canonical_android_revision(request.version.as_str()));
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto layout      = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)active_lock;
+    auto version_lock = rstd_try(
+        acquire_version_lock(layout, request.version.as_str(), rstd::fs::FileLockMode::Shared));
+    (void)version_lock;
+    auto installation =
+        rstd_try(resolve_android_installation(layout, request.version.as_str(), *host));
+    auto inspection = rstd_try(inspect_android_active(layout));
+    auto unchanged =
+        inspection.state.is_some() && inspection.issue.is_none() &&
+        inspection.state->revision == request.version.as_str() &&
+        inspection.state->descriptor_sha256 == installation.descriptor.identity.as_str();
+    if (! unchanged) {
+        rstd_try(
+            write_android_active(layout,
+                                 AndroidActiveState {
+                                     .revision          = request.version.clone(),
+                                     .host              = host->clone(),
+                                     .descriptor_sha256 = installation.descriptor.identity.clone(),
+                                 }));
+    }
+    return Ok(SdkActivateSummary {
+        .version   = rstd::move(request.version),
+        .host      = host_text(*host),
+        .prefix    = rstd::move(installation.prefix),
+        .unchanged = unchanged,
+    });
+}
+
+auto deactivate_android_ndk() -> SdkResult<SdkDeactivateSummary> {
+    auto layout = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto lock   = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)lock;
+    auto inspection = rstd_try(inspect_android_active(layout));
+    if (! inspection.exists) return Ok(SdkDeactivateSummary { .unchanged = true });
+    auto summary = SdkDeactivateSummary {
+        .invalid_state = inspection.issue.is_some(),
+    };
+    if (inspection.state.is_some()) {
+        summary.version = Some(inspection.state->revision.clone());
+        summary.host    = Some(host_text(inspection.state->host));
+        summary.prefix  = Some(layout.version(inspection.state->revision.as_str()));
+    }
+    if (! inspection.removable && inspection.issue.is_some()) {
+        return sdk_failure<SdkDeactivateSummary>(rstd::move(inspection.issue).unwrap());
+    }
+    rstd_try(remove_android_active(layout));
+    return Ok(rstd::move(summary));
+}
+
+auto uninstall_android_ndk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary> {
+    (void)rstd_try(canonical_android_revision(request.version.as_str()));
+    auto layout      = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)active_lock;
+    auto version_lock = rstd_try(
+        acquire_version_lock(layout, request.version.as_str(), rstd::fs::FileLockMode::Exclusive));
+    (void)version_lock;
+    auto recovered  = rstd_try(remove_android_tombstone(layout, request.version.as_str()));
+    auto inspection = rstd_try(inspect_android_active(layout));
+    if (inspection.issue.is_some()) {
+        return sdk_failure<SdkUninstallSummary>(
+            rstd::format("Android NDK activation state is invalid; run 'lito sdk android-ndk "
+                         "deactivate' first: {}",
+                         *inspection.issue));
+    }
+    auto was_active =
+        inspection.state.is_some() && inspection.state->revision == request.version.as_str();
+    auto prefix   = layout.version(request.version.as_str());
+    auto metadata = rstd::fs::symlink_metadata(prefix.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            if (recovered) {
+                if (was_active) rstd_try(remove_android_active(layout));
+                return Ok(SdkUninstallSummary {
+                    .version    = rstd::move(request.version),
+                    .prefix     = rstd::move(prefix),
+                    .was_active = was_active,
+                    .recovered  = true,
+                });
+            }
+            return sdk_failure<SdkUninstallSummary>(
+                rstd::format("Android NDK revision '{}' is not installed", request.version));
+        }
+        return sdk_io_failure<SdkUninstallSummary>(
+            "inspect Android NDK uninstall target"_str, prefix.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<SdkUninstallSummary>(rstd::format(
+            "Android NDK uninstall target '{}' must be a real directory", prefix.as_path()));
+    }
+    auto descriptor      = load_android_descriptor(prefix.as_path());
+    auto invalid         = descriptor.is_err() || descriptor->is_none() ||
+                           (descriptor.is_ok() && descriptor->is_some() &&
+                            descriptor->as_ref()->revision != request.version.as_str());
+    auto host_text_value = Option<String> {};
+    if (descriptor.is_ok() && descriptor->is_some()) {
+        host_text_value = Some(host_text(descriptor->as_ref()->host));
+    }
+    if (was_active) rstd_try(remove_android_active(layout));
+    auto tombstone = layout.removing_area(request.version.as_str());
+    auto renamed   = rstd::fs::rename(prefix.as_path(), tombstone.as_path());
+    if (renamed.is_err()) {
+        return sdk_io_failure<SdkUninstallSummary>(
+            "publish Android NDK removal"_str, prefix.as_path(), rstd::move(renamed).unwrap_err());
+    }
+    auto removed = rstd::fs::remove_dir_all(tombstone.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<SdkUninstallSummary>("remove Android NDK tombstone"_str,
+                                                   tombstone.as_path(),
+                                                   rstd::move(removed).unwrap_err());
+    }
+    return Ok(SdkUninstallSummary {
+        .version       = rstd::move(request.version),
+        .host          = rstd::move(host_text_value),
+        .prefix        = rstd::move(prefix),
+        .was_active    = was_active,
+        .invalid_entry = invalid,
+    });
+}
+
+auto install_android_ndk(AndroidNdkInstallRequest request) -> SdkResult<SdkInstallSummary> {
+    (void)rstd_try(canonical_android_revision(request.version.as_str()));
+    auto catalog = load_embedded_android_ndk_catalog();
+    if (catalog.is_err()) return Err(SdkError::AndroidCatalog(rstd::move(catalog).unwrap_err()));
+    auto release = find_android_ndk_release(*catalog, request.version.as_str());
+    if (release.is_none()) {
+        return sdk_failure<SdkInstallSummary>(
+            rstd::format("Android NDK revision '{}' is not available", request.version));
+    }
+    if (! request.accept_license) {
+        return sdk_failure<SdkInstallSummary>(rstd::format(
+            "Android NDK {} requires acceptance of {} at {}; rerun with --accept-license",
+            request.version,
+            catalog->license.id,
+            catalog->license.url));
+    }
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto artifact = find_android_ndk_artifact(**release, *host);
+    if (artifact.is_none()) {
+        return sdk_failure<SdkInstallSummary>(rstd::format(
+            "Android NDK {} is not available for {}", request.version, host_text(*host).as_str()));
+    }
+    auto environment = lito::system::ResolvedProcessEnvironment::resolve(request.environment);
+    if (environment.is_err()) return Err(SdkError::System(rstd::move(environment).unwrap_err()));
+    auto resolver = lito::tools::ToolResolver(
+        *environment, request.tools.clone(), rstd::move(request.tool_reporter));
+    auto layout = rstd_try(sdk_store_layout("android-ndk"_str));
+    auto lock   = rstd_try(acquire_version_lock(layout, request.version.as_str()));
+    (void)lock;
+    (void)rstd_try(remove_android_tombstone(layout, request.version.as_str()));
+    auto prefix   = layout.version(request.version.as_str());
+    auto metadata = rstd::fs::symlink_metadata(prefix.as_path());
+    if (metadata.is_ok()) {
+        auto resolved =
+            rstd_try(resolve_android_installation(layout, request.version.as_str(), *host));
+        if (! android_descriptor_matches(resolved.descriptor, *catalog, **release, **artifact)) {
+            return sdk_failure<SdkInstallSummary>(
+                rstd::format("Android NDK destination '{}' conflicts with the catalog artifact",
+                             prefix.as_path()));
+        }
+        return Ok(SdkInstallSummary {
+            .version = request.version.clone(),
+            .host    = host_text(*host),
+            .prefix  = rstd::move(prefix),
+            .reused  = true,
+        });
+    }
+    auto error = rstd::move(metadata).unwrap_err();
+    if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+        return sdk_io_failure<SdkInstallSummary>(
+            "inspect Android NDK destination"_str, prefix.as_path(), rstd::move(error));
+    }
+
+    auto observer = SdkAcquisitionObserver {
+        .sdk     = lito::config::SdkKind::AndroidNdk,
+        .version = request.version.as_str(),
+        .sink    = request.observer,
+    };
+    auto download_requirement = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::HttpDownload, "sdk android-ndk install"_str);
+    auto extraction_requirement = lito::tools::command_tool_requirement(
+        lito::tools::HostToolCapability::ArchiveExtraction, "sdk android-ndk install"_str);
+    auto acquisitions = Vec<lito::tools::acquisition::VerifiedArchiveRequest>::make();
+    acquisitions.push(lito::tools::acquisition::VerifiedArchiveRequest {
+        .label                  = rstd::format("android-ndk@{}", request.version),
+        .url                    = (**artifact).archive.url.clone(),
+        .sha256                 = (**artifact).archive.sha256.clone(),
+        .expected_size          = Some(u64((**artifact).archive.size.to_primitive())),
+        .download_requirement   = download_requirement.clone(),
+        .extraction_requirement = extraction_requirement.clone(),
+    });
+    auto files = lito::tools::acquisition::acquire_verified_files(
+        rstd::move(acquisitions),
+        usize(1),
+        resolver,
+        *environment,
+        false,
+        lito::tools::acquisition::AcquisitionEventSink {
+            .context = rstd::addressof(observer),
+            .notify  = observe_sdk_acquisition,
+        });
+    if (files.is_err()) return Err(SdkError::Acquisition(rstd::move(files).unwrap_err()));
+    auto verified_files = rstd::move(files).unwrap();
+    auto extractor =
+        lito::tools::acquisition::select_archive_extractor(resolver, extraction_requirement);
+    if (extractor.is_err()) {
+        return Err(SdkError::Acquisition(rstd::move(extractor).unwrap_err()));
+    }
+    auto staging   = layout.staging_area(request.version.as_str(), *host);
+    auto extracted = lito::tools::acquisition::extract_verified_archive(
+        rstd::move(verified_files[usize {}]),
+        staging.as_path(),
+        Some((**artifact).archive.root.as_str()),
+        *extractor,
+        *environment,
+        lito::tools::acquisition::AcquisitionEventSink {
+            .context = rstd::addressof(observer),
+            .notify  = observe_sdk_acquisition,
+        });
+    if (extracted.is_err()) {
+        remove_staging(staging.as_path());
+        return Err(SdkError::Acquisition(rstd::move(extracted).unwrap_err()));
+    }
+    auto distribution = open_android_ndk(extracted->root.as_path(), *host);
+    if (distribution.is_err()) {
+        remove_staging(staging.as_path());
+        return Err(SdkError::AndroidNdk(rstd::move(distribution).unwrap_err()));
+    }
+    if (distribution->revision().text != request.version.as_str()) {
+        remove_staging(staging.as_path());
+        return sdk_failure<SdkInstallSummary>(
+            rstd::format("downloaded Android NDK revision '{}' differs from requested '{}'",
+                         distribution->revision().text,
+                         request.version));
+    }
+    emit_sdk_event(request.observer,
+                   SdkEventKind::Certify,
+                   request.version.as_str(),
+                   "android-toolchain"_str,
+                   extracted->root.as_path(),
+                   lito::config::SdkKind::AndroidNdk);
+    auto certification = certify_android_ndk(*distribution, *environment);
+    if (certification.is_err()) {
+        remove_staging(staging.as_path());
+        return Err(SdkError::Toolchain(rstd::move(certification).unwrap_err()));
+    }
+    auto descriptor = AndroidInstalledDescriptor {
+        .revision              = request.version.clone(),
+        .host                  = host->clone(),
+        .url                   = (**artifact).archive.url.clone(),
+        .sha256                = (**artifact).archive.sha256.clone(),
+        .size                  = (**artifact).archive.size,
+        .root                  = (**artifact).archive.root.clone(),
+        .license_id            = catalog->license.id.clone(),
+        .license_sha256        = catalog->license.sha256.clone(),
+        .distribution_identity = String::make(distribution->identity()),
+        .certification         = rstd::move(certification).unwrap(),
+    };
+    descriptor.identity = rstd::crypto::sha256_hex(android_descriptor_payload(descriptor).as_str());
+    auto descriptor_path = staging.join(PathBuf::from("sdk.json"_str).as_path());
+    auto descriptor_text = serialize_android_descriptor(descriptor);
+    auto written =
+        rstd::fs::write_atomic(descriptor_path.as_path(), descriptor_text.as_str().as_bytes());
+    if (written.is_err()) {
+        auto result = sdk_io_failure<SdkInstallSummary>("write Android NDK descriptor"_str,
+                                                        descriptor_path.as_path(),
+                                                        rstd::move(written).unwrap_err());
+        remove_staging(staging.as_path());
+        return result;
+    }
+    auto published = rstd::fs::rename(staging.as_path(), prefix.as_path());
+    if (published.is_err()) {
+        auto result = sdk_io_failure<SdkInstallSummary>(
+            "publish Android NDK"_str, prefix.as_path(), rstd::move(published).unwrap_err());
+        remove_staging(staging.as_path());
+        return result;
+    }
     return Ok(SdkInstallSummary {
         .version = rstd::move(request.version),
         .host    = host_text(*host),

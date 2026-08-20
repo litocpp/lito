@@ -30,6 +30,7 @@ struct ProjectConfig {
     StandardLibrary                   standard_library { StandardLibrary::Libcxx };
     StandardLibraryRuntime            standard_library_runtime { StandardLibraryRuntime::Dynamic };
     ProjectBuildOptions               build_options;
+    BuildTargetRequest                build_target;
     lito::source::PackageSourceConfig sources;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;

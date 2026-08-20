@@ -4,6 +4,7 @@ import rstd;
 import lito.core;
 import :build.artifact;
 import :build.result;
+import :command.error;
 import lito.cpp;
 import lito.system;
 
@@ -44,6 +45,15 @@ auto selected_artifacts(const BuildSummary& summary, cpp::ArtifactKind kind)
                                        return left->target.name < right->target.name;
                                    });
     return selected;
+}
+
+auto ensure_artifact_runner(const lito::system::BuildPlatform& platform, ref<str> command)
+    -> CommandResult<empty> {
+    if (platform.android_abi.is_none()) return Ok(empty {});
+    return Err(CommandError::Message(
+        rstd::format("{} cannot run Android target '{}' without a configured target runner",
+                     command,
+                     platform.effective_target.triple.as_str())));
 }
 
 auto execute_artifact(const BuiltArtifact&              artifact,

@@ -19,6 +19,8 @@ export namespace lito
 class SdkError {
     RSTD_ENUM(SdkError,
               (Catalog, (LlvmSdkCatalogError source;)),
+              (AndroidCatalog, (AndroidNdkCatalogError source;)),
+              (AndroidNdk, (AndroidNdkError source;)),
               (Acquisition, (lito::tools::acquisition::AcquisitionError source;)),
               (Toolchain, (ToolchainError source;)),
               (Build, (BuildError source;)),
@@ -45,6 +47,7 @@ enum class SdkEventKind
 };
 
 struct SdkEvent {
+    lito::config::SdkKind sdk { lito::config::SdkKind::Llvm };
     SdkEventKind          kind { SdkEventKind::Fetch };
     ref<str>              version;
     ref<str>              source;
@@ -93,6 +96,15 @@ struct SdkInstallSummary {
     String  host;
     PathBuf prefix;
     bool    reused { false };
+};
+
+struct AndroidNdkInstallRequest {
+    String                                      version;
+    bool                                        accept_license { false };
+    lito::system::ProcessEnvironmentSpec        environment;
+    lito::tools::ToolSpec                       tools;
+    Option<lito::tools::HostToolResolutionSink> tool_reporter;
+    Option<SdkEventSink>                        observer;
 };
 
 struct SdkActivateRequest {
@@ -154,12 +166,51 @@ public:
     auto project_defaults() const -> lito::config::ProjectConfigDefaults;
 };
 
+class AndroidNdkLease {
+    String             m_version;
+    String             m_host;
+    PathBuf            m_prefix;
+    PathBuf            m_root;
+    String             m_identity;
+    rstd::fs::FileLock m_lock;
+
+public:
+    AndroidNdkLease(String             version,
+                    String             host,
+                    PathBuf            prefix,
+                    PathBuf            root,
+                    String             identity,
+                    rstd::fs::FileLock lock) noexcept;
+    friend auto acquire_active_android_ndk() -> SdkResult<Option<AndroidNdkLease>>;
+    friend auto acquire_android_ndk(ref<str> version) -> SdkResult<AndroidNdkLease>;
+
+    AndroidNdkLease(const AndroidNdkLease&)                        = delete;
+    auto operator=(const AndroidNdkLease&) -> AndroidNdkLease&     = delete;
+    AndroidNdkLease(AndroidNdkLease&&) noexcept                    = default;
+    auto operator=(AndroidNdkLease&&) noexcept -> AndroidNdkLease& = default;
+    ~AndroidNdkLease()                                             = default;
+
+    auto version() const noexcept -> ref<str> { return m_version.as_str(); }
+    auto host() const noexcept -> ref<str> { return m_host.as_str(); }
+    auto prefix() const noexcept -> ref<rstd::path::Path> { return m_prefix.as_path(); }
+    auto root() const noexcept -> ref<rstd::path::Path> { return m_root.as_path(); }
+    auto identity() const noexcept -> ref<str> { return m_identity.as_str(); }
+    auto project_defaults() const -> lito::config::ProjectConfigDefaults;
+};
+
 auto list_llvm_sdks() -> SdkResult<SdkListSummary>;
 auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>;
 auto activate_llvm_sdk(SdkActivateRequest request) -> SdkResult<SdkActivateSummary>;
 auto deactivate_llvm_sdk() -> SdkResult<SdkDeactivateSummary>;
 auto uninstall_llvm_sdk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary>;
 auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>>;
+auto list_android_ndks() -> SdkResult<SdkListSummary>;
+auto install_android_ndk(AndroidNdkInstallRequest request) -> SdkResult<SdkInstallSummary>;
+auto activate_android_ndk(SdkActivateRequest request) -> SdkResult<SdkActivateSummary>;
+auto deactivate_android_ndk() -> SdkResult<SdkDeactivateSummary>;
+auto uninstall_android_ndk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary>;
+auto acquire_active_android_ndk() -> SdkResult<Option<AndroidNdkLease>>;
+auto acquire_android_ndk(ref<str> version) -> SdkResult<AndroidNdkLease>;
 
 } // namespace lito
 
@@ -174,33 +225,41 @@ struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
             return formatter.write_raw("LLVM SDK catalog operation failed",
                                        sizeof("LLVM SDK catalog operation failed") - 1);
         }
+        if (error.is_AndroidCatalog()) {
+            return formatter.write_raw("Android NDK catalog operation failed",
+                                       sizeof("Android NDK catalog operation failed") - 1);
+        }
+        if (error.is_AndroidNdk()) {
+            return formatter.write_raw("Android NDK operation failed",
+                                       sizeof("Android NDK operation failed") - 1);
+        }
         if (error.is_Acquisition()) {
-            return formatter.write_raw("LLVM SDK acquisition failed",
-                                       sizeof("LLVM SDK acquisition failed") - 1);
+            return formatter.write_raw("SDK acquisition failed",
+                                       sizeof("SDK acquisition failed") - 1);
         }
         if (error.is_Toolchain()) {
-            return formatter.write_raw("LLVM SDK toolchain operation failed",
-                                       sizeof("LLVM SDK toolchain operation failed") - 1);
+            return formatter.write_raw("SDK toolchain operation failed",
+                                       sizeof("SDK toolchain operation failed") - 1);
         }
         if (error.is_Build()) {
             return formatter.write_raw("LLVM SDK component build failed",
                                        sizeof("LLVM SDK component build failed") - 1);
         }
         if (error.is_Tools()) {
-            return formatter.write_raw("LLVM SDK host tool operation failed",
-                                       sizeof("LLVM SDK host tool operation failed") - 1);
+            return formatter.write_raw("SDK host tool operation failed",
+                                       sizeof("SDK host tool operation failed") - 1);
         }
         if (error.is_SourceTree()) {
             return formatter.write_raw("LLVM SDK recipe materialization failed",
                                        sizeof("LLVM SDK recipe materialization failed") - 1);
         }
         if (error.is_Platform()) {
-            return formatter.write_raw("LLVM SDK host detection failed",
-                                       sizeof("LLVM SDK host detection failed") - 1);
+            return formatter.write_raw("SDK host detection failed",
+                                       sizeof("SDK host detection failed") - 1);
         }
         if (error.is_System()) {
-            return formatter.write_raw("LLVM SDK environment operation failed",
-                                       sizeof("LLVM SDK environment operation failed") - 1);
+            return formatter.write_raw("SDK environment operation failed",
+                                       sizeof("SDK environment operation failed") - 1);
         }
         if (error.is_Json()) {
             return formatter.write_fmt(fmt::Arguments::make("cannot parse LLVM SDK descriptor '{}'",
@@ -227,6 +286,12 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Catalog()) return Some(dyn<error::Error>::from_ref(error.as_Catalog().source));
+        if (error.is_AndroidCatalog()) {
+            return Some(dyn<error::Error>::from_ref(error.as_AndroidCatalog().source));
+        }
+        if (error.is_AndroidNdk()) {
+            return Some(dyn<error::Error>::from_ref(error.as_AndroidNdk().source));
+        }
         if (error.is_Acquisition()) {
             return Some(dyn<error::Error>::from_ref(error.as_Acquisition().source));
         }

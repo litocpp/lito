@@ -76,6 +76,25 @@ struct ParsedGlobalBuildOptions {
     Vec<lito::config::BuildOptionInput> linker;
 };
 
+auto apply_build_platform(ProfileSpec& profile, const lito::system::BuildPlatform& platform)
+    -> lito::manifest::BuildProfileResult<empty> {
+    auto target = lito::compiler::TargetOptions {};
+    if (platform.intent == lito::system::BuildTargetIntent::ExplicitTarget) {
+        target.target = Some(platform.effective_target.triple.clone());
+    }
+    if (platform.sysroot.is_some()) {
+        auto text = platform.sysroot->as_path().to_str();
+        if (text.is_none()) {
+            return Err(lito::manifest::BuildProfileError::Message(rstd::format(
+                "target sysroot '{}' is not valid UTF-8", platform.sysroot->as_path())));
+        }
+        target.sysroot = Some(String::make(*text));
+    }
+    profile.c.common.target   = target.clone();
+    profile.cpp.common.target = rstd::move(target);
+    return Ok(empty {});
+}
+
 } // namespace lito::cpp
 
 export namespace lito::cpp

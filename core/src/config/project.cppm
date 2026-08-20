@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.core:config.project;
 
 import rstd;
@@ -49,6 +52,31 @@ enum class EnvironmentFlagPolicy
 {
     Ignore,
     Append,
+};
+
+struct AndroidTargetRequest {
+    String abi;
+    u32    minimum_api {};
+
+    auto clone() const -> AndroidTargetRequest {
+        return AndroidTargetRequest {
+            .abi         = abi.clone(),
+            .minimum_api = minimum_api,
+        };
+    }
+};
+
+class BuildTargetRequest : public DefaultInClass<BuildTargetRequest, Clone> {
+    RSTD_ENUM_DEFAULT(BuildTargetRequest,
+                      (Default),
+                      (Default),
+                      (Android, (AndroidTargetRequest target;)))
+
+public:
+    auto clone() const -> BuildTargetRequest {
+        if (is_Default()) return Default();
+        return Android(as_Android().target.clone());
+    }
 };
 
 } // namespace lito::config

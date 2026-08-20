@@ -1,5 +1,4 @@
 module;
-#include <initializer_list>
 #include <rstd/enum.hpp>
 #include <rstd/macro.hpp>
 
@@ -216,7 +215,7 @@ auto catalog_failure(String message) -> LlvmSdkCatalogResult<T> {
     return Err(LlvmSdkCatalogError::Message(rstd::move(message)));
 }
 
-auto known_fields(const Json& value, ref<str> context, std::initializer_list<ref<str>> names)
+auto known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> LlvmSdkCatalogResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) {

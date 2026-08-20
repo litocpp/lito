@@ -68,6 +68,7 @@ lito.install({
         destination = "bin/producer",
         runtime_search = {{ external_asset = { dependency = "runtime", set = "files" } }},
     }},
+    target_runtimes = {{ name = "libc++_shared.so", destination = "lib/libc++_shared.so" }},
     external_assets = {{
         dependency = "runtime", set = "files", destination = "lib/runtime",
         strip = { mode = "symbols", files = { "runtime.so" } },
@@ -111,6 +112,10 @@ lito.install({
     ASSERT_EQ(recipe->artifacts[usize {}].runtime_search.len(), usize(1));
     EXPECT_EQ(recipe->artifacts[usize {}].runtime_search[usize {}].dependency.as_str(),
               "runtime"_str);
+    ASSERT_EQ(recipe->target_runtimes.len(), usize(1));
+    EXPECT_EQ(recipe->target_runtimes[usize {}].name.as_str(), "libc++_shared.so"_str);
+    EXPECT_EQ(recipe->target_runtimes[usize {}].destination.as_path(),
+              PathBuf::from("lib/libc++_shared.so"_str).as_path());
     ASSERT_EQ(recipe->external_assets.len(), usize(1));
     ASSERT_TRUE(recipe->external_assets[usize {}].strip.is_some());
     EXPECT_EQ(recipe->external_assets[usize {}].strip->mode, lito::artifact::StripMode::Symbols);

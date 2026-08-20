@@ -234,12 +234,19 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
 }
 
 auto output_name(ArtifactKind kind, ref<str> declared_name) -> String {
-    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::TestAttachmentArchive) {
+    if (kind != ArtifactKind::StaticLibrary && kind != ArtifactKind::SharedLibrary &&
+        kind != ArtifactKind::TestAttachmentArchive) {
         return String::make(declared_name);
     }
     auto result = String::make("lib"_str);
     result.push_str(declared_name);
-    result.push_str(kind == ArtifactKind::StaticLibrary ? ".a"_str : ".test.a"_str);
+    if (kind == ArtifactKind::StaticLibrary) {
+        result.push_str(".a"_str);
+    } else if (kind == ArtifactKind::SharedLibrary) {
+        result.push_str(".so"_str);
+    } else {
+        result.push_str(".test.a"_str);
+    }
     return result;
 }
 
@@ -666,9 +673,12 @@ auto clone_external_dependencies(const Vec<ResolvedExternalDependency>& dependen
     return result;
 }
 
-auto target_artifact_kind(lito::package::PackageTargetKind kind) -> ArtifactKind {
+auto target_artifact_kind(const lito::manifest::PackageTargetManifest& target) -> ArtifactKind {
+    auto kind = lito::manifest::package_target_kind(target);
     switch (kind) {
-    case lito::package::PackageTargetKind::Library: return ArtifactKind::StaticLibrary;
+    case lito::package::PackageTargetKind::Library:
+        return lito::manifest::package_library_is_shared(target) ? ArtifactKind::SharedLibrary
+                                                                 : ArtifactKind::StaticLibrary;
     case lito::package::PackageTargetKind::Binary: return ArtifactKind::Executable;
     case lito::package::PackageTargetKind::Test: return ArtifactKind::TestExecutable;
     case lito::package::PackageTargetKind::Benchmark: return ArtifactKind::BenchmarkExecutable;
@@ -928,6 +938,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (const auto& target : package.manifest.targets) {
             auto kind = lito::manifest::package_target_kind(target);
             if (kind == lito::package::PackageTargetKind::Library) has_library = true;
+            if (lito::manifest::package_library_is_shared(target)) has_link_action = true;
             if (kind == lito::package::PackageTargetKind::Binary ||
                 kind == lito::package::PackageTargetKind::Test ||
                 kind == lito::package::PackageTargetKind::Benchmark) {
@@ -1068,7 +1079,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             }
             targets.push(ResolvedTarget {
                 .id            = rstd::move(id),
-                .artifact_kind = target_artifact_kind(kind),
+                .artifact_kind = target_artifact_kind(manifest_target),
                 .language      = package_language,
                 .artifact_name =
                     String::make(lito::manifest::package_target_artifact_name(manifest_target)),
@@ -1290,6 +1301,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .cxx = configuration.toolchain.cxx.clone(),
                 .ld  = configuration.toolchain.ld.clone(),
                 .ar  = configuration.toolchain.ar.clone(),
+                .sdk = as<Clone>(configuration.toolchain.sdk).clone(),
             },
         .profiles = rstd::move(profiles),
         .targets  = rstd::move(targets),

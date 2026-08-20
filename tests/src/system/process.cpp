@@ -234,6 +234,44 @@ TEST_F(SystemProcess, BuildUsesConfiguredAppendedToolPath) {
     EXPECT_EQ(artifact_count(*built, lito::cpp::ArtifactKind::Executable), usize(1));
 }
 
+TEST_F(SystemProcess, BuildProducesPrimarySharedLibraryArtifact) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-primary-shared"
+version = "0.1.0"
+
+[lib]
+name = "fixture-primary-shared"
+kind = "shared"
+module = "fixture.primary.shared"
+artifact = "fixture_primary_shared"
+sources = ["src/library.cppm"]
+)toml"_str },
+        { "src/library.cppm"_str,
+          "export module fixture.primary.shared;\n"
+          "export auto fixture_primary_shared() -> int { return 42; }\n"_str },
+    };
+    auto project = materialize("primary-shared"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto request = build_request(project->root.as_path(),
+                                 build_root("primary-shared"_str).as_path(),
+                                 Vec<String>::make(),
+                                 build_profile("release"_str));
+    auto built   = lito::build(request);
+    if (built.is_err()) {
+        auto message = error_chain_text(built.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(artifact_count(*built, lito::cpp::ArtifactKind::SharedLibrary), usize(1));
+    for (const auto& artifact : built->artifacts) {
+        if (artifact.kind != lito::cpp::ArtifactKind::SharedLibrary) continue;
+        EXPECT_EQ(artifact.path.as_path().file_name().unwrap().to_str().unwrap(),
+                  "libfixture_primary_shared.so"_str);
+        EXPECT_TRUE(rstd::fs::exists(artifact.path.as_path()).unwrap());
+    }
+}
+
 TEST_F(SystemProcess, TestArtifactReceivesConfiguredEffectivePath) {
     auto tree = environment_tool_project_tree();
     ASSERT_TRUE(tree.is_ok());

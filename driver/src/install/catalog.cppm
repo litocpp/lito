@@ -1,5 +1,4 @@
 module;
-#include <initializer_list>
 #include <rstd/macro.hpp>
 
 export module lito.driver:install.catalog;
@@ -48,7 +47,7 @@ auto catalog_json_string(ref<str> value) -> Json {
     return Json::String(String::make(value));
 }
 
-auto known_fields(const Json& value, ref<str> context, std::initializer_list<ref<str>> names)
+auto known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> InstallStoreResult<empty> {
     auto object = value.as_object();
     if (object.is_none()) {

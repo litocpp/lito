@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "kind": "lito-android-ndk-repository",
+  "license": {
+    "id": "android-sdk-license",
+    "url": "https://developer.android.com/studio/terms",
+    "sha256": "efa8d9576e4816922a4676b8b9f8040f05fa22e371fbac5042c4551b08d5a43e"
+  },
+  "releases": [
+    {
+      "revision": "29.0.14206865",
+      "release-name": "r29",
+      "artifacts": [
+        {
+          "host": {
+            "os": "linux",
+            "architecture": "x86_64"
+          },
+          "archive": {
+            "format": "zip",
+            "url": "https://dl.google.com/android/repository/android-ndk-r29-linux.zip",
+            "sha256": "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf",
+            "size": 783549481,
+            "root": "android-ndk-r29"
+          }
+        }
+      ]
+    }
+  ]
+}
