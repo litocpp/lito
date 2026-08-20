@@ -56,29 +56,45 @@ auto start_project_resolution(const lito::package::PackageSelection&    selectio
                               bool                                      locked,
                               lito::source::GitResolutionMode           git,
                               const TargetInfo*                         target,
-                              lito::tools::ToolResolver&                tool_resolver,
+                              lito::tools::ToolResolver*                tool_resolver,
                               const ResolvedProcessEnvironment&         environment,
                               usize                                     jobs     = usize(1),
                               BuildEventSink                            observer = {},
-                              Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+                              Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+                              lito::source::SourceMaterializationPolicy materialization =
+                                  lito::source::SourceMaterializationPolicy::Materialize)
     -> ProjectResult<StartedProjectResolution> {
     auto lock_session =
         rstd_try(lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git));
-    auto resolution          = lock_session.take_resolution_options();
-    resolution.sources       = sources.clone();
-    auto external_resolution = resolution.clone();
-    auto project             = rstd_try(
-        lito::package::resolve_package_selection_with_environment(selection,
-                                                                  purpose,
-                                                                  rstd::move(resolution),
-                                                                  target,
-                                                                  tool_resolver,
-                                                                  environment,
-                                                                  jobs,
-                                                                  source_observer(observer),
-                                                                  rstd::move(catalog)));
+    auto resolution            = lock_session.take_resolution_options();
+    resolution.sources         = sources.clone();
+    resolution.materialization = materialization;
+    auto external_resolution   = resolution.clone();
+    auto project =
+        tool_resolver != nullptr
+            ? lito::package::resolve_package_selection_with_environment(selection,
+                                                                        purpose,
+                                                                        rstd::move(resolution),
+                                                                        target,
+                                                                        *tool_resolver,
+                                                                        environment,
+                                                                        jobs,
+                                                                        source_observer(observer),
+                                                                        rstd::move(catalog))
+            : lito::package::resolve_existing_package_selection_with_environment(
+                  selection,
+                  purpose,
+                  rstd::move(resolution),
+                  *target,
+                  environment,
+                  jobs,
+                  source_observer(observer),
+                  rstd::move(catalog));
+    if (project.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(project).unwrap_err()));
+    }
     return Ok(StartedProjectResolution {
-        .selection = rstd::move(project),
+        .selection = rstd::move(project).unwrap(),
         .lock      = rstd::move(lock_session),
         .external  = rstd::move(external_resolution),
     });
@@ -105,7 +121,7 @@ auto resolve_project(const lito::package::PackageSelection&         selection,
                                                      locked,
                                                      git,
                                                      target,
-                                                     tool_resolver,
+                                                     rstd::addressof(tool_resolver),
                                                      environment,
                                                      jobs,
                                                      observer,
@@ -147,10 +163,38 @@ auto resolve_project_selection(const lito::package::PackageSelection&   selectio
                                             locked,
                                             lito::source::GitResolutionMode::ReuseLocked,
                                             nullptr,
-                                            tool_resolver,
+                                            rstd::addressof(tool_resolver),
                                             environment,
                                             jobs,
                                             observer_value(observer));
+    if (started.is_err()) return Err(rstd::move(started).unwrap_err());
+    return Ok(rstd::move(started).unwrap().selection);
+}
+
+auto resolve_existing_project_selection(const lito::package::PackageSelection&    selection,
+                                        lito::package::PackageSelectionPurpose    purpose,
+                                        const lito::source::PackageSourceConfig&  sources,
+                                        const lito::lock::LockConfig&             lock,
+                                        const TargetInfo&                         target,
+                                        const ResolvedProcessEnvironment&         environment,
+                                        usize                                     jobs,
+                                        const Option<BuildEventSink>&             observer,
+                                        Option<lito::workspace::WorkspaceCatalog> catalog = None())
+    -> ProjectResult<lito::package::ResolvedPackageSelection> {
+    auto started =
+        start_project_resolution(selection,
+                                 purpose,
+                                 sources,
+                                 lock,
+                                 true,
+                                 lito::source::GitResolutionMode::ReuseLocked,
+                                 rstd::addressof(target),
+                                 nullptr,
+                                 environment,
+                                 jobs,
+                                 observer_value(observer),
+                                 rstd::move(catalog),
+                                 lito::source::SourceMaterializationPolicy::ExistingOnly);
     if (started.is_err()) return Err(rstd::move(started).unwrap_err());
     return Ok(rstd::move(started).unwrap().selection);
 }

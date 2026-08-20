@@ -398,7 +398,11 @@ public:
             .package  = owner->name.clone(),
             .relative = rstd::move(output_relative).unwrap(),
         });
-        report_.files.push(ConfiguredFile { .output = output.clone(), .write = *written });
+        report_.files.push(ConfiguredFile {
+            .input  = input->clone(),
+            .output = output.clone(),
+            .write  = *written,
+        });
         switch (*written) {
         case rstd::fs::WriteOutcome::Created: ++report_.created; break;
         case rstd::fs::WriteOutcome::Replaced: ++report_.replaced; break;

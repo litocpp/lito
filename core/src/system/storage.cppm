@@ -27,7 +27,8 @@ auto join(ref<rstd::path::Path> root, ref<str> component) -> PathBuf {
     return PathBuf::from(root).join(PathBuf::from(component).as_path());
 }
 
-auto ensure_cache_directory_tag(ref<rstd::path::Path> directory) -> SystemResult<empty> {
+auto ensure_cache_directory_tag(ref<rstd::path::Path> directory, bool create = true)
+    -> SystemResult<empty> {
     auto tag      = join(directory, "CACHEDIR.TAG"_str);
     auto metadata = rstd::fs::symlink_metadata(tag.as_path());
     if (metadata.is_ok()) {
@@ -55,6 +56,10 @@ auto ensure_cache_directory_tag(ref<rstd::path::Path> directory) -> SystemResult
     if (error.kind() != rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
         return storage_io_failure<empty>(
             "inspect cache directory tag"_str, tag.as_path(), rstd::move(error));
+    }
+    if (! create) {
+        return Err(SystemError::Storage(
+            rstd::format("cache directory '{}' has no CACHEDIR.TAG", directory)));
     }
     auto written = rstd::fs::write_atomic(tag.as_path(), CACHE_TAG_CONTENT.as_bytes());
     if (written.is_err()) {
@@ -114,13 +119,25 @@ public:
 
 class SourceCacheSession {
     rstd::sync::Arc<SourceCacheState> state_;
+    bool                              writable_ { true };
 
-    explicit SourceCacheSession(rstd::sync::Arc<SourceCacheState> state)
-        : state_(rstd::move(state)) {}
+    explicit SourceCacheSession(rstd::sync::Arc<SourceCacheState> state, bool writable = true)
+        : state_(rstd::move(state)), writable_(writable) {}
     friend class LitoDataRoot;
 
     auto open_cache(ref<str> name) const -> SystemResult<PathBuf> {
-        auto root    = join(state_->root.as_path(), name);
+        auto root = join(state_->root.as_path(), name);
+        if (! writable_) {
+            auto canonical = rstd::fs::canonicalize(root.as_path());
+            if (canonical.is_err()) {
+                return storage_io_failure<PathBuf>("resolve existing source cache"_str,
+                                                   root.as_path(),
+                                                   rstd::move(canonical).unwrap_err());
+            }
+            auto tagged = ensure_cache_directory_tag(canonical->as_path(), false);
+            if (tagged.is_err()) return Err(rstd::move(tagged).unwrap_err());
+            return Ok(rstd::move(canonical).unwrap());
+        }
         auto created = rstd::fs::create_dir_all(root.as_path());
         if (created.is_err()) {
             return storage_io_failure<PathBuf>(
@@ -137,7 +154,9 @@ class SourceCacheSession {
     }
 
 public:
-    auto clone() const -> SourceCacheSession { return SourceCacheSession { state_.clone() }; }
+    auto clone() const -> SourceCacheSession {
+        return SourceCacheSession { state_.clone(), writable_ };
+    }
     auto root() const noexcept -> ref<rstd::path::Path> { return state_->root.as_path(); }
 
     auto open_git_cache() const -> SystemResult<GitCacheLayout> {
@@ -241,6 +260,34 @@ public:
         }
         return Ok(SourceCacheSession {
             rstd::sync::Arc<SourceCacheState>::make(rstd::move(locked).unwrap(), root_.clone()) });
+    }
+
+    auto open_source_cache() const -> SystemResult<SourceCacheSession> {
+        auto canonical = rstd::fs::canonicalize(root_.as_path());
+        if (canonical.is_err()) {
+            return storage_io_failure<SourceCacheSession>("resolve existing Lito data root"_str,
+                                                          root_.as_path(),
+                                                          rstd::move(canonical).unwrap_err());
+        }
+        auto lock_path = join(canonical->as_path(), ".source-cache"_str);
+        auto opened =
+            rstd::fs::OpenOptions::make().read(true).write(false).open(lock_path.as_path());
+        if (opened.is_err()) {
+            return storage_io_failure<SourceCacheSession>("open existing source cache lock"_str,
+                                                          lock_path.as_path(),
+                                                          rstd::move(opened).unwrap_err());
+        }
+        auto locked = rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(),
+                                                  rstd::fs::FileLockMode::Shared);
+        if (locked.is_err()) {
+            return storage_io_failure<SourceCacheSession>("lock existing source cache"_str,
+                                                          lock_path.as_path(),
+                                                          rstd::move(locked).unwrap_err());
+        }
+        return Ok(
+            SourceCacheSession { rstd::sync::Arc<SourceCacheState>::make(
+                                     rstd::move(locked).unwrap(), rstd::move(canonical).unwrap()),
+                                 false });
     }
 };
 

@@ -64,10 +64,33 @@ auto module_filename(ref<str> logical_name) -> String {
 export namespace lito
 {
 
+class BuildDirectory {
+    PathBuf base_;
+
+    explicit BuildDirectory(PathBuf base): base_(rstd::move(base)) {}
+
+public:
+    static auto resolve(ref<rstd::path::Path> owner_root,
+                        ref<rstd::path::Path> requested,
+                        ref<str>              profile) -> BuildDirectory {
+        if (requested.is_empty()) {
+            auto build = join(owner_root, "build"_str);
+            return BuildDirectory(join(build.as_path(), profile));
+        }
+        if (requested.is_absolute()) return BuildDirectory(PathBuf::from(requested));
+        return BuildDirectory(PathBuf::from(owner_root).join(requested));
+    }
+
+    auto path() const noexcept -> ref<rstd::path::Path> { return base_.as_path(); }
+    auto clone() const -> BuildDirectory { return BuildDirectory(base_.clone()); }
+};
+
 class BuildLayout {
+    PathBuf base_;
     PathBuf output_;
 
-    explicit BuildLayout(PathBuf output): output_(rstd::move(output)) {}
+    explicit BuildLayout(PathBuf base, PathBuf output)
+        : base_(rstd::move(base)), output_(rstd::move(output)) {}
 
     auto relative_source_path(ref<rstd::path::Path> directory,
                               ref<rstd::path::Path> relative_source,
@@ -109,19 +132,12 @@ public:
                         ref<rstd::path::Path> requested_output,
                         ref<str>              profile,
                         ref<str>              target_output_key = ""_str) -> BuildLayout {
-        auto output = PathBuf::make();
-        if (requested_output.is_empty()) {
-            auto build = join(owner_root, "build"_str);
-            output     = join(build.as_path(), profile);
-        } else if (requested_output.is_absolute()) {
-            output = PathBuf::from(requested_output);
-        } else {
-            output = PathBuf::from(owner_root).join(requested_output);
-        }
+        auto directory = BuildDirectory::resolve(owner_root, requested_output, profile);
+        auto output    = PathBuf::from(directory.path());
         if (! target_output_key.is_empty()) {
             output = join(join(output.as_path(), "targets"_str).as_path(), target_output_key);
         }
-        return BuildLayout(rstd::move(output));
+        return BuildLayout(PathBuf::from(directory.path()), rstd::move(output));
     }
 
     static auto create(ref<rstd::path::Path> owner_root,
@@ -162,12 +178,20 @@ public:
                                            scan_cache.as_path(),
                                            rstd::move(canonical_scan).unwrap_err());
         }
-        return Ok(BuildLayout(rstd::move(canonical).unwrap()));
+        auto base = rstd::fs::canonicalize(layout.base_.as_path());
+        if (base.is_err()) {
+            return io_failure<BuildLayout>("resolve build directory"_str,
+                                           layout.base_.as_path(),
+                                           rstd::move(base).unwrap_err());
+        }
+        return Ok(BuildLayout(rstd::move(base).unwrap(), rstd::move(canonical).unwrap()));
     }
 
+    auto base_directory() const -> ref<rstd::path::Path> { return base_.as_path(); }
+    auto directory() const -> ref<rstd::path::Path> { return output_.as_path(); }
     auto output() const -> ref<rstd::path::Path> { return output_.as_path(); }
 
-    auto clone() const -> BuildLayout { return BuildLayout { output_.clone() }; }
+    auto clone() const -> BuildLayout { return BuildLayout { base_.clone(), output_.clone() }; }
 
     auto generated_root() const -> PathBuf { return join(output_.as_path(), "generated"_str); }
 

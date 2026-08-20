@@ -34,6 +34,8 @@ target_sources(
          src/build/layout_error.cppm
          src/build/mod.cppm
          src/build/profiling.cppm
+         src/build/product.cppm
+         src/build/product_error.cppm
          src/build/request.cppm
          src/build/result.cppm
          src/build/script_error.cppm

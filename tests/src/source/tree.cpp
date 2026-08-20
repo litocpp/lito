@@ -135,8 +135,8 @@ TEST_F(InlineProjectFixture, OwnsIndependentProjectAndOutputRoots) {
     auto request = project_build_request(
         "project"_str, project->root.as_path(), strings("inline-project"_str));
     EXPECT_EQ(request.selection.root.as_path(), project->root.as_path());
-    EXPECT_TRUE(request.output.as_path().starts_with(temp_root()));
-    EXPECT_NE(request.output.as_path(), project->root.as_path());
+    EXPECT_TRUE(request.build_directory.as_path().starts_with(temp_root()));
+    EXPECT_NE(request.build_directory.as_path(), project->root.as_path());
     EXPECT_TRUE(install_root("project"_str).as_path().starts_with(temp_root()));
     EXPECT_TRUE(cache_root("project"_str).as_path().starts_with(temp_root()));
     EXPECT_TRUE(tool_root("project"_str).as_path().starts_with(temp_root()));

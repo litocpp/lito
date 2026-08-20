@@ -30,7 +30,7 @@ struct BuildExecutionPolicy {
     CompileExecutionPolicy compile;
 };
 
-struct InstallArtifactLinkPolicy {
+struct InstallArtifactLinkPolicy : DefaultInClass<InstallArtifactLinkPolicy, Clone> {
     lito::artifact::ElfRunpath runtime_search;
     String                     identity;
 
@@ -59,7 +59,7 @@ struct BuildRequest {
     Vec<String>                               targets;
     Vec<lito::package::PackageTargetId>       exact_targets;
     Vec<RequestedArtifactLinkVariant>         artifact_link_variants;
-    PathBuf                                   output;
+    PathBuf                                   build_directory;
     ProcessEnvironmentSpec                    environment;
     lito::tools::ToolSpec                     tools;
     cpp::BuildConfiguration                   configuration;

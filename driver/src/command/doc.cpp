@@ -51,7 +51,7 @@ auto doc_json_string(ref<str> text) -> Json {
 
 auto selected_package(const BuildSummary& summary, ref<str> name)
     -> Option<ref<cpp::SelectedPackageMetadata>> {
-    for (const auto& package : summary.selected_packages) {
+    for (const auto& package : summary.product.selected_packages) {
         if (package.name.as_str() == name) {
             return Some(
                 ref<cpp::SelectedPackageMetadata>::from_raw_parts(rstd::addressof(package)));
@@ -63,7 +63,7 @@ auto selected_package(const BuildSummary& summary, ref<str> name)
 auto selected_library_target(const BuildSummary&                   summary,
                              const lito::package::PackageTargetId& target) -> bool {
     if (target.kind != lito::package::PackageTargetKind::Library) return false;
-    for (const auto& selected : summary.selected_targets) {
+    for (const auto& selected : summary.product.selected_targets) {
         if (selected == target) return true;
     }
     return false;
@@ -391,7 +391,7 @@ auto site_manifest_json(const BuildSummary&     summary,
                         bool                    data_only,
                         bool                    package_publication) -> DocResult<String> {
     auto packages = Vec<PackageResponses>::make();
-    for (const auto& selected : summary.selected_packages) {
+    for (const auto& selected : summary.product.selected_packages) {
         packages.push(PackageResponses { .package = rstd::addressof(selected) });
     }
     for (const auto& plan : plans) {
@@ -446,7 +446,8 @@ auto site_manifest_json(const BuildSummary&     summary,
                      doc_json_string(package.package->source_identity.as_str()));
         value.insert(String::make("root_module"_str),
                      doc_json_string(package.root_module.as_str()));
-        value.insert(String::make("profile"_str), doc_json_string(summary.profile.as_str()));
+        value.insert(String::make("profile"_str),
+                     doc_json_string(summary.product.profile.as_str()));
         value.insert(String::make("root"_str), Json::String(rstd::move(root)));
         value.insert(String::make("toolchain_version"_str),
                      doc_json_string(summary.compiler.version.as_str()));
@@ -462,7 +463,7 @@ auto site_manifest_json(const BuildSummary&     summary,
     auto root        = JsonMap::make();
     root.insert(String::make("format"_str), doc_json_string("litodoc-site"_str));
     root.insert(String::make("version"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
-    root.insert(String::make("title"_str), doc_json_string(summary.package.as_str()));
+    root.insert(String::make("title"_str), doc_json_string(summary.product.package.as_str()));
     root.insert(String::make("output"_str), Json::String(rstd::move(output_text)));
     root.insert(String::make("data_output"_str), Json::String(rstd::move(data_text)));
     if (frontend.is_some()) {
@@ -520,8 +521,9 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
         resolve_doc_tool(request.build, request.config, summary, *environment, request.observer);
     if (tool.is_err()) return Err(rstd::move(tool).unwrap_err());
 
-    auto cache_root = summary.output.join(PathBuf::from("lito-doc-cache"_str).as_path());
-    auto plans      = Vec<DocUnitPlan>::make();
+    auto cache_root =
+        summary.product.build_directory.join(PathBuf::from("lito-doc-cache"_str).as_path());
+    auto plans = Vec<DocUnitPlan>::make();
     for (usize index {}; index < summary.documentation_units.len(); ++index) {
         const auto& unit = summary.documentation_units[index];
         if (! selected_library_target(summary, unit.target)) continue;
@@ -552,12 +554,13 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
 
     auto reused = execute_extractions(request, summary, *tool, *environment, plans);
     if (reused.is_err()) return Err(rstd::move(reused).unwrap_err());
-    auto output        = request.output.is_empty()
-                             ? summary.output.join(PathBuf::from("doc"_str).as_path())
-                             : rstd::move(request.output);
-    auto data_output   = request.data_output.is_empty()
-                             ? summary.output.join(PathBuf::from("doc-data"_str).as_path())
-                             : rstd::move(request.data_output);
+    auto output = request.output.is_empty()
+                      ? summary.product.build_directory.join(PathBuf::from("doc"_str).as_path())
+                      : rstd::move(request.output);
+    auto data_output =
+        request.data_output.is_empty()
+            ? summary.product.build_directory.join(PathBuf::from("doc-data"_str).as_path())
+            : rstd::move(request.data_output);
     auto manifest_path = cache_root.join(PathBuf::from("site.json"_str).as_path());
     auto manifest      = site_manifest_json(summary,
                                             plans,
@@ -568,7 +571,10 @@ auto doc(DocRequest request) -> DocResult<DocSummary> {
                                             request.package_publication);
     if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
     rstd_try(write_extraction_request(manifest_path.as_path(), manifest->as_str()));
-    emit_doc(request.observer, DocEventKind::Generate, summary.package.as_str(), output.as_path());
+    emit_doc(request.observer,
+             DocEventKind::Generate,
+             summary.product.package.as_str(),
+             output.as_path());
     rstd_try(run_generate(*tool, manifest_path.as_path(), *environment));
     auto publication_receipt = Option<PathBuf> {};
     if (request.package_publication) {

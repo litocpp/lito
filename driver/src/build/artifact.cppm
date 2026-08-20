@@ -17,6 +17,17 @@ struct BuiltArtifact {
     PathBuf                           package_root;
     Option<InstallArtifactLinkPolicy> install_link;
     String                            link_identity;
+
+    auto clone() const -> BuiltArtifact {
+        return BuiltArtifact {
+            .target        = target.clone(),
+            .kind          = kind,
+            .path          = path.clone(),
+            .package_root  = package_root.clone(),
+            .install_link  = as<Clone>(install_link).clone(),
+            .link_identity = link_identity.clone(),
+        };
+    }
 };
 
 struct BuiltRuntimeResource {
@@ -25,12 +36,28 @@ struct BuiltRuntimeResource {
     PathBuf                        root;
     String                         identity;
     Vec<PathBuf>                   files;
+
+    auto clone() const -> BuiltRuntimeResource {
+        return BuiltRuntimeResource {
+            .target   = target.clone(),
+            .name     = name.clone(),
+            .root     = root.clone(),
+            .identity = identity.clone(),
+            .files    = as<Clone>(files).clone(),
+        };
+    }
 };
 
 struct BuiltTargetRuntime {
     String  name;
     PathBuf path;
     String  identity;
+
+    auto clone() const -> BuiltTargetRuntime {
+        return BuiltTargetRuntime { .name     = name.clone(),
+                                    .path     = path.clone(),
+                                    .identity = identity.clone() };
+    }
 };
 
 struct CompileTestExecution {
@@ -48,6 +75,7 @@ struct CompileTestExecution {
 };
 
 struct ConfiguredFile {
+    PathBuf                input;
     PathBuf                output;
     rstd::fs::WriteOutcome write { rstd::fs::WriteOutcome::Unchanged };
 };

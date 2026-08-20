@@ -298,7 +298,7 @@ class PackageGraphResolver {
 public:
     explicit PackageGraphResolver(ref<rstd::path::Path>                 root_directory,
                                   lito::source::SourceResolutionOptions options,
-                                  lito::tools::ToolResolver&            resolver,
+                                  lito::tools::ToolResolver*            resolver,
                                   const ResolvedProcessEnvironment&     environment,
                                   usize                                 jobs,
                                   lito::source::SourceEventSink         observer)
@@ -540,14 +540,15 @@ public:
 export namespace lito::package
 {
 
-auto resolve_package_graph_with_environment(ref<rstd::path::Path>                 requested_root,
-                                            lito::source::SourceResolutionOptions options,
-                                            lito::tools::ToolResolver&            tool_resolver,
-                                            const ResolvedProcessEnvironment&     environment,
-                                            usize                                 jobs = usize(1),
-                                            lito::source::SourceEventSink         observer = {},
-                                            Option<lito::workspace::WorkspaceCatalog> catalog =
-                                                None()) -> PackageResult<ResolvedPackageGraph> {
+auto resolve_package_graph_with_environment_impl(
+    ref<rstd::path::Path>                     requested_root,
+    lito::source::SourceResolutionOptions     options,
+    lito::tools::ToolResolver*                tool_resolver,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    lito::source::SourceEventSink             observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    -> PackageResult<ResolvedPackageGraph> {
     if (jobs == usize {}) {
         return package_resolution_failure<ResolvedPackageGraph>(
             String::make("source fetch jobs must be greater than zero"_str));
@@ -600,6 +601,23 @@ auto resolve_package_graph_with_environment(ref<rstd::path::Path>               
                               rstd::move(manifest_path),
                               root_is_workspace,
                               rstd::move(profile)));
+}
+
+auto resolve_package_graph_with_environment(ref<rstd::path::Path>                 requested_root,
+                                            lito::source::SourceResolutionOptions options,
+                                            lito::tools::ToolResolver&            tool_resolver,
+                                            const ResolvedProcessEnvironment&     environment,
+                                            usize                                 jobs = usize(1),
+                                            lito::source::SourceEventSink         observer = {},
+                                            Option<lito::workspace::WorkspaceCatalog> catalog =
+                                                None()) -> PackageResult<ResolvedPackageGraph> {
+    return resolve_package_graph_with_environment_impl(requested_root,
+                                                       rstd::move(options),
+                                                       rstd::addressof(tool_resolver),
+                                                       environment,
+                                                       jobs,
+                                                       observer,
+                                                       rstd::move(catalog));
 }
 
 auto resolve_package_graph(ref<rstd::path::Path>                 requested_root,

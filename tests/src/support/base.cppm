@@ -87,15 +87,15 @@ auto build_request(ref<rstd::path::Path>            root,
                 .root     = PathBuf::from(root),
                 .packages = rstd::move(packages),
             },
-        .output        = PathBuf::from(output),
-        .configuration = configuration(),
-        .profile       = Some(rstd::move(profile)),
+        .build_directory = PathBuf::from(output),
+        .configuration   = configuration(),
+        .profile         = Some(rstd::move(profile)),
     };
 }
 
 auto artifact_count(const lito::BuildSummary& summary, lito::cpp::ArtifactKind kind) -> usize {
     auto count = usize {};
-    for (const auto& artifact : summary.artifacts) {
+    for (const auto& artifact : summary.product.artifacts) {
         if (artifact.kind == kind) ++count;
     }
     return count;

@@ -1437,8 +1437,8 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
                     .root     = recipe_root.clone(),
                     .packages = rstd::move(packages),
                 },
-            .output = component_root.join(PathBuf::from("build"_str).as_path()),
-            .tools  = request.tools.clone(),
+            .build_directory = component_root.join(PathBuf::from("build"_str).as_path()),
+            .tools           = request.tools.clone(),
             .configuration =
                 lito::cpp::BuildConfiguration {
                     .toolchain         = bootstrap_toolchain.clone(),
@@ -1457,7 +1457,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
     if (build.is_err()) return Err(lito::SdkError::Build(rstd::move(build).unwrap_err()));
 
     const lito::BuiltArtifact* archive = nullptr;
-    for (const auto& artifact : build->artifacts) {
+    for (const auto& artifact : build->product.artifacts) {
         if (artifact.kind != lito::cpp::ArtifactKind::StaticLibrary ||
             artifact.target.package != recipe.package.as_str() ||
             artifact.target.kind != lito::package::PackageTargetKind::Library ||
@@ -1479,7 +1479,7 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
                          recipe.target.as_str()));
     }
     const lito::ExternalSourceProvenance* source = nullptr;
-    for (const auto& candidate : build->external_source_provenance) {
+    for (const auto& candidate : build->product.external_source_provenance) {
         if (candidate.package != recipe.package.as_str() ||
             candidate.name != recipe.external_source.as_str()) {
             continue;

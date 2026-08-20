@@ -41,14 +41,6 @@ auto lock_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::e
     return Err(LockError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
 }
 
-auto lock_path(ref<rstd::path::Path> root, const LockConfig& config) -> PathBuf {
-    if (! config.path.is_empty()) {
-        if (config.path.as_path().is_absolute()) return config.path.clone();
-        return PathBuf::from(root).join(config.path.as_path());
-    }
-    return PathBuf::from(root).join(PathBuf::from("lito.lock"_str).as_path());
-}
-
 auto path_string(ref<rstd::path::Path> path) -> LockResult<String> {
     auto text = path.to_str();
     if (text.is_none()) {
@@ -732,7 +724,7 @@ auto write_lock(ref<rstd::path::Path> destination, const Json& desired) -> LockR
 
 auto lito::lock::load_locked_project(ref<rstd::path::Path> root, const LockConfig& config)
     -> LockResult<LockedProject> {
-    auto destination = lock_path(root, config);
+    auto destination = resolve_lock_path(root, config);
     auto loaded      = rstd_try(load_existing(destination.as_path()));
     if (loaded.is_none()) {
         return lock_failure<LockedProject>(
@@ -749,7 +741,7 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
     if (locked && git == lito::source::GitResolutionMode::Refresh) {
         return lock_failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
-    auto destination = lock_path(root, config);
+    auto destination = resolve_lock_path(root, config);
     auto loaded      = load_existing(destination.as_path());
     if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
     auto existing = rstd::move(loaded).unwrap();

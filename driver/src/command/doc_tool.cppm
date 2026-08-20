@@ -462,10 +462,10 @@ auto resolve_doc_tool(const BuildRequest&               request,
         .kind    = lito::package::PackageTargetKind::Binary,
         .name    = String::make("litodoc"_str),
     });
-    tool_request.output        = tool_root->join(PathBuf::from("build"_str).as_path());
-    tool_request.environment   = request.environment.clone();
-    tool_request.tools         = request.tools.clone();
-    tool_request.configuration = request.configuration.clone();
+    tool_request.build_directory = tool_root->join(PathBuf::from("build"_str).as_path());
+    tool_request.environment     = request.environment.clone();
+    tool_request.tools           = request.tools.clone();
+    tool_request.configuration   = request.configuration.clone();
     tool_request.configuration.toolchain.cxx    = project.compiler.path.clone();
     tool_request.configuration.standard_library = sdk->standard_library;
     tool_request.lock.path           = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
@@ -482,7 +482,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     auto built                     = build_with_environment(tool_request, environment);
     if (built.is_err()) return Err(rstd::into<DocError>(rstd::move(built).unwrap_err()));
     auto executable = Option<PathBuf> {};
-    for (const auto& artifact : built->artifacts) {
+    for (const auto& artifact : built->product.artifacts) {
         if (artifact.kind == cpp::ArtifactKind::Executable &&
             artifact.target.kind == lito::package::PackageTargetKind::Binary &&
             artifact.target.package.as_str() == "litodoc"_str &&

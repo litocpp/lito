@@ -129,9 +129,9 @@ sources = ["src/main.cpp"]
         rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
         return;
     }
-    ASSERT_EQ(result->artifacts.len(), usize(1));
+    ASSERT_EQ(result->product.artifacts.len(), usize(1));
     auto status =
-        rstd::process::Command::make(result->artifacts[usize {}].path.as_path().as_os_str())
+        rstd::process::Command::make(result->product.artifacts[usize {}].path.as_path().as_os_str())
             .status();
     ASSERT_TRUE(status.is_ok());
     EXPECT_TRUE(status->success());
@@ -202,7 +202,7 @@ TEST_F(BuildCommand, BuildSelectsProductionArtifacts) {
         EXPECT_FALSE(unit.invocation.arguments.is_empty());
         EXPECT_FALSE(unit.invocation.identity.is_empty());
         auto selected = false;
-        for (const auto& target : summary->selected_targets) {
+        for (const auto& target : summary->product.selected_targets) {
             if (target == unit.target) selected = true;
         }
         EXPECT_TRUE(selected);
@@ -242,8 +242,8 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     normal_request.exact_targets.push(target.clone());
     auto normal = lito::build(rstd::move(normal_request));
     ASSERT_TRUE(normal.is_ok());
-    ASSERT_EQ(normal->artifacts.len(), usize(1));
-    EXPECT_TRUE(normal->artifacts[usize {}].install_link.is_none());
+    ASSERT_EQ(normal->product.artifacts.len(), usize(1));
+    EXPECT_TRUE(normal->product.artifacts[usize {}].install_link.is_none());
 
     auto origin = lito::artifact::make_origin_relative_runtime_path(PathBuf::from("."_str));
     ASSERT_TRUE(origin.is_ok());
@@ -264,12 +264,12 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     });
     auto installed = lito::build(rstd::move(install_request));
     ASSERT_TRUE(installed.is_ok());
-    ASSERT_EQ(installed->artifacts.len(), usize(1));
-    ASSERT_TRUE(installed->artifacts[usize {}].install_link.is_some());
-    EXPECT_EQ(installed->artifacts[usize {}].install_link->identity.as_str(),
+    ASSERT_EQ(installed->product.artifacts.len(), usize(1));
+    ASSERT_TRUE(installed->product.artifacts[usize {}].install_link.is_some());
+    EXPECT_EQ(installed->product.artifacts[usize {}].install_link->identity.as_str(),
               "fixture-install-link-v1"_str);
-    EXPECT_NE(installed->artifacts[usize {}].path.as_path(),
-              normal->artifacts[usize {}].path.as_path());
+    EXPECT_NE(installed->product.artifacts[usize {}].path.as_path(),
+              normal->product.artifacts[usize {}].path.as_path());
     EXPECT_EQ(installed->compiled, usize {});
     EXPECT_TRUE(installed->reused > usize {});
 }
@@ -536,7 +536,7 @@ set_property(TARGET LitoOverrideFixture::fixture PROPERTY
     ASSERT_TRUE(unchanged.is_ok());
     EXPECT_EQ(unchanged->as_str(), locked_contents.as_str());
 
-    request.output = build_root("cmake-installed-override-missing"_str);
+    request.build_directory = build_root("cmake-installed-override-missing"_str);
     request.cmake.search_paths.clear();
     events       = CMakeOverrideEvents {};
     auto missing = lito::build(request);
@@ -898,7 +898,7 @@ auto main() -> int {
     EXPECT_EQ(artifact_count(*result, lito::cpp::ArtifactKind::Executable), usize(2));
 
 #if RSTD_OS_LINUX
-    for (const auto& artifact : result->artifacts) {
+    for (const auto& artifact : result->product.artifacts) {
         if (artifact.kind != lito::cpp::ArtifactKind::StaticLibrary) continue;
         auto command = rstd::process::Command::make("/nix/opt/llvm/22/bin/llvm-readelf"_str);
         command.arg("--symbols"_str).arg(artifact.path.as_path().as_os_str());

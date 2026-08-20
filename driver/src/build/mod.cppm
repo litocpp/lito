@@ -17,6 +17,8 @@ export import :build.script_error;
 export import :build.tool_action_error;
 export import :build.compile_executor;
 export import :build.profiling;
+export import :build.product;
+export import :build.product_error;
 export import :cache.error;
 export import :project.error;
 import lito.core;

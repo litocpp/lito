@@ -179,7 +179,7 @@ TEST_F(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
     });
     ASSERT_TRUE(benchmarked.is_ok());
     EXPECT_TRUE(benchmarked->success());
-    EXPECT_EQ(benchmarked->build.profile.as_str(), "release"_str);
+    EXPECT_EQ(benchmarked->build.product.profile.as_str(), "release"_str);
     EXPECT_EQ(artifact_count(benchmarked->build, lito::cpp::ArtifactKind::BenchmarkExecutable),
               usize(2));
     ASSERT_EQ(benchmarked->executions.len(), usize(2));
@@ -197,6 +197,6 @@ TEST_F(BenchCommand, PackageTargetsSelectTypedArtifactsAndRunBenchmarks) {
         .no_run = true,
     });
     ASSERT_TRUE(debug_bench.is_ok());
-    EXPECT_EQ(debug_bench->build.profile.as_str(), "debug"_str);
+    EXPECT_EQ(debug_bench->build.product.profile.as_str(), "debug"_str);
     EXPECT_TRUE(debug_bench->executions.is_empty());
 }

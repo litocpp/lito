@@ -10,11 +10,18 @@ using namespace rstd::prelude;
 export namespace lito::source
 {
 
+enum class SourceMaterializationPolicy
+{
+    Materialize,
+    ExistingOnly,
+};
+
 struct SourceResolutionOptions {
-    bool                locked { false };
-    GitResolutionMode   git { GitResolutionMode::ReuseLocked };
-    Vec<GitSourcePin>   git_sources;
-    PackageSourceConfig sources;
+    bool                        locked { false };
+    GitResolutionMode           git { GitResolutionMode::ReuseLocked };
+    SourceMaterializationPolicy materialization { SourceMaterializationPolicy::Materialize };
+    Vec<GitSourcePin>           git_sources;
+    PackageSourceConfig         sources;
 
     auto clone() const -> SourceResolutionOptions {
         auto pins = Vec<GitSourcePin>::with_capacity(git_sources.len());
@@ -30,10 +37,11 @@ struct SourceResolutionOptions {
             });
         }
         return SourceResolutionOptions {
-            .locked      = locked,
-            .git         = git,
-            .git_sources = rstd::move(pins),
-            .sources     = sources.clone(),
+            .locked          = locked,
+            .git             = git,
+            .materialization = materialization,
+            .git_sources     = rstd::move(pins),
+            .sources         = sources.clone(),
         };
     }
 };

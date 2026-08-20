@@ -366,7 +366,7 @@ TEST_F(TestCommand, TestRunsPassFailureSignalAndNoRun) {
     };
     auto no_run = lito::test(rstd::move(no_run_request));
     ASSERT_TRUE(no_run.is_ok());
-    EXPECT_EQ(no_run->build.profile.as_str(), "release"_str);
+    EXPECT_EQ(no_run->build.product.profile.as_str(), "release"_str);
     EXPECT_TRUE(no_run->executions.is_empty());
     EXPECT_EQ(artifact_count(no_run->build, lito::cpp::ArtifactKind::TestExecutable), usize(3));
 

@@ -20,7 +20,7 @@ struct BuildOptions {
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              targets;
-    Option<PathBuf>                          output;
+    Option<PathBuf>                          build_directory;
     bool                                     locked {};
     bool                                     offline {};
     bool                                     frozen {};
@@ -69,7 +69,9 @@ struct InstallOptions {
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              binaries;
+    Option<PathBuf>                          build_directory;
     InstallDestinationRequirement            destination;
+    bool                                     no_build {};
     bool                                     force {};
     bool                                     locked {};
     bool                                     offline {};
@@ -86,7 +88,7 @@ struct TestOptions {
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              targets;
-    Option<PathBuf>                          output;
+    Option<PathBuf>                          build_directory;
     Vec<String>                              arguments;
     bool                                     locked {};
     bool                                     offline {};
@@ -104,7 +106,7 @@ struct BenchOptions {
     Vec<String>                              packages;
     Option<lito::manifest::BuildProfileName> profile;
     Vec<String>                              targets;
-    Option<PathBuf>                          output;
+    Option<PathBuf>                          build_directory;
     Vec<String>                              arguments;
     bool                                     locked {};
     bool                                     offline {};
@@ -309,7 +311,7 @@ struct BuildSchema {
     CommandKey            command;
     PackageProfileArgs    package;
     ArgKey<String>        target;
-    ArgKey<String>        output;
+    ArgKey<String>        build_directory;
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
 
@@ -320,8 +322,10 @@ struct InstallSchema {
     CommandKey            command;
     PackageProfileArgs    package;
     ArgKey<String>        binary;
+    ArgKey<String>        build_directory;
     ArgKey<String>        root;
     ArgKey<String>        prefix;
+    ArgKey<bool>          no_build;
     ArgKey<bool>          force;
     SourceAcquisitionArgs source_acquisition;
     BuildExecutionArgs    execution;
@@ -333,7 +337,7 @@ struct TestSchema {
     CommandKey            command;
     PackageProfileArgs    package;
     ArgKey<String>        target;
-    ArgKey<String>        output;
+    ArgKey<String>        build_directory;
     SourceAcquisitionArgs source_acquisition;
     ArgKey<bool>          no_run;
     BuildExecutionArgs    execution;
@@ -346,7 +350,7 @@ struct BenchSchema {
     CommandKey            command;
     PackageProfileArgs    package;
     ArgKey<String>        target;
-    ArgKey<String>        output;
+    ArgKey<String>        build_directory;
     SourceAcquisitionArgs source_acquisition;
     ArgKey<bool>          no_run;
     BuildExecutionArgs    execution;
@@ -557,11 +561,11 @@ auto target_arg() -> Arg<String> {
         .append();
 }
 
-auto output_arg() -> Arg<String> {
-    return Arg<String>::value("out"_str, string_parser())
-        .long_name("out"_str)
+auto build_directory_arg() -> Arg<String> {
+    return Arg<String>::value("build-dir"_str, string_parser())
+        .long_name("build-dir"_str)
         .value_name("DIRECTORY"_str)
-        .help("Override the build output directory"_str);
+        .help("Set the build directory"_str);
 }
 
 auto locked_arg() -> Arg<bool> {
@@ -669,7 +673,7 @@ auto make_build_definition() -> CommandDefinition<BuildSchema> {
     auto key                = command.key();
     auto package            = add_package_profile_args(command);
     auto target             = command.add_arg(target_arg());
-    auto output             = command.add_arg(output_arg());
+    auto build_directory    = command.add_arg(build_directory_arg());
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
     return {
@@ -677,7 +681,7 @@ auto make_build_definition() -> CommandDefinition<BuildSchema> {
             .command            = key,
             .package            = rstd::move(package),
             .target             = target,
-            .output             = output,
+            .build_directory    = build_directory,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
         },
@@ -688,33 +692,42 @@ auto make_build_definition() -> CommandDefinition<BuildSchema> {
 auto make_install_definition() -> CommandDefinition<InstallSchema> {
     auto command = Command::make("install"_str);
     command.about("Build and install packages"_str);
-    auto key     = command.key();
-    auto package = add_package_profile_args(command);
-    auto binary  = command.add_arg(Arg<String>::value("bin"_str, string_parser())
-                                       .long_name("bin"_str)
-                                       .value_name("NAME"_str)
-                                       .help("Install only the selected binary"_str)
-                                       .append());
-    auto root    = command.add_arg(Arg<String>::value("root"_str, string_parser())
-                                       .long_name("root"_str)
-                                       .value_name("DIRECTORY"_str)
-                                       .help("Set the Lito-managed install root"_str));
-    auto prefix  = command.add_arg(Arg<String>::value("prefix"_str, string_parser())
-                                       .long_name("prefix"_str)
-                                       .value_name("DIRECTORY"_str)
-                                       .help("Install an untracked prefix tree"_str));
+    auto key             = command.key();
+    auto package         = add_package_profile_args(command);
+    auto binary          = command.add_arg(Arg<String>::value("bin"_str, string_parser())
+                                               .long_name("bin"_str)
+                                               .value_name("NAME"_str)
+                                               .help("Install only the selected binary"_str)
+                                               .append());
+    auto build_directory = command.add_arg(build_directory_arg());
+    auto root            = command.add_arg(Arg<String>::value("root"_str, string_parser())
+                                               .long_name("root"_str)
+                                               .value_name("DIRECTORY"_str)
+                                               .help("Set the Lito-managed install root"_str));
+    auto prefix          = command.add_arg(Arg<String>::value("prefix"_str, string_parser())
+                                               .long_name("prefix"_str)
+                                               .value_name("DIRECTORY"_str)
+                                               .help("Install an untracked prefix tree"_str));
     command.conflicts(root, prefix);
     auto force = command.add_arg(
         Arg<bool>::flag("force"_str).long_name("force"_str).help("Replace conflicting files"_str));
+    auto no_build = command.add_arg(Arg<bool>::flag("no-build"_str)
+                                        .long_name("no-build"_str)
+                                        .help("Install a completed build without building"_str));
     auto source_acquisition = add_source_acquisition_args(command);
     auto execution          = add_build_execution_args(command);
+    command.conflicts(no_build, source_acquisition.fetch_seed);
+    command.conflicts(no_build, execution.timing_file);
+    command.conflicts(no_build, execution.jobs);
     return {
         InstallSchema {
             .command            = key,
             .package            = rstd::move(package),
             .binary             = binary,
+            .build_directory    = build_directory,
             .root               = root,
             .prefix             = prefix,
+            .no_build           = no_build,
             .force              = force,
             .source_acquisition = rstd::move(source_acquisition),
             .execution          = rstd::move(execution),
@@ -729,7 +742,7 @@ auto make_test_definition() -> CommandDefinition<TestSchema> {
     auto key                = command.key();
     auto package            = add_package_profile_args(command);
     auto target             = command.add_arg(target_arg());
-    auto output             = command.add_arg(output_arg());
+    auto build_directory    = command.add_arg(build_directory_arg());
     auto source_acquisition = add_source_acquisition_args(command);
     auto no_run             = command.add_arg(Arg<bool>::flag("no-run"_str)
                                                   .long_name("no-run"_str)
@@ -744,7 +757,7 @@ auto make_test_definition() -> CommandDefinition<TestSchema> {
             .command            = key,
             .package            = rstd::move(package),
             .target             = target,
-            .output             = output,
+            .build_directory    = build_directory,
             .source_acquisition = rstd::move(source_acquisition),
             .no_run             = no_run,
             .execution          = rstd::move(execution),
@@ -760,7 +773,7 @@ auto make_bench_definition() -> CommandDefinition<BenchSchema> {
     auto key                = command.key();
     auto package            = add_package_profile_args(command);
     auto target             = command.add_arg(target_arg());
-    auto output             = command.add_arg(output_arg());
+    auto build_directory    = command.add_arg(build_directory_arg());
     auto source_acquisition = add_source_acquisition_args(command);
     auto no_run             = command.add_arg(Arg<bool>::flag("no-run"_str)
                                                   .long_name("no-run"_str)
@@ -775,7 +788,7 @@ auto make_bench_definition() -> CommandDefinition<BenchSchema> {
             .command            = key,
             .package            = rstd::move(package),
             .target             = target,
-            .output             = output,
+            .build_directory    = build_directory,
             .source_acquisition = rstd::move(source_acquisition),
             .no_run             = no_run,
             .execution          = rstd::move(execution),
@@ -1290,19 +1303,19 @@ auto BuildSchema::decode(const Matches& matches) const -> Result<BuildOptions, C
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(BuildOptions {
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .targets     = rstd_try(string_values(matches, target)),
-        .output      = rstd_try(optional_path(matches, output)),
-        .locked      = source.locked,
-        .offline     = source.offline,
-        .frozen      = source.frozen,
-        .fetch_seeds = rstd::move(source.fetch_seeds),
-        .verbose     = execution.verbose,
-        .timing_file = rstd::move(execution.timing_file),
-        .no_timing   = execution.no_timing,
-        .jobs        = rstd::move(execution.jobs),
-        .features    = rstd::move(package.features),
+        .packages        = rstd::move(package.packages),
+        .profile         = rstd::move(package.profile),
+        .targets         = rstd_try(string_values(matches, target)),
+        .build_directory = rstd_try(optional_path(matches, build_directory)),
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .verbose         = execution.verbose,
+        .timing_file     = rstd::move(execution.timing_file),
+        .no_timing       = execution.no_timing,
+        .jobs            = rstd::move(execution.jobs),
+        .features        = rstd::move(package.features),
     });
 }
 
@@ -1316,20 +1329,22 @@ auto InstallSchema::decode(const Matches& matches) const -> Result<InstallOption
                            ? InstallDestinationRequirement::Prefix(rstd::move(prefix).unwrap())
                            : InstallDestinationRequirement::Managed(rstd::move(root));
     return Ok(InstallOptions {
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .binaries    = rstd_try(string_values(matches, binary)),
-        .destination = rstd::move(destination),
-        .force       = rstd_try(flag_value(matches, force)),
-        .locked      = source.locked,
-        .offline     = source.offline,
-        .frozen      = source.frozen,
-        .fetch_seeds = rstd::move(source.fetch_seeds),
-        .verbose     = execution.verbose,
-        .timing_file = rstd::move(execution.timing_file),
-        .no_timing   = execution.no_timing,
-        .jobs        = rstd::move(execution.jobs),
-        .features    = rstd::move(package.features),
+        .packages        = rstd::move(package.packages),
+        .profile         = rstd::move(package.profile),
+        .binaries        = rstd_try(string_values(matches, binary)),
+        .build_directory = rstd_try(optional_path(matches, build_directory)),
+        .destination     = rstd::move(destination),
+        .no_build        = rstd_try(flag_value(matches, no_build)),
+        .force           = rstd_try(flag_value(matches, force)),
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .verbose         = execution.verbose,
+        .timing_file     = rstd::move(execution.timing_file),
+        .no_timing       = execution.no_timing,
+        .jobs            = rstd::move(execution.jobs),
+        .features        = rstd::move(package.features),
     });
 }
 
@@ -1338,21 +1353,21 @@ auto TestSchema::decode(const Matches& matches) const -> Result<TestOptions, Cli
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(TestOptions {
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .targets     = rstd_try(string_values(matches, target)),
-        .output      = rstd_try(optional_path(matches, output)),
-        .arguments   = rstd_try(string_values(matches, arguments)),
-        .locked      = source.locked,
-        .offline     = source.offline,
-        .frozen      = source.frozen,
-        .fetch_seeds = rstd::move(source.fetch_seeds),
-        .no_run      = rstd_try(flag_value(matches, no_run)),
-        .verbose     = execution.verbose,
-        .timing_file = rstd::move(execution.timing_file),
-        .no_timing   = execution.no_timing,
-        .jobs        = rstd::move(execution.jobs),
-        .features    = rstd::move(package.features),
+        .packages        = rstd::move(package.packages),
+        .profile         = rstd::move(package.profile),
+        .targets         = rstd_try(string_values(matches, target)),
+        .build_directory = rstd_try(optional_path(matches, build_directory)),
+        .arguments       = rstd_try(string_values(matches, arguments)),
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .no_run          = rstd_try(flag_value(matches, no_run)),
+        .verbose         = execution.verbose,
+        .timing_file     = rstd::move(execution.timing_file),
+        .no_timing       = execution.no_timing,
+        .jobs            = rstd::move(execution.jobs),
+        .features        = rstd::move(package.features),
     });
 }
 
@@ -1361,21 +1376,21 @@ auto BenchSchema::decode(const Matches& matches) const -> Result<BenchOptions, C
     auto source    = rstd_try(decode_source_acquisition(matches, source_acquisition));
     auto execution = rstd_try(decode_build_execution(matches, this->execution));
     return Ok(BenchOptions {
-        .packages    = rstd::move(package.packages),
-        .profile     = rstd::move(package.profile),
-        .targets     = rstd_try(string_values(matches, target)),
-        .output      = rstd_try(optional_path(matches, output)),
-        .arguments   = rstd_try(string_values(matches, arguments)),
-        .locked      = source.locked,
-        .offline     = source.offline,
-        .frozen      = source.frozen,
-        .fetch_seeds = rstd::move(source.fetch_seeds),
-        .no_run      = rstd_try(flag_value(matches, no_run)),
-        .verbose     = execution.verbose,
-        .timing_file = rstd::move(execution.timing_file),
-        .no_timing   = execution.no_timing,
-        .jobs        = rstd::move(execution.jobs),
-        .features    = rstd::move(package.features),
+        .packages        = rstd::move(package.packages),
+        .profile         = rstd::move(package.profile),
+        .targets         = rstd_try(string_values(matches, target)),
+        .build_directory = rstd_try(optional_path(matches, build_directory)),
+        .arguments       = rstd_try(string_values(matches, arguments)),
+        .locked          = source.locked,
+        .offline         = source.offline,
+        .frozen          = source.frozen,
+        .fetch_seeds     = rstd::move(source.fetch_seeds),
+        .no_run          = rstd_try(flag_value(matches, no_run)),
+        .verbose         = execution.verbose,
+        .timing_file     = rstd::move(execution.timing_file),
+        .no_timing       = execution.no_timing,
+        .jobs            = rstd::move(execution.jobs),
+        .features        = rstd::move(package.features),
     });
 }
 
@@ -1629,6 +1644,10 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     if (use_env_flags && ! consumes_build_options) {
         return Err(CliDecodeError::InvalidUsage(String::make(
             "--use-env-flags is only valid for build, install, test, bench, doc, and scan"_str)));
+    }
+    if (use_env_flags && command.is_Install() && command.as_Install().options.no_build) {
+        return Err(CliDecodeError::InvalidUsage(
+            String::make("--use-env-flags conflicts with install --no-build"_str)));
     }
     if (command.is_Config() && (no_config || ! overrides.is_empty())) {
         return Err(CliDecodeError::InvalidUsage(String::make(

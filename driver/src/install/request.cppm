@@ -11,11 +11,18 @@ using namespace rstd::prelude;
 export namespace lito
 {
 
+enum class InstallBuildMode
+{
+    Build,
+    ReuseCompleted,
+};
+
 struct InstallRequest {
     ResolvedInstallSource source;
     BuildRequest          build;
     InstallDestination    destination;
     Vec<String>           binaries;
+    InstallBuildMode      build_mode { InstallBuildMode::Build };
     bool                  force { false };
 };
 

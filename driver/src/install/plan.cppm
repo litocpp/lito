@@ -12,7 +12,7 @@ import :install.materialize_error;
 import :install.recipe;
 import :install.package;
 import :build.artifact;
-import :build.result;
+import :build.product;
 import :dependency.preparation;
 import :dependency.cmake;
 import lito.cpp;
@@ -77,7 +77,7 @@ auto append_entry(Vec<InstallEntry>& entries, InstallEntry entry)
     return Ok(empty {});
 }
 
-auto artifact_for(const BuildSummary&                   summary,
+auto artifact_for(const CompletedBuildProduct&          product,
                   const InstallBuildRequirements&       requirements,
                   const lito::package::PackageTargetId& target)
     -> InstallMaterializeResult<const BuiltArtifact*> {
@@ -92,7 +92,7 @@ auto artifact_for(const BuildSummary&                   summary,
         expected = rstd::addressof(variant);
     }
     const BuiltArtifact* result = nullptr;
-    for (const auto& artifact : summary.artifacts) {
+    for (const auto& artifact : product.artifacts) {
         if (artifact.target != target) continue;
         if (expected == nullptr && artifact.install_link.is_some()) continue;
         if (expected != nullptr &&
@@ -144,7 +144,7 @@ export namespace lito
 
 auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                               const InstallBuildRequirements& requirements,
-                              const BuildSummary&             build,
+                              const CompletedBuildProduct&    product,
                               ref<str>                        profile,
                               ref<str> target) -> InstallMaterializeResult<InstallPlan> {
     auto plan = InstallPlan {};
@@ -161,7 +161,7 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                                   }));
         }
         for (const auto& artifact : recipe.artifacts) {
-            auto built      = rstd_try(artifact_for(build, requirements, artifact.target));
+            auto built      = rstd_try(artifact_for(product, requirements, artifact.target));
             auto production = Option<InstallLinkProduction> {};
             if (built->install_link.is_some()) {
                 production = Some(InstallLinkProduction {
@@ -181,7 +181,7 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
         }
         for (const auto& requested : recipe.target_runtimes) {
             const BuiltTargetRuntime* resolved = nullptr;
-            for (const auto& runtime : build.target_runtimes) {
+            for (const auto& runtime : product.target_runtimes) {
                 if (runtime.name != requested.name.as_str()) continue;
                 if (resolved != nullptr) {
                     return materialize_failure<InstallPlan>(rstd::format(
@@ -203,8 +203,8 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                              }));
         }
         for (const auto& requested : recipe.external_assets) {
-            auto set = build.external_assets.resolve(requested.dependency.as_str(),
-                                                     requested.set.as_str());
+            auto set = product.external_assets.resolve(requested.dependency.as_str(),
+                                                       requested.set.as_str());
             if (set.is_err()) {
                 return materialize_failure<InstallPlan>(rstd::move(set).unwrap_err());
             }

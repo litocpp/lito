@@ -11,6 +11,7 @@ import :install.recipe;
 import :install.package;
 import :install.path;
 import :dependency.preparation;
+import :build.product;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -60,6 +61,35 @@ auto direct_package(const lito::package::ResolvedPackageSelection& selection, re
 
 export namespace lito
 {
+
+auto validate_completed_build_selection(const CompletedBuildProduct&                   product,
+                                        const lito::package::ResolvedPackageSelection& selection)
+    -> InstallResult<empty> {
+    for (const auto& recorded : product.selected_packages) {
+        const lito::package::ResolvedPackage* matched = nullptr;
+        for (const auto& package : selection.graph.packages) {
+            if (package.manifest.name != recorded.name.as_str()) continue;
+            if (matched != nullptr) {
+                return selection_failure<empty>(rstd::format(
+                    "resolved graph contains package '{}' more than once", recorded.name.as_str()));
+            }
+            matched = rstd::addressof(package);
+        }
+        if (matched == nullptr) {
+            return selection_failure<empty>(
+                rstd::format("completed build package '{}' is missing from the current graph",
+                             recorded.name.as_str()));
+        }
+        if (matched->source_identity != recorded.source_identity.as_str()) {
+            return selection_failure<empty>(
+                rstd::format("completed build package '{}' source changed from '{}' to '{}'",
+                             recorded.name.as_str(),
+                             recorded.source_identity.as_str(),
+                             matched->source_identity.as_str()));
+        }
+    }
+    return Ok(empty {});
+}
 
 auto resolve_install_packages(const lito::package::ResolvedPackageSelection& selection,
                               const TargetInfo& target) -> InstallResult<Vec<PackageInstallInput>> {

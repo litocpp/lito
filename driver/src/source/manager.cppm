@@ -203,6 +203,10 @@ class SourceManager {
     auto git_client(ref<str> source = "source resolution"_str, ref<str> owner = "Git"_str)
         -> SourceResult<lito::tools::GitClient> {
         if (git_.is_none()) {
+            if (resolver_ == nullptr) {
+                return source_failure<lito::tools::GitClient>(rstd::format(
+                    "existing-only source resolution cannot resolve Git for '{}'", source));
+            }
             const auto requirement = lito::tools::external_source_tool_requirement(
                 lito::tools::HostToolCapability::GitCheckout, owner, source);
             auto resolved = resolver_->require(lito::tools::Tool::Git, requirement);
@@ -409,10 +413,12 @@ class SourceManager {
                 request.owner.is_empty() ? "Git"_str : request.owner.as_str(),
                 request.name.is_empty() ? request.source.as_Git().url.as_str()
                                         : request.name.as_str());
-            resolver_->report_not_required(requirement,
-                                           seeds[index]->kind == ResolvedGitSeed::Kind::Cache
-                                               ? "Git checkout cache is reusable"_str
-                                               : "local source patch is selected"_str);
+            if (resolver_ != nullptr) {
+                resolver_->report_not_required(requirement,
+                                               seeds[index]->kind == ResolvedGitSeed::Kind::Cache
+                                                   ? "Git checkout cache is reusable"_str
+                                                   : "local source patch is selected"_str);
+            }
         }
         if (git_request.is_some() && git_.is_none()) {
             const auto& request = requests[*git_request];
@@ -430,7 +436,9 @@ class SourceManager {
             if (root.is_err()) {
                 return Err(rstd::into<SourceError>(rstd::move(root).unwrap_err()));
             }
-            auto acquired = root->acquire_source_cache();
+            auto acquired = options_.materialization == SourceMaterializationPolicy::ExistingOnly
+                                ? root->open_source_cache()
+                                : root->acquire_source_cache();
             if (acquired.is_err()) {
                 return Err(rstd::into<SourceError>(rstd::move(acquired).unwrap_err()));
             }
@@ -723,6 +731,12 @@ class SourceManager {
             return Ok(registered);
         }
 
+        if (options_.materialization == SourceMaterializationPolicy::ExistingOnly) {
+            return source_failure<usize>(
+                rstd::format("existing-only source resolution cannot materialize Git source '{}'",
+                             request_key.as_str()));
+        }
+
         auto session = rstd_try(source_cache_session());
         auto cache   = session.open_git_cache();
         if (cache.is_err()) {
@@ -812,6 +826,11 @@ class SourceManager {
             if (input.is_some()) precise_commit = String::make(*exact_commit);
         }
         if (precise_commit.is_empty()) {
+            if (options_.materialization == SourceMaterializationPolicy::ExistingOnly) {
+                return source_failure<ResolvedPackageSource>(rstd::format(
+                    "existing-only source resolution cannot materialize Git source '{}'",
+                    git_requirement_identity(url, reference).as_str()));
+            }
             auto session = rstd_try(source_cache_session());
             auto cache   = session.open_git_cache();
             if (cache.is_err()) {
@@ -853,18 +872,33 @@ class SourceManager {
 public:
     explicit SourceManager(ref<rstd::path::Path>             graph_root,
                            SourceResolutionOptions           options,
-                           lito::tools::ToolResolver&        resolver,
+                           lito::tools::ToolResolver*        resolver,
                            const ResolvedProcessEnvironment& environment,
                            SourceEventSink                   observer      = {},
                            Option<SourceCacheSession>        cache_session = None(),
                            Option<PathBuf>                   git           = None())
         : graph_root_(PathBuf::from(graph_root)),
           options_(rstd::move(options)),
-          resolver_(rstd::addressof(resolver)),
+          resolver_(resolver),
           environment_(rstd::addressof(environment)),
           observer_(observer),
           git_(rstd::move(git)),
           cache_session_(rstd::move(cache_session)) {}
+
+    explicit SourceManager(ref<rstd::path::Path>             graph_root,
+                           SourceResolutionOptions           options,
+                           lito::tools::ToolResolver&        resolver,
+                           const ResolvedProcessEnvironment& environment,
+                           SourceEventSink                   observer      = {},
+                           Option<SourceCacheSession>        cache_session = None(),
+                           Option<PathBuf>                   git           = None())
+        : SourceManager(graph_root,
+                        rstd::move(options),
+                        rstd::addressof(resolver),
+                        environment,
+                        observer,
+                        rstd::move(cache_session),
+                        rstd::move(git)) {}
 
     auto resolve_external_source(const PackageSourceRequirement& requirement,
                                  ref<rstd::path::Path>           declaring_root)

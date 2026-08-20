@@ -233,24 +233,24 @@ auto effective_compile_targets(const ResolvedPackageGraph& graph,
 export namespace lito::package
 {
 
-auto resolve_package_selection_with_environment(
+auto resolve_package_selection_with_environment_impl(
     const PackageSelection&                   selection,
     PackageSelectionPurpose                   purpose,
     lito::source::SourceResolutionOptions     options,
     const TargetInfo*                         target,
-    lito::tools::ToolResolver&                tool_resolver,
+    lito::tools::ToolResolver*                tool_resolver,
     const ResolvedProcessEnvironment&         environment,
     usize                                     jobs     = usize(1),
     lito::source::SourceEventSink             observer = {},
     Option<lito::workspace::WorkspaceCatalog> catalog  = None())
     -> PackageSelectionResult<ResolvedPackageSelection> {
-    auto resolved = resolve_package_graph_with_environment(selection.root.as_path(),
-                                                           rstd::move(options),
-                                                           tool_resolver,
-                                                           environment,
-                                                           jobs,
-                                                           observer,
-                                                           rstd::move(catalog));
+    auto resolved = resolve_package_graph_with_environment_impl(selection.root.as_path(),
+                                                                rstd::move(options),
+                                                                tool_resolver,
+                                                                environment,
+                                                                jobs,
+                                                                observer,
+                                                                rstd::move(catalog));
     if (resolved.is_err()) {
         return Err(rstd::into<PackageSelectionError>(rstd::move(resolved).unwrap_err()));
     }
@@ -414,6 +414,49 @@ auto resolve_package_selection_with_environment(
         .effective_targets      = rstd::move(effective_targets),
         .standards              = rstd::move(standards).unwrap(),
     });
+}
+
+auto resolve_package_selection_with_environment(
+    const PackageSelection&                   selection,
+    PackageSelectionPurpose                   purpose,
+    lito::source::SourceResolutionOptions     options,
+    const TargetInfo*                         target,
+    lito::tools::ToolResolver&                tool_resolver,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    lito::source::SourceEventSink             observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    -> PackageSelectionResult<ResolvedPackageSelection> {
+    return resolve_package_selection_with_environment_impl(selection,
+                                                           purpose,
+                                                           rstd::move(options),
+                                                           target,
+                                                           rstd::addressof(tool_resolver),
+                                                           environment,
+                                                           jobs,
+                                                           observer,
+                                                           rstd::move(catalog));
+}
+
+auto resolve_existing_package_selection_with_environment(
+    const PackageSelection&                   selection,
+    PackageSelectionPurpose                   purpose,
+    lito::source::SourceResolutionOptions     options,
+    const TargetInfo&                         target,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    lito::source::SourceEventSink             observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None())
+    -> PackageSelectionResult<ResolvedPackageSelection> {
+    return resolve_package_selection_with_environment_impl(selection,
+                                                           purpose,
+                                                           rstd::move(options),
+                                                           rstd::addressof(target),
+                                                           nullptr,
+                                                           environment,
+                                                           jobs,
+                                                           observer,
+                                                           rstd::move(catalog));
 }
 
 auto resolve_package_selection(const PackageSelection& selection,

@@ -31,7 +31,7 @@ struct ArtifactExecution {
 auto selected_artifacts(const BuildSummary& summary, cpp::ArtifactKind kind)
     -> Vec<const BuiltArtifact*> {
     auto selected = Vec<const BuiltArtifact*>::make();
-    for (const auto& artifact : summary.artifacts) {
+    for (const auto& artifact : summary.product.artifacts) {
         if (artifact.kind == kind) selected.push(rstd::addressof(artifact));
     }
     rstd::slice_::sort_unstable_by(selected.as_mut_slice().as_mut_ref(),

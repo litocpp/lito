@@ -387,7 +387,7 @@ struct ArtifactCounts {
 
 auto artifact_counts(const lito::BuildSummary& summary) -> ArtifactCounts {
     auto counts = ArtifactCounts {};
-    for (const auto& artifact : summary.artifacts) {
+    for (const auto& artifact : summary.product.artifacts) {
         switch (artifact.kind) {
         case lito::cpp::ArtifactKind::StaticLibrary: ++counts.archives; break;
         case lito::cpp::ArtifactKind::SharedLibrary: ++counts.shared_libraries; break;
@@ -674,7 +674,9 @@ extern "C++" int main() {
                           summary.prefix.as_path());
         return 0;
     }
-    auto install_source = Option<lito::ResolvedInstallSource> {};
+    auto       install_source = Option<lito::ResolvedInstallSource> {};
+    const auto reuse_install =
+        invocation.command.is_Install() && invocation.command.as_Install().options.no_build;
     if (invocation.command.is_Install()) {
         auto resolved = lito::resolve_install_source(
             lito::InstallSourceRequirement::LocalProject(invocation.working_directory.clone()));
@@ -685,16 +687,19 @@ extern "C++" int main() {
         }
         install_source = Some(rstd::move(resolved).unwrap());
     }
-    auto config_root       = install_source.is_some() ? install_source->project.root.as_path()
-                                                      : invocation.working_directory.as_path();
-    auto active_sdk_result = lito::acquire_active_llvm_sdk();
-    if (active_sdk_result.is_err()) {
-        auto error = rstd::move(active_sdk_result).unwrap_err();
-        report_error(error);
-        return 1;
+    auto config_root = install_source.is_some() ? install_source->project.root.as_path()
+                                                : invocation.working_directory.as_path();
+    auto active_sdk  = Option<lito::ActiveSdkLease> {};
+    if (! reuse_install) {
+        auto active_sdk_result = lito::acquire_active_llvm_sdk();
+        if (active_sdk_result.is_err()) {
+            auto error = rstd::move(active_sdk_result).unwrap_err();
+            report_error(error);
+            return 1;
+        }
+        active_sdk = rstd::move(active_sdk_result).unwrap();
     }
-    auto active_sdk = rstd::move(active_sdk_result).unwrap();
-    auto defaults   = Option<lito::config::ProjectConfigDefaults> {};
+    auto defaults = Option<lito::config::ProjectConfigDefaults> {};
     if (active_sdk.is_some()) defaults = Some(active_sdk->project_defaults());
     auto loaded_config = lito::config::load_project_config(
         config_root,
@@ -702,7 +707,7 @@ extern "C++" int main() {
             .mode              = invocation.no_config ? lito::config::ConfigLoadMode::LocalDisabled
                                                       : lito::config::ConfigLoadMode::Enabled,
             .overrides         = rstd::move(invocation.config_overrides),
-            .environment_flags = invocation.use_env_flags
+            .environment_flags = invocation.use_env_flags && ! reuse_install
                                      ? lito::config::EnvironmentFlagPolicy::Append
                                      : lito::config::EnvironmentFlagPolicy::Ignore,
             .defaults          = rstd::move(defaults),
@@ -714,7 +719,8 @@ extern "C++" int main() {
     }
     auto       project        = rstd::move(loaded_config).unwrap();
     auto       active_android = Option<lito::AndroidNdkLease> {};
-    const auto build_command  = invocation.command.is_Build() || invocation.command.is_Install() ||
+    const auto build_command  = invocation.command.is_Build() ||
+                                (invocation.command.is_Install() && ! reuse_install) ||
                                 invocation.command.is_Test() || invocation.command.is_Bench() ||
                                 invocation.command.is_Doc() || invocation.command.is_Scan();
     if (build_command && project.build_target.is_Android() && project.toolchain.sdk.is_none()) {
@@ -756,8 +762,8 @@ extern "C++" int main() {
         auto options = rstd::move(invocation.command).as_Install().options;
         apply_source_options(project.sources,
                              project.root.as_path(),
-                             options.offline,
-                             options.frozen,
+                             options.offline || options.no_build,
+                             options.frozen || options.no_build,
                              rstd::move(options.fetch_seeds));
         auto destination = lito::resolve_install_destination(invocation.working_directory.as_path(),
                                                              rstd::move(options.destination),
@@ -774,25 +780,30 @@ extern "C++" int main() {
             .source      = rstd::move(install_source).unwrap(),
             .destination = rstd::move(destination).unwrap(),
         };
-        request.binaries                    = rstd::move(options.binaries);
-        request.force                       = options.force;
-        request.build.selection.root        = project.root.clone();
-        request.build.environment           = rstd::move(project.environment);
-        request.build.tools                 = rstd::move(project.tools);
-        request.build.configuration         = build_configuration(rstd::move(project.toolchain),
-                                                                  project.standard_library,
-                                                                  project.standard_library_runtime,
-                                                                  rstd::move(project.build_options),
-                                                                  rstd::move(project.build_target));
-        request.build.lock                  = rstd::move(project.lock);
-        request.build.sources               = rstd::move(project.sources);
-        request.build.pkg_config            = rstd::move(project.pkg_config);
-        request.build.cmake                 = rstd::move(project.cmake);
+        request.binaries             = rstd::move(options.binaries);
+        request.build_mode           = options.no_build ? lito::InstallBuildMode::ReuseCompleted
+                                                        : lito::InstallBuildMode::Build;
+        request.force                = options.force;
+        request.build.selection.root = project.root.clone();
+        request.build.environment    = rstd::move(project.environment);
+        request.build.tools          = rstd::move(project.tools);
+        request.build.configuration  = build_configuration(rstd::move(project.toolchain),
+                                                           project.standard_library,
+                                                           project.standard_library_runtime,
+                                                           rstd::move(project.build_options),
+                                                           rstd::move(project.build_target));
+        request.build.lock           = rstd::move(project.lock);
+        request.build.sources        = rstd::move(project.sources);
+        request.build.pkg_config     = rstd::move(project.pkg_config);
+        request.build.cmake          = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
         request.build.selection.packages    = rstd::move(options.packages);
         request.build.selection.features    = rstd::move(options.features);
-        request.build.locked                = options.locked || options.frozen;
+        request.build.locked                = options.locked || options.frozen || options.no_build;
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
+        if (options.build_directory.is_some()) {
+            request.build.build_directory = rstd::move(*options.build_directory);
+        }
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
         auto event_context                   = EventContext { .verbose = options.verbose };
@@ -824,16 +835,24 @@ extern "C++" int main() {
                 }
             }
         }
-        auto emitted = lito::timing_output::emit(summary.build, timing);
-        if (emitted.is_err()) {
-            auto error = rstd::move(emitted).unwrap_err();
-            report_error(error);
-            return 1;
+        if (summary.build.is_Built()) {
+            auto emitted = lito::timing_output::emit(summary.build.as_Built().summary, timing);
+            if (emitted.is_err()) {
+                auto error = rstd::move(emitted).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+        } else if (options.verbose) {
+            const auto& product = summary.build.as_Reused().product;
+            rstd::io::println("[reuse] build product {} {}",
+                              product.id.as_str(),
+                              product.build_directory.as_path());
         }
-        rstd::io::println("installed {} entries from {} packages ({}) to {} {}",
+        rstd::io::println("installed {} entries from {} packages ({}{}) to {} {}",
                           summary.entries.len(),
                           summary.packages.len(),
-                          summary.build.profile.as_str(),
+                          summary.build.profile(),
+                          summary.build.is_Reused() ? ", reused build"_str : ""_str,
                           summary.destination.is_Managed() ? "managed root"_str
                                                            : "untracked prefix"_str,
                           summary.destination.path());
@@ -1038,14 +1057,14 @@ extern "C++" int main() {
         if (summary.publication_receipt.is_some()) {
             rstd::io::println(
                 "generated package publications for {} packages: {} ({} extracted, {} reused)",
-                summary.build.selected_packages.len(),
+                summary.build.product.selected_packages.len(),
                 summary.publication_receipt->as_path(),
                 summary.extracted,
                 summary.reused);
         } else {
             rstd::io::println(
                 "generated documentation for {} packages in {}: {} extracted, {} reused",
-                summary.build.selected_packages.len(),
+                summary.build.product.selected_packages.len(),
                 options.data_only ? summary.data_output.as_path() : summary.output.as_path(),
                 summary.extracted,
                 summary.reused);
@@ -1088,7 +1107,9 @@ extern "C++" int main() {
         }
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
-        if (options.output.is_some()) request.build.output = rstd::move(*options.output);
+        if (options.build_directory.is_some()) {
+            request.build.build_directory = rstd::move(*options.build_directory);
+        }
         auto event_context = EventContext { .verbose = options.verbose };
         configure_build_output(request.build, event_context);
         request.observer = Some(lito::TestObserver {
@@ -1113,8 +1134,8 @@ extern "C++" int main() {
         if (options.no_run) {
             rstd::io::println("built {} tests ({}) in {}: {} scanned, {} compiled, {} reused",
                               counts.tests + summary.build.compile_tests.len(),
-                              summary.build.profile.as_str(),
-                              summary.build.output.as_path(),
+                              summary.build.product.profile.as_str(),
+                              summary.build.product.build_directory.as_path(),
                               summary.build.scanned,
                               summary.build.compiled,
                               summary.build.reused);
@@ -1212,7 +1233,9 @@ extern "C++" int main() {
         if (options.profile.is_some()) request.build.profile = Some(options.profile->clone());
         request.build.execution.scan.jobs    = options.jobs;
         request.build.execution.compile.jobs = options.jobs;
-        if (options.output.is_some()) request.build.output = rstd::move(*options.output);
+        if (options.build_directory.is_some()) {
+            request.build.build_directory = rstd::move(*options.build_directory);
+        }
         auto event_context = EventContext { .verbose = options.verbose };
         configure_build_output(request.build, event_context);
         request.observer = Some(lito::BenchObserver {
@@ -1237,8 +1260,8 @@ extern "C++" int main() {
         if (options.no_run) {
             rstd::io::println("built {} benchmarks ({}) in {}: {} scanned, {} compiled, {} reused",
                               counts.benchmarks,
-                              summary.build.profile.as_str(),
-                              summary.build.output.as_path(),
+                              summary.build.product.profile.as_str(),
+                              summary.build.product.build_directory.as_path(),
                               summary.build.scanned,
                               summary.build.compiled,
                               summary.build.reused);
@@ -1310,7 +1333,9 @@ extern "C++" int main() {
     if (options.profile.is_some()) request.profile = Some(options.profile->clone());
     request.execution.scan.jobs    = options.jobs;
     request.execution.compile.jobs = options.jobs;
-    if (options.output.is_some()) request.output = rstd::move(*options.output);
+    if (options.build_directory.is_some()) {
+        request.build_directory = rstd::move(*options.build_directory);
+    }
     auto event_context = EventContext { .verbose = options.verbose };
 
     configure_build_output(request, event_context);
@@ -1325,9 +1350,9 @@ extern "C++" int main() {
     auto counts  = artifact_counts(summary);
     rstd::io::println("built {} ({}) in {}: {} scanned, {} compiled, {} reused, "
                       "{} archives, {} shared libraries, {} executables, {} tests",
-                      summary.package.as_str(),
-                      summary.profile.as_str(),
-                      summary.output.as_path(),
+                      summary.product.package.as_str(),
+                      summary.product.profile.as_str(),
+                      summary.product.build_directory.as_path(),
                       summary.scanned,
                       summary.compiled,
                       summary.reused,

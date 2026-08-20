@@ -7,6 +7,7 @@ import rstd;
 import rstd.json;
 import lito.core;
 import :build.error;
+import :build.product_error;
 import :install.script_error;
 import :install.materialize_error;
 import lito.toolchain.common;
@@ -57,6 +58,7 @@ class InstallError {
               (Selection, (lito::workspace::WorkspaceError source;)),
               (Script, (InstallScriptError source;)),
               (Build, (BuildError source;)),
+              (Product, (BuildProductError source;)),
               (Materialize, (InstallMaterializeError source;)),
               (Store, (InstallStoreError source;)),
               (Message, (String message;)))
@@ -227,6 +229,13 @@ struct Impl<convert::From<lito::BuildError>, lito::InstallError> {
 };
 
 template<>
+struct Impl<convert::From<lito::BuildProductError>, lito::InstallError> {
+    static auto from(lito::BuildProductError error) -> lito::InstallError {
+        return lito::InstallError::Product(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::InstallMaterializeError>, lito::InstallError> {
     static auto from(lito::InstallMaterializeError error) -> lito::InstallError {
         return lito::InstallError::Materialize(rstd::move(error));
@@ -259,6 +268,10 @@ struct Impl<fmt::Display, lito::InstallError> : ImplBase<lito::InstallError> {
         if (error.is_Build()) {
             return formatter.write_raw("install build failed", sizeof("install build failed") - 1);
         }
+        if (error.is_Product()) {
+            return formatter.write_raw("install build product reuse failed",
+                                       sizeof("install build product reuse failed") - 1);
+        }
         if (error.is_Materialize()) {
             return formatter.write_raw("install plan materialization failed",
                                        sizeof("install plan materialization failed") - 1);
@@ -290,6 +303,9 @@ struct Impl<error::Error, lito::InstallError> : ImplBase<lito::InstallError> {
         }
         if (error.is_Script()) return Some(dyn<error::Error>::from_ref(error.as_Script().source));
         if (error.is_Build()) return Some(dyn<error::Error>::from_ref(error.as_Build().source));
+        if (error.is_Product()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Product().source));
+        }
         if (error.is_Materialize()) {
             return Some(dyn<error::Error>::from_ref(error.as_Materialize().source));
         }

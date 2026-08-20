@@ -136,7 +136,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                                  Option<PreparedBuildProject>              prepared = None())
     -> BuildResult<BuildSummary> {
     if (request.selection.root.is_empty()) {
-        return build_failure<BuildSummary>("build directory is required"_str);
+        return build_failure<BuildSummary>("build project root is required"_str);
     }
     auto tool_resolver = lito::tools::ToolResolver(
         process_environment, request.tools.clone(), request.tool_reporter);
@@ -166,7 +166,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         auto project = prepare_build_project(request.selection,
                                              request.configuration,
                                              profile,
-                                             request.output.as_path(),
+                                             request.build_directory.as_path(),
                                              request.sources,
                                              request.lock,
                                              request.pkg_config,
@@ -198,7 +198,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                              profile.as_str()));
         }
         auto requested_layout = BuildLayout::resolve(metadata.root.as_path(),
-                                                     request.output.as_path(),
+                                                     request.build_directory.as_path(),
                                                      metadata.default_profile.as_str(),
                                                      project.platform.output_key.as_str());
         auto canonical_output = rstd::fs::canonicalize(requested_layout.output());
@@ -254,14 +254,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
     }
     auto selected_packages = Vec<cpp::SelectedPackageMetadata>::make();
     for (const auto& package : metadata.selected_packages) {
-        auto used = false;
-        for (const auto& target : selected_targets) {
-            if (target.package == package.name.as_str()) {
-                used = true;
-                break;
-            }
-        }
-        if (! used) continue;
         auto version = Option<String> {};
         if (package.version.is_some()) version = Some(package.version->clone());
         selected_packages.push(cpp::SelectedPackageMetadata {
@@ -729,33 +721,74 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         });
     }
 
-    return Ok(BuildSummary {
-        .package                    = package.name.clone(),
-        .profile                    = package_plan.profile->name.clone(),
-        .target                     = project.platform.effective_target.triple.clone(),
-        .platform                   = project.platform.clone(),
-        .language_standard          = request.configuration.language_standard.clone(),
-        .output                     = PathBuf::from(layout.output()),
-        .scanned                    = scans.len(),
-        .compiled                   = compiled,
-        .reused                     = reused,
+    auto product_inputs = Vec<PathBuf>::make();
+    for (const auto& unit : units) product_inputs.push(unit.unit.source.clone());
+    for (const auto& scan : scans) {
+        const auto& common = cpp::scan_common(scan);
+        for (const auto& header : common.header_inputs) product_inputs.push(header.clone());
+        for (const auto& embedded : common.embedded_inputs) {
+            product_inputs.push(embedded.path.clone());
+        }
+    }
+    for (const auto& configured : script_report.files) {
+        product_inputs.push(configured.input.clone());
+    }
+
+    auto product = CompletedBuildProduct {
+        .project_root        = request.selection.root.clone(),
+        .package             = package.name.clone(),
+        .profile             = package_plan.profile->name.clone(),
+        .target              = project.platform.effective_target.triple.clone(),
+        .target_architecture = project.platform.effective_target.architecture.name.clone(),
+        .target_kind =
+            String::make(request.configuration.target.is_Android() ? "android"_str : "default"_str),
+        .android_abi         = project.platform.android_abi.is_some()
+                                   ? project.platform.android_abi->clone()
+                                   : String::make(),
+        .android_minimum_api = project.platform.android_minimum_api.is_some()
+                                   ? *project.platform.android_minimum_api
+                                   : u32 {},
+        .base_directory      = PathBuf::from(layout.base_directory()),
+        .build_directory     = PathBuf::from(layout.output()),
+        .requested_packages  = as<Clone>(request.selection.packages).clone(),
+        .features =
+            lito::package::FeatureSelection {
+                .enabled          = as<Clone>(request.selection.features.enabled).clone(),
+                .default_features = request.selection.features.default_features,
+            },
+        .selected_targets           = rstd::move(selected_targets),
+        .selected_packages          = rstd::move(selected_packages),
         .artifacts                  = rstd::move(artifacts),
         .runtime_resources          = rstd::move(runtime_resources),
         .target_runtimes            = rstd::move(project.target_runtimes),
-        .selected_targets           = rstd::move(selected_targets),
-        .selected_packages          = rstd::move(selected_packages),
-        .frontend                   = frontend_statistics,
-        .toolchain                  = toolchain.statistics(),
-        .scan_profile               = rstd::move(scan_profile),
-        .compile_execution          = compile_statistics,
-        .external_preparation       = rstd::move(preparation_timing),
-        .build_timing               = rstd::move(build_timing),
-        .compile_tests              = rstd::move(compile_tests),
-        .script                     = rstd::move(script_report),
         .external_assets            = rstd::move(project.external_assets),
         .external_source_provenance = rstd::move(project.external_source_provenance),
-        .compiler                   = toolchain.compiler_identity().clone(),
-        .documentation_units        = rstd::move(documentation_units).unwrap(),
+        .compiler_identity          = toolchain.compiler_identity().build_identity.clone(),
+        .compiler_version           = toolchain.compiler_identity().version.clone(),
+    };
+    auto completed_product =
+        finalize_completed_build_product(rstd::move(product), request.lock, product_inputs);
+    if (completed_product.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(completed_product).unwrap_err()));
+    }
+
+    return Ok(BuildSummary {
+        .product              = rstd::move(completed_product).unwrap(),
+        .platform             = project.platform.clone(),
+        .language_standard    = request.configuration.language_standard.clone(),
+        .scanned              = scans.len(),
+        .compiled             = compiled,
+        .reused               = reused,
+        .frontend             = frontend_statistics,
+        .toolchain            = toolchain.statistics(),
+        .scan_profile         = rstd::move(scan_profile),
+        .compile_execution    = compile_statistics,
+        .external_preparation = rstd::move(preparation_timing),
+        .build_timing         = rstd::move(build_timing),
+        .compile_tests        = rstd::move(compile_tests),
+        .script               = rstd::move(script_report),
+        .compiler             = toolchain.compiler_identity().clone(),
+        .documentation_units  = rstd::move(documentation_units).unwrap(),
     });
 }
 
@@ -788,11 +821,34 @@ auto build_prepared_project(const BuildRequest&               request,
 }
 
 auto build(const BuildRequest& request) -> BuildResult<BuildSummary> {
+    if (request.selection.root.is_empty()) {
+        return build_failure<BuildSummary>("build project root is required"_str);
+    }
+    const auto profile =
+        request.profile.is_some()
+            ? request.profile->clone()
+            : lito::manifest::BuildProfileName {
+                  .value = String::make(request.purpose ==
+                                                lito::package::PackageSelectionPurpose::Benchmark
+                                            ? "release"_str
+                                            : "debug"_str),
+              };
+    auto publication = begin_build_product_publication(
+        request.selection.root.as_path(), request.build_directory.as_path(), profile.as_str());
+    if (publication.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(publication).unwrap_err()));
+    }
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
     if (environment.is_err()) {
         return Err(rstd::into<BuildError>(rstd::move(environment).unwrap_err()));
     }
-    return build_with_environment_impl(request, *environment, None(), None());
+    auto summary = build_with_environment_impl(request, *environment, None(), None());
+    if (summary.is_err()) return Err(rstd::move(summary).unwrap_err());
+    auto completed = complete_build_product_publication(*publication, summary->product);
+    if (completed.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(completed).unwrap_err()));
+    }
+    return Ok(rstd::move(summary).unwrap());
 }
 
 } // namespace lito
