@@ -813,20 +813,14 @@ extern "C++" int main() {
     }
 
     if (invocation.command.is_Format()) {
-        auto options               = rstd::move(invocation.command).as_Format().options;
-        auto request               = lito::FormatRequest {};
-        request.selection.root     = rstd::move(project.root);
-        request.environment        = rstd::move(project.environment);
-        request.tools              = rstd::move(project.tools);
-        request.lock               = rstd::move(project.lock);
-        request.sources            = rstd::move(project.sources);
-        request.selection.packages = rstd::move(options.packages);
+        auto options          = rstd::move(invocation.command).as_Format().options;
+        auto request          = lito::FormatRequest {};
+        request.root          = rstd::move(project.root);
+        request.environment   = rstd::move(project.environment);
+        request.tools         = rstd::move(project.tools);
+        request.packages      = rstd::move(options.packages);
         request.mode          = options.check ? lito::FormatMode::Check : lito::FormatMode::Write;
         auto event_context    = EventContext {};
-        request.observer      = Some(lito::BuildEventSink {
-            .context = rstd::addressof(event_context),
-            .notify  = observe,
-        });
         request.tool_reporter = Some(lito::system::HostToolResolutionSink {
             .context = rstd::addressof(event_context),
             .notify  = report_host_tool_resolution,

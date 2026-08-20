@@ -73,8 +73,7 @@ auto same_source_root(ref<rstd::path::Path> left, ref<rstd::path::Path> right) n
     return left.starts_with(right) && right.starts_with(left);
 }
 
-auto load_package_catalog(ref<rstd::path::Path>                    root,
-                          const lito::workspace::WorkspaceCatalog* associated_primary = nullptr)
+auto load_package_catalog(ref<rstd::path::Path> root)
     -> PackageResult<lito::workspace::WorkspaceCatalog> {
     auto document = lito::manifest::load_manifest_document(root);
     if (document.is_err()) {
@@ -93,15 +92,7 @@ auto load_package_catalog(ref<rstd::path::Path>                    root,
         return package_resolution_failure<lito::workspace::WorkspaceCatalog>(
             "source manifest has no package or workspace"_str);
     }
-    auto package = rstd::move(loaded.package).unwrap();
-    if (associated_primary != nullptr) {
-        auto catalog = lito::workspace::WorkspaceCatalog::associated_package(rstd::move(package),
-                                                                             *associated_primary);
-        if (catalog.is_err()) {
-            return Err(rstd::into<PackageError>(rstd::move(catalog).unwrap_err()));
-        }
-        return Ok(rstd::move(catalog).unwrap());
-    }
+    auto package    = rstd::move(loaded.package).unwrap();
     auto containing = lito::workspace::try_containing_workspace(package);
     if (containing.is_err()) {
         return Err(rstd::into<PackageError>(rstd::move(containing).unwrap_err()));
@@ -194,11 +185,10 @@ class PackageGraphResolver {
     }
 
     auto acquire_catalog_root(ref<rstd::path::Path>                     root,
-                              Option<lito::workspace::WorkspaceCatalog> preloaded         = None(),
-                              const lito::workspace::WorkspaceCatalog* associated_primary = nullptr)
+                              Option<lito::workspace::WorkspaceCatalog> preloaded = None())
         -> PackageResult<usize> {
-        auto loaded = preloaded.is_some() ? Ok(rstd::move(preloaded).unwrap())
-                                          : load_package_catalog(root, associated_primary);
+        auto loaded =
+            preloaded.is_some() ? Ok(rstd::move(preloaded).unwrap()) : load_package_catalog(root);
         if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
         auto catalog  = rstd::move(loaded).unwrap();
         auto acquired = sources_.acquire_root(catalog.root());
@@ -230,32 +220,16 @@ class PackageGraphResolver {
 
     auto acquire_associated_catalog(usize primary_source, ref<str> directory, ProjectRootRole role)
         -> PackageResult<Option<usize>> {
-        auto& primary = catalog(primary_source);
-        auto  root    = PathBuf::from(primary.root()).join(PathBuf::from(directory).as_path());
-        auto  located = lito::manifest::try_locate_manifest(root.as_path());
-        if (located.is_err()) {
-            return Err(PackageError::Manifest(
-                lito::manifest::ManifestError::Locate(rstd::move(located).unwrap_err())));
+        auto& primary    = catalog(primary_source);
+        auto  associated = lito::workspace::try_load_associated_catalog(primary, directory, role);
+        if (associated.is_err()) {
+            return Err(rstd::into<PackageError>(rstd::move(associated).unwrap_err()));
         }
-        if (located->is_none()) return Ok(None());
-        const auto& location = **located;
-        if (! same_source_root(location.directory.as_path(), root.as_path())) {
-            return package_resolution_failure<Option<usize>>(rstd::format(
-                "associated manifest directory '{}' must be the exact project directory '{}'",
-                location.directory.as_path(),
-                root.as_path()));
-        }
-        if (primary.contains_package_root(location.directory.as_path())) return Ok(None());
-        auto source =
-            acquire_catalog_root(location.directory.as_path(), None(), rstd::addressof(primary));
+        if (associated->is_none()) return Ok(None());
+        auto catalog = rstd::move(associated).unwrap().unwrap();
+        auto root    = PathBuf::from(catalog.root());
+        auto source  = acquire_catalog_root(root.as_path(), Some(rstd::move(catalog)));
         if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-        // Storing the associated catalog can grow `catalogs_` and invalidate `primary`.
-        // Resolve it again before validation instead of retaining a reference into the vector.
-        auto validated = lito::workspace::validate_associated_catalog(
-            catalog(primary_source), catalog(*source), role);
-        if (validated.is_err()) {
-            return Err(rstd::into<PackageError>(rstd::move(validated).unwrap_err()));
-        }
         return Ok(Some(*source));
     }
 

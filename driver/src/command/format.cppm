@@ -3,7 +3,6 @@ export module lito.driver:command.format;
 import rstd;
 import lito.core;
 import :command.error;
-import :build.event;
 import lito.toolchain;
 import lito.system;
 
@@ -20,14 +19,12 @@ enum class FormatMode
 };
 
 struct FormatRequest {
-    lito::package::PackageSelection   selection;
-    ProcessEnvironmentSpec            environment;
-    ToolSpec                          tools;
-    lito::lock::LockConfig            lock;
-    lito::source::PackageSourceConfig sources;
-    FormatMode                        mode { FormatMode::Write };
-    Option<BuildEventSink>            observer;
-    Option<HostToolResolutionSink>    tool_reporter;
+    PathBuf                        root;
+    Vec<String>                    packages;
+    ProcessEnvironmentSpec         environment;
+    ToolSpec                       tools;
+    FormatMode                     mode { FormatMode::Write };
+    Option<HostToolResolutionSink> tool_reporter;
 };
 
 struct FormatSummary {

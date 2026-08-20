@@ -1,11 +1,12 @@
+module;
+#include <rstd/macro.hpp>
+
 module lito.driver;
 
 import rstd;
 import lito.core;
 import :command.error;
-import :build.event;
 import :build.discovery;
-import :project;
 import lito.toolchain;
 import lito.system;
 
@@ -28,7 +29,7 @@ namespace lito
 {
 
 auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
-    if (request.selection.root.is_empty()) {
+    if (request.root.is_empty()) {
         return format_failure<FormatSummary>("format directory is required"_str);
     }
     auto environment = ResolvedProcessEnvironment::resolve(request.environment);
@@ -36,23 +37,45 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
         return Err(rstd::into<CommandError>(rstd::move(environment).unwrap_err()));
     }
     auto tool_resolver = ToolResolver(*environment, request.tools.clone(), request.tool_reporter);
-    auto resolved      = resolve_project_selection(request.selection,
-                                                   lito::package::PackageSelectionPurpose::All,
-                                                   request.sources,
-                                                   request.lock,
-                                                   false,
-                                                   tool_resolver,
-                                                   *environment,
-                                                   usize(1),
-                                                   request.observer);
+    auto resolved      = lito::workspace::resolve_local_project(request.root.as_path());
     if (resolved.is_err()) {
-        return Err(rstd::into<CommandError>(rstd::move(resolved).unwrap_err()));
+        auto package_error =
+            rstd::into<lito::package::PackageError>(rstd::move(resolved).unwrap_err());
+        return Err(rstd::into<CommandError>(rstd::move(package_error)));
     }
-    auto selection = rstd::move(resolved).unwrap();
+    auto project = rstd::move(resolved).unwrap();
 
-    auto selected_roots = StringSet::make();
-    for (const auto& name : selection.selected_root_names) {
-        selected_roots.insert(name.clone(), empty {});
+    auto available = StringSet::make();
+    for (const auto& name : project.primary.names()) available.insert(name.clone(), empty {});
+    if (project.tests.is_some()) {
+        for (const auto& name : project.tests->names()) available.insert(name.clone(), empty {});
+    }
+    auto selected = StringSet::make();
+    if (request.packages.is_empty()) {
+        auto keys = available.keys();
+        for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+            selected.insert((**key).clone(), empty {});
+        }
+    } else {
+        for (const auto& name : request.packages) {
+            if (! lito::manifest::valid_package_name(name.as_str())) {
+                return format_failure<FormatSummary>(rstd::format(
+                    "package selection '{}' must contain only ASCII letters, digits, '-' or '_'",
+                    name.as_str()));
+            }
+            if (selected.contains_key(name.as_str())) {
+                return format_failure<FormatSummary>(rstd::format(
+                    "project package '{}' was selected more than once", name.as_str()));
+            }
+            if (! available.contains_key(name.as_str())) {
+                return format_failure<FormatSummary>(
+                    rstd::format("project has no local package named '{}'", name.as_str()));
+            }
+            selected.insert(name.clone(), empty {});
+        }
+    }
+    if (selected.is_empty()) {
+        return format_failure<FormatSummary>("project has no selected format package"_str);
     }
 
     const auto tool_requirement =
@@ -68,34 +91,49 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     }
     auto formatter = rstd::move(created).unwrap();
 
-    auto summary = FormatSummary {};
-    for (const auto& package : selection.graph.packages) {
-        if (! selected_roots.contains_key(package.manifest.name.as_str())) continue;
-        auto discovered = discover_format_sources(package.manifest);
-        if (discovered.is_err()) {
-            return Err(rstd::into<CommandError>(rstd::move(discovered).unwrap_err()));
-        }
-        auto sources = rstd::move(discovered).unwrap();
-        for (const auto& source : sources.sources) {
-            if (request.mode == FormatMode::Check) {
-                auto formatted = formatter.is_formatted(source.canonical_path.as_path());
-                if (formatted.is_err()) {
-                    return Err(rstd::into<CommandError>(rstd::move(formatted).unwrap_err()));
-                }
-                if (! *formatted) summary.unformatted_files.push(source.canonical_path.clone());
-            } else {
-                auto formatted = formatter.format(source.canonical_path.as_path());
-                if (formatted.is_err()) {
-                    return Err(rstd::into<CommandError>(rstd::move(formatted).unwrap_err()));
-                }
+    auto       summary = FormatSummary {};
+    const auto format_catalog =
+        [&](lito::workspace::WorkspaceCatalog& catalog) -> CommandResult<empty> {
+        auto names = Vec<String>::with_capacity(catalog.names().len());
+        for (const auto& name : catalog.names()) names.push(name.clone());
+        for (const auto& name : names) {
+            if (! selected.contains_key(name.as_str())) continue;
+            auto package = catalog.take_package(name.as_str());
+            if (package.is_none()) {
+                return format_failure<empty>(
+                    rstd::format("local project catalog is missing package '{}'", name.as_str()));
             }
-            ++summary.files;
+            auto discovered = discover_format_sources(*package);
+            if (discovered.is_err()) {
+                return Err(rstd::into<CommandError>(rstd::move(discovered).unwrap_err()));
+            }
+            auto sources = rstd::move(discovered).unwrap();
+            for (const auto& source : sources.sources) {
+                if (request.mode == FormatMode::Check) {
+                    auto formatted = formatter.is_formatted(source.canonical_path.as_path());
+                    if (formatted.is_err()) {
+                        return Err(rstd::into<CommandError>(rstd::move(formatted).unwrap_err()));
+                    }
+                    if (! *formatted) summary.unformatted_files.push(source.canonical_path.clone());
+                } else {
+                    auto formatted = formatter.format(source.canonical_path.as_path());
+                    if (formatted.is_err()) {
+                        return Err(rstd::into<CommandError>(rstd::move(formatted).unwrap_err()));
+                    }
+                }
+                ++summary.files;
+            }
+            ++summary.packages;
         }
-        ++summary.packages;
+        return Ok(empty {});
+    };
+    rstd_try(format_catalog(project.primary));
+    if (project.tests.is_some()) {
+        rstd_try(format_catalog(*project.tests));
     }
-    if (summary.packages != selection.selected_root_names.len()) {
+    if (summary.packages != selected.len()) {
         return format_failure<FormatSummary>(
-            "selected packages are missing from resolved graph"_str);
+            "selected packages are missing from local project catalog"_str);
     }
     return Ok(rstd::move(summary));
 }
