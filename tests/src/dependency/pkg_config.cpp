@@ -129,6 +129,9 @@ TEST_F(PkgConfig, PkgConfigManifestIsTypedBeforeResolution) {
 name = "pkg-config-valid"
 version = "0.1.0"
 
+[features.qt]
+default = false
+
 [lib]
 name = "pkg-config-valid"
 module = "pkg_config_valid"
@@ -138,6 +141,7 @@ archive = "pkg_config_valid"
 module = "libcurl"
 version = ">= 7.86.0"
 visibility = "private"
+condition = "!feature.qt"
 
 [external-dependencies.pkg-config.openssl]
 module = "openssl"
@@ -161,6 +165,8 @@ visibility = "public"
               lito::dependency::PkgConfigVersionOperator::GreaterEqual);
     EXPECT_EQ(requirement.version->value.as_str(), "7.86.0"_str);
     EXPECT_EQ(requirement.mode, lito::dependency::PkgConfigQueryMode::Shared);
+    ASSERT_TRUE(curl.condition.is_some());
+    EXPECT_EQ(curl.condition->source.as_str(), "!feature.qt"_str);
 
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
@@ -184,6 +190,18 @@ module = "pkg_config_legacy_dependency"
 archive = "pkg_config_legacy_dependency"
 [dependencies.fixture]
 pkg-config = "lito-fixture"
+)"_str },
+        { "invalid-condition"_str, R"([package]
+name = "pkg-config-invalid-condition"
+version = "0.1.0"
+[lib]
+name = "pkg-config-invalid-condition"
+module = "pkg_config_invalid_condition"
+archive = "pkg_config_invalid_condition"
+[external-dependencies.pkg-config.curl]
+module = "libcurl"
+condition = "feature.qt ||"
+visibility = "private"
 )"_str },
         { "path-version"_str, R"([package]
 name = "pkg-config-path-version"

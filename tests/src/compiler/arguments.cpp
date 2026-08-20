@@ -186,6 +186,19 @@ TEST(CompilerArguments, ClassifiesPthreadAsThreadRequirement) {
     EXPECT_EQ(normalized->arguments.tokens[usize {}].as_str(), "-lm"_str);
 }
 
+TEST(CompilerArguments, ClassifiesExternalDataAccessAsCodegen) {
+    auto parser = make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto arguments =
+        parser->parse(strings("-fno-direct-access-external-data"_str), "compiler arguments"_str);
+    ASSERT_TRUE(arguments.is_ok());
+    ASSERT_EQ(arguments->occurrences.len(), usize(1));
+    const auto& argument = arguments->occurrences[usize {}].argument;
+    ASSERT_TRUE(argument.is_Family());
+    EXPECT_EQ(argument.as_Family().domain, cpp::CppOptionFamilyDomain::Codegen);
+    EXPECT_EQ(argument.as_Family().family.as_str(), "direct-access-external-data"_str);
+}
+
 TEST(CompilerArguments, NormalizesRuntimeSearchRequirements) {
     auto normalized = normalize_clang_link_arguments(lito::link::ArgumentSequence {
         .tokens   = strings("-Wl,-rpath,$ORIGIN"_str,

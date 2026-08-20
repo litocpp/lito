@@ -1212,6 +1212,9 @@
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
       "additionalProperties": false
@@ -1242,6 +1245,9 @@
         },
         "visibility": {
           "$ref": "#/definitions/dependencyVisibility"
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
       "additionalProperties": false
@@ -1263,8 +1269,13 @@
         },
         {
           "not": {
-            "required": [
-              "visibility"
+            "anyOf": [
+              {
+                "required": ["visibility"]
+              },
+              {
+                "required": ["condition"]
+              }
             ]
           }
         }
@@ -1295,6 +1306,14 @@
         "package": {
           "$ref": "#/definitions/cmakePackage"
         },
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/definitions/cmakePackage"
+          }
+        },
         "source": {
           "$ref": "#/definitions/packageName"
         },
@@ -1314,6 +1333,9 @@
           "items": {
             "$ref": "#/definitions/cmakeExternalTarget"
           }
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
       "not": {
@@ -1355,6 +1377,9 @@
           "items": {
             "$ref": "#/definitions/cmakeExternalTarget"
           }
+        },
+        "condition": {
+          "$ref": "#/definitions/nonEmptyString"
         }
       },
       "additionalProperties": false
@@ -1376,8 +1401,13 @@
         },
         {
           "not": {
-            "required": [
-              "targets"
+            "anyOf": [
+              {
+                "required": ["targets"]
+              },
+              {
+                "required": ["condition"]
+              }
             ]
           }
         }

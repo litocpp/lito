@@ -52,9 +52,10 @@ TEST_F(CMakeProvider, CMakeProviderBuildsInstallsAndReadsImportedTargetUsage) {
         .value = String::make(count_path.as_path().to_str().unwrap()),
     });
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoFixture"_str),
-        .source  = lito::PreparedCMakeDependencySource::Directory(
+        .alias      = String::make("fixture"_str),
+        .package    = String::make("LitoFixture"_str),
+        .components = strings("Core"_str),
+        .source     = lito::PreparedCMakeDependencySource::Directory(
             project->root.clone(), String::make("lito-test-cmake-fixture-v5"_str), true),
         .config_directory = Some(rstd::path::PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
@@ -243,9 +244,10 @@ TEST_F(CMakeProvider, PlainProfileBuildsWithSingleAndMultiConfigGenerators) {
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("plain-fixture"_str),
-        .package = String::make("LitoFixture"_str),
-        .source  = lito::PreparedCMakeDependencySource::Directory(
+        .alias      = String::make("plain-fixture"_str),
+        .package    = String::make("LitoFixture"_str),
+        .components = strings("Core"_str),
+        .source     = lito::PreparedCMakeDependencySource::Directory(
             project->root.clone(), String::make("lito-test-cmake-plain-v1"_str), false),
         .config_directory = Some(PathBuf::from("lib/cmake/LitoFixture"_str)),
         .cache            = rstd::move(cache),
@@ -398,6 +400,51 @@ TEST_F(CMakeProvider, CMakeProviderFindsPackageAndReadsGenericTargetUsage) {
         assets[usize {}].entries[usize {}].source.as_path().starts_with(project->root.as_path()));
 }
 
+TEST_F(CMakeProvider, CMakeProviderRequestsRequiredFindComponents) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto tree = cmake_find_package_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("cmake-find-components"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto provider = fixture_cmake();
+    provider.search_paths.push(project->root.clone());
+    auto targets = Vec<lito::dependency::CMakeTargetRequirement>::make();
+    targets.push(lito::dependency::CMakeTargetRequirement {
+        .name       = String::make("LitoFindFixture::component"_str),
+        .visibility = lito::dependency::DependencyVisibility::Private,
+    });
+    auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
+    declarations.push(lito::PreparedCMakeDependencyRequirement {
+        .alias      = String::make("fixture"_str),
+        .package    = String::make("LitoFindFixture"_str),
+        .components = strings("Feature"_str),
+        .source     = lito::PreparedCMakeDependencySource::Find(),
+        .targets    = rstd::move(targets),
+    });
+    auto resolved =
+        resolve_cmake_fixtures_with_provider(declarations,
+                                             default_profile(*parser),
+                                             native_platform(),
+                                             build_root("cmake-find-components-work"_str).as_path(),
+                                             rstd::move(provider));
+    ASSERT_TRUE(resolved.is_ok());
+    ASSERT_EQ(resolved->len(), usize(1));
+    auto compile_arguments =
+        parser->parse((*resolved)[usize {}].targets[usize {}].compile_options,
+                      (*resolved)[usize {}].targets[usize {}].compile_source.as_str());
+    ASSERT_TRUE(compile_arguments.is_ok());
+    auto has_component = false;
+    for (const auto& occurrence : compile_arguments->occurrences) {
+        if (occurrence.argument.is_Macro()) {
+            has_component =
+                has_component || occurrence.argument.as_Macro().directive.value.as_str() ==
+                                     "LITO_CMAKE_COMPONENT_USAGE=1"_str;
+        }
+    }
+    EXPECT_TRUE(has_component);
+}
+
 TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
@@ -414,11 +461,12 @@ TEST_F(CMakeProvider, CMakeProviderFindAdapterNormalizesTargetUsage) {
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoFindFixture"_str),
-        .source  = lito::PreparedCMakeDependencySource::Find(),
-        .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
-        .targets = rstd::move(targets),
+        .alias      = String::make("fixture"_str),
+        .package    = String::make("LitoFindFixture"_str),
+        .components = strings("Raw"_str),
+        .source     = lito::PreparedCMakeDependencySource::Find(),
+        .adapter    = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
+        .targets    = rstd::move(targets),
     });
     auto assets = Vec<lito::ExternalAssetSet>::make();
     auto resolved =
@@ -473,11 +521,12 @@ TEST_F(CMakeProvider, CMakeProviderReportsFindAdapterTargetContractFailure) {
     });
     auto declarations = Vec<lito::PreparedCMakeDependencyRequirement>::make();
     declarations.push(lito::PreparedCMakeDependencyRequirement {
-        .alias   = String::make("fixture"_str),
-        .package = String::make("LitoFindFixture"_str),
-        .source  = lito::PreparedCMakeDependencySource::Find(),
-        .adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
-        .targets = rstd::move(targets),
+        .alias      = String::make("fixture"_str),
+        .package    = String::make("LitoFindFixture"_str),
+        .components = strings("Raw"_str),
+        .source     = lito::PreparedCMakeDependencySource::Find(),
+        .adapter    = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path())),
+        .targets    = rstd::move(targets),
     });
     auto resolved = resolve_cmake_fixtures_with_provider(
         declarations,

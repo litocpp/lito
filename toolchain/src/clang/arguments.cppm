@@ -210,6 +210,13 @@ auto make_clang_cpp_argument_parser() -> cpp::CppOptionResult<cpp::CppArgumentPa
     schema.add(cpp::CppCompilerArgumentKind::CodegenMode, rstd::move(pic_aliases), "pic"_str);
 
     add_toggles(schema,
+                cpp::CppCompilerArgumentKind::CodegenMode,
+                "direct-access-external-data"_str,
+                "direct-access-external-data"_str,
+                "-fdirect-access-external-data"_str,
+                "-fno-direct-access-external-data"_str);
+
+    add_toggles(schema,
                 cpp::CppCompilerArgumentKind::LanguageMode,
                 "blocks"_str,
                 "blocks"_str,

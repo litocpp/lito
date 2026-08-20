@@ -240,6 +240,9 @@ auto target_snapshot_identity(const lito::dependency::CMakeProviderConfig& provi
     append_identity(result, provider.generator.as_str());
     rstd_try(append_search_path_identity(result, provider));
     append_identity(result, requirement.package.as_str());
+    for (const auto& component : requirement.components) {
+        append_identity(result, component.as_str());
+    }
     append_identity(result, target);
     append_identity(result, version);
     append_identity(result, effective_target);
@@ -261,6 +264,9 @@ auto dependency_identity(const lito::dependency::CMakeProviderConfig& provider,
     append_identity(result, provider.generator.as_str());
     rstd_try(append_search_path_identity(result, provider));
     append_identity(result, requirement.package.as_str());
+    for (const auto& component : requirement.components) {
+        append_identity(result, component.as_str());
+    }
     append_identity(result, version);
     append_identity(result, effective_target);
     append_identity(result, source_identity(requirement).as_str());

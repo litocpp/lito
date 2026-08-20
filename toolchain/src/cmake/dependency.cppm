@@ -20,6 +20,7 @@ class ResolvedCMakeDependencySource {
 struct ResolvedCMakeDependencyRequirement {
     String                                        alias;
     String                                        package;
+    Vec<String>                                   components;
     ResolvedCMakeDependencySource                 source;
     Option<PathBuf>                               adapter;
     String                                        adapter_identity;

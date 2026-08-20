@@ -308,6 +308,7 @@ auto clone_cmake_requirement(const ResolvedCMakeDependencyRequirement& requireme
     auto result = ResolvedCMakeDependencyRequirement {
         .alias            = requirement.alias.clone(),
         .package          = requirement.package.clone(),
+        .components       = as<Clone>(requirement.components).clone(),
         .source           = clone_cmake_source(requirement.source),
         .adapter_identity = requirement.adapter_identity.clone(),
         .cache            = rstd::move(cache),
@@ -413,6 +414,9 @@ auto work_area(const ResolvedCMakeDependencyRequirement&    requirement,
     auto query_recipe = String::make("lito-cmake-query-v5\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());
+    for (const auto& component : requirement.components) {
+        append_identity(query_recipe, component.as_str());
+    }
     append_identity(query_recipe, requirement.source.is_Find() ? "find"_str : "source"_str);
     append_identity(query_recipe, requirement.adapter.is_some() ? "adapter"_str : "generic"_str);
     if (requirement.adapter.is_some()) {

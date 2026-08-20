@@ -4,6 +4,7 @@ module;
 export module lito.core:dependency.cmake;
 
 import rstd;
+import :dependency.condition;
 import :dependency.visibility;
 import lito.system;
 
@@ -30,6 +31,10 @@ auto cmake_package_name_is_valid(ref<str> value) noexcept -> bool {
     return true;
 }
 
+auto cmake_component_name_is_valid(ref<str> value) noexcept -> bool {
+    return cmake_package_name_is_valid(value);
+}
+
 struct CMakeCacheEntry {
     String name;
     String value;
@@ -41,15 +46,17 @@ struct CMakeTargetRequirement {
 };
 
 struct CMakeDependencyRequirement {
-    String                      alias;
-    String                      package;
-    Option<String>              source;
-    Option<PathBuf>             adapter;
-    Option<PathBuf>             config_directory;
-    Vec<CMakeCacheEntry>        cache;
-    Vec<CMakeTargetRequirement> targets;
-    Option<PathBuf>             declaration_root;
-    Option<PathBuf>             adapter_root;
+    String                              alias;
+    String                              package;
+    Vec<String>                         components;
+    Option<ExternalDependencyCondition> condition;
+    Option<String>                      source;
+    Option<PathBuf>                     adapter;
+    Option<PathBuf>                     config_directory;
+    Vec<CMakeCacheEntry>                cache;
+    Vec<CMakeTargetRequirement>         targets;
+    Option<PathBuf>                     declaration_root;
+    Option<PathBuf>                     adapter_root;
 
     auto clone() const -> CMakeDependencyRequirement {
         auto cache_copy = Vec<CMakeCacheEntry>::with_capacity(cache.len());
@@ -67,11 +74,13 @@ struct CMakeDependencyRequirement {
             });
         }
         auto result = CMakeDependencyRequirement {
-            .alias   = alias.clone(),
-            .package = package.clone(),
-            .cache   = rstd::move(cache_copy),
-            .targets = rstd::move(target_copy),
+            .alias      = alias.clone(),
+            .package    = package.clone(),
+            .components = as<Clone>(components).clone(),
+            .cache      = rstd::move(cache_copy),
+            .targets    = rstd::move(target_copy),
         };
+        if (condition.is_some()) result.condition = Some(condition->clone());
         if (source.is_some()) result.source = Some(source->clone());
         if (adapter.is_some()) result.adapter = Some(adapter->clone());
         if (config_directory.is_some()) result.config_directory = Some(config_directory->clone());

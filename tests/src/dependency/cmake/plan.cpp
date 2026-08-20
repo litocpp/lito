@@ -76,6 +76,19 @@ TEST_F(CMakePlan, CMakePlannerIsPureAndMaterializesOrderedPackageOperations) {
     EXPECT_EQ(first->area.root.as_path(), parallel->area.root.as_path());
     EXPECT_EQ(first->area.query_root.as_path(), parallel->area.query_root.as_path());
 
+    requirement->components.push(String::make("Feature"_str));
+    auto component_variant = lito::plan_cmake_package(*requirement,
+                                                      fixture_cmake(),
+                                                      configuration(),
+                                                      default_profile(*parser),
+                                                      linker_identity(),
+                                                      platform.compiler_default,
+                                                      platform.effective_target.triple.as_str(),
+                                                      work_root.as_path());
+    ASSERT_TRUE(component_variant.is_ok());
+    EXPECT_EQ(first->area.root.as_path(), component_variant->area.root.as_path());
+    EXPECT_NE(first->area.query_root.as_path(), component_variant->area.query_root.as_path());
+
     requirement->adapter = Some(project->root.join(PathBuf::from("adapter.cmake"_str).as_path()));
     auto source_adapter  = lito::plan_cmake_package(*requirement,
                                                     fixture_cmake(),

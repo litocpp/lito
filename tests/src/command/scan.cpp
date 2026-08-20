@@ -79,7 +79,8 @@ import :missing;
 #if !__has_builtin(__builtin_assume) || \
     !__has_cpp_attribute(_Clang::__lifetimebound__) || \
     !__has_attribute(__type_visibility__) || \
-    !__has_warning("-Winvalid-specialization")
+    !__has_warning("-Winvalid-specialization") || \
+    !__has_feature(cxx_unicode_literals)
 import :standard_library_capability_failure;
 #endif
 

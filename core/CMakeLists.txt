@@ -24,6 +24,7 @@ target_sources(
          src/config/toolchain.cppm
          src/condition/mod.cppm
          src/lib.cppm
+         src/dependency/condition.cppm
          src/dependency/cmake.cppm
          src/dependency/error.cppm
          src/dependency/mod.cppm

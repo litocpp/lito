@@ -228,6 +228,9 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .alias       = reference.alias.clone(),
                 .requirement = clone_pkg_config_requirement(definition->requirement),
                 .visibility  = reference.visibility,
+                .condition   = reference.condition.is_some()
+                                   ? Some(reference.condition->clone())
+                                   : Option<lito::dependency::ExternalDependencyCondition> {},
             });
     }
     manifest.workspace_pkg_config_external_dependencies.clear();
@@ -266,9 +269,14 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .visibility = target.visibility,
             });
         }
+        auto components  = as<Clone>(definition->components).clone();
         auto requirement = lito::dependency::CMakeDependencyRequirement {
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
+            .components       = rstd::move(components),
+            .condition        = reference.condition.is_some()
+                                    ? Some(reference.condition->clone())
+                                    : Option<lito::dependency::ExternalDependencyCondition> {},
             .adapter          = rstd::move(adapter),
             .config_directory = rstd::move(config_directory),
             .cache            = rstd::move(cache),

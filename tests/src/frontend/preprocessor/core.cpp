@@ -339,6 +339,19 @@ TEST(Preprocessor, Core) {
     EXPECT_EQ(run_preprocessor_test(), 0);
 }
 
+TEST(Preprocessor, LookupCandidateTreatsRegularAncestorAsAbsent) {
+    auto directory = rstd::fs::TempDir::make("lito-frontend-lookup"_str);
+    ASSERT_TRUE(directory.is_ok());
+    auto ancestor = rstd::path::PathBuf::from(directory->path())
+                        .join(rstd::path::PathBuf::from("QtCore"_str).as_path());
+    ASSERT_TRUE(rstd::fs::write(ancestor.as_path(), "aggregate header"_str.as_bytes()).is_ok());
+    auto candidate = ancestor.join(rstd::path::PathBuf::from("qtcoreglobal.h"_str).as_path());
+
+    auto exists = lito::frontend::lookup_candidate_exists(candidate.as_path());
+    ASSERT_TRUE(exists.is_ok());
+    EXPECT_FALSE(*exists);
+}
+
 TEST(Preprocessor, LazilyMaterializesExternalMacros) {
     auto sources = MemorySources {};
     sources.add("/metadata.hpp"_str,

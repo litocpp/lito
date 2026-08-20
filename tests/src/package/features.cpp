@@ -2,9 +2,13 @@
 
 import rstd;
 import lito.core;
+import lito.cpp;
+import lito.toolchain;
+import lito.test.support;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
+using namespace lito_test;
 
 auto feature(ref<str> name, bool default_enabled = false) -> lito::manifest::FeatureDeclaration {
     return {
@@ -65,6 +69,30 @@ auto feature_enabled(const lito::package::ResolvedPackage& package, ref<str> nam
         if (value.name.as_str() == name) return value.enabled;
     }
     return false;
+}
+
+auto external_condition(ref<str> source) -> lito::dependency::ExternalDependencyCondition {
+    return lito::dependency::ExternalDependencyCondition {
+        .source     = String::make(source),
+        .expression = lito::condition::parse(source).unwrap(),
+    };
+}
+
+auto package_with_external_backends() -> lito::package::ResolvedPackage {
+    auto declarations = Vec<lito::manifest::FeatureDeclaration>::make();
+    declarations.push(feature("qt"_str));
+    auto result = package("provider"_str, rstd::move(declarations));
+    result.manifest.pkg_config_external_dependencies.push(
+        lito::dependency::PkgConfigExternalDependency {
+            .alias     = String::make("curl"_str),
+            .condition = Some(external_condition("!feature.qt"_str)),
+        });
+    result.manifest.cmake_external_dependencies.push(lito::dependency::CMakeDependencyRequirement {
+        .alias     = String::make("qt"_str),
+        .package   = String::make("Qt6"_str),
+        .condition = Some(external_condition("feature.qt"_str)),
+    });
+    return result;
 }
 
 TEST(PackageFeatures, ResolvesRootDefaultsAndCommandLineRequests) {
@@ -147,4 +175,71 @@ TEST(PackageFeatures, RejectsUnknownFeatureRequests) {
     };
 
     EXPECT_TRUE(lito::package::resolve_features(graph, roots, roots, targets, selection).is_err());
+}
+
+TEST(PackageFeatures, SelectsExternalDependenciesAfterGraphFeatureUnion) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto profile = default_profile(*parser);
+
+    auto packages = Vec<lito::package::ResolvedPackage>::make();
+    packages.push(package_with_external_backends());
+    auto graph   = lito::package::ResolvedPackageGraph { .packages = rstd::move(packages) };
+    auto roots   = names("provider"_str);
+    auto targets = library_targets("provider"_str);
+    ASSERT_TRUE(lito::package::resolve_features(
+                    graph, roots, roots, targets, lito::package::FeatureSelection {})
+                    .is_ok());
+    ASSERT_TRUE(lito::cpp::apply_package_configuration(
+                    graph.packages[usize {}], configuration(), profile, native_platform(), false)
+                    .is_ok());
+    EXPECT_EQ(graph.packages[usize {}].manifest.pkg_config_external_dependencies.len(), usize(1));
+    EXPECT_TRUE(graph.packages[usize {}].manifest.cmake_external_dependencies.is_empty());
+
+    auto consumer_dependencies = Vec<lito::package::ResolvedDependency>::make();
+    consumer_dependencies.push(dependency("provider"_str, names("qt"_str), false));
+    auto enabled_packages = Vec<lito::package::ResolvedPackage>::make();
+    enabled_packages.push(package("consumer"_str, {}, rstd::move(consumer_dependencies)));
+    enabled_packages.push(package_with_external_backends());
+    auto enabled_graph =
+        lito::package::ResolvedPackageGraph { .packages = rstd::move(enabled_packages) };
+    auto enabled_roots    = names("consumer"_str);
+    auto enabled_selected = names("consumer"_str, "provider"_str);
+    auto enabled_targets  = library_targets("consumer"_str);
+    ASSERT_TRUE(lito::package::resolve_features(enabled_graph,
+                                                enabled_roots,
+                                                enabled_selected,
+                                                enabled_targets,
+                                                lito::package::FeatureSelection {})
+                    .is_ok());
+    ASSERT_TRUE(
+        lito::cpp::apply_package_configuration(
+            enabled_graph.packages[usize(1)], configuration(), profile, native_platform(), false)
+            .is_ok());
+    EXPECT_TRUE(
+        enabled_graph.packages[usize(1)].manifest.pkg_config_external_dependencies.is_empty());
+    ASSERT_EQ(enabled_graph.packages[usize(1)].manifest.cmake_external_dependencies.len(),
+              usize(1));
+    EXPECT_EQ(enabled_graph.packages[usize(1)]
+                  .manifest.cmake_external_dependencies[usize {}]
+                  .package.as_str(),
+              "Qt6"_str);
+}
+
+TEST(PackageFeatures, ReportsExternalDependencyConditionContext) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto profile                   = default_profile(*parser);
+    auto package                   = package_with_external_backends();
+    package.manifest.manifest_path = rstd::path::PathBuf::from("fixture/lito.toml"_str);
+    package.manifest.pkg_config_external_dependencies[usize {}].condition =
+        Some(external_condition("feature.unknown"_str));
+
+    auto resolved = lito::cpp::apply_package_configuration(
+        package, configuration(), profile, native_platform(), false);
+    ASSERT_TRUE(resolved.is_err());
+    auto message = error_chain_text(resolved.unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("fixture/lito.toml"_str));
+    EXPECT_TRUE(message.as_str().contains("curl"_str));
+    EXPECT_TRUE(message.as_str().contains("feature.unknown"_str));
 }

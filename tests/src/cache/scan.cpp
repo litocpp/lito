@@ -211,6 +211,51 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(dynamic_warm->frontend.analyze_builds, usize(1));
 }
 
+TEST_F(ScanCache, IncludeLookupCachesNotDirectoryCandidatesAsMissing) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-scan-not-directory"
+version = "0.1.0"
+
+[[bin]]
+name = "fixture-scan-not-directory"
+link-stdlib = false
+sources = ["src/main.cpp"]
+
+[usage]
+private-include-directories = ["first", "second"]
+)toml"_str },
+        { "first/nested"_str, "aggregate header\n"_str },
+        { "second/nested/choice.hpp"_str, "#define LITO_CHOICE 1\n"_str },
+        { "src/main.cpp"_str,
+          "#include <nested/choice.hpp>\n"
+          "auto main() -> int { return LITO_CHOICE == 1 ? 0 : 1; }\n"_str },
+    };
+    auto project = materialize("scan-not-directory"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("scan-not-directory"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-scan-not-directory"_str));
+
+    auto cold = lito::build(request);
+    ASSERT_TRUE(cold.is_ok());
+    auto warm = lito::build(request);
+    ASSERT_TRUE(warm.is_ok());
+    EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(1));
+
+    auto ancestor = project->root.join(PathBuf::from("first/nested"_str).as_path());
+    ASSERT_TRUE(rstd::fs::remove_file(ancestor.as_path()).is_ok());
+    ASSERT_TRUE(rstd::fs::create_dir_all(ancestor.as_path()).is_ok());
+    auto preferred = ancestor.join(PathBuf::from("choice.hpp"_str).as_path());
+    ASSERT_TRUE(
+        rstd::fs::write(preferred.as_path(), "#define LITO_CHOICE 1\n"_str.as_bytes()).is_ok());
+
+    auto changed = lito::build(request);
+    ASSERT_TRUE(changed.is_ok());
+    EXPECT_EQ(changed->frontend.persistent_scan_include_lookup, usize(1));
+    EXPECT_EQ(changed->frontend.analyze_builds, usize(1));
+}
+
 TEST_F(ScanCache, EmbeddedResourcesInvalidateLookupAndContentCaches) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

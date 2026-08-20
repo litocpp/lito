@@ -127,6 +127,10 @@ install(FILES ${CMAKE_CURRENT_BINARY_DIR}/LitoFixtureConfig.cmake
   DESTINATION ${CMAKE_INSTALL_LIBDIR}/cmake/LitoFixture)
 )"_str },
         { "cmake/LitoFixtureConfig.cmake.in"_str, R"(@PACKAGE_INIT@
+if(NOT "Core" IN_LIST LitoFixture_FIND_COMPONENTS)
+  message(FATAL_ERROR "LitoFixture requires the Core component")
+endif()
+set(LitoFixture_Core_FOUND TRUE)
 include("${CMAKE_CURRENT_LIST_DIR}/LitoFixtureTargets.cmake")
 if(COMMAND lito_export_asset_set)
   lito_export_asset_set(NAME runtime ROOT "${PACKAGE_PREFIX_DIR}/share/lito-fixture/runtime"
@@ -211,6 +215,12 @@ if(NOT TARGET LitoFindFixture::raw)
     INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_FIND_USAGE=1
     INTERFACE_INCLUDE_DIRECTORIES "${_LITO_FIND_FIXTURE_PREFIX}/include")
 endif()
+if("Feature" IN_LIST LitoFindFixture_FIND_COMPONENTS AND
+   NOT TARGET LitoFindFixture::component)
+  add_library(LitoFindFixture::component INTERFACE IMPORTED)
+  set_target_properties(LitoFindFixture::component PROPERTIES
+    INTERFACE_COMPILE_DEFINITIONS LITO_CMAKE_COMPONENT_USAGE=1)
+endif()
 if(COMMAND lito_export_asset_set)
   lito_export_asset_set(NAME runtime
     ROOT "${_LITO_FIND_FIXTURE_PREFIX}/share/lito-find-fixture"
@@ -229,7 +239,11 @@ endif()
 if(DEFINED LITO_CMAKE_DEPENDENCY_SOURCE_DIR)
   message(FATAL_ERROR "LitoFindFixture adapter received a source directory in find mode")
 endif()
-find_package(${LITO_CMAKE_DEPENDENCY_PACKAGE} REQUIRED CONFIG)
+if(NOT LITO_CMAKE_DEPENDENCY_COMPONENTS STREQUAL "Raw")
+  message(FATAL_ERROR "LitoFindFixture adapter received the wrong components")
+endif()
+find_package(${LITO_CMAKE_DEPENDENCY_PACKAGE} REQUIRED
+  COMPONENTS ${LITO_CMAKE_DEPENDENCY_COMPONENTS} CONFIG)
 if(COMMAND lito_export_asset_set)
   lito_export_asset_set(NAME runtime PROVIDED)
 endif()

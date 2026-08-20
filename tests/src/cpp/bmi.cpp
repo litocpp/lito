@@ -39,6 +39,17 @@ TEST(Bmi, SeparatesBuildRecipeFromConsumerCompatibility) {
                      .compatible());
     EXPECT_NE(cpp::cpp_scan_identity(provider).as_str(), cpp::cpp_scan_identity(pthread).as_str());
 
+    auto external_data_access = cpp_options("c++20"_str,
+                                            lito::manifest::Optimization::None,
+                                            lito::manifest::DebugInfo::None,
+                                            strings("-fno-direct-access-external-data"_str));
+    EXPECT_TRUE(
+        cpp::check_bmi_compatibility(
+            provider_format, provider, public_requirements, consumer_format, external_data_access)
+            .compatible());
+    EXPECT_NE(cpp::cpp_compile_identity(provider).as_str(),
+              cpp::cpp_compile_identity(external_data_access).as_str());
+
     auto incompatible = cpp_options(
         "c++23"_str, lito::manifest::Optimization::Level3, lito::manifest::DebugInfo::None);
     auto result = cpp::check_bmi_compatibility(

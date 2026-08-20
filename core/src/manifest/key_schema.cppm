@@ -135,7 +135,7 @@ auto external_dependencies_key(ref<str> key) -> bool {
 auto cmake_external_key(ref<str> key) -> bool {
     return key == "package"_str || key == "source"_str || key == "adapter"_str ||
            key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
-           key == "workspace"_str;
+           key == "components"_str || key == "condition"_str || key == "workspace"_str;
 }
 
 auto cmake_archive_variant_key(ref<str> key) -> bool {
@@ -143,7 +143,8 @@ auto cmake_archive_variant_key(ref<str> key) -> bool {
 }
 
 auto workspace_cmake_external_key(ref<str> key) -> bool {
-    return cmake_external_key(key) && key != "targets"_str && key != "workspace"_str;
+    return cmake_external_key(key) && key != "targets"_str && key != "condition"_str &&
+           key != "workspace"_str;
 }
 
 auto external_source_key(ref<str> key) -> bool {
@@ -161,7 +162,7 @@ auto workspace_external_source_reference_key(ref<str> key) -> bool {
 }
 
 auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str || key == "targets"_str;
+    return key == "workspace"_str || key == "targets"_str || key == "condition"_str;
 }
 
 auto cmake_target_key(ref<str> key) -> bool {
@@ -170,7 +171,7 @@ auto cmake_target_key(ref<str> key) -> bool {
 
 auto pkg_config_external_key(ref<str> key) -> bool {
     return key == "module"_str || key == "version"_str || key == "static"_str ||
-           key == "visibility"_str || key == "workspace"_str;
+           key == "visibility"_str || key == "condition"_str || key == "workspace"_str;
 }
 
 auto workspace_pkg_config_external_key(ref<str> key) -> bool {
@@ -178,7 +179,7 @@ auto workspace_pkg_config_external_key(ref<str> key) -> bool {
 }
 
 auto workspace_pkg_config_external_reference_key(ref<str> key) -> bool {
-    return key == "workspace"_str || key == "visibility"_str;
+    return key == "workspace"_str || key == "visibility"_str || key == "condition"_str;
 }
 
 auto workspace_key(ref<str> key) -> bool {

@@ -88,6 +88,53 @@ auto resolve_target_source_groups(lito::package::ResolvedPackage& package,
     return Ok(empty {});
 }
 
+auto resolve_external_dependency_conditions(lito::package::ResolvedPackage& package,
+                                            const lito::condition::Context& context)
+    -> lito::package::PackageResult<empty> {
+    auto pkg_config = Vec<lito::dependency::PkgConfigExternalDependency>::with_capacity(
+        package.manifest.pkg_config_external_dependencies.len());
+    for (auto& dependency : package.manifest.pkg_config_external_dependencies) {
+        if (dependency.condition.is_some()) {
+            auto matched = lito::condition::evaluate(dependency.condition->expression, context);
+            if (matched.is_err()) {
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "package '{}' manifest '{}' pkg-config external dependency '{}' condition "
+                    "'{}' is invalid: {}",
+                    package.manifest.name.as_str(),
+                    package.manifest.manifest_path.as_path(),
+                    dependency.alias.as_str(),
+                    dependency.condition->source.as_str(),
+                    rstd::move(matched).unwrap_err())));
+            }
+            if (! *matched) continue;
+        }
+        pkg_config.push(rstd::move(dependency));
+    }
+    package.manifest.pkg_config_external_dependencies = rstd::move(pkg_config);
+
+    auto cmake = Vec<lito::dependency::CMakeDependencyRequirement>::with_capacity(
+        package.manifest.cmake_external_dependencies.len());
+    for (auto& dependency : package.manifest.cmake_external_dependencies) {
+        if (dependency.condition.is_some()) {
+            auto matched = lito::condition::evaluate(dependency.condition->expression, context);
+            if (matched.is_err()) {
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "package '{}' manifest '{}' CMake external dependency '{}' condition '{}' "
+                    "is invalid: {}",
+                    package.manifest.name.as_str(),
+                    package.manifest.manifest_path.as_path(),
+                    dependency.alias.as_str(),
+                    dependency.condition->source.as_str(),
+                    rstd::move(matched).unwrap_err())));
+            }
+            if (! *matched) continue;
+        }
+        cmake.push(rstd::move(dependency));
+    }
+    package.manifest.cmake_external_dependencies = rstd::move(cmake);
+    return Ok(empty {});
+}
+
 } // namespace lito::cpp
 
 namespace lito::cpp
@@ -256,6 +303,8 @@ auto resolve_package_configuration(lito::package::ResolvedPackage& package,
                                    const BuildPlatform&            platform,
                                    bool has_library) -> lito::package::PackageResult<empty> {
     auto context = make_package_condition_context(package, configuration, profile, platform);
+
+    rstd_try(resolve_external_dependency_conditions(package, context));
 
     auto       matched_threads        = Option<bool> {};
     auto       matched_threads_source = Option<String> {};

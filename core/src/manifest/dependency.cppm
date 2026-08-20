@@ -48,11 +48,13 @@ struct WorkspacePkgConfigExternalDependencyReference {
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
+    Option<lito::dependency::ExternalDependencyCondition> condition;
 };
 
 struct WorkspaceCMakeExternalDependencyReference {
-    String                                        alias;
-    Vec<lito::dependency::CMakeTargetRequirement> targets;
+    String                                                alias;
+    Vec<lito::dependency::CMakeTargetRequirement>         targets;
+    Option<lito::dependency::ExternalDependencyCondition> condition;
 };
 
 struct WorkspaceDependencyDefinition {
@@ -68,6 +70,7 @@ struct WorkspacePkgConfigExternalDependencyDefinition {
 struct WorkspaceCMakeExternalDependencyDefinition {
     String                                 alias;
     String                                 package;
+    Vec<String>                            components;
     Option<String>                         source;
     Option<PathBuf>                        adapter;
     Option<PathBuf>                        config_directory;

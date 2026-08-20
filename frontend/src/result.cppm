@@ -72,6 +72,18 @@ struct EmbedLookupDependency {
     Option<ResolvedEmbedCandidate> resolved;
 };
 
+auto lookup_candidate_exists(ref<rstd::path::Path> path) -> rstd::io::Result<bool> {
+    auto exists = rstd::fs::exists(path);
+    if (exists.is_ok()) return exists;
+    auto error = rstd::move(exists).unwrap_err();
+    auto kind  = error.kind();
+    if (kind == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound } ||
+        kind == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotADirectory }) {
+        return Ok(false);
+    }
+    return Err(rstd::move(error));
+}
+
 struct EmbeddedInput : DefaultInClass<EmbeddedInput, Clone> {
     rstd::path::PathBuf path;
     u64                 size {};
@@ -274,7 +286,7 @@ auto restore(FrontendSnapshot value) -> Option<FrontendResult> {
 
 auto validate(const IncludeLookupDependency& lookup) -> Result<bool, String> {
     for (const auto& candidate : lookup.missing_candidates) {
-        auto exists = rstd::fs::exists(candidate.as_path());
+        auto exists = lookup_candidate_exists(candidate.as_path());
         if (exists.is_err()) {
             return Err(rstd::format("cannot inspect include candidate '{}': {}",
                                     candidate.as_path(),
@@ -283,7 +295,7 @@ auto validate(const IncludeLookupDependency& lookup) -> Result<bool, String> {
         if (*exists) return Ok(false);
     }
     if (lookup.resolved.is_none()) return Ok(true);
-    auto exists = rstd::fs::exists(lookup.resolved->requested_path.as_path());
+    auto exists = lookup_candidate_exists(lookup.resolved->requested_path.as_path());
     if (exists.is_err()) {
         return Err(rstd::format("cannot inspect include candidate '{}': {}",
                                 lookup.resolved->requested_path.as_path(),
@@ -301,7 +313,7 @@ auto validate(const IncludeLookupDependency& lookup) -> Result<bool, String> {
 
 auto validate(const EmbedLookupDependency& lookup) -> Result<bool, String> {
     for (const auto& candidate : lookup.missing_candidates) {
-        auto exists = rstd::fs::exists(candidate.as_path());
+        auto exists = lookup_candidate_exists(candidate.as_path());
         if (exists.is_err()) {
             return Err(rstd::format("cannot inspect embed candidate '{}': {}",
                                     candidate.as_path(),
@@ -310,7 +322,7 @@ auto validate(const EmbedLookupDependency& lookup) -> Result<bool, String> {
         if (*exists) return Ok(false);
     }
     if (lookup.resolved.is_none()) return Ok(true);
-    auto exists = rstd::fs::exists(lookup.resolved->requested_path.as_path());
+    auto exists = lookup_candidate_exists(lookup.resolved->requested_path.as_path());
     if (exists.is_err()) {
         return Err(rstd::format("cannot inspect embed candidate '{}': {}",
                                 lookup.resolved->requested_path.as_path(),

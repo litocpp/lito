@@ -1,6 +1,7 @@
 export module lito.core:dependency.pkg_config;
 
 import rstd;
+import :dependency.condition;
 import :dependency.visibility;
 
 using namespace rstd::prelude;
@@ -36,9 +37,10 @@ struct PkgConfigDependencyRequirement {
 };
 
 struct PkgConfigExternalDependency {
-    String                         alias;
-    PkgConfigDependencyRequirement requirement;
-    DependencyVisibility           visibility { DependencyVisibility::Private };
+    String                              alias;
+    PkgConfigDependencyRequirement      requirement;
+    DependencyVisibility                visibility { DependencyVisibility::Private };
+    Option<ExternalDependencyCondition> condition;
 };
 
 struct PkgConfigProviderConfig {

@@ -133,6 +133,7 @@ path = "cmake-package"
 
 [workspace.external-dependencies.cmake.fixture]
 package = "LitoFixture"
+components = ["Core"]
 source = "fixture"
 adapter = "fixture-adapter.cmake"
 )toml"_str,
@@ -169,9 +170,11 @@ visibility = "private"
 [external-dependencies.pkg-config.curl]
 workspace = true
 visibility = "public"
+condition = "true"
 
 [external-dependencies.cmake.fixture]
 workspace = true
+condition = "true"
 targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
 )toml"_str,
         },
@@ -236,10 +239,16 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_EQ(curl.requirement.module.as_str(), "libcurl"_str);
     EXPECT_EQ(curl.requirement.mode, lito::dependency::PkgConfigQueryMode::Static);
     EXPECT_EQ(curl.visibility, lito::dependency::DependencyVisibility::Public);
+    ASSERT_TRUE(curl.condition.is_some());
+    EXPECT_EQ(curl.condition->source.as_str(), "true"_str);
 
     ASSERT_EQ(app.manifest.cmake_external_dependencies.len(), usize(1));
     const auto& cmake = app.manifest.cmake_external_dependencies[usize {}];
     EXPECT_EQ(cmake.alias.as_str(), "fixture"_str);
+    ASSERT_EQ(cmake.components.len(), usize(1));
+    EXPECT_EQ(cmake.components[usize {}].as_str(), "Core"_str);
+    ASSERT_TRUE(cmake.condition.is_some());
+    EXPECT_EQ(cmake.condition->source.as_str(), "true"_str);
     ASSERT_EQ(cmake.targets.len(), usize(1));
     EXPECT_EQ(cmake.targets[usize {}].name.as_str(), "LitoFixture::fixture"_str);
     ASSERT_TRUE(cmake.adapter.is_some());

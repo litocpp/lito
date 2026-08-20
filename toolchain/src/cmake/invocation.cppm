@@ -335,12 +335,26 @@ function(lito_export_asset_set)
   endforeach()
 endfunction()
 )cmake"_str);
+    for (const auto& component : requirement.components) {
+        if (! lito::dependency::cmake_component_name_is_valid(component.as_str())) {
+            return cmake_failure<String>(
+                rstd::format("CMake dependency '{}' has unsafe component '{}'",
+                             requirement.alias.as_str(),
+                             component.as_str()));
+        }
+    }
     if (requirement.adapter.is_some()) {
         result.push_str("set(LITO_CMAKE_DEPENDENCY_MODE \""_str);
         result.push_str(requirement.source.is_Find() ? "find"_str : "source"_str);
         result.push_str("\")\nset(LITO_CMAKE_DEPENDENCY_PACKAGE \""_str);
         result.push_str(requirement.package.as_str());
-        result.push_str("\")\n"_str);
+        result.push_str("\")\nset(LITO_CMAKE_DEPENDENCY_COMPONENTS"_str);
+        for (const auto& component : requirement.components) {
+            result.push_str(" \""_str);
+            result.push_str(component.as_str());
+            result.push_ascii('"');
+        }
+        result.push_str(")\n"_str);
         if (requirement.source.is_Directory()) {
             auto source = path_text(area.source.as_path(), "CMake dependency source"_str);
             if (source.is_err()) return Err(rstd::move(source).unwrap_err());
@@ -360,12 +374,27 @@ endfunction()
     } else if (requirement.source.is_Directory()) {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
-        result.push_str(
-            " REQUIRED CONFIG PATHS \"${LITO_CMAKE_DEPENDENCY_PREFIX}\" NO_DEFAULT_PATH)\n"_str);
+        result.push_str(" REQUIRED"_str);
+        if (! requirement.components.is_empty()) {
+            result.push_str(" COMPONENTS"_str);
+            for (const auto& component : requirement.components) {
+                result.push_ascii(' ');
+                result.push_str(component.as_str());
+            }
+        }
+        result.push_str(" CONFIG PATHS \"${LITO_CMAKE_DEPENDENCY_PREFIX}\" NO_DEFAULT_PATH)\n"_str);
     } else {
         result.push_str("find_package("_str);
         result.push_str(requirement.package.as_str());
-        result.push_str(" REQUIRED)\n"_str);
+        result.push_str(" REQUIRED"_str);
+        if (! requirement.components.is_empty()) {
+            result.push_str(" COMPONENTS"_str);
+            for (const auto& component : requirement.components) {
+                result.push_ascii(' ');
+                result.push_str(component.as_str());
+            }
+        }
+        result.push_str(")\n"_str);
     }
     auto mode  = requirement.source.is_Find() ? "find"_str : "source"_str;
     auto owner = requirement.adapter.is_some() ? "adapter"_str : "generic"_str;

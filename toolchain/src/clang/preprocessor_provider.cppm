@@ -72,7 +72,7 @@ private:
                    frontend::IncludeLookupDependency& dependency)
         -> preprocessor::Result<Option<preprocessor::IncludeResolution>> {
         auto requested = PathBuf::from(directory).join(PathBuf::from(name).as_path());
-        auto exists    = rstd::fs::exists(requested.as_path());
+        auto exists    = frontend::lookup_candidate_exists(requested.as_path());
         if (exists.is_err()) {
             return Err(
                 preprocessor::Error::make(rstd::format("cannot inspect include candidate '{}': {}",
@@ -155,7 +155,7 @@ private:
                    frontend::EmbedLookupDependency& dependency)
         -> preprocessor::Result<Option<preprocessor::EmbedResolution>> {
         auto requested = PathBuf::from(directory).join(PathBuf::from(name).as_path());
-        auto exists    = rstd::fs::exists(requested.as_path());
+        auto exists    = frontend::lookup_candidate_exists(requested.as_path());
         if (exists.is_err()) {
             return Err(
                 preprocessor::Error::make(rstd::format("cannot inspect embed candidate '{}': {}",

@@ -31,12 +31,16 @@ TEST_F(CMakeManifest, CMakeManifestIsTypedAndSourceIsResolvedByExternalOwner) {
         { "lito.toml"_str, R"([package]
 name = "cmake-valid"
 version = "0.1.0"
+[features.qt]
+default = false
 [lib]
 name = "cmake-valid"
 module = "cmake_valid"
 archive = "cmake_valid"
 [external-dependencies.cmake.vulkan]
 package = "Vulkan"
+components = ["Headers"]
+condition = "!feature.qt"
 targets = [{ name = "Vulkan::Vulkan", visibility = "public" }]
 [external-sources.fixture]
 path = "package"
@@ -66,6 +70,10 @@ targets = [
     const auto  source_index          = installed_index == usize {} ? usize(1) : usize {};
     const auto& installed_requirement = loaded->cmake_external_dependencies[installed_index];
     EXPECT_EQ(installed_requirement.package.as_str(), "Vulkan"_str);
+    ASSERT_EQ(installed_requirement.components.len(), usize(1));
+    EXPECT_EQ(installed_requirement.components[usize {}].as_str(), "Headers"_str);
+    ASSERT_TRUE(installed_requirement.condition.is_some());
+    EXPECT_EQ(installed_requirement.condition->source.as_str(), "!feature.qt"_str);
     ASSERT_EQ(installed_requirement.targets.len(), usize(1));
     EXPECT_EQ(installed_requirement.targets[usize {}].name.as_str(), "Vulkan::Vulkan"_str);
     EXPECT_TRUE(installed_requirement.source.is_none());
@@ -363,6 +371,26 @@ targets = [
   { name = "LitoFixture::fixture", visibility = "public" },
 ]
 )"_str },
+        { "duplicate-component"_str, R"([external-dependencies.cmake.fixture]
+package = "LitoFixture"
+components = ["Core", "Core"]
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "empty-components"_str, R"([external-dependencies.cmake.fixture]
+package = "LitoFixture"
+components = []
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "invalid-condition"_str, R"([external-dependencies.cmake.fixture]
+package = "LitoFixture"
+condition = "feature.qt &&"
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)"_str },
+        { "unsafe-component"_str, R"toml([external-dependencies.cmake.fixture]
+package = "LitoFixture"
+components = ["Core;include(evil)"]
+targets = [{ name = "LitoFixture::fixture", visibility = "private" }]
+)toml"_str },
         { "empty-targets"_str, R"([external-dependencies.cmake.fixture]
 package = "LitoFixture"
 targets = []
@@ -570,6 +598,7 @@ archive = "https://example.com/fixture-linuxarm64.tar.gz"
 sha256 = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 [workspace.external-dependencies.cmake.fixture]
 package = "Fixture"
+components = ["Core", "Network"]
 source = "fixture"
 )"_str },
         { "app/lito.toml"_str, R"([package]
@@ -581,6 +610,7 @@ name = "fixture-workspace-architecture-archives-app"
 sources = ["main.cpp"]
 [external-dependencies.cmake.fixture]
 workspace = true
+condition = "true"
 targets = [{ name = "Fixture::fixture", visibility = "private" }]
 )"_str },
         { "app/main.cpp"_str, "int main() { return 0; }\n"_str },
@@ -604,6 +634,11 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
         graph->packages[usize {}].manifest.cmake_external_dependencies[usize {}];
     ASSERT_TRUE(inherited.source.is_some());
     EXPECT_EQ(inherited.source->as_str(), "fixture"_str);
+    ASSERT_EQ(inherited.components.len(), usize(2));
+    EXPECT_EQ(inherited.components[usize {}].as_str(), "Core"_str);
+    EXPECT_EQ(inherited.components[usize(1)].as_str(), "Network"_str);
+    ASSERT_TRUE(inherited.condition.is_some());
+    EXPECT_EQ(inherited.condition->source.as_str(), "true"_str);
     ASSERT_EQ(inherited.targets.len(), usize(1));
     EXPECT_EQ(inherited.targets[usize {}].name.as_str(), "Fixture::fixture"_str);
     ASSERT_EQ(graph->packages[usize {}].manifest.external_sources.len(), usize(1));

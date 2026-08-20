@@ -474,6 +474,7 @@ using StandardLibraryHasFeature = StandardLibraryCapabilitySet<
     preprocessor::HasFeatureQuery,
     frontend::StaticName<"address_sanitizer">,
     frontend::StaticName<"cxx_atomic">,
+    frontend::StaticName<"cxx_unicode_literals">,
     frontend::StaticName<"experimental_library">,
     frontend::StaticName<"modules">,
     frontend::StaticName<"nullability">,

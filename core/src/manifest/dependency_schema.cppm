@@ -18,6 +18,7 @@ import lito.system;
 import :manifest.primitives;
 import :manifest.key_schema;
 import :manifest.target_schema;
+import :condition;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -632,6 +633,24 @@ auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
     });
 }
 
+auto parse_external_dependency_condition(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Option<lito::dependency::ExternalDependencyCondition>> {
+    auto source = rstd_try(optional_string(specification, "condition"_str, context));
+    if (source.is_none()) {
+        return Ok(Option<lito::dependency::ExternalDependencyCondition> {});
+    }
+    auto expression = lito::condition::parse(source->as_str());
+    if (expression.is_err()) {
+        return manifest_schema_failure<Option<lito::dependency::ExternalDependencyCondition>>(
+            rstd::format(
+                "{} condition '{}': {}", context, source->as_str(), expression.unwrap_err()));
+    }
+    return Ok(Some(lito::dependency::ExternalDependencyCondition {
+        .source     = rstd::move(source).unwrap(),
+        .expression = rstd::move(expression).unwrap(),
+    }));
+}
+
 struct ParsedPkgConfigExternalDependencies {
     Vec<lito::dependency::PkgConfigExternalDependency> explicit_dependencies;
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_dependencies;
@@ -666,10 +685,13 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
         auto parsed_visibility =
             parse_visibility(visibility->as_str(), "external pkg-config visibility"_str);
         if (parsed_visibility.is_err()) return Err(rstd::move(parsed_visibility).unwrap_err());
+        auto condition =
+            rstd_try(parse_external_dependency_condition(**specification, context.as_str()));
         if (*inherited) {
             result.workspace_dependencies.push(WorkspacePkgConfigExternalDependencyReference {
                 .alias      = alias.clone(),
                 .visibility = rstd::move(parsed_visibility).unwrap(),
+                .condition  = rstd::move(condition),
             });
             continue;
         }
@@ -679,6 +701,7 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
             .alias       = alias.clone(),
             .requirement = rstd::move(requirement).unwrap(),
             .visibility  = rstd::move(parsed_visibility).unwrap(),
+            .condition   = rstd::move(condition),
         });
     }
     return Ok(rstd::move(result));
@@ -755,15 +778,41 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
     return Ok(rstd::move(result));
 }
 
+auto parse_cmake_components(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Vec<String>> {
+    auto value = member(specification, "components"_str);
+    auto components =
+        rstd_try(string_array(value, rstd::format("{}.components", context).as_str()));
+    if (value.is_some() && components.is_empty()) {
+        return manifest_schema_failure<Vec<String>>(
+            rstd::format("{}.components must not be empty", context));
+    }
+    auto names = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& component : components) {
+        if (! lito::dependency::cmake_component_name_is_valid(component.as_str())) {
+            return manifest_schema_failure<Vec<String>>(rstd::format(
+                "{}.components contains unsafe component '{}'", context, component.as_str()));
+        }
+        if (names.contains_key(component.as_str())) {
+            return manifest_schema_failure<Vec<String>>(
+                rstd::format("{}.components repeats component '{}'", context, component.as_str()));
+        }
+        names.insert(component.clone(), empty {});
+    }
+    return Ok(rstd::move(components));
+}
+
 auto parse_cmake_external_dependency_definition(const Toml& specification,
                                                 String      alias,
                                                 ref<str>    context)
     -> ManifestSchemaResult<WorkspaceCMakeExternalDependencyDefinition> {
     auto package          = required_string(specification, "package"_str, context);
+    auto components       = parse_cmake_components(specification, context);
     auto source           = optional_string(specification, "source"_str, context);
     auto adapter          = optional_string(specification, "adapter"_str, context);
     auto config_directory = optional_string(specification, "config-directory"_str, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
+    if (components.is_err()) return Err(rstd::move(components).unwrap_err());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
@@ -805,6 +854,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     return Ok(WorkspaceCMakeExternalDependencyDefinition {
         .alias            = rstd::move(alias),
         .package          = rstd::move(package).unwrap(),
+        .components       = rstd::move(components).unwrap(),
         .source           = rstd::move(source_value),
         .adapter          = rstd::move(adapter_path),
         .config_directory = rstd::move(directory),
@@ -839,12 +889,15 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
         if (inherited.is_err()) return Err(rstd::move(inherited).unwrap_err());
         auto targets = parse_cmake_targets(**specification, context.as_str());
         if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
+        auto condition =
+            rstd_try(parse_external_dependency_condition(**specification, context.as_str()));
         if (*inherited) {
             rstd_try(
                 reject_unknown(**fields, context.as_str(), workspace_cmake_external_reference_key));
             result.workspace_dependencies.push(WorkspaceCMakeExternalDependencyReference {
-                .alias   = alias.clone(),
-                .targets = rstd::move(targets).unwrap(),
+                .alias     = alias.clone(),
+                .targets   = rstd::move(targets).unwrap(),
+                .condition = rstd::move(condition),
             });
             continue;
         }
@@ -855,6 +908,8 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
         result.explicit_dependencies.push(lito::dependency::CMakeDependencyRequirement {
             .alias            = rstd::move(value.alias),
             .package          = rstd::move(value.package),
+            .components       = rstd::move(value.components),
+            .condition        = rstd::move(condition),
             .source           = rstd::move(value.source),
             .adapter          = rstd::move(value.adapter),
             .config_directory = rstd::move(value.config_directory),

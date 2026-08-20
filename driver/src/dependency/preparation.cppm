@@ -23,6 +23,7 @@ class PreparedCMakeDependencySource {
 struct PreparedCMakeDependencyRequirement {
     String                                        alias;
     String                                        package;
+    Vec<String>                                   components;
     Option<String>                                source_name;
     PreparedCMakeDependencySource                 source;
     Option<PathBuf>                               adapter;
@@ -76,6 +77,7 @@ class SelectedCMakeDependencySource {
 struct SelectedCMakeDependencyRequirement {
     String                                        alias;
     String                                        package;
+    Vec<String>                                   components;
     SelectedCMakeDependencySource                 source;
     Option<PathBuf>                               adapter;
     String                                        adapter_identity;

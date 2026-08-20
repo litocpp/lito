@@ -120,6 +120,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
             .visibility = target.visibility,
         });
     }
+    auto components       = as<Clone>(declaration.components).clone();
     auto config_directory = Option<PathBuf> {};
     if (! task.installed_override && declaration.config_directory.is_some()) {
         config_directory = Some(declaration.config_directory->clone());
@@ -164,6 +165,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
             PreparedCMakeDependencyRequirement {
                 .alias            = declaration.alias.clone(),
                 .package          = declaration.package.clone(),
+                .components       = rstd::move(components),
                 .source_name      = rstd::move(source_name),
                 .source           = rstd::move(source),
                 .adapter          = rstd::move(adapter),
@@ -409,9 +411,11 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
             .visibility = target.visibility,
         });
     }
+    auto components = as<Clone>(requirement.components).clone();
     return Ok(SelectedCMakeDependencyRequirement {
         .alias            = requirement.alias.clone(),
         .package          = requirement.package.clone(),
+        .components       = rstd::move(components),
         .source           = rstd::move(source),
         .adapter          = rstd::move(adapter),
         .adapter_identity = requirement.adapter_identity.clone(),
@@ -456,9 +460,11 @@ auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& req
             .visibility = target.visibility,
         });
     }
+    auto components = as<Clone>(requirement.components).clone();
     return Ok(ResolvedCMakeDependencyRequirement {
         .alias            = requirement.alias.clone(),
         .package          = requirement.package.clone(),
+        .components       = rstd::move(components),
         .source           = rstd::move(source),
         .adapter          = rstd::move(adapter),
         .adapter_identity = requirement.adapter_identity.clone(),
