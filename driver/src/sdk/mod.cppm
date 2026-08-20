@@ -67,11 +67,13 @@ struct SdkListEntry {
     SdkListStatus   status { SdkListStatus::Available };
     Option<PathBuf> prefix;
     Option<String>  issue;
+    bool            active { false };
 };
 
 struct SdkListSummary {
     String            host;
     Vec<SdkListEntry> entries;
+    Option<String>    active_issue;
 };
 
 struct SdkInstallRequest {
@@ -90,8 +92,71 @@ struct SdkInstallSummary {
     bool    reused { false };
 };
 
+struct SdkActivateRequest {
+    String version;
+};
+
+struct SdkActivateSummary {
+    String  version;
+    String  host;
+    PathBuf prefix;
+    bool    unchanged { false };
+};
+
+struct SdkDeactivateSummary {
+    Option<String>  version;
+    Option<String>  host;
+    Option<PathBuf> prefix;
+    bool            invalid_state { false };
+    bool            unchanged { false };
+};
+
+struct SdkUninstallRequest {
+    String version;
+};
+
+struct SdkUninstallSummary {
+    String         version;
+    Option<String> host;
+    PathBuf        prefix;
+    bool           was_active { false };
+    bool           invalid_entry { false };
+    bool           recovered { false };
+};
+
+class ActiveSdkLease {
+    String                              m_version;
+    String                              m_host;
+    PathBuf                             m_prefix;
+    lito::config::ProjectConfigDefaults m_defaults;
+    rstd::fs::FileLock                  m_lock;
+
+    ActiveSdkLease(String                              version,
+                   String                              host,
+                   PathBuf                             prefix,
+                   lito::config::ProjectConfigDefaults defaults,
+                   rstd::fs::FileLock                  lock) noexcept;
+    friend auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>>;
+
+public:
+    ActiveSdkLease(const ActiveSdkLease&)                        = delete;
+    auto operator=(const ActiveSdkLease&) -> ActiveSdkLease&     = delete;
+    ActiveSdkLease(ActiveSdkLease&&) noexcept                    = default;
+    auto operator=(ActiveSdkLease&&) noexcept -> ActiveSdkLease& = default;
+    ~ActiveSdkLease()                                            = default;
+
+    auto version() const noexcept -> ref<str> { return m_version.as_str(); }
+    auto host() const noexcept -> ref<str> { return m_host.as_str(); }
+    auto prefix() const noexcept -> ref<rstd::path::Path> { return m_prefix.as_path(); }
+    auto project_defaults() const -> lito::config::ProjectConfigDefaults;
+};
+
 auto list_llvm_sdks() -> SdkResult<SdkListSummary>;
 auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>;
+auto activate_llvm_sdk(SdkActivateRequest request) -> SdkResult<SdkActivateSummary>;
+auto deactivate_llvm_sdk() -> SdkResult<SdkDeactivateSummary>;
+auto uninstall_llvm_sdk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary>;
+auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>>;
 
 } // namespace lito
 

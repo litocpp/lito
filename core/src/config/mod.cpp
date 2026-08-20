@@ -425,8 +425,10 @@ auto lito::config::load_project_config(ref<rstd::path::Path> root, ProjectConfig
     for (usize index {}; index < request.overrides.len(); ++index) {
         rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
     }
-    return decode_project_config(
-        document.location.root.clone(), document.value, request.environment_flags);
+    return decode_project_config(document.location.root.clone(),
+                                 document.value,
+                                 request.environment_flags,
+                                 rstd::move(request.defaults));
 }
 
 auto lito::config::load_project_config(ref<rstd::path::Path> root, ConfigLoadMode mode)
@@ -444,7 +446,8 @@ auto lito::config::load_host_tool_command_config(ref<rstd::path::Path> root,
     for (usize index {}; index < request.overrides.len(); ++index) {
         rstd_try(apply_config_override(document, request.overrides[index].as_str(), index));
     }
-    return decode_host_tool_command_config(document.location.root.clone(), document.value);
+    return decode_host_tool_command_config(
+        document.location.root.clone(), document.value, rstd::move(request.defaults));
 }
 
 auto lito::config::get_persisted_config(ref<rstd::path::Path> root, Option<String> key)

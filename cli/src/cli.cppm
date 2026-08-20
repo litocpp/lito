@@ -152,6 +152,16 @@ struct SdkInstallOptions {
     String version;
 };
 
+struct SdkActivateOptions {
+    String version;
+};
+
+struct SdkDeactivateOptions {};
+
+struct SdkUninstallOptions {
+    String version;
+};
+
 class LockCommand {
     RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
 };
@@ -167,7 +177,10 @@ class ConfigCommand {
 class SdkCommand {
     RSTD_ENUM(SdkCommand,
               (List, (SdkListOptions options;)),
-              (Install, (SdkInstallOptions options;)))
+              (Install, (SdkInstallOptions options;)),
+              (Activate, (SdkActivateOptions options;)),
+              (Deactivate, (SdkDeactivateOptions options;)),
+              (Uninstall, (SdkUninstallOptions options;)))
 };
 
 class CliCommand {
@@ -437,10 +450,33 @@ struct SdkInstallSchema {
     auto decode(const Matches& matches) const -> Result<SdkInstallOptions, CliDecodeError>;
 };
 
+struct SdkActivateSchema {
+    CommandKey     command;
+    ArgKey<String> version;
+
+    auto decode(const Matches& matches) const -> Result<SdkActivateOptions, CliDecodeError>;
+};
+
+struct SdkDeactivateSchema {
+    CommandKey command;
+
+    auto decode(const Matches& matches) const -> Result<SdkDeactivateOptions, CliDecodeError>;
+};
+
+struct SdkUninstallSchema {
+    CommandKey     command;
+    ArgKey<String> version;
+
+    auto decode(const Matches& matches) const -> Result<SdkUninstallOptions, CliDecodeError>;
+};
+
 struct SdkSchema {
-    CommandKey       command;
-    SdkListSchema    list;
-    SdkInstallSchema install;
+    CommandKey          command;
+    SdkListSchema       list;
+    SdkInstallSchema    install;
+    SdkActivateSchema   activate;
+    SdkDeactivateSchema deactivate;
+    SdkUninstallSchema  uninstall;
 
     auto decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError>;
 };
@@ -938,17 +974,53 @@ auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
                                                    .help("Exact LLVM version to install"_str)
                                                    .required());
 
+    auto activate_command = Command::make("activate"_str);
+    activate_command.about("Activate an installed LLVM SDK"_str);
+    auto activate_key = activate_command.key();
+    auto activate_version =
+        activate_command.add_arg(Arg<String>::value("version"_str, string_parser())
+                                     .value_name("VERSION"_str)
+                                     .help("Exact LLVM version to activate"_str)
+                                     .required());
+
+    auto deactivate_command = Command::make("deactivate"_str);
+    deactivate_command.about("Clear the active LLVM SDK"_str);
+    auto deactivate_key = deactivate_command.key();
+
+    auto uninstall_command = Command::make("uninstall"_str);
+    uninstall_command.about("Uninstall an LLVM SDK"_str);
+    auto uninstall_key = uninstall_command.key();
+    auto uninstall_version =
+        uninstall_command.add_arg(Arg<String>::value("version"_str, string_parser())
+                                      .value_name("VERSION"_str)
+                                      .help("Exact LLVM version to uninstall"_str)
+                                      .required());
+
     auto command = Command::make("sdk"_str);
     command.about("Manage LLVM SDKs"_str);
     command.require_subcommand();
     auto key = command.key();
     command.add_subcommand(rstd::move(list_command));
     command.add_subcommand(rstd::move(install_command));
+    command.add_subcommand(rstd::move(activate_command));
+    command.add_subcommand(rstd::move(deactivate_command));
+    command.add_subcommand(rstd::move(uninstall_command));
     return {
         SdkSchema {
             .command = key,
             .list    = SdkListSchema { .command = list_key },
             .install = SdkInstallSchema { .command = install_key, .version = version },
+            .activate =
+                SdkActivateSchema {
+                    .command = activate_key,
+                    .version = activate_version,
+                },
+            .deactivate = SdkDeactivateSchema { .command = deactivate_key },
+            .uninstall =
+                SdkUninstallSchema {
+                    .command = uninstall_key,
+                    .version = uninstall_version,
+                },
         },
         rstd::move(command),
     };
@@ -1387,12 +1459,40 @@ auto SdkInstallSchema::decode(const Matches& matches) const
     });
 }
 
+auto SdkActivateSchema::decode(const Matches& matches) const
+    -> Result<SdkActivateOptions, CliDecodeError> {
+    return Ok(SdkActivateOptions {
+        .version = rstd_try(required_string(matches, version, "version"_str)),
+    });
+}
+
+auto SdkDeactivateSchema::decode(const Matches&) const
+    -> Result<SdkDeactivateOptions, CliDecodeError> {
+    return Ok(SdkDeactivateOptions {});
+}
+
+auto SdkUninstallSchema::decode(const Matches& matches) const
+    -> Result<SdkUninstallOptions, CliDecodeError> {
+    return Ok(SdkUninstallOptions {
+        .version = rstd_try(required_string(matches, version, "version"_str)),
+    });
+}
+
 auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(list.command); child.is_some()) {
         return Ok(SdkCommand::List(rstd_try(list.decode(**child))));
     }
     if (auto child = matches.subcommand_matches(install.command); child.is_some()) {
         return Ok(SdkCommand::Install(rstd_try(install.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(activate.command); child.is_some()) {
+        return Ok(SdkCommand::Activate(rstd_try(activate.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(deactivate.command); child.is_some()) {
+        return Ok(SdkCommand::Deactivate(rstd_try(deactivate.decode(**child))));
+    }
+    if (auto child = matches.subcommand_matches(uninstall.command); child.is_some()) {
+        return Ok(SdkCommand::Uninstall(rstd_try(uninstall.decode(**child))));
     }
     return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
 }

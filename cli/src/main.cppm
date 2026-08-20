@@ -222,6 +222,12 @@ auto sdk_status_text(lito::SdkListStatus status) -> ref<str> {
     rstd::unreachable();
 }
 
+auto sdk_entry_status_text(const lito::SdkListEntry& entry) -> String {
+    auto text = String::make(sdk_status_text(entry.status));
+    if (entry.active) text.push_str(", active"_str);
+    return text;
+}
+
 void append_column(String& output, ref<str> value, usize width) {
     output.push_str(value);
     for (auto padding = value.len(); padding < width; ++padding) output.push_ascii(' ');
@@ -230,6 +236,9 @@ void append_column(String& output, ref<str> value, usize width) {
 void render_sdk_list(const lito::SdkListSummary& summary) {
     if (summary.entries.is_empty()) {
         rstd::io::println("no LLVM SDKs are available for {}", summary.host);
+        if (summary.active_issue.is_some()) {
+            rstd::io::println("active SDK state: {}", *summary.active_issue);
+        }
         return;
     }
     auto version_width = "VERSION"_str.len();
@@ -238,7 +247,7 @@ void render_sdk_list(const lito::SdkListSummary& summary) {
     for (const auto& entry : summary.entries) {
         if (entry.version.len() > version_width) version_width = entry.version.len();
         if (entry.host.len() > host_width) host_width = entry.host.len();
-        auto status = sdk_status_text(entry.status);
+        auto status = sdk_entry_status_text(entry);
         if (status.len() > status_width) status_width = status.len();
     }
     auto output = String::make();
@@ -253,7 +262,8 @@ void render_sdk_list(const lito::SdkListSummary& summary) {
         output.push_str("  "_str);
         append_column(output, entry.host.as_str(), host_width);
         output.push_str("  "_str);
-        append_column(output, sdk_status_text(entry.status), status_width);
+        auto status = sdk_entry_status_text(entry);
+        append_column(output, status.as_str(), status_width);
         if (entry.prefix.is_some()) {
             output.push_str("  "_str);
             output.push_str(rstd::format("{}", entry.prefix->as_path()).as_str());
@@ -262,6 +272,11 @@ void render_sdk_list(const lito::SdkListSummary& summary) {
             output.push_str("  "_str);
             output.push_str(entry.issue->as_str());
         }
+        output.push_ascii('\n');
+    }
+    if (summary.active_issue.is_some()) {
+        output.push_str("active SDK state: "_str);
+        output.push_str(summary.active_issue->as_str());
         output.push_ascii('\n');
     }
     rstd::io::print("{}", output.as_str());
@@ -499,6 +514,78 @@ extern "C++" int main() {
             render_sdk_list(*result);
             return 0;
         }
+        if (command.is_Activate()) {
+            auto options = rstd::move(command).as_Activate().options;
+            auto result  = lito::activate_llvm_sdk(lito::SdkActivateRequest {
+                .version = rstd::move(options.version),
+            });
+            if (result.is_err()) {
+                auto error = rstd::move(result).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            auto summary = rstd::move(result).unwrap();
+            if (summary.unchanged) {
+                rstd::io::println("LLVM SDK {} for {} is already active at {}",
+                                  summary.version,
+                                  summary.host,
+                                  summary.prefix.as_path());
+            } else {
+                rstd::io::println("activated LLVM SDK {} for {} at {}",
+                                  summary.version,
+                                  summary.host,
+                                  summary.prefix.as_path());
+            }
+            return 0;
+        }
+        if (command.is_Deactivate()) {
+            auto result = lito::deactivate_llvm_sdk();
+            if (result.is_err()) {
+                auto error = rstd::move(result).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            auto summary = rstd::move(result).unwrap();
+            if (summary.unchanged) {
+                rstd::io::println("no LLVM SDK is active");
+            } else if (summary.invalid_state) {
+                rstd::io::println("cleared invalid LLVM SDK activation state");
+            } else {
+                rstd::io::println(
+                    "deactivated LLVM SDK {} for {}", *summary.version, *summary.host);
+            }
+            return 0;
+        }
+        if (command.is_Uninstall()) {
+            auto options = rstd::move(command).as_Uninstall().options;
+            auto result  = lito::uninstall_llvm_sdk(lito::SdkUninstallRequest {
+                .version = rstd::move(options.version),
+            });
+            if (result.is_err()) {
+                auto error = rstd::move(result).unwrap_err();
+                report_error(error);
+                return 1;
+            }
+            auto summary = rstd::move(result).unwrap();
+            auto status  = summary.was_active ? "uninstalled active"_str : "uninstalled"_str;
+            if (summary.recovered) {
+                rstd::io::println("completed interrupted LLVM SDK {} removal from {}",
+                                  summary.version,
+                                  summary.prefix.as_path());
+            } else if (summary.invalid_entry) {
+                rstd::io::println("{} invalid LLVM SDK {} from {}",
+                                  status,
+                                  summary.version,
+                                  summary.prefix.as_path());
+            } else {
+                rstd::io::println("{} LLVM SDK {} for {} from {}",
+                                  status,
+                                  summary.version,
+                                  *summary.host,
+                                  summary.prefix.as_path());
+            }
+            return 0;
+        }
         auto options = rstd::move(command).as_Install().options;
         auto loaded  = lito::config::load_host_tool_command_config(
             invocation.working_directory.as_path(),
@@ -551,8 +638,17 @@ extern "C++" int main() {
         }
         install_source = Some(rstd::move(resolved).unwrap());
     }
-    auto config_root   = install_source.is_some() ? install_source->project.root.as_path()
-                                                  : invocation.working_directory.as_path();
+    auto config_root       = install_source.is_some() ? install_source->project.root.as_path()
+                                                      : invocation.working_directory.as_path();
+    auto active_sdk_result = lito::acquire_active_llvm_sdk();
+    if (active_sdk_result.is_err()) {
+        auto error = rstd::move(active_sdk_result).unwrap_err();
+        report_error(error);
+        return 1;
+    }
+    auto active_sdk = rstd::move(active_sdk_result).unwrap();
+    auto defaults   = Option<lito::config::ProjectConfigDefaults> {};
+    if (active_sdk.is_some()) defaults = Some(active_sdk->project_defaults());
     auto loaded_config = lito::config::load_project_config(
         config_root,
         lito::config::ProjectConfigRequest {
@@ -562,6 +658,7 @@ extern "C++" int main() {
             .environment_flags = invocation.use_env_flags
                                      ? lito::config::EnvironmentFlagPolicy::Append
                                      : lito::config::EnvironmentFlagPolicy::Ignore,
+            .defaults          = rstd::move(defaults),
         });
     if (loaded_config.is_err()) {
         auto error = rstd::move(loaded_config).unwrap_err();

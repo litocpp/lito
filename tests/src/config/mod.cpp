@@ -164,6 +164,68 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::system::Tool::PkgConfig));
 }
 
+TEST_F(Config, CallerToolDefaultsRemainBelowProjectAndRuntimeOverrides) {
+    auto project = config("caller-tool-defaults"_str,
+                          "[toolchain]\n"
+                          "cxx = \"project-cxx\"\n"
+                          "[tools]\n"
+                          "git = \"project-git\"\n"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto defaults = [] {
+        auto tools         = ToolSpec {};
+        tools.strip        = PathBuf::from("sdk-strip"_str);
+        tools.clang_format = PathBuf::from("sdk-format"_str);
+        tools.mark_configured(Tool::Strip);
+        tools.mark_configured(Tool::ClangFormat);
+        return lito::config::ProjectConfigDefaults {
+            .tools = rstd::move(tools),
+            .toolchain =
+                lito::config::ToolchainSpec {
+                    .cc  = PathBuf::from("sdk-cc"_str),
+                    .cxx = PathBuf::from("sdk-cxx"_str),
+                    .ld  = PathBuf::from("sdk-ld"_str),
+                    .ar  = PathBuf::from("sdk-ar"_str),
+                },
+        };
+    };
+
+    auto loaded = lito::config::load_project_config(project->root.as_path(),
+                                                    lito::config::ProjectConfigRequest {
+                                                        .defaults = Some(defaults()),
+                                                    });
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("sdk-cc"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("project-cxx"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("sdk-ld"_str).as_path());
+    EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("sdk-ar"_str).as_path());
+    EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("sdk-strip"_str).as_path());
+    EXPECT_EQ(loaded->tools.clang_format.as_path(), PathBuf::from("sdk-format"_str).as_path());
+    EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("project-git"_str).as_path());
+    EXPECT_TRUE(loaded->tools.explicitly_configured(Tool::Strip));
+
+    auto overrides = Vec<String>::make();
+    overrides.push(String::make("toolchain.ld=runtime-ld"_str));
+    overrides.push(String::make("tools.strip=runtime-strip"_str));
+    auto overridden = lito::config::load_project_config(project->root.as_path(),
+                                                        lito::config::ProjectConfigRequest {
+                                                            .overrides = rstd::move(overrides),
+                                                            .defaults  = Some(defaults()),
+                                                        });
+    ASSERT_TRUE(overridden.is_ok());
+    EXPECT_EQ(overridden->toolchain.ld.as_path(), PathBuf::from("runtime-ld"_str).as_path());
+    EXPECT_EQ(overridden->tools.strip.as_path(), PathBuf::from("runtime-strip"_str).as_path());
+
+    auto local_disabled =
+        lito::config::load_project_config(project->root.as_path(),
+                                          lito::config::ProjectConfigRequest {
+                                              .mode = lito::config::ConfigLoadMode::LocalDisabled,
+                                              .defaults = Some(defaults()),
+                                          });
+    ASSERT_TRUE(local_disabled.is_ok());
+    EXPECT_EQ(local_disabled->toolchain.cxx.as_path(), PathBuf::from("sdk-cxx"_str).as_path());
+    EXPECT_EQ(local_disabled->tools.strip.as_path(), PathBuf::from("sdk-strip"_str).as_path());
+}
+
 TEST_F(Config, HostToolCommandConfigDoesNotDecodeProjectOnlyDomains) {
     auto project = config("host-tool-command"_str,
                           "[tools]\n"

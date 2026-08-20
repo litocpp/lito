@@ -167,13 +167,6 @@ auto configured_tool_override(const Toml& toolchain_value, ref<str> key, ref<str
     return Ok(Some(rstd_try(configured_executable(**value, field.as_str()))));
 }
 
-auto configured_tool(const Toml& toolchain_value, ref<str> key, ref<str> fallback, ref<str> context)
-    -> ConfigResult<PathBuf> {
-    auto configured = rstd_try(configured_tool_override(toolchain_value, key, context));
-    if (configured.is_some()) return Ok(rstd::move(configured).unwrap());
-    return Ok(PathBuf::from(fallback));
-}
-
 auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<StandardLibrary> {
     auto value = config_member(toolchain_value, "stdlib"_str);
     if (value.is_none()) return Ok(StandardLibrary::Libcxx);
@@ -457,8 +450,8 @@ auto default_toolchain() -> ToolchainSpec {
     };
 }
 
-auto configured_toolchain(const Toml& document) -> ConfigResult<ToolchainSpec> {
-    auto toolchain       = default_toolchain();
+auto configured_toolchain(const Toml& document, ToolchainSpec toolchain)
+    -> ConfigResult<ToolchainSpec> {
     auto toolchain_value = config_member(document, "toolchain"_str);
     if (toolchain_value.is_none()) return Ok(rstd::move(toolchain));
     auto table = rstd_try(config_table(**toolchain_value, "config.toolchain"_str));
@@ -484,9 +477,11 @@ struct DecodedHostTools {
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
 };
 
-auto configured_host_tools(const Toml& document, ref<rstd::path::Path> project_root)
-    -> ConfigResult<DecodedHostTools> {
+auto configured_host_tools(const Toml&           document,
+                           ref<rstd::path::Path> project_root,
+                           ToolSpec              executables) -> ConfigResult<DecodedHostTools> {
     auto result = DecodedHostTools {
+        .executables = rstd::move(executables),
         .cmake =
             lito::dependency::CMakeProviderConfig {
                 .generator = String::make("Ninja"_str),
@@ -498,18 +493,21 @@ auto configured_host_tools(const Toml& document, ref<rstd::path::Path> project_r
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto known = reject_config_unknown(**table, "config.tools"_str, tools_config_key);
     if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-    result.executables.tar =
-        rstd_try(configured_tool(**value, "tar"_str, "tar"_str, "config.tools"_str));
-    result.executables.bsdtar =
-        rstd_try(configured_tool(**value, "bsdtar"_str, "bsdtar"_str, "config.tools"_str));
-    result.executables.clang_format = rstd_try(
-        configured_tool(**value, "clang-format"_str, "clang-format"_str, "config.tools"_str));
-    result.executables.curl =
-        rstd_try(configured_tool(**value, "curl"_str, "curl"_str, "config.tools"_str));
-    result.executables.git =
-        rstd_try(configured_tool(**value, "git"_str, "git"_str, "config.tools"_str));
-    result.executables.strip =
-        rstd_try(configured_tool(**value, "strip"_str, "llvm-strip"_str, "config.tools"_str));
+    auto tar = rstd_try(configured_tool_override(**value, "tar"_str, "config.tools"_str));
+    if (tar.is_some()) result.executables.tar = rstd::move(tar).unwrap();
+    auto bsdtar = rstd_try(configured_tool_override(**value, "bsdtar"_str, "config.tools"_str));
+    if (bsdtar.is_some()) result.executables.bsdtar = rstd::move(bsdtar).unwrap();
+    auto clang_format =
+        rstd_try(configured_tool_override(**value, "clang-format"_str, "config.tools"_str));
+    if (clang_format.is_some()) {
+        result.executables.clang_format = rstd::move(clang_format).unwrap();
+    }
+    auto curl = rstd_try(configured_tool_override(**value, "curl"_str, "config.tools"_str));
+    if (curl.is_some()) result.executables.curl = rstd::move(curl).unwrap();
+    auto git = rstd_try(configured_tool_override(**value, "git"_str, "config.tools"_str));
+    if (git.is_some()) result.executables.git = rstd::move(git).unwrap();
+    auto strip = rstd_try(configured_tool_override(**value, "strip"_str, "config.tools"_str));
+    if (strip.is_some()) result.executables.strip = rstd::move(strip).unwrap();
     constexpr Tool tool_values[] = {
         Tool::Tar, Tool::BsdTar, Tool::ClangFormat, Tool::Curl, Tool::Git, Tool::Strip,
     };
@@ -755,15 +753,23 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
 
 auto decode_project_config(PathBuf               root,
                            const Toml&           document,
-                           EnvironmentFlagPolicy environment_flags = EnvironmentFlagPolicy::Ignore)
+                           EnvironmentFlagPolicy environment_flags = EnvironmentFlagPolicy::Ignore,
+                           Option<ProjectConfigDefaults> defaults  = None())
     -> ConfigResult<ProjectConfig> {
     auto root_table = config_table(document, "config root"_str);
     if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
-    auto toolchain                = rstd_try(configured_toolchain(document));
-    auto tools                    = rstd_try(configured_host_tools(document, root.as_path()));
+    auto tool_defaults      = ToolSpec {};
+    auto toolchain_defaults = default_toolchain();
+    if (defaults.is_some()) {
+        tool_defaults      = rstd::move(defaults->tools);
+        toolchain_defaults = rstd::move(defaults->toolchain);
+    }
+    auto toolchain = rstd_try(configured_toolchain(document, rstd::move(toolchain_defaults)));
+    auto tools =
+        rstd_try(configured_host_tools(document, root.as_path(), rstd::move(tool_defaults)));
     auto standard_library         = StandardLibrary::Libcxx;
     auto standard_library_runtime = StandardLibraryRuntime::Dynamic;
     auto toolchain_value          = config_member(document, "toolchain"_str);
@@ -805,16 +811,25 @@ auto decode_project_config(PathBuf               root,
     });
 }
 
-auto decode_host_tool_command_config(PathBuf root, const Toml& document)
+auto decode_host_tool_command_config(PathBuf                       root,
+                                     const Toml&                   document,
+                                     Option<ProjectConfigDefaults> defaults = None())
     -> ConfigResult<HostToolCommandConfig> {
     auto root_table = config_table(document, "config root"_str);
     if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
     auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
     if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
 
+    auto tool_defaults      = ToolSpec {};
+    auto toolchain_defaults = default_toolchain();
+    if (defaults.is_some()) {
+        tool_defaults      = rstd::move(defaults->tools);
+        toolchain_defaults = rstd::move(defaults->toolchain);
+    }
     auto environment = rstd_try(configured_environment(document, root.as_path()));
-    auto tools       = rstd_try(configured_host_tools(document, root.as_path()));
-    auto toolchain   = rstd_try(configured_toolchain(document));
+    auto tools =
+        rstd_try(configured_host_tools(document, root.as_path(), rstd::move(tool_defaults)));
+    auto toolchain = rstd_try(configured_toolchain(document, rstd::move(toolchain_defaults)));
     return Ok(HostToolCommandConfig {
         .root        = rstd::move(root),
         .environment = rstd::move(environment),

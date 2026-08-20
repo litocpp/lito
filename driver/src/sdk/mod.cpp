@@ -139,6 +139,7 @@ struct InstalledSdkDescriptor {
     lito::LlvmSdkPaths             paths;
     lito::LlvmSdkCertification     certification;
     Vec<InstalledRuntimeComponent> components;
+    String                         identity;
 };
 
 auto installed_file_record(ref<rstd::path::Path> root, ref<rstd::path::Path> relative)
@@ -148,6 +149,8 @@ struct SdkStoreLayout {
     PathBuf root;
     PathBuf locks;
     PathBuf staging;
+    PathBuf removing;
+    PathBuf active;
 
     auto version(ref<str> value) const -> PathBuf {
         return root.join(PathBuf::from(value).as_path());
@@ -155,6 +158,14 @@ struct SdkStoreLayout {
 
     auto lock(ref<str> value) const -> PathBuf {
         return locks.join(PathBuf::from(rstd::format("{}.lock", value)).as_path());
+    }
+
+    auto active_lock() const -> PathBuf {
+        return locks.join(PathBuf::from("active.lock"_str).as_path());
+    }
+
+    auto removing_area(ref<str> version) const -> PathBuf {
+        return removing.join(PathBuf::from(version).as_path());
     }
 
     auto staging_area(ref<str> version, const lito::system::HostInfo& host) const -> PathBuf {
@@ -184,6 +195,19 @@ auto sdk_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::er
 
 auto host_text(const lito::system::HostInfo& host) -> String {
     return rstd::format("{}-{}", host.os.as_str(), host.architecture.as_str());
+}
+
+auto canonical_sdk_version(ref<str> value) -> lito::SdkResult<lito::LlvmVersion> {
+    auto parsed = lito::parse_llvm_version(value);
+    if (parsed.is_err()) {
+        return Err(lito::SdkError::Catalog(rstd::move(parsed).unwrap_err()));
+    }
+    auto canonical = rstd::format("{}.{}.{}", parsed->major, parsed->minor, parsed->patch);
+    if (canonical.as_str() != value) {
+        return sdk_failure<lito::LlvmVersion>(rstd::format(
+            "LLVM SDK version '{}' is not canonical; expected '{}'", value, canonical));
+    }
+    return Ok(rstd::move(parsed).unwrap());
 }
 
 auto json_string(ref<str> value) -> Json {
@@ -678,7 +702,9 @@ auto load_descriptor(ref<rstd::path::Path> prefix)
     if (parsed.is_err()) {
         return Err(lito::SdkError::Json(rstd::move(path), rstd::move(parsed).unwrap_err()));
     }
-    return Ok(Some(rstd_try(parse_descriptor(*parsed))));
+    auto descriptor     = rstd_try(parse_descriptor(*parsed));
+    descriptor.identity = rstd::crypto::sha256_hex(contents->as_str());
+    return Ok(Some(rstd::move(descriptor)));
 }
 
 auto paths_equal(const lito::LlvmSdkPaths& left, const lito::LlvmSdkPaths& right) -> bool {
@@ -789,16 +815,19 @@ auto sdk_store_layout() -> lito::SdkResult<SdkStoreLayout> {
     if (data.is_err()) return Err(lito::SdkError::System(rstd::move(data).unwrap_err()));
     auto root = PathBuf::from(data->root()).join(PathBuf::from("llvm"_str).as_path());
     return Ok(SdkStoreLayout {
-        .root    = root.clone(),
-        .locks   = root.join(PathBuf::from(".locks"_str).as_path()),
-        .staging = root.join(PathBuf::from(".staging"_str).as_path()),
+        .root     = root.clone(),
+        .locks    = root.join(PathBuf::from(".locks"_str).as_path()),
+        .staging  = root.join(PathBuf::from(".staging"_str).as_path()),
+        .removing = root.join(PathBuf::from(".removing"_str).as_path()),
+        .active   = root.join(PathBuf::from(".active.json"_str).as_path()),
     });
 }
 
 auto ensure_store(const SdkStoreLayout& layout) -> lito::SdkResult<empty> {
     const ref<rstd::path::Path> directories[] = { layout.root.as_path(),
                                                   layout.locks.as_path(),
-                                                  layout.staging.as_path() };
+                                                  layout.staging.as_path(),
+                                                  layout.removing.as_path() };
     for (const auto directory : directories) {
         auto created = rstd::fs::create_dir_all(directory);
         if (created.is_err()) {
@@ -818,32 +847,392 @@ auto ensure_store(const SdkStoreLayout& layout) -> lito::SdkResult<empty> {
     return Ok(empty {});
 }
 
-auto acquire_version_lock(const SdkStoreLayout& layout, ref<str> version)
+auto acquire_store_lock(ref<rstd::path::Path> path, ref<str> name, rstd::fs::FileLockMode mode)
+    -> lito::SdkResult<rstd::fs::FileLock> {
+    auto opened = rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(path);
+    if (opened.is_err()) {
+        return sdk_io_failure<rstd::fs::FileLock>(
+            rstd::format("open LLVM SDK {} lock", name).as_str(),
+            path,
+            rstd::move(opened).unwrap_err());
+    }
+    auto metadata = rstd::fs::symlink_metadata(path);
+    if (metadata.is_err()) {
+        return sdk_io_failure<rstd::fs::FileLock>(
+            rstd::format("inspect LLVM SDK {} lock", name).as_str(),
+            path,
+            rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_file() || metadata->is_symlink()) {
+        return sdk_failure<rstd::fs::FileLock>(
+            rstd::format("LLVM SDK {} lock '{}' must be an ordinary file", name, path));
+    }
+    auto locked = rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), mode);
+    if (locked.is_err()) {
+        return sdk_io_failure<rstd::fs::FileLock>(
+            rstd::format("lock LLVM SDK {}", name).as_str(), path, rstd::move(locked).unwrap_err());
+    }
+    return Ok(rstd::move(locked).unwrap());
+}
+
+auto acquire_active_lock(const SdkStoreLayout& layout, rstd::fs::FileLockMode mode)
+    -> lito::SdkResult<rstd::fs::FileLock> {
+    rstd_try(ensure_store(layout));
+    auto path = layout.active_lock();
+    return acquire_store_lock(path.as_path(), "activation state"_str, mode);
+}
+
+auto acquire_version_lock(const SdkStoreLayout&  layout,
+                          ref<str>               version,
+                          rstd::fs::FileLockMode mode = rstd::fs::FileLockMode::Exclusive)
     -> lito::SdkResult<rstd::fs::FileLock> {
     rstd_try(ensure_store(layout));
     auto path = layout.lock(version);
-    auto opened =
-        rstd::fs::OpenOptions::make().read(true).write(true).create(true).open(path.as_path());
-    if (opened.is_err()) {
-        return sdk_io_failure<rstd::fs::FileLock>(
-            "open LLVM SDK version lock"_str, path.as_path(), rstd::move(opened).unwrap_err());
+    return acquire_store_lock(path.as_path(), "version"_str, mode);
+}
+
+struct ActiveSdkState {
+    String                 version;
+    lito::system::HostInfo host;
+    String                 descriptor_sha256;
+};
+
+struct ActiveStateInspection {
+    bool                   exists { false };
+    bool                   removable { false };
+    Option<ActiveSdkState> state;
+    Option<String>         issue;
+};
+
+auto active_state_json(const ActiveSdkState& state) -> Json {
+    auto host = JsonMap::make();
+    host.insert(String::make("os"_str), json_string(state.host.os.as_str()));
+    host.insert(String::make("architecture"_str), json_string(state.host.architecture.as_str()));
+    auto root = JsonMap::make();
+    root.insert(String::make("schema"_str), Json::Number(rstd::json::Number::from_u64(u64(1))));
+    root.insert(String::make("kind"_str), json_string("lito-llvm-sdk-active"_str));
+    root.insert(String::make("version"_str), json_string(state.version.as_str()));
+    root.insert(String::make("host"_str), Json::Object(rstd::move(host)));
+    root.insert(String::make("descriptor-sha256"_str),
+                json_string(state.descriptor_sha256.as_str()));
+    return Json::Object(rstd::move(root));
+}
+
+auto parse_active_state(const Json& value) -> lito::SdkResult<ActiveSdkState> {
+    rstd_try(known_fields(
+        value,
+        "LLVM SDK activation state"_str,
+        { "schema"_str, "kind"_str, "version"_str, "host"_str, "descriptor-sha256"_str }));
+    auto schema = rstd_try(required_u64(value, "schema"_str, "LLVM SDK activation state"_str));
+    if (schema != u64(1)) {
+        return sdk_failure<ActiveSdkState>(
+            rstd::format("LLVM SDK activation state schema {} is not supported", schema));
     }
-    auto metadata = opened->metadata();
+    auto kind = rstd_try(required_string(value, "kind"_str, "LLVM SDK activation state"_str));
+    if (kind.as_str() != "lito-llvm-sdk-active"_str) {
+        return sdk_failure<ActiveSdkState>(
+            rstd::format("LLVM SDK activation state kind '{}' is not supported", kind));
+    }
+    auto version = rstd_try(required_string(value, "version"_str, "LLVM SDK activation state"_str));
+    auto parsed_version = lito::parse_llvm_version(version.as_str());
+    if (parsed_version.is_err()) {
+        return sdk_failure<ActiveSdkState>(
+            rstd::format("LLVM SDK activation state version '{}' is invalid: {}",
+                         version,
+                         rstd::move(parsed_version).unwrap_err()));
+    }
+    auto canonical = rstd::format(
+        "{}.{}.{}", parsed_version->major, parsed_version->minor, parsed_version->patch);
+    if (canonical.as_str() != version.as_str()) {
+        return sdk_failure<ActiveSdkState>(
+            rstd::format("LLVM SDK activation state version '{}' is not canonical; expected '{}'",
+                         version,
+                         canonical));
+    }
+    auto host_value = rstd_try(required_member(value, "host"_str, "LLVM SDK activation state"_str));
+    rstd_try(known_fields(
+        *host_value, "LLVM SDK activation state host"_str, { "os"_str, "architecture"_str }));
+    auto os =
+        rstd_try(required_string(*host_value, "os"_str, "LLVM SDK activation state host"_str));
+    if (os.as_str() != "linux"_str && os.as_str() != "macos"_str && os.as_str() != "windows"_str) {
+        return sdk_failure<ActiveSdkState>(
+            rstd::format("LLVM SDK activation state host OS '{}' is not canonical", os));
+    }
+    auto architecture_text = rstd_try(
+        required_string(*host_value, "architecture"_str, "LLVM SDK activation state host"_str));
+    auto architecture = lito::system::canonical_architecture(architecture_text.as_str());
+    if (architecture.is_err() || architecture->as_str() != architecture_text.as_str()) {
+        return sdk_failure<ActiveSdkState>(rstd::format(
+            "LLVM SDK activation state architecture '{}' is not canonical", architecture_text));
+    }
+    auto identity =
+        rstd_try(required_string(value, "descriptor-sha256"_str, "LLVM SDK activation state"_str));
+    return Ok(ActiveSdkState {
+        .version = rstd::move(version),
+        .host =
+            lito::system::HostInfo {
+                .architecture = rstd::move(architecture).unwrap(),
+                .os           = rstd::move(os),
+            },
+        .descriptor_sha256 = rstd_try(descriptor_sha256(
+            identity.as_str(), "LLVM SDK activation state descriptor-sha256"_str)),
+    });
+}
+
+auto active_marker_present(const SdkStoreLayout& layout) -> lito::SdkResult<bool> {
+    auto metadata = rstd::fs::symlink_metadata(layout.active.as_path());
+    if (metadata.is_ok()) return Ok(true);
+    auto error = rstd::move(metadata).unwrap_err();
+    if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+        return Ok(false);
+    }
+    return sdk_io_failure<bool>(
+        "inspect LLVM SDK activation state"_str, layout.active.as_path(), rstd::move(error));
+}
+
+auto inspect_active_state(const SdkStoreLayout& layout) -> lito::SdkResult<ActiveStateInspection> {
+    auto metadata = rstd::fs::symlink_metadata(layout.active.as_path());
     if (metadata.is_err()) {
-        return sdk_io_failure<rstd::fs::FileLock>(
-            "inspect LLVM SDK version lock"_str, path.as_path(), rstd::move(metadata).unwrap_err());
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(ActiveStateInspection {});
+        }
+        return sdk_io_failure<ActiveStateInspection>(
+            "inspect LLVM SDK activation state"_str, layout.active.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_file() || metadata->is_symlink()) {
+        return Ok(ActiveStateInspection {
+            .exists = true,
+            .issue  = Some(rstd::format("activation state '{}' must be an ordinary file",
+                                        layout.active.as_path())),
+        });
+    }
+    auto contents = rstd::fs::read_to_string(layout.active.as_path());
+    if (contents.is_err()) {
+        return sdk_io_failure<ActiveStateInspection>("read LLVM SDK activation state"_str,
+                                                     layout.active.as_path(),
+                                                     rstd::move(contents).unwrap_err());
+    }
+    auto parsed = rstd::json::from_str(contents->as_str());
+    if (parsed.is_err()) {
+        auto error = rstd::move(parsed).unwrap_err();
+        return Ok(ActiveStateInspection {
+            .exists    = true,
+            .removable = true,
+            .issue     = Some(rstd::format(
+                "cannot parse activation state '{}': {}", layout.active.as_path(), error)),
+        });
+    }
+    auto state = parse_active_state(*parsed);
+    if (state.is_err()) {
+        return Ok(ActiveStateInspection {
+            .exists    = true,
+            .removable = true,
+            .issue     = Some(rstd::format("{}", rstd::move(state).unwrap_err())),
+        });
+    }
+    return Ok(ActiveStateInspection {
+        .exists    = true,
+        .removable = true,
+        .state     = Some(rstd::move(state).unwrap()),
+    });
+}
+
+auto write_active_state(const SdkStoreLayout& layout, const ActiveSdkState& state)
+    -> lito::SdkResult<empty> {
+    auto text = rstd::json::to_string(active_state_json(state),
+                                      rstd::json::FormatOptions {
+                                          .pretty = true,
+                                          .indent = usize(2),
+                                      });
+    text.push_ascii('\n');
+    auto written = rstd::fs::write_atomic(layout.active.as_path(), text.as_str().as_bytes());
+    if (written.is_err()) {
+        return sdk_io_failure<empty>("write LLVM SDK activation state"_str,
+                                     layout.active.as_path(),
+                                     rstd::move(written).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto remove_active_state(const SdkStoreLayout& layout) -> lito::SdkResult<empty> {
+    auto removed = rstd::fs::remove_file(layout.active.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<empty>("remove LLVM SDK activation state"_str,
+                                     layout.active.as_path(),
+                                     rstd::move(removed).unwrap_err());
+    }
+    return Ok(empty {});
+}
+
+auto validate_sdk_prefix(ref<rstd::path::Path> prefix) -> lito::SdkResult<empty> {
+    auto metadata = rstd::fs::symlink_metadata(prefix);
+    if (metadata.is_err()) {
+        return sdk_io_failure<empty>(
+            "inspect LLVM SDK prefix"_str, prefix, rstd::move(metadata).unwrap_err());
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<empty>(
+            rstd::format("LLVM SDK prefix '{}' must be a real directory", prefix));
+    }
+    return Ok(empty {});
+}
+
+auto active_tool_path(ref<rstd::path::Path> prefix, ref<rstd::path::Path> relative, ref<str> name)
+    -> lito::SdkResult<PathBuf> {
+    auto path     = PathBuf::from(prefix).join(relative);
+    auto metadata = rstd::fs::metadata(path.as_path());
+    if (metadata.is_err()) {
+        return sdk_io_failure<PathBuf>(rstd::format("inspect active LLVM SDK {}", name).as_str(),
+                                       path.as_path(),
+                                       rstd::move(metadata).unwrap_err());
     }
     if (! metadata->is_file()) {
-        return sdk_failure<rstd::fs::FileLock>(
-            rstd::format("LLVM SDK version lock '{}' must be an ordinary file", path.as_path()));
+        return sdk_failure<PathBuf>(
+            rstd::format("active LLVM SDK {} '{}' is not a file", name, path.as_path()));
     }
-    auto locked =
-        rstd::fs::FileLock::acquire(rstd::move(opened).unwrap(), rstd::fs::FileLockMode::Exclusive);
-    if (locked.is_err()) {
-        return sdk_io_failure<rstd::fs::FileLock>(
-            "lock LLVM SDK version"_str, path.as_path(), rstd::move(locked).unwrap_err());
+    auto canonical_prefix = rstd::fs::canonicalize(prefix);
+    if (canonical_prefix.is_err()) {
+        return sdk_io_failure<PathBuf>("resolve active LLVM SDK prefix"_str,
+                                       prefix,
+                                       rstd::move(canonical_prefix).unwrap_err());
     }
-    return Ok(rstd::move(locked).unwrap());
+    auto canonical = rstd::fs::canonicalize(path.as_path());
+    if (canonical.is_err()) {
+        return sdk_io_failure<PathBuf>(rstd::format("resolve active LLVM SDK {}", name).as_str(),
+                                       path.as_path(),
+                                       rstd::move(canonical).unwrap_err());
+    }
+    if (canonical->as_path().strip_prefix(canonical_prefix->as_path()).is_none()) {
+        return sdk_failure<PathBuf>(rstd::format(
+            "active LLVM SDK {} '{}' resolves outside prefix '{}'", name, path.as_path(), prefix));
+    }
+    return Ok(rstd::move(path));
+}
+
+auto active_project_defaults(ref<rstd::path::Path> prefix, const InstalledSdkDescriptor& descriptor)
+    -> lito::SdkResult<lito::config::ProjectConfigDefaults> {
+    auto tools  = lito::system::ToolSpec {};
+    tools.strip = rstd_try(active_tool_path(prefix, descriptor.paths.strip.as_path(), "strip"_str));
+    tools.mark_configured(lito::system::Tool::Strip);
+    tools.clang_format =
+        rstd_try(active_tool_path(prefix, descriptor.paths.format.as_path(), "format"_str));
+    tools.mark_configured(lito::system::Tool::ClangFormat);
+    return Ok(lito::config::ProjectConfigDefaults {
+        .tools = rstd::move(tools),
+        .toolchain =
+            lito::config::ToolchainSpec {
+                .cc = rstd_try(
+                    active_tool_path(prefix, descriptor.paths.cc.as_path(), "C compiler"_str)),
+                .cxx = rstd_try(
+                    active_tool_path(prefix, descriptor.paths.cxx.as_path(), "C++ compiler"_str)),
+                .ld = rstd_try(
+                    active_tool_path(prefix, descriptor.paths.linker.as_path(), "linker"_str)),
+                .ar = rstd_try(
+                    active_tool_path(prefix, descriptor.paths.archiver.as_path(), "archiver"_str)),
+            },
+    });
+}
+
+struct ResolvedActiveSdk {
+    String                              version;
+    String                              host;
+    PathBuf                             prefix;
+    String                              descriptor_sha256;
+    lito::config::ProjectConfigDefaults defaults;
+};
+
+auto resolve_installed_sdk(const SdkStoreLayout&         layout,
+                           ref<str>                      version,
+                           const lito::system::HostInfo& current_host)
+    -> lito::SdkResult<ResolvedActiveSdk> {
+    auto prefix = layout.version(version);
+    rstd_try(validate_sdk_prefix(prefix.as_path()));
+    auto loaded = rstd_try(load_descriptor(prefix.as_path()));
+    if (loaded.is_none()) {
+        return sdk_failure<ResolvedActiveSdk>(
+            rstd::format("LLVM SDK '{}' is missing sdk.json", prefix.as_path()));
+    }
+    auto descriptor = rstd::move(loaded).unwrap();
+    if (descriptor.version.as_str() != version) {
+        return sdk_failure<ResolvedActiveSdk>(
+            rstd::format("LLVM SDK descriptor version '{}' differs from requested version '{}'",
+                         descriptor.version,
+                         version));
+    }
+    if (descriptor.host.os != current_host.os.as_str() ||
+        descriptor.host.architecture != current_host.architecture) {
+        return sdk_failure<ResolvedActiveSdk>(
+            rstd::format("LLVM SDK {} is for {}, current host is {}",
+                         version,
+                         host_text(descriptor.host).as_str(),
+                         host_text(current_host).as_str()));
+    }
+    auto catalog = lito::load_embedded_llvm_sdk_catalog();
+    if (catalog.is_err()) {
+        return Err(lito::SdkError::Catalog(rstd::move(catalog).unwrap_err()));
+    }
+    auto release = lito::find_llvm_sdk_release(*catalog, version);
+    if (release.is_some()) {
+        auto artifact = lito::find_llvm_sdk_artifact(**release, current_host);
+        if (artifact.is_some() &&
+            ! descriptor_matches(descriptor, *catalog, **release, **artifact)) {
+            return sdk_failure<ResolvedActiveSdk>(rstd::format(
+                "LLVM SDK {} installed artifact identity differs from repository data", version));
+        }
+    }
+    rstd_try(validate_installed_components(prefix.as_path(), descriptor.components));
+    auto defaults = rstd_try(active_project_defaults(prefix.as_path(), descriptor));
+    return Ok(ResolvedActiveSdk {
+        .version           = descriptor.version.clone(),
+        .host              = host_text(descriptor.host),
+        .prefix            = rstd::move(prefix),
+        .descriptor_sha256 = descriptor.identity.clone(),
+        .defaults          = rstd::move(defaults),
+    });
+}
+
+auto resolve_active_state(const SdkStoreLayout&         layout,
+                          const ActiveSdkState&         state,
+                          const lito::system::HostInfo& current_host)
+    -> lito::SdkResult<ResolvedActiveSdk> {
+    if (state.host.os != current_host.os.as_str() ||
+        state.host.architecture != current_host.architecture) {
+        return sdk_failure<ResolvedActiveSdk>(
+            rstd::format("active LLVM SDK is for {}, current host is {}",
+                         host_text(state.host).as_str(),
+                         host_text(current_host).as_str()));
+    }
+    auto resolved = rstd_try(resolve_installed_sdk(layout, state.version.as_str(), current_host));
+    if (resolved.descriptor_sha256 != state.descriptor_sha256.as_str()) {
+        return sdk_failure<ResolvedActiveSdk>(rstd::format(
+            "active LLVM SDK {} descriptor differs from activation state", state.version));
+    }
+    return Ok(rstd::move(resolved));
+}
+
+auto cleanup_removing_entry(const SdkStoreLayout& layout, ref<str> version)
+    -> lito::SdkResult<bool> {
+    auto path     = layout.removing_area(version);
+    auto metadata = rstd::fs::symlink_metadata(path.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            return Ok(false);
+        }
+        return sdk_io_failure<bool>(
+            "inspect removing LLVM SDK"_str, path.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<bool>(
+            rstd::format("removing LLVM SDK entry '{}' must be a real directory", path.as_path()));
+    }
+    auto removed = rstd::fs::remove_dir_all(path.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<bool>(
+            "remove LLVM SDK tombstone"_str, path.as_path(), rstd::move(removed).unwrap_err());
+    }
+    return Ok(true);
 }
 
 struct SdkAcquisitionObserver {
@@ -1339,8 +1728,55 @@ auto sort_list_entries(Vec<lito::SdkListEntry>& entries) -> void {
         });
 }
 
+struct ActiveListSelection {
+    Option<String> version;
+    Option<String> issue;
+};
+
+auto active_list_selection(const SdkStoreLayout& layout, const lito::system::HostInfo& current_host)
+    -> lito::SdkResult<ActiveListSelection> {
+    if (! rstd_try(active_marker_present(layout))) return Ok(ActiveListSelection {});
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Shared));
+    (void)active_lock;
+    auto inspection = rstd_try(inspect_active_state(layout));
+    if (inspection.issue.is_some()) {
+        return Ok(ActiveListSelection {
+            .issue = Some(rstd::move(inspection.issue).unwrap()),
+        });
+    }
+    if (inspection.state.is_none()) return Ok(ActiveListSelection {});
+    auto version_lock = rstd_try(acquire_version_lock(
+        layout, inspection.state->version.as_str(), rstd::fs::FileLockMode::Shared));
+    (void)version_lock;
+    auto resolved = resolve_active_state(layout, *inspection.state, current_host);
+    if (resolved.is_err()) {
+        return Ok(ActiveListSelection {
+            .issue = Some(rstd::format("{}", rstd::move(resolved).unwrap_err())),
+        });
+    }
+    return Ok(ActiveListSelection {
+        .version = Some(resolved->version.clone()),
+    });
+}
+
 namespace lito
 {
+
+ActiveSdkLease::ActiveSdkLease(String                              version,
+                               String                              host,
+                               PathBuf                             prefix,
+                               lito::config::ProjectConfigDefaults defaults,
+                               rstd::fs::FileLock                  lock) noexcept
+    : m_version(rstd::move(version)),
+      m_host(rstd::move(host)),
+      m_prefix(rstd::move(prefix)),
+      m_defaults(rstd::move(defaults)),
+      m_lock(rstd::move(lock)) {
+}
+
+auto ActiveSdkLease::project_defaults() const -> lito::config::ProjectConfigDefaults {
+    return m_defaults.clone();
+}
 
 auto list_llvm_sdks() -> SdkResult<SdkListSummary> {
     auto catalog = load_embedded_llvm_sdk_catalog();
@@ -1349,6 +1785,7 @@ auto list_llvm_sdks() -> SdkResult<SdkListSummary> {
     if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
     auto layout    = rstd_try(sdk_store_layout());
     auto installed = rstd_try(scan_installed(layout, *host));
+    auto active    = rstd_try(active_list_selection(layout, *host));
 
     auto entries = Vec<SdkListEntry>::make();
     for (const auto& release : catalog->releases) {
@@ -1386,17 +1823,202 @@ auto list_llvm_sdks() -> SdkResult<SdkListSummary> {
     for (auto& entry : installed) {
         if (! entry.version.is_empty()) entries.push(rstd::move(entry));
     }
+    if (active.version.is_some()) {
+        auto matched = false;
+        for (auto& entry : entries) {
+            if (entry.version == active.version->as_str()) {
+                entry.active = true;
+                matched      = true;
+                break;
+            }
+        }
+        if (! matched) {
+            active.issue = Some(rstd::format(
+                "active LLVM SDK {} is missing from installed inventory", *active.version));
+        }
+    }
     sort_list_entries(entries);
     return Ok(SdkListSummary {
-        .host    = host_text(*host),
-        .entries = rstd::move(entries),
+        .host         = host_text(*host),
+        .entries      = rstd::move(entries),
+        .active_issue = rstd::move(active.issue),
     });
 }
 
+auto activate_llvm_sdk(SdkActivateRequest request) -> SdkResult<SdkActivateSummary> {
+    (void)rstd_try(canonical_sdk_version(request.version.as_str()));
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto layout      = rstd_try(sdk_store_layout());
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)active_lock;
+    auto current = rstd_try(inspect_active_state(layout));
+    if (current.exists && ! current.removable) {
+        return sdk_failure<SdkActivateSummary>(
+            current.issue.is_some() ? rstd::move(current.issue).unwrap()
+                                    : String::make("LLVM SDK activation state is invalid"_str));
+    }
+    auto version_lock = rstd_try(
+        acquire_version_lock(layout, request.version.as_str(), rstd::fs::FileLockMode::Shared));
+    (void)version_lock;
+    auto resolved  = rstd_try(resolve_installed_sdk(layout, request.version.as_str(), *host));
+    auto unchanged = current.state.is_some() &&
+                     current.state->version == resolved.version.as_str() &&
+                     current.state->host.os == host->os.as_str() &&
+                     current.state->host.architecture == host->architecture &&
+                     current.state->descriptor_sha256 == resolved.descriptor_sha256.as_str();
+    if (! unchanged) {
+        rstd_try(write_active_state(layout,
+                                    ActiveSdkState {
+                                        .version           = resolved.version.clone(),
+                                        .host              = host->clone(),
+                                        .descriptor_sha256 = resolved.descriptor_sha256.clone(),
+                                    }));
+    }
+    return Ok(SdkActivateSummary {
+        .version   = rstd::move(resolved.version),
+        .host      = rstd::move(resolved.host),
+        .prefix    = rstd::move(resolved.prefix),
+        .unchanged = unchanged,
+    });
+}
+
+auto deactivate_llvm_sdk() -> SdkResult<SdkDeactivateSummary> {
+    auto layout      = rstd_try(sdk_store_layout());
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)active_lock;
+    auto current = rstd_try(inspect_active_state(layout));
+    if (! current.exists) {
+        return Ok(SdkDeactivateSummary {
+            .unchanged = true,
+        });
+    }
+    if (! current.removable) {
+        return sdk_failure<SdkDeactivateSummary>(
+            current.issue.is_some() ? rstd::move(current.issue).unwrap()
+                                    : String::make("LLVM SDK activation state is invalid"_str));
+    }
+    auto summary = SdkDeactivateSummary {
+        .invalid_state = current.state.is_none(),
+    };
+    if (current.state.is_some()) {
+        summary.version = Some(current.state->version.clone());
+        summary.host    = Some(host_text(current.state->host));
+        summary.prefix  = Some(layout.version(current.state->version.as_str()));
+    }
+    rstd_try(remove_active_state(layout));
+    return Ok(rstd::move(summary));
+}
+
+auto acquire_active_llvm_sdk() -> SdkResult<Option<ActiveSdkLease>> {
+    auto layout = rstd_try(sdk_store_layout());
+    if (! rstd_try(active_marker_present(layout))) return Ok(None());
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Shared));
+    (void)active_lock;
+    auto current = rstd_try(inspect_active_state(layout));
+    if (current.issue.is_some()) {
+        return sdk_failure<Option<ActiveSdkLease>>(rstd::move(current.issue).unwrap());
+    }
+    if (current.state.is_none()) return Ok(None());
+    auto host = lito::system::detect_host_info();
+    if (host.is_err()) return Err(SdkError::Platform(rstd::move(host).unwrap_err()));
+    auto version_lock = rstd_try(acquire_version_lock(
+        layout, current.state->version.as_str(), rstd::fs::FileLockMode::Shared));
+    auto resolved     = rstd_try(resolve_active_state(layout, *current.state, *host));
+    return Ok(Some(ActiveSdkLease(rstd::move(resolved.version),
+                                  rstd::move(resolved.host),
+                                  rstd::move(resolved.prefix),
+                                  rstd::move(resolved.defaults),
+                                  rstd::move(version_lock))));
+}
+
+auto uninstall_llvm_sdk(SdkUninstallRequest request) -> SdkResult<SdkUninstallSummary> {
+    (void)rstd_try(canonical_sdk_version(request.version.as_str()));
+    auto layout      = rstd_try(sdk_store_layout());
+    auto active_lock = rstd_try(acquire_active_lock(layout, rstd::fs::FileLockMode::Exclusive));
+    (void)active_lock;
+    auto version_lock = rstd_try(
+        acquire_version_lock(layout, request.version.as_str(), rstd::fs::FileLockMode::Exclusive));
+    (void)version_lock;
+    auto recovered = rstd_try(cleanup_removing_entry(layout, request.version.as_str()));
+
+    auto current = rstd_try(inspect_active_state(layout));
+    if (current.issue.is_some()) {
+        return sdk_failure<SdkUninstallSummary>(rstd::format(
+            "LLVM SDK activation state is invalid; run 'lito sdk deactivate' first: {}",
+            *current.issue));
+    }
+
+    auto was_active = current.state.is_some() && current.state->version == request.version.as_str();
+    auto prefix     = layout.version(request.version.as_str());
+    auto metadata   = rstd::fs::symlink_metadata(prefix.as_path());
+    if (metadata.is_err()) {
+        auto error = rstd::move(metadata).unwrap_err();
+        if (error.kind() == rstd::io::error::ErrorKind { rstd::io::error::ErrorKind::NotFound }) {
+            if (recovered) {
+                if (was_active) rstd_try(remove_active_state(layout));
+                return Ok(SdkUninstallSummary {
+                    .version    = rstd::move(request.version),
+                    .prefix     = rstd::move(prefix),
+                    .was_active = was_active,
+                    .recovered  = true,
+                });
+            }
+            return sdk_failure<SdkUninstallSummary>(
+                rstd::format("LLVM SDK version '{}' is not installed", request.version));
+        }
+        return sdk_io_failure<SdkUninstallSummary>(
+            "inspect LLVM SDK uninstall target"_str, prefix.as_path(), rstd::move(error));
+    }
+    if (! metadata->is_dir() || metadata->is_symlink()) {
+        return sdk_failure<SdkUninstallSummary>(rstd::format(
+            "LLVM SDK uninstall target '{}' must be a real directory", prefix.as_path()));
+    }
+
+    auto invalid_entry    = false;
+    auto descriptor       = load_descriptor(prefix.as_path());
+    auto descriptor_value = Option<InstalledSdkDescriptor> {};
+    if (descriptor.is_err()) {
+        auto error = rstd::move(descriptor).unwrap_err();
+        if (error.is_Io()) return Err(rstd::move(error));
+        invalid_entry = true;
+    } else if (descriptor->is_none()) {
+        invalid_entry = true;
+    } else {
+        descriptor_value = Some(rstd::move(descriptor).unwrap().unwrap());
+        if (descriptor_value->version != request.version.as_str()) invalid_entry = true;
+        auto host = lito::system::detect_host_info();
+        if (host.is_ok() && (descriptor_value->host.os != host->os.as_str() ||
+                             descriptor_value->host.architecture != host->architecture)) {
+            invalid_entry = true;
+        }
+    }
+
+    if (was_active) rstd_try(remove_active_state(layout));
+
+    auto tombstone = layout.removing_area(request.version.as_str());
+    auto published = rstd::fs::rename(prefix.as_path(), tombstone.as_path());
+    if (published.is_err()) {
+        return sdk_io_failure<SdkUninstallSummary>(
+            "publish LLVM SDK removal"_str, prefix.as_path(), rstd::move(published).unwrap_err());
+    }
+    auto removed = rstd::fs::remove_dir_all(tombstone.as_path());
+    if (removed.is_err()) {
+        return sdk_io_failure<SdkUninstallSummary>(
+            "remove LLVM SDK tombstone"_str, tombstone.as_path(), rstd::move(removed).unwrap_err());
+    }
+    auto summary = SdkUninstallSummary {
+        .version       = rstd::move(request.version),
+        .prefix        = rstd::move(prefix),
+        .was_active    = was_active,
+        .invalid_entry = invalid_entry,
+    };
+    if (descriptor_value.is_some()) summary.host = Some(host_text(descriptor_value->host));
+    return Ok(rstd::move(summary));
+}
+
 auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary> {
-    auto parsed_version = parse_llvm_version(request.version.as_str());
-    if (parsed_version.is_err())
-        return Err(SdkError::Catalog(rstd::move(parsed_version).unwrap_err()));
+    (void)rstd_try(canonical_sdk_version(request.version.as_str()));
     auto catalog = load_embedded_llvm_sdk_catalog();
     if (catalog.is_err()) return Err(SdkError::Catalog(rstd::move(catalog).unwrap_err()));
     auto release = find_llvm_sdk_release(*catalog, request.version.as_str());
@@ -1420,6 +2042,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
     auto layout = rstd_try(sdk_store_layout());
     auto lock   = rstd_try(acquire_version_lock(layout, request.version.as_str()));
     (void)lock;
+    (void)rstd_try(cleanup_removing_entry(layout, request.version.as_str()));
     auto prefix          = layout.version(request.version.as_str());
     auto prefix_metadata = rstd::fs::symlink_metadata(prefix.as_path());
     if (prefix_metadata.is_ok()) {

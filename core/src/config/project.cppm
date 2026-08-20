@@ -85,10 +85,23 @@ struct ProjectConfig {
     DocConfig                                 doc;
 };
 
+struct ProjectConfigDefaults {
+    ToolSpec      tools;
+    ToolchainSpec toolchain;
+
+    auto clone() const -> ProjectConfigDefaults {
+        return ProjectConfigDefaults {
+            .tools     = tools.clone(),
+            .toolchain = toolchain.clone(),
+        };
+    }
+};
+
 struct ProjectConfigRequest {
-    ConfigLoadMode        mode { ConfigLoadMode::Enabled };
-    Vec<String>           overrides;
-    EnvironmentFlagPolicy environment_flags { EnvironmentFlagPolicy::Ignore };
+    ConfigLoadMode                mode { ConfigLoadMode::Enabled };
+    Vec<String>                   overrides;
+    EnvironmentFlagPolicy         environment_flags { EnvironmentFlagPolicy::Ignore };
+    Option<ProjectConfigDefaults> defaults;
 };
 
 struct HostToolCommandConfig {
