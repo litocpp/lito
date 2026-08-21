@@ -301,9 +301,17 @@ struct CMakeTargetUsageSnapshot {
     Vec<String> link;
 };
 
+struct CMakeHostToolSnapshot {
+    String  name;
+    String  target;
+    PathBuf executable;
+    String  digest;
+};
+
 struct CMakeUsageSnapshot {
     String                        version;
     Vec<CMakeTargetUsageSnapshot> targets;
+    Vec<CMakeHostToolSnapshot>    host_tools;
     CMakeTargetUsageSnapshot      combined;
     Vec<ExternalAssetSet>         assets;
 };
@@ -528,6 +536,88 @@ auto snapshot_from_targets(const Json& baseline, const Json& dependency)
     });
 }
 
+auto read_host_tool_snapshots(const CMakeWorkArea& area, const Request& requirement)
+    -> lito::tools::ToolResult<Vec<CMakeHostToolSnapshot>> {
+    auto path     = area.query_build.join(PathBuf::from("lito-host-tools-v1.txt"_str).as_path());
+    auto contents = rstd::fs::read_to_string(path.as_path());
+    if (contents.is_err()) {
+        return cmake_io_failure<Vec<CMakeHostToolSnapshot>>(
+            "read CMake host tool snapshot"_str, path.as_path(), rstd::move(contents).unwrap_err());
+    }
+    auto remaining = contents->as_str();
+    auto header    = remaining.split_once("\n"_str);
+    if (header.is_none() || header->template get<0>() != "lito-cmake-host-tools-v1"_str) {
+        return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
+            "CMake host tool snapshot '{}' has an unsupported schema", path.as_path()));
+    }
+    remaining   = header->template get<1>();
+    auto result = Vec<CMakeHostToolSnapshot>::make();
+    while (! remaining.is_empty()) {
+        auto next = remaining.split_once("\n"_str);
+        auto line = next.is_some() ? next->template get<0>() : remaining;
+        remaining = next.is_some() ? next->template get<1>() : ""_str;
+        if (auto normalized = line.strip_suffix("\r"_str); normalized.is_some()) line = *normalized;
+        if (line.is_empty()) continue;
+        auto kind     = line.split_once("\t"_str);
+        auto named    = kind.is_some() ? kind->template get<1>().split_once("\t"_str) : None();
+        auto targeted = named.is_some() ? named->template get<1>().split_once("\t"_str) : None();
+        if (kind.is_none() || kind->template get<0>() != "tool"_str || named.is_none() ||
+            targeted.is_none() || targeted->template get<1>().contains("\t"_str)) {
+            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
+                "CMake host tool snapshot '{}' contains an invalid entry", path.as_path()));
+        }
+        if (result.len() >= requirement.host_tools.len()) {
+            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
+                "CMake host tool snapshot '{}' contains unexpected entries", path.as_path()));
+        }
+        const auto& expected = requirement.host_tools[result.len()];
+        if (named->template get<0>() != expected.name.as_str() ||
+            targeted->template get<0>() != expected.target.as_str()) {
+            return cmake_failure<Vec<CMakeHostToolSnapshot>>(rstd::format(
+                "CMake host tool snapshot '{}' does not match declared tool '{}' target '{}'",
+                path.as_path(),
+                expected.name.as_str(),
+                expected.target.as_str()));
+        }
+        auto executable = PathBuf::from(targeted->template get<1>());
+        auto metadata   = rstd::fs::symlink_metadata(executable.as_path());
+        if (metadata.is_err()) {
+            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("inspect CMake host tool"_str,
+                                                                executable.as_path(),
+                                                                rstd::move(metadata).unwrap_err());
+        }
+        if (! metadata->is_file()) {
+            return cmake_failure<Vec<CMakeHostToolSnapshot>>(
+                rstd::format("CMake host tool '{}' is not a file", executable.as_path()));
+        }
+        auto canonical = rstd::fs::canonicalize(executable.as_path());
+        if (canonical.is_err()) {
+            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>("resolve CMake host tool"_str,
+                                                                executable.as_path(),
+                                                                rstd::move(canonical).unwrap_err());
+        }
+        auto bytes = rstd::fs::read(canonical->as_path());
+        if (bytes.is_err()) {
+            return cmake_io_failure<Vec<CMakeHostToolSnapshot>>(
+                "read CMake host tool"_str, canonical->as_path(), rstd::move(bytes).unwrap_err());
+        }
+        result.push(CMakeHostToolSnapshot {
+            .name       = expected.name.clone(),
+            .target     = expected.target.clone(),
+            .executable = rstd::move(canonical).unwrap(),
+            .digest     = rstd::crypto::sha256_hex(bytes->as_slice()),
+        });
+    }
+    if (result.len() != requirement.host_tools.len()) {
+        return cmake_failure<Vec<CMakeHostToolSnapshot>>(
+            rstd::format("CMake host tool snapshot '{}' has {} tools, expected {}",
+                         path.as_path(),
+                         result.len(),
+                         requirement.host_tools.len()));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto read_probe_snapshots(const CMakeWorkArea& area, const Request& requirement)
     -> lito::tools::ToolResult<CMakeUsageSnapshot> {
     auto paths = probe_target_paths(area, requirement);
@@ -547,9 +637,10 @@ auto read_probe_snapshots(const CMakeWorkArea& area, const Request& requirement)
     auto combined_snapshot = snapshot_from_targets(*baseline, *combined);
     if (combined_snapshot.is_err()) return Err(rstd::move(combined_snapshot).unwrap_err());
     return Ok(CMakeUsageSnapshot {
-        .targets  = rstd::move(snapshots),
-        .combined = rstd::move(combined_snapshot).unwrap(),
-        .assets   = rstd_try(read_asset_snapshot(area, requirement)),
+        .targets    = rstd::move(snapshots),
+        .host_tools = rstd_try(read_host_tool_snapshots(area, requirement)),
+        .combined   = rstd::move(combined_snapshot).unwrap(),
+        .assets     = rstd_try(read_asset_snapshot(area, requirement)),
     });
 }
 

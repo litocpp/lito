@@ -95,6 +95,10 @@ visibility = "private"
 workspace = true
 visibility = "private"
 
+[dependencies.luato]
+workspace = true
+visibility = "private"
+
 [dependencies.rstd-std]
 workspace = true
 visibility = "private"

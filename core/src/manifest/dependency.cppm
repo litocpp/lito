@@ -14,23 +14,19 @@ export namespace lito::manifest
 {
 
 struct DeclaredDependency {
-    String                                 name;
-    lito::source::PackageSourceRequirement source;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    Vec<String>     features;
-    bool            default_features { true };
-    Option<PathBuf> declaration_root;
+    String                                         name;
+    lito::source::PackageSourceRequirement         source;
+    Option<lito::dependency::DependencyVisibility> visibility;
+    Option<Vec<String>>                            features;
+    Option<bool>                                   default_features;
+    Option<PathBuf>                                declaration_root;
 };
 
 struct WorkspaceDependencyReference {
-    String                                 name;
-    lito::dependency::DependencyVisibility visibility {
-        lito::dependency::DependencyVisibility::Private
-    };
-    Vec<String> features;
-    bool        default_features { true };
+    String                                         name;
+    Option<lito::dependency::DependencyVisibility> visibility;
+    Option<Vec<String>>                            features;
+    Option<bool>                                   default_features;
 };
 
 struct DeclaredRuntimeDependency {
@@ -68,13 +64,14 @@ struct WorkspacePkgConfigExternalDependencyDefinition {
 };
 
 struct WorkspaceCMakeExternalDependencyDefinition {
-    String                                 alias;
-    String                                 package;
-    Vec<String>                            components;
-    Option<String>                         source;
-    Option<PathBuf>                        adapter;
-    Option<PathBuf>                        config_directory;
-    Vec<lito::dependency::CMakeCacheEntry> cache;
+    String                                          alias;
+    String                                          package;
+    Vec<String>                                     components;
+    Option<String>                                  source;
+    Option<PathBuf>                                 adapter;
+    Option<PathBuf>                                 config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>          cache;
+    Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
 struct PackageExternalSourceDeclaration {

@@ -6,9 +6,9 @@ import lito.core;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 
-auto language_package(ref<str>                                   name,
-                      lito::manifest::PackageStandardRequirement standard,
-                      Vec<lito::package::ResolvedDependency>     dependencies = {})
+auto language_package(ref<str>                                       name,
+                      lito::manifest::PackageStandardRequirement     standard,
+                      Vec<lito::package::ResolvedRequiredDependency> dependencies = {})
     -> lito::package::ResolvedPackage {
     return lito::package::ResolvedPackage {
         .manifest =
@@ -55,10 +55,11 @@ TEST(PackageLanguage, ResolvesIndependentEffectiveStandards) {
 }
 
 TEST(PackageLanguage, RejectsCDependencyOnCppPackage) {
-    auto dependencies = Vec<lito::package::ResolvedDependency>::make();
-    dependencies.push(lito::package::ResolvedDependency {
-        .name = String::make("cpp-provider"_str),
-    });
+    auto dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
+    dependencies.push(
+        lito::package::ResolvedRequiredDependency::Cpp(lito::package::ResolvedCppDependency {
+            .name = String::make("cpp-provider"_str),
+        }));
     auto packages = Vec<lito::package::ResolvedPackage>::make();
     packages.push(language_package(
         "c-consumer"_str,

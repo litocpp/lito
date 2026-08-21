@@ -85,6 +85,9 @@ auto clone_package_source(const lito::source::PackageSourceRequirement& source)
     if (source.is_Path()) {
         return lito::source::PackageSourceRequirement::Path(source.as_Path().path.clone());
     }
+    if (source.is_Builtin()) {
+        return lito::source::PackageSourceRequirement::Builtin(source.as_Builtin().id.clone());
+    }
     return lito::source::PackageSourceRequirement::Git(
         source.as_Git().url.clone(),
         lito::source::GitReference {
@@ -160,7 +163,8 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .name             = reference.name.clone(),
                 .source           = clone_package_source(definition->source),
                 .visibility       = reference.visibility,
-                .features         = reference.features.clone(),
+                .features         = reference.features.is_some() ? Some(reference.features->clone())
+                                                                 : Option<Vec<String>> {},
                 .default_features = reference.default_features,
                 .declaration_root = Some(workspace.root.clone()),
             });
@@ -269,7 +273,9 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 .visibility = target.visibility,
             });
         }
-        auto components  = as<Clone>(definition->components).clone();
+        auto components = as<Clone>(definition->components).clone();
+        auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
+        for (const auto& tool : definition->host_tools) host_tools.push(tool.clone());
         auto requirement = lito::dependency::CMakeDependencyRequirement {
             .alias            = reference.alias.clone(),
             .package          = definition->package.clone(),
@@ -281,6 +287,7 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
             .config_directory = rstd::move(config_directory),
             .cache            = rstd::move(cache),
             .targets          = rstd::move(targets),
+            .host_tools       = rstd::move(host_tools),
             .declaration_root = Some(workspace.root.clone()),
             .adapter_root     = Some(workspace.root.clone()),
         };

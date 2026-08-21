@@ -8,6 +8,7 @@ import lito.core;
 import lito.tools;
 import lito.system;
 import :source.manager;
+import :package.builtin;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -33,6 +34,9 @@ auto clone_dependency_source(const lito::source::PackageSourceRequirement& sourc
     -> lito::source::PackageSourceRequirement {
     if (source.is_Path()) {
         return lito::source::PackageSourceRequirement::Path(source.as_Path().path.clone());
+    }
+    if (source.is_Builtin()) {
+        return lito::source::PackageSourceRequirement::Builtin(source.as_Builtin().id.clone());
     }
     return lito::source::PackageSourceRequirement::Git(
         source.as_Git().url.clone(),
@@ -60,6 +64,12 @@ struct SelectedSourcePackage {
 struct AcquiredProjectSources {
     usize         primary;
     Option<usize> tests;
+};
+
+struct AcquiredDependencySource {
+    Option<usize>          source;
+    String                 builtin_id;
+    Option<BuiltinPackage> builtin;
 };
 
 auto same_source_root(ref<rstd::path::Path> left, ref<rstd::path::Path> right) noexcept -> bool {
@@ -111,7 +121,7 @@ auto package_coordinate(const SelectedSourcePackage& selected) -> PackageResult<
         return package_resolution_failure<PackageCoordinate>(rstd::format(
             "package '{}' has an unresolved workspace version", selected.package.name.as_str()));
     }
-    auto requires_version = false;
+    auto requires_version = selected.package.script.is_some();
     for (const auto& target : selected.package.targets) {
         const auto kind = lito::manifest::package_target_kind(target);
         if (kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary ||
@@ -227,11 +237,26 @@ class PackageGraphResolver {
     }
 
     auto acquire_frontier(Vec<lito::source::PackageSourceFetchRequest> requests)
-        -> PackageResult<Vec<usize>> {
+        -> PackageResult<Vec<AcquiredDependencySource>> {
         auto prepared = Vec<lito::source::PackageSourceFetchRequest>::with_capacity(requests.len());
+        auto positions = Vec<usize>::make();
         auto catalogs =
             Vec<Option<lito::workspace::WorkspaceCatalog>>::with_capacity(requests.len());
-        for (auto& request : requests) {
+        auto result = Vec<Option<AcquiredDependencySource>>::with_capacity(requests.len());
+        for (usize index {}; index < requests.len(); ++index) result.push(None());
+        for (usize index {}; index < requests.len(); ++index) {
+            auto& request = requests[index];
+            if (request.source.is_Builtin()) {
+                auto builtin_id = request.source.as_Builtin().id.clone();
+                auto package    = load_builtin_package(builtin_id.as_str());
+                if (package.is_err()) return Err(rstd::move(package).unwrap_err());
+                result[index] = Some(AcquiredDependencySource {
+                    .builtin_id = rstd::move(builtin_id),
+                    .builtin    = Some(rstd::move(package).unwrap()),
+                });
+                continue;
+            }
+            positions.push(usize(index));
             if (request.source.is_Git()) {
                 prepared.push(rstd::move(request));
                 catalogs.push(None());
@@ -253,16 +278,27 @@ class PackageGraphResolver {
         if (acquired.is_err()) {
             return Err(rstd::into<PackageError>(rstd::move(acquired).unwrap_err()));
         }
-        auto result = rstd::move(acquired).unwrap();
-        for (usize index {}; index < result.len(); ++index) {
+        auto acquired_sources = rstd::move(acquired).unwrap();
+        for (usize index {}; index < acquired_sources.len(); ++index) {
             if (catalogs[index].is_some()) {
-                store_catalog(result[index], rstd::move(catalogs[index]).unwrap());
+                store_catalog(acquired_sources[index], rstd::move(catalogs[index]).unwrap());
             } else {
-                auto ensured = ensure_source_catalog(result[index]);
+                auto ensured = ensure_source_catalog(acquired_sources[index]);
                 if (ensured.is_err()) return Err(rstd::move(ensured).unwrap_err());
             }
+            result[positions[index]] = Some(AcquiredDependencySource {
+                .source = Some(acquired_sources[index]),
+            });
         }
-        return Ok(rstd::move(result));
+        auto completed = Vec<AcquiredDependencySource>::with_capacity(result.len());
+        for (auto& item : result) {
+            if (item.is_none()) {
+                return package_resolution_failure<Vec<AcquiredDependencySource>>(
+                    "dependency source acquisition result is missing"_str);
+            }
+            completed.push(rstd::move(item).unwrap());
+        }
+        return Ok(rstd::move(completed));
     }
 
     auto take_package(usize source, ref<str> name) -> PackageResult<SelectedSourcePackage> {
@@ -293,6 +329,150 @@ class PackageGraphResolver {
             .manifest        = PathBuf::from(*relative),
             .package         = rstd::move(package),
         });
+    }
+
+    auto resolved_package(ref<str> name) const noexcept -> const ResolvedPackage* {
+        for (const auto& package : packages_) {
+            if (package.manifest.name == name) return rstd::addressof(package);
+        }
+        return nullptr;
+    }
+
+    auto package_has_library(const lito::manifest::PackageManifest& package) const noexcept
+        -> bool {
+        for (const auto& target : package.targets) {
+            if (lito::manifest::package_target_kind(target) == PackageTargetKind::Library)
+                return true;
+        }
+        return false;
+    }
+
+    auto resolve_builtin(BuiltinPackage package, ref<str> builtin, ref<str> expected_name)
+        -> PackageResult<String> {
+        if (package.manifest.name != expected_name) {
+            return package_resolution_failure<String>(
+                rstd::format("dependency '{}' resolves builtin '{}' as package '{}'",
+                             expected_name,
+                             builtin,
+                             package.manifest.name.as_str()));
+        }
+        auto existing = coordinates_.get(expected_name);
+        if (existing.is_some()) {
+            if ((**existing).source_identity == package.source_identity.as_str()) {
+                return Ok(String::make(expected_name));
+            }
+            auto candidate = PackageCoordinate {
+                .version         = package.manifest.version.value.clone(),
+                .source_identity = package.source_identity.clone(),
+                .manifest        = package.manifest.manifest_path.clone(),
+            };
+            return Err(package_conflict(expected_name, **existing, candidate));
+        }
+        auto coordinate = PackageCoordinate {
+            .version         = package.manifest.version.value.clone(),
+            .source_identity = package.source_identity.clone(),
+            .manifest        = package.manifest.manifest_path.clone(),
+        };
+        coordinates_.insert(String::make(expected_name),
+                            PackageCoordinate {
+                                .version         = coordinate.version.clone(),
+                                .source_identity = coordinate.source_identity.clone(),
+                                .manifest        = coordinate.manifest.clone(),
+                            });
+        auto resolved_source = lito::source::ResolvedPackageSource {
+            .identity       = package.source_identity.clone(),
+            .kind           = lito::source::PackageSourceKind::Builtin,
+            .root_directory = package.manifest.root.clone(),
+            .builtin        = String::make(builtin),
+            .digest         = package.digest.clone(),
+        };
+        packages_.push(ResolvedPackage {
+            .source_identity      = rstd::move(package.source_identity),
+            .source               = rstd::move(resolved_source),
+            .source_manifest      = PathBuf::from("lito.toml"_str),
+            .manifest             = rstd::move(package.manifest),
+            .embedded_source      = Some(rstd::move(package.source)),
+            .dependencies         = {},
+            .dev_dependencies     = {},
+            .runtime_dependencies = {},
+            .features             = {},
+        });
+        return Ok(String::make(expected_name));
+    }
+
+    auto resolve_acquired(AcquiredDependencySource& acquired,
+                          ref<str>                  expected_name,
+                          PackageDependencyKind     incoming) -> PackageResult<String> {
+        if (acquired.builtin.is_some()) {
+            return resolve_builtin(
+                rstd::move(acquired.builtin).unwrap(), acquired.builtin_id.as_str(), expected_name);
+        }
+        return resolve(*acquired.source, expected_name, incoming);
+    }
+
+    auto classify_dependency(const lito::manifest::DeclaredDependency& declaration,
+                             PackageDependencyKind                     kind)
+        -> PackageResult<ResolvedRequiredDependency> {
+        const auto* provider = resolved_package(declaration.name.as_str());
+        if (provider == nullptr) {
+            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                "resolved dependency '{}' is missing from the package graph", declaration.name));
+        }
+        if (provider->manifest.script.is_some()) {
+            if (kind == PackageDependencyKind::Development) {
+                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                    "development dependency '{}' resolves to a script package, but development "
+                    "Lua hosts are not supported",
+                    declaration.name.as_str()));
+            }
+            auto       fields = String::make();
+            const auto append = [&](ref<str> name) -> void {
+                if (! fields.is_empty()) fields.push_str(", "_str);
+                fields.push_str(name);
+            };
+            if (declaration.visibility.is_some()) append("visibility"_str);
+            if (declaration.features.is_some()) append("features"_str);
+            if (declaration.default_features.is_some()) append("default-features"_str);
+            if (! fields.is_empty()) {
+                return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                    "dependency '{}' resolves to script package '{}', so C++ fields {} are not "
+                    "allowed",
+                    declaration.name.as_str(),
+                    provider->manifest.manifest_path.as_path(),
+                    fields.as_str()));
+            }
+            auto require_name =
+                lito::manifest::script_require_name(provider->manifest.name.as_str());
+            if (require_name == "@lito"_str) {
+                return package_resolution_failure<ResolvedRequiredDependency>(
+                    rstd::format("script package '{}' uses reserved require name '@lito'",
+                                 provider->manifest.name.as_str()));
+            }
+            return Ok(ResolvedRequiredDependency::Script(ResolvedScriptDependency {
+                .name            = provider->manifest.name.clone(),
+                .require_name    = rstd::move(require_name),
+                .source_identity = provider->source_identity.clone(),
+                .supports        = provider->manifest.script->supports.clone(),
+            }));
+        }
+        if (! package_has_library(provider->manifest)) {
+            return package_resolution_failure<ResolvedRequiredDependency>(rstd::format(
+                "dependency '{}' resolves to package '{}' which exposes neither a C/C++ library "
+                "nor a script contract",
+                declaration.name.as_str(),
+                provider->manifest.manifest_path.as_path()));
+        }
+        auto features =
+            declaration.features.is_some() ? declaration.features->clone() : Vec<String>::make();
+        return Ok(ResolvedRequiredDependency::Cpp(ResolvedCppDependency {
+            .name       = provider->manifest.name.clone(),
+            .visibility = declaration.visibility.is_some()
+                              ? *declaration.visibility
+                              : lito::dependency::DependencyVisibility::Private,
+            .features   = rstd::move(features),
+            .default_features =
+                declaration.default_features.is_some() ? *declaration.default_features : true,
+        }));
     }
 
 public:
@@ -442,42 +622,65 @@ public:
                 .declaring_root = rstd::move(declaring_root),
             });
         }
-        auto       fetched_sources = rstd_try(acquire_frontier(rstd::move(fetch_requests)));
-        auto       source_offset   = usize {};
-        const auto resolve_dependencies =
-            [&](const Vec<lito::manifest::DeclaredDependency>& declarations,
-                PackageDependencyKind kind) -> PackageResult<Vec<ResolvedDependency>> {
-            auto dependencies = Vec<ResolvedDependency>::with_capacity(declarations.len());
-            for (const auto& dependency : declarations) {
-                auto dependency_name =
-                    resolve(fetched_sources[source_offset++], dependency.name.as_str(), kind);
-                if (dependency_name.is_err()) {
-                    return Err(rstd::move(dependency_name).unwrap_err());
-                }
-                dependencies.push(ResolvedDependency {
-                    .name             = rstd::move(dependency_name).unwrap(),
-                    .visibility       = dependency.visibility,
-                    .features         = dependency.features.clone(),
-                    .default_features = dependency.default_features,
-                });
+        auto fetched_sources = rstd_try(acquire_frontier(rstd::move(fetch_requests)));
+        auto source_offset   = usize {};
+        auto dependencies =
+            Vec<ResolvedRequiredDependency>::with_capacity(loaded.package.dependencies.len());
+        for (const auto& dependency : loaded.package.dependencies) {
+            rstd_try(resolve_acquired(fetched_sources[source_offset++],
+                                      dependency.name.as_str(),
+                                      PackageDependencyKind::Normal));
+            dependencies.push(
+                rstd_try(classify_dependency(dependency, PackageDependencyKind::Normal)));
+        }
+        rstd::slice_::sort_unstable_by(
+            dependencies.as_mut_slice().as_mut_ref(),
+            [](const ResolvedRequiredDependency& left, const ResolvedRequiredDependency& right) {
+                return resolved_dependency_name_value(left) < resolved_dependency_name_value(right);
+            });
+        for (usize index {}; index < dependencies.len(); ++index) {
+            if (! dependencies[index].is_Script()) continue;
+            for (usize other = index + usize(1); other < dependencies.len(); ++other) {
+                if (! dependencies[other].is_Script()) continue;
+                const auto& left  = dependencies[index].as_Script().value;
+                const auto& right = dependencies[other].as_Script().value;
+                if (left.require_name != right.require_name.as_str()) continue;
+                return package_resolution_failure<String>(rstd::format(
+                    "dependencies '{}' and '{}' of package '{}' normalize to the same Lua require "
+                    "name '{}'",
+                    left.name.as_str(),
+                    right.name.as_str(),
+                    loaded.package.name.as_str(),
+                    left.require_name.as_str()));
             }
-            rstd::slice_::sort_unstable_by(
-                dependencies.as_mut_slice().as_mut_ref(),
-                [](const ResolvedDependency& left, const ResolvedDependency& right) {
-                    return left.name < right.name;
-                });
-            return Ok(rstd::move(dependencies));
-        };
-        auto dependencies = rstd_try(
-            resolve_dependencies(loaded.package.dependencies, PackageDependencyKind::Normal));
-        auto dev_dependencies = rstd_try(resolve_dependencies(loaded.package.dev_dependencies,
-                                                              PackageDependencyKind::Development));
+        }
+
+        auto dev_dependencies =
+            Vec<ResolvedCppDependency>::with_capacity(loaded.package.dev_dependencies.len());
+        for (const auto& dependency : loaded.package.dev_dependencies) {
+            rstd_try(resolve_acquired(fetched_sources[source_offset++],
+                                      dependency.name.as_str(),
+                                      PackageDependencyKind::Development));
+            auto classified =
+                rstd_try(classify_dependency(dependency, PackageDependencyKind::Development));
+            if (! classified.is_Cpp()) {
+                return package_resolution_failure<String>(
+                    rstd::format("development dependency '{}' does not expose a C/C++ contract",
+                                 dependency.name.as_str()));
+            }
+            dev_dependencies.push(rstd::move(classified.as_Cpp().value));
+        }
+        rstd::slice_::sort_unstable_by(
+            dev_dependencies.as_mut_slice().as_mut_ref(),
+            [](const ResolvedCppDependency& left, const ResolvedCppDependency& right) {
+                return left.name < right.name;
+            });
         auto runtime_dependencies = Vec<ResolvedRuntimeDependency>::with_capacity(
             loaded.package.runtime_dependencies.len());
         for (const auto& dependency : loaded.package.runtime_dependencies) {
-            auto dependency_name = resolve(fetched_sources[source_offset++],
-                                           dependency.name.as_str(),
-                                           PackageDependencyKind::Runtime);
+            auto dependency_name = resolve_acquired(fetched_sources[source_offset++],
+                                                    dependency.name.as_str(),
+                                                    PackageDependencyKind::Runtime);
             if (dependency_name.is_err()) {
                 return Err(rstd::move(dependency_name).unwrap_err());
             }
@@ -499,6 +702,7 @@ public:
             .source               = rstd::move(loaded.source),
             .source_manifest      = rstd::move(loaded.manifest),
             .manifest             = rstd::move(loaded.package),
+            .embedded_source      = None(),
             .dependencies         = rstd::move(dependencies),
             .dev_dependencies     = rstd::move(dev_dependencies),
             .runtime_dependencies = rstd::move(runtime_dependencies),

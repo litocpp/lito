@@ -541,7 +541,9 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                             project.standards,
                             resolved_configuration.standard_library_runtime,
                             resolved_profile,
-                            session.platform);
+                            session.platform,
+                            project.graph,
+                            project.selected_package_names);
     auto layout = BuildLayout::create(project.graph.root_directory.as_path(),
                                       requested_output,
                                       resolved_profile.name.as_str(),

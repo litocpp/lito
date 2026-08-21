@@ -47,6 +47,7 @@ class ManifestSchemaError {
 class ManifestFileCause {
     RSTD_ENUM(ManifestFileCause,
               (Read, (rstd::io::error::Error source;)),
+              (Utf8, (alloc::string::FromUtf8Error source;)),
               (Parse, (rstd::toml::Error source;)),
               (Schema, (ManifestSchemaError source;)))
 };
@@ -237,6 +238,10 @@ struct Impl<fmt::Display, lito::manifest::ManifestFileCause>
             return formatter.write_raw("cannot parse manifest",
                                        sizeof("cannot parse manifest") - 1);
         }
+        if (value.is_Utf8()) {
+            return formatter.write_raw("manifest is not valid UTF-8",
+                                       sizeof("manifest is not valid UTF-8") - 1);
+        }
         return formatter.write_raw("manifest is invalid", sizeof("manifest is invalid") - 1);
     }
 };
@@ -255,6 +260,7 @@ struct Impl<error::Error, lito::manifest::ManifestFileCause>
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (value.is_Read()) return Some(dyn<error::Error>::from_ref(value.as_Read().source));
+        if (value.is_Utf8()) return Some(dyn<error::Error>::from_ref(value.as_Utf8().source));
         if (value.is_Parse()) return Some(dyn<error::Error>::from_ref(value.as_Parse().source));
         return Some(dyn<error::Error>::from_ref(value.as_Schema().source));
     }

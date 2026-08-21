@@ -56,6 +56,10 @@ auto build_tool_archive_key(ref<str> key) -> bool {
     return key == "url"_str || key == "sha256"_str;
 }
 
+auto script_key(ref<str> key) -> bool {
+    return key == "supports"_str;
+}
+
 auto test_key(ref<str> key) -> bool {
     return runnable_key(key) || key == "attach"_str;
 }
@@ -100,7 +104,8 @@ auto include_directory_key(ref<str> key) -> bool {
 auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
-           key == "workspace"_str || key == "features"_str || key == "default-features"_str;
+           key == "builtin"_str || key == "workspace"_str || key == "features"_str ||
+           key == "default-features"_str;
 }
 
 auto dev_dependency_key(ref<str> key) -> bool {
@@ -109,7 +114,7 @@ auto dev_dependency_key(ref<str> key) -> bool {
 
 auto workspace_dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
-           key == "rev"_str || key == "commit"_str;
+           key == "rev"_str || key == "commit"_str || key == "builtin"_str;
 }
 
 auto workspace_dependency_reference_key(ref<str> key) -> bool {
@@ -136,7 +141,8 @@ auto external_dependencies_key(ref<str> key) -> bool {
 auto cmake_external_key(ref<str> key) -> bool {
     return key == "package"_str || key == "source"_str || key == "adapter"_str ||
            key == "cache"_str || key == "config-directory"_str || key == "targets"_str ||
-           key == "components"_str || key == "condition"_str || key == "workspace"_str;
+           key == "components"_str || key == "condition"_str || key == "workspace"_str ||
+           key == "host-tools"_str;
 }
 
 auto cmake_archive_variant_key(ref<str> key) -> bool {
@@ -168,6 +174,10 @@ auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
 
 auto cmake_target_key(ref<str> key) -> bool {
     return key == "name"_str || key == "visibility"_str;
+}
+
+auto cmake_host_tool_key(ref<str> key) -> bool {
+    return key == "name"_str || key == "target"_str;
 }
 
 auto pkg_config_external_key(ref<str> key) -> bool {

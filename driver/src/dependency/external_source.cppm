@@ -122,6 +122,8 @@ auto prepare_external_source_task(ExternalSourceTask task)
             .visibility = target.visibility,
         });
     }
+    auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
+    for (const auto& tool : declaration.host_tools) host_tools.push(tool.clone());
     auto components       = as<Clone>(declaration.components).clone();
     auto config_directory = Option<PathBuf> {};
     if (! task.installed_override && declaration.config_directory.is_some()) {
@@ -175,6 +177,7 @@ auto prepare_external_source_task(ExternalSourceTask task)
                 .config_directory = rstd::move(config_directory),
                 .cache            = rstd::move(cache),
                 .targets          = rstd::move(targets),
+                .host_tools       = rstd::move(host_tools),
             },
     });
 }
@@ -404,6 +407,8 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
             .visibility = target.visibility,
         });
     }
+    auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
+    for (const auto& tool : requirement.host_tools) host_tools.push(tool.clone());
     auto components = as<Clone>(requirement.components).clone();
     return Ok(SelectedCMakeDependencyRequirement {
         .alias            = requirement.alias.clone(),
@@ -415,6 +420,7 @@ auto resolve_cmake_requirement_for_platform(const PreparedCMakeDependencyRequire
         .config_directory = rstd::move(config_directory),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
+        .host_tools       = rstd::move(host_tools),
     });
 }
 
@@ -453,6 +459,8 @@ auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& req
             .visibility = target.visibility,
         });
     }
+    auto host_tools = Vec<lito::dependency::CMakeHostToolRequirement>::make();
+    for (const auto& tool : requirement.host_tools) host_tools.push(tool.clone());
     auto components = as<Clone>(requirement.components).clone();
     return Ok(ResolvedCMakeDependencyRequirement {
         .alias            = requirement.alias.clone(),
@@ -464,6 +472,7 @@ auto materialize_cmake_requirement(const SelectedCMakeDependencyRequirement& req
         .config_directory = rstd::move(config_directory),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
+        .host_tools       = rstd::move(host_tools),
     });
 }
 

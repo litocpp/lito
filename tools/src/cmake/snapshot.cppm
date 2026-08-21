@@ -19,7 +19,7 @@ export namespace lito::tools::cmake
 {
 
 auto usage_snapshot_path(const CMakeWorkArea& area) -> PathBuf {
-    return area.query_root.join(PathBuf::from("usage-snapshot-v3.json"_str).as_path());
+    return area.query_root.join(PathBuf::from("usage-snapshot-v4.json"_str).as_path());
 }
 
 auto json_strings(const Vec<String>& values) -> Json {
@@ -41,10 +41,21 @@ auto write_usage_snapshot(const CMakeWorkArea& area, const CMakeUsageSnapshot& s
     for (const auto& target : snapshot.targets) targets.push(snapshot_json(target));
     auto document = JsonMap::make();
     document.insert(String::make("schema"_str),
-                    Json::String(String::make("lito-cmake-usage-v3"_str)));
+                    Json::String(String::make("lito-cmake-usage-v4"_str)));
     document.insert(String::make("version"_str), Json::String(snapshot.version.clone()));
     document.insert(String::make("targets"_str), Json::Array(rstd::move(targets)));
     document.insert(String::make("combined"_str), snapshot_json(snapshot.combined));
+    auto host_tools = JsonArray::with_capacity(snapshot.host_tools.len());
+    for (const auto& tool : snapshot.host_tools) {
+        auto item = JsonMap::make();
+        item.insert(String::make("digest"_str), Json::String(tool.digest.clone()));
+        item.insert(String::make("name"_str), Json::String(tool.name.clone()));
+        item.insert(String::make("path"_str),
+                    Json::String(tool.executable.as_path().to_string_lossy()));
+        item.insert(String::make("target"_str), Json::String(tool.target.clone()));
+        host_tools.push(Json::Object(rstd::move(item)));
+    }
+    document.insert(String::make("host-tools"_str), Json::Array(rstd::move(host_tools)));
     auto assets = JsonArray::with_capacity(snapshot.assets.len());
     for (const auto& set : snapshot.assets) {
         auto entries = JsonArray::with_capacity(set.entries.len());
@@ -154,7 +165,7 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
     if (value.is_err()) return Err(rstd::move(value).unwrap_err());
     auto schema = required_json_string(*value, "schema"_str, "CMake usage snapshot"_str);
     if (schema.is_err()) return Err(rstd::move(schema).unwrap_err());
-    if (*schema != "lito-cmake-usage-v3"_str) {
+    if (*schema != "lito-cmake-usage-v4"_str) {
         return cmake_failure<Option<CMakeUsageSnapshot>>(rstd::format(
             "CMake usage snapshot '{}' has unsupported schema '{}'", path.as_path(), *schema));
     }
@@ -179,6 +190,35 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
     if (combined.is_err()) return Err(rstd::move(combined).unwrap_err());
     auto parsed_combined = parse_usage_target(**combined, "CMake combined usage"_str);
     if (parsed_combined.is_err()) return Err(rstd::move(parsed_combined).unwrap_err());
+    auto tool_values = required_json_array(*value, "host-tools"_str, "CMake usage snapshot"_str);
+    if (tool_values.is_err()) return Err(rstd::move(tool_values).unwrap_err());
+    if ((**tool_values).len() != requirement.host_tools.len()) return Ok(None());
+    auto host_tools = Vec<CMakeHostToolSnapshot>::make();
+    for (usize index {}; index < (**tool_values).len(); ++index) {
+        const auto& item = (**tool_values)[index];
+        auto        name = required_json_string(item, "name"_str, "CMake host tool snapshot"_str);
+        auto target      = required_json_string(item, "target"_str, "CMake host tool snapshot"_str);
+        auto path        = required_json_string(item, "path"_str, "CMake host tool snapshot"_str);
+        auto digest      = required_json_string(item, "digest"_str, "CMake host tool snapshot"_str);
+        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
+        if (target.is_err()) return Err(rstd::move(target).unwrap_err());
+        if (path.is_err()) return Err(rstd::move(path).unwrap_err());
+        if (digest.is_err()) return Err(rstd::move(digest).unwrap_err());
+        const auto& expected = requirement.host_tools[index];
+        if (*name != expected.name.as_str() || *target != expected.target.as_str())
+            return Ok(None());
+        auto executable = PathBuf::from(*path);
+        auto bytes      = rstd::fs::read(executable.as_path());
+        if (bytes.is_err() || rstd::crypto::sha256_hex(bytes->as_slice()) != *digest) {
+            return Ok(None());
+        }
+        host_tools.push(CMakeHostToolSnapshot {
+            .name       = String::make(*name),
+            .target     = String::make(*target),
+            .executable = rstd::move(executable),
+            .digest     = String::make(*digest),
+        });
+    }
     auto asset_values = required_json_array(*value, "assets"_str, "CMake usage snapshot"_str);
     if (asset_values.is_err()) return Err(rstd::move(asset_values).unwrap_err());
     auto assets = Vec<ExternalAssetSet>::make();
@@ -216,10 +256,11 @@ auto read_usage_snapshot(const CMakeWorkArea& area, const Request& requirement)
     auto validated_assets = validate_asset_snapshot(area, requirement, rstd::move(assets));
     if (validated_assets.is_err()) return Err(rstd::move(validated_assets).unwrap_err());
     return Ok(Some(CMakeUsageSnapshot {
-        .version  = String::make(*version),
-        .targets  = rstd::move(parsed_targets),
-        .combined = rstd::move(parsed_combined).unwrap(),
-        .assets   = rstd::move(validated_assets).unwrap(),
+        .version    = String::make(*version),
+        .targets    = rstd::move(parsed_targets),
+        .host_tools = rstd::move(host_tools),
+        .combined   = rstd::move(parsed_combined).unwrap(),
+        .assets     = rstd::move(validated_assets).unwrap(),
     }));
 }
 
@@ -274,6 +315,12 @@ auto dependency_identity(const Provider&           provider,
         }
     }
     for (const auto& token : snapshots.combined.link) append_identity(result, token.as_str());
+    for (const auto& tool : snapshots.host_tools) {
+        append_identity(result, tool.name.as_str());
+        append_identity(result, tool.target.as_str());
+        append_identity(result, tool.executable.as_path().to_string_lossy().as_str());
+        append_identity(result, tool.digest.as_str());
+    }
     return Ok(rstd::move(result));
 }
 

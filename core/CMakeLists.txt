@@ -36,6 +36,8 @@ target_sources(
          src/lock/session.cppm
          src/manifest/build_tool.cppm
          src/manifest/build_tool_schema.cppm
+         src/manifest/build_script.cppm
+         src/manifest/build_script_schema.cppm
          src/manifest/convention.cppm
          src/manifest/conditional.cppm
          src/manifest/dependency_schema.cppm

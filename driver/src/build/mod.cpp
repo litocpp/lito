@@ -268,13 +268,24 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         return Err(rstd::into<BuildError>(rstd::move(script_packages).unwrap_err()));
     }
 
+    auto scan_span = profiler.span(ScanProbe::Total);
+    auto resolved  = profiler.measure(ScanProbe::Plan, [&] {
+        return cpp::resolve_native_targets(metadata, selected->clone());
+    });
+    if (resolved.is_err()) {
+        return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
+    }
+    auto native_target_plan = rstd::move(resolved).unwrap();
+
     auto script_report = rstd_try(execute_build_script(metadata,
+                                                       native_target_plan,
                                                        layout,
                                                        metadata.default_profile.as_str(),
                                                        *script_packages,
                                                        *selected,
                                                        request.observer,
                                                        project.platform.host,
+                                                       project.platform.effective_target,
                                                        tool_resolver,
                                                        process_environment,
                                                        request.sources,
@@ -293,16 +304,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         }
     }
 
-    auto scan_span = profiler.span(ScanProbe::Total);
-
-    auto resolved = profiler.measure(ScanProbe::Plan, [&] {
-        return cpp::resolve_native_targets(metadata, rstd::move(selected).unwrap());
-    });
-    if (resolved.is_err()) {
-        return Err(rstd::into<BuildError>(rstd::move(resolved).unwrap_err()));
-    }
-    auto native_target_plan = rstd::move(resolved).unwrap();
-    auto stripper           = as<Clone>(project.target_stripper).clone();
+    auto stripper = as<Clone>(project.target_stripper).clone();
     if (needs_strip_tool &&
         metadata.profiles[native_target_plan.profile].strip != lito::artifact::StripMode::None &&
         stripper.is_none()) {

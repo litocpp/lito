@@ -15,6 +15,8 @@ import :manifest.convention;
 import :manifest.target_schema;
 import :manifest.dependency_schema;
 import :manifest.build_tool_schema;
+import :manifest.build_script_schema;
+import :source.tree;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -27,7 +29,10 @@ auto lito::manifest::valid_package_name(ref<str> value) -> bool {
     return package_name_is_valid(value);
 }
 
-auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
+auto assemble_manifest_document(PathBuf                               root,
+                                PathBuf                               path,
+                                Toml                                  document,
+                                Option<ref<lito::source::SourceTree>> embedded_source = None())
     -> ManifestSchemaResult<ManifestDocument> {
     auto root_table = table_value(document, "manifest root"_str);
     if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
@@ -150,6 +155,8 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
                                                    lito::package::PackageTargetKind::Benchmark,
                                                    "bench"_str,
                                                    target_language));
+    auto script  = rstd_try(
+        parse_script_package(member(document, "script"_str), root.as_path(), embedded_source));
 
     auto compile_tests      = Vec<CompileTestCase>::make();
     auto compile_test_value = member(document, "compile-test"_str);
@@ -159,9 +166,12 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         compile_tests = rstd_try(parse_compile_tests(member(**compile_test_value, "cases"_str)));
     }
 
-    auto source_root = resolve_package_source_root(package_value, root.as_path());
+    auto source_root = embedded_source.is_some()
+                           ? Ok(root.clone())
+                           : resolve_package_source_root(package_value, root.as_path());
     if (source_root.is_err()) return Err(rstd::move(source_root).unwrap_err());
-    auto install_script = discover_install_script(root.as_path());
+    auto install_script = embedded_source.is_some() ? Ok(Option<PathBuf> {})
+                                                    : discover_install_script(root.as_path());
     if (install_script.is_err()) return Err(rstd::move(install_script).unwrap_err());
 
     const auto has_library = library.is_some();
@@ -173,7 +183,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
     for (auto& target : tests) targets.push(rstd::move(target));
     for (auto& target : benches) targets.push(rstd::move(target));
     auto conventional =
-        discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
+        embedded_source.is_some()
+            ? Ok(Vec<PackageTargetManifest>::make())
+            : discover_conventional_benchmarks(root.as_path(), source_root->as_path(), targets);
     if (conventional.is_err()) return Err(rstd::move(conventional).unwrap_err());
     for (auto& target : *conventional) targets.push(rstd::move(target));
     const auto has_compile_contract = ! targets.is_empty() || ! compile_tests.is_empty();
@@ -189,10 +201,15 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
         return manifest_schema_failure<ManifestDocument>(
             "compile-test is currently only supported by C++ packages"_str);
     }
-    if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none()) {
+    if (script.is_some() && has_compile_contract) {
+        return manifest_schema_failure<ManifestDocument>(
+            "manifest.script cannot be combined with C or C++ targets"_str);
+    }
+    if (targets.is_empty() && compile_tests.is_empty() && install_script->is_none() &&
+        script.is_none()) {
         return manifest_schema_failure<ManifestDocument>(
             "manifest must contain at least one of 'lib', 'bin', 'test', 'bench', or "
-            "'compile-test', or provide install.lua"_str);
+            "'compile-test', provide install.lua, or declare a script package"_str);
     }
     auto has_benches = false;
     for (const auto& target : targets) {
@@ -201,9 +218,9 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             break;
         }
     }
-    const auto version_optional =
-        install_script->is_none() && ! has_library && ! has_bins && ! has_benches;
-    auto version = parse_package_version(package_value, version_optional);
+    const auto version_optional = install_script->is_none() && ! has_library && ! has_bins &&
+                                  ! has_benches && script.is_none();
+    auto       version          = parse_package_version(package_value, version_optional);
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     auto license = parse_package_license(package_value);
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
@@ -370,6 +387,7 @@ auto assemble_manifest_document(PathBuf root, PathBuf path, Toml document)
             .install_script             = rstd::move(install_script).unwrap(),
             .profile                    = rstd::move(profile),
             .build_tools                = rstd::move(build_tools).unwrap(),
+            .script                     = rstd::move(script),
             .external_sources           = rstd::move(parsed_external_sources.explicit_sources),
             .workspace_external_sources = rstd::move(parsed_external_sources.workspace_sources),
             .source_groups              = rstd::move(parsed_source_groups),
@@ -427,6 +445,67 @@ auto lito::manifest::load_manifest_document(ref<rstd::path::Path> requested_dire
         }));
     }
     return Ok(rstd::move(assembled).unwrap());
+}
+
+auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_identity,
+                                                            const lito::source::SourceTree& tree)
+    -> ManifestResult<PackageManifest> {
+    if (source_identity.is_empty()) {
+        auto path = PathBuf::from("builtin/lito.toml"_str);
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Schema(ManifestSchemaError::InvalidValue(
+                ManifestNodePath::make("manifest source"_str),
+                String::make("builtin source identity must not be empty"_str))),
+        }));
+    }
+    const lito::source::SourceTreeEntry* manifest_entry = nullptr;
+    for (const auto& entry : tree.entries()) {
+        if (entry.path().as_str() == "lito.toml"_str &&
+            entry.kind() == lito::source::SourceEntryKind::File) {
+            manifest_entry = rstd::addressof(entry);
+            break;
+        }
+    }
+    auto root = PathBuf::from(rstd::format("builtin/{}", source_identity));
+    auto path = root.join(PathBuf::from("lito.toml"_str).as_path());
+    if (manifest_entry == nullptr) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Schema(ManifestSchemaError::MissingField(
+                ManifestNodePath::make("builtin package source"_str),
+                String::make("lito.toml"_str))),
+        }));
+    }
+    auto decoded = String::from_utf8(Vec<u8>::from(manifest_entry->contents()));
+    if (decoded.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Utf8(rstd::move(decoded).unwrap_err()),
+        }));
+    }
+    auto parsed = rstd::toml::from_str(decoded->as_str());
+    if (parsed.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Parse(rstd::move(parsed).unwrap_err()),
+        }));
+    }
+    auto tree_ref  = ref<lito::source::SourceTree>::from_raw_parts(rstd::addressof(tree));
+    auto assembled = assemble_manifest_document(
+        rstd::move(root), path.clone(), rstd::move(parsed).unwrap(), Some(tree_ref));
+    if (assembled.is_err()) {
+        return Err(ManifestError::File(ManifestFileError {
+            .path  = rstd::move(path),
+            .cause = ManifestFileCause::Schema(rstd::move(assembled).unwrap_err()),
+        }));
+    }
+    auto document = rstd::move(assembled).unwrap();
+    if (document.kind != ManifestKind::Package || document.package.is_none()) {
+        return Err(ManifestError::Kind(
+            PathBuf::from("builtin"_str), ManifestKind::Package, document.kind));
+    }
+    return Ok(rstd::move(document.package).unwrap());
 }
 
 auto lito::manifest::load_package_manifest(ref<rstd::path::Path> requested_directory)

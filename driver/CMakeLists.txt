@@ -13,6 +13,7 @@ target_sources(
           src/config/mod.cpp
           src/dependency/external_source.cpp
           src/install/store.cpp
+          src/package/builtin.cpp
           src/sdk/mod.cpp)
 target_sources(
   lito.driver
@@ -86,6 +87,8 @@ target_sources(
          src/install/store/model.cppm
          src/lib.cppm
          src/package/mod.cppm
+         src/package/builtin.cppm
+         src/package/module_catalog.cppm
          src/package/resolver.cppm
          src/package/selection.cppm
          src/source/acquisition.cppm

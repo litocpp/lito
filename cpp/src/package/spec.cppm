@@ -21,22 +21,23 @@ export namespace lito::cpp
 using TargetId = usize;
 
 struct TargetSpec {
-    lito::package::PackageTargetId  id;
-    ArtifactKind                    artifact_kind { ArtifactKind::StaticLibrary };
-    lito::manifest::PackageLanguage language { lito::manifest::PackageLanguage::Cpp };
-    String                          artifact_name;
-    bool                            link_stdlib { true };
-    String                          archive_stem;
-    Option<String>                  module_affiliation;
-    PathBuf                         root;
-    PathBuf                         source_root;
-    Vec<TargetSource>               sources;
-    Vec<DependencySpec>             dependencies;
-    Vec<ResolvedExternalDependency> external_dependencies;
-    UsageRequirements               usage;
-    Vec<ResolvedCompileTestCase>    compile_tests;
-    Option<TestAttachmentTarget>    test_attachment;
-    PackageCompileMetadata          compile_metadata;
+    lito::package::PackageTargetId     id;
+    ArtifactKind                       artifact_kind { ArtifactKind::StaticLibrary };
+    lito::manifest::PackageLanguage    language { lito::manifest::PackageLanguage::Cpp };
+    String                             artifact_name;
+    bool                               link_stdlib { true };
+    String                             archive_stem;
+    Option<String>                     module_affiliation;
+    PathBuf                            root;
+    PathBuf                            source_root;
+    Vec<TargetSource>                  sources;
+    Vec<DependencySpec>                dependencies;
+    Vec<ResolvedExternalDependency>    external_dependencies;
+    Vec<GeneratedArtifactContribution> generated_artifacts;
+    UsageRequirements                  usage;
+    Vec<ResolvedCompileTestCase>       compile_tests;
+    Option<TestAttachmentTarget>       test_attachment;
+    PackageCompileMetadata             compile_metadata;
 };
 
 struct PackageSpec {
@@ -86,6 +87,14 @@ struct CompileContext {
             .external_identities = as<Clone>(external_identities).clone(),
         };
     }
+};
+
+struct PreprocessorProjection {
+    Vec<String> user_include_directories;
+    Vec<String> system_include_directories;
+    Vec<String> definitions;
+    Vec<String> undefinitions;
+    String      identity;
 };
 
 constexpr auto compile_language(const CompileContext& context) noexcept

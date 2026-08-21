@@ -16,12 +16,14 @@ enum class PackageSourceKind
 {
     Path,
     Git,
+    Builtin,
 };
 
 class PackageSourceRequirement {
     RSTD_ENUM(PackageSourceRequirement,
               (Path, (PathBuf path;)),
-              (Git, (String url; GitReference reference;)))
+              (Git, (String url; GitReference reference;)),
+              (Builtin, (String id;)))
 };
 
 struct ResolvedPackageSource {
@@ -32,6 +34,8 @@ struct ResolvedPackageSource {
     String            git;
     GitReference      reference;
     String            commit;
+    String            builtin;
+    String            digest;
 
     auto clone() const -> ResolvedPackageSource {
         return ResolvedPackageSource {
@@ -42,6 +46,8 @@ struct ResolvedPackageSource {
             .git            = git.clone(),
             .reference      = reference.clone(),
             .commit         = commit.clone(),
+            .builtin        = builtin.clone(),
+            .digest         = digest.clone(),
         };
     }
 };

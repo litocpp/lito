@@ -177,7 +177,7 @@ auto selected_closure(const ResolvedPackageGraph& graph,
         }
         selected.insert(current.clone(), empty {});
         for (const auto& dependency : graph.packages[**index].dependencies) {
-            pending.push(dependency.name.clone());
+            pending.push(String::make(resolved_dependency_name(dependency)));
         }
         if (development.contains_key(current.as_str())) {
             for (const auto& dependency : graph.packages[**index].dev_dependencies) {

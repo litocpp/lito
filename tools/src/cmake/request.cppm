@@ -24,16 +24,22 @@ struct TargetRequirement {
     String name;
 };
 
+struct HostToolRequirement {
+    String name;
+    String target;
+};
+
 struct Request {
-    String                 alias;
-    String                 package;
-    Vec<String>            components;
-    Source                 source;
-    Option<PathBuf>        adapter;
-    String                 adapter_identity;
-    Option<PathBuf>        config_directory;
-    Vec<CacheEntry>        cache;
-    Vec<TargetRequirement> targets;
+    String                   alias;
+    String                   package;
+    Vec<String>              components;
+    Source                   source;
+    Option<PathBuf>          adapter;
+    String                   adapter_identity;
+    Option<PathBuf>          config_directory;
+    Vec<CacheEntry>          cache;
+    Vec<TargetRequirement>   targets;
+    Vec<HostToolRequirement> host_tools;
 };
 
 struct Provider {

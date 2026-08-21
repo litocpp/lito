@@ -454,6 +454,115 @@ auto main() -> int {
     EXPECT_EQ(summary->compiled, usize(3));
 }
 
+TEST_F(BuildCommand, BuildScriptGeneratedActionsPublishDependencyOrderedSources) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-action-lib"
+version = "0.1.0"
+
+[lib]
+name = "fixture-action-lib"
+module = "fixture.action"
+archive = "fixture_action"
+sources = ["src/lib.cppm"]
+)toml"_str },
+        { "build.lua"_str, R"lua(local target = lito.target({
+  kind = "lib",
+  name = "fixture-action-lib",
+})
+local written = lito.write({
+  output = "intermediate/generated.cpp",
+  content = [[module fixture.action;
+
+auto generated_answer() noexcept -> int {
+  return 42;
+}
+]],
+})
+local copied = lito.copy({
+  input = written.output,
+  output = "src/generated.cpp",
+})
+lito.target_add_generated_source(target, copied.output)
+)lua"_str },
+        { "src/lib.cppm"_str, R"cpp(export module fixture.action;
+
+export auto generated_answer() noexcept -> int;
+)cpp"_str },
+    };
+    auto project = materialize("build-script-action-dag"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output = build_root("build-script-action-dag"_str);
+    auto request =
+        build_request(project->root.as_path(), output.as_path(), strings("fixture-action-lib"_str));
+    auto first = lito::build(request);
+    if (first.is_err()) {
+        auto message = error_chain_text(first.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_EQ(first->compiled, usize(2));
+    auto generated =
+        output.join(PathBuf::from("generated/fixture-action-lib/src/generated.cpp"_str).as_path());
+    EXPECT_TRUE(rstd::fs::exists(generated.as_path()).unwrap_or(false));
+
+    auto second = lito::build(request);
+    ASSERT_TRUE(second.is_ok());
+    EXPECT_EQ(second->compiled, usize {});
+    EXPECT_EQ(second->frontend.persistent_scan_hits, usize(2));
+}
+
+TEST_F(BuildCommand, BuildScriptLoadsRequiredScriptPackageAndSourceRootFiles) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-script-host"
+version = "0.1.0"
+
+[lib]
+name = "fixture-script-host"
+module = "fixture.script.host"
+archive = "fixture-script-host"
+sources = ["lib.cppm"]
+
+[dependencies.fixture-script-helper]
+path = "tools/helper"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.script.host;\n"_str },
+        { "build.lua"_str, R"lua(local host = require("@lito")
+assert(host == lito)
+local helper = require("@fixture.script.helper")
+local own = require("scripts/value.lua")
+assert(helper.answer == 42)
+assert(own == "consumer")
+)lua"_str },
+        { "scripts/value.lua"_str, "return \"consumer\"\n"_str },
+        { "tools/helper/lito.toml"_str, R"toml([package]
+name = "fixture-script-helper"
+version = "0.1.0"
+
+[script]
+supports = ["build"]
+)toml"_str },
+        { "tools/helper/lib.lua"_str, R"lua(local value = require("internal/value.lua")
+return { answer = value }
+)lua"_str },
+        { "tools/helper/internal/value.lua"_str, "return 42\n"_str },
+    };
+    auto project = materialize("required-script-package"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("required-script-package"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-script-host"_str));
+    auto summary = lito::build(request);
+    if (summary.is_err()) {
+        auto message = error_chain_text(summary.unwrap_err());
+        rstd::test::fail_current(message.as_str(), __FILE__, __LINE__, true);
+        return;
+    }
+    EXPECT_TRUE(summary->script.executed);
+    EXPECT_EQ(summary->compiled, usize(1));
+}
+
 TEST_F(BuildCommand, CMakeInstalledOverrideBuildsFromSearchPathAndPreservesLockSource) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([package]

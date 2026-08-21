@@ -412,6 +412,32 @@ endfunction()
         result.push_str(target.name.as_str());
         result.push_str(" is unavailable\")\nendif()\n"_str);
     }
+    for (const auto& tool : requirement.host_tools) {
+        result.push_str("if(NOT TARGET "_str);
+        result.push_str(tool.target.as_str());
+        result.push_str(")\n  message(FATAL_ERROR \"CMake dependency "_str);
+        result.push_str(requirement.package.as_str());
+        result.push_str(" required host tool target "_str);
+        result.push_str(tool.target.as_str());
+        result.push_str(" is unavailable\")\nendif()\nget_target_property(_lito_tool_type "_str);
+        result.push_str(tool.target.as_str());
+        result.push_str(" TYPE)\nif(NOT _lito_tool_type STREQUAL \"EXECUTABLE\")\n  "
+                        "message(FATAL_ERROR \"CMake host tool target "_str);
+        result.push_str(tool.target.as_str());
+        result.push_str(" is not executable\")\nendif()\n"_str);
+    }
+    result.push_str("file(GENERATE OUTPUT \"${CMAKE_BINARY_DIR}/lito-host-tools-v1.txt\" "
+                    "CONTENT [=[lito-cmake-host-tools-v1\n"_str);
+    for (const auto& tool : requirement.host_tools) {
+        result.push_str("tool\t"_str);
+        result.push_str(tool.name.as_str());
+        result.push_ascii('\t');
+        result.push_str(tool.target.as_str());
+        result.push_str("\t$<TARGET_FILE:"_str);
+        result.push_str(tool.target.as_str());
+        result.push_str(">\n"_str);
+    }
+    result.push_str("]=])\n"_str);
     result.push_str("if(DEFINED "_str);
     result.push_str(requirement.package.as_str());
     result.push_str(

@@ -22,16 +22,17 @@ class PreparedCMakeDependencySource {
 };
 
 struct PreparedCMakeDependencyRequirement {
-    String                                        alias;
-    String                                        package;
-    Vec<String>                                   components;
-    Option<String>                                source_name;
-    PreparedCMakeDependencySource                 source;
-    Option<PathBuf>                               adapter;
-    String                                        adapter_identity;
-    Option<PathBuf>                               config_directory;
-    Vec<lito::dependency::CMakeCacheEntry>        cache;
-    Vec<lito::dependency::CMakeTargetRequirement> targets;
+    String                                          alias;
+    String                                          package;
+    Vec<String>                                     components;
+    Option<String>                                  source_name;
+    PreparedCMakeDependencySource                   source;
+    Option<PathBuf>                                 adapter;
+    String                                          adapter_identity;
+    Option<PathBuf>                                 config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>          cache;
+    Vec<lito::dependency::CMakeTargetRequirement>   targets;
+    Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
 struct PreparedExternalDependency {
@@ -76,15 +77,16 @@ class SelectedCMakeDependencySource {
 };
 
 struct SelectedCMakeDependencyRequirement {
-    String                                        alias;
-    String                                        package;
-    Vec<String>                                   components;
-    SelectedCMakeDependencySource                 source;
-    Option<PathBuf>                               adapter;
-    String                                        adapter_identity;
-    Option<PathBuf>                               config_directory;
-    Vec<lito::dependency::CMakeCacheEntry>        cache;
-    Vec<lito::dependency::CMakeTargetRequirement> targets;
+    String                                          alias;
+    String                                          package;
+    Vec<String>                                     components;
+    SelectedCMakeDependencySource                   source;
+    Option<PathBuf>                                 adapter;
+    String                                          adapter_identity;
+    Option<PathBuf>                                 config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>          cache;
+    Vec<lito::dependency::CMakeTargetRequirement>   targets;
+    Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
 struct DeclaredExternalDependencySources {

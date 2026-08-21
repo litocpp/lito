@@ -219,6 +219,26 @@ command = "generator"
 url = "https://example.com/generator.tgz"
 sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
 )lito"_str },
+    { "manifest-script-invalid-host"_str, R"lito([package]
+name = "script-invalid-host"
+version = "0.1.0"
+
+[script]
+supports = ["unknown"]
+)lito"_str },
+    { "manifest-dependency-conflicting-source"_str, R"lito([package]
+name = "dependency-conflicting-source"
+version = "0.1.0"
+
+[lib]
+name = "dependency-conflicting-source"
+module = "fixture.dependency_conflicting_source"
+archive = "fixture.dependency_conflicting_source"
+
+[dependencies.lito-qt]
+builtin = "qt"
+path = "../qt"
+)lito"_str },
     { "manifest-legacy-target-schema"_str, R"lito([package]
 name = "fixture-legacy-target-schema"
 version = "0.1.0"
@@ -851,9 +871,11 @@ default-features = false
     EXPECT_TRUE(loaded->features[usize {}].default_enabled);
     EXPECT_EQ(loaded->features[usize {}].macro_name, "LITO_FEAT_FFI"_str);
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
-    EXPECT_FALSE(loaded->dependencies[usize {}].default_features);
-    ASSERT_EQ(loaded->dependencies[usize {}].features.len(), usize(1));
-    EXPECT_EQ(loaded->dependencies[usize {}].features[usize {}], "api"_str);
+    ASSERT_TRUE(loaded->dependencies[usize {}].default_features.is_some());
+    EXPECT_FALSE(*loaded->dependencies[usize {}].default_features);
+    ASSERT_TRUE(loaded->dependencies[usize {}].features.is_some());
+    ASSERT_EQ(loaded->dependencies[usize {}].features->len(), usize(1));
+    EXPECT_EQ((*loaded->dependencies[usize {}].features)[usize {}], "api"_str);
 }
 
 TEST_F(Manifest, UsageSeparatesLocalOptionsFromTypedLinkRequirements) {
@@ -955,6 +977,36 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
         });
     ASSERT_TRUE(unsupported.is_err());
     EXPECT_TRUE(unsupported.unwrap_err().is_UnsupportedHost());
+}
+
+TEST_F(Manifest, ScriptPackageHasFixedEntryAndBuiltinDependencySource) {
+    constexpr ProjectFile files[] = {
+        {
+            "lito.toml"_str,
+            R"toml([package]
+name = "fixture-lua-package"
+version = "0.1.0"
+
+[script]
+supports = ["build", "install"]
+
+[dependencies.lito-qt]
+builtin = "qt"
+)toml"_str,
+        },
+        { "lib.lua"_str, "return { enabled = true }\n"_str },
+    };
+    auto project = materialize("lua-package"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_TRUE(loaded->targets.is_empty());
+    ASSERT_TRUE(loaded->script.is_some());
+    ASSERT_EQ(loaded->script->supports.len(), usize(2));
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    EXPECT_EQ(loaded->dependencies[usize {}].name.as_str(), "lito-qt"_str);
+    EXPECT_TRUE(loaded->dependencies[usize {}].source.is_Builtin());
+    EXPECT_EQ(loaded->dependencies[usize {}].source.as_Builtin().id.as_str(), "qt"_str);
 }
 
 TEST_F(Manifest, ManifestLocatorPrefersLitoAndAcceptsLegacyTenon) {

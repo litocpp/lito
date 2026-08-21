@@ -166,7 +166,7 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         if (package.source.is_Path()) {
             rstd_try(validate_export_path(package.source.as_Path().path.as_path(),
                                           package.name.as_str()));
-        } else {
+        } else if (package.source.is_Git()) {
             const auto& source        = package.source.as_Git();
             auto        architectures = Vec<String>::make();
             rstd_try(add_candidate(

@@ -7,6 +7,7 @@ export import :manifest.language;
 export import :manifest.target;
 export import :manifest.dependency;
 export import :manifest.build_tool;
+export import :manifest.build_script;
 export import :manifest.package;
 export import :manifest.workspace;
 export import :manifest.document;

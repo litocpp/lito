@@ -152,6 +152,20 @@ auto render_build_setup(const lito::BuildSetupReport& report) -> String {
             result.push_ascii('\n');
         }
     }
+    if (! report.script_packages.is_empty()) {
+        result.push_str("  Script packages\n"_str);
+        for (const auto& package : report.script_packages) {
+            result.push_str(rstd::format("    {} {} <- {} ({}; {}; {}#{})\n",
+                                         package.package.as_str(),
+                                         package.require_name.as_str(),
+                                         package.dependency.as_str(),
+                                         package.source_identity.as_str(),
+                                         package.supports.as_str(),
+                                         package.entry.as_path(),
+                                         package.entry_digest.as_str())
+                                .as_str());
+        }
+    }
     result.push_ascii('\n');
     return result;
 }

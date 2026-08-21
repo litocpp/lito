@@ -26,15 +26,16 @@ class ResolvedCMakeDependencySource {
 };
 
 struct ResolvedCMakeDependencyRequirement {
-    String                                        alias;
-    String                                        package;
-    Vec<String>                                   components;
-    ResolvedCMakeDependencySource                 source;
-    Option<PathBuf>                               adapter;
-    String                                        adapter_identity;
-    Option<PathBuf>                               config_directory;
-    Vec<lito::dependency::CMakeCacheEntry>        cache;
-    Vec<lito::dependency::CMakeTargetRequirement> targets;
+    String                                          alias;
+    String                                          package;
+    Vec<String>                                     components;
+    ResolvedCMakeDependencySource                   source;
+    Option<PathBuf>                                 adapter;
+    String                                          adapter_identity;
+    Option<PathBuf>                                 config_directory;
+    Vec<lito::dependency::CMakeCacheEntry>          cache;
+    Vec<lito::dependency::CMakeTargetRequirement>   targets;
+    Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
 using ExternalAssetEntry       = lito::tools::cmake::ExternalAssetEntry;
@@ -116,6 +117,13 @@ auto cmake_request(const ResolvedCMakeDependencyRequirement& requirement)
     for (const auto& target : requirement.targets) {
         targets.push(lito::tools::cmake::TargetRequirement { .name = target.name.clone() });
     }
+    auto host_tools = Vec<lito::tools::cmake::HostToolRequirement>::make();
+    for (const auto& tool : requirement.host_tools) {
+        host_tools.push(lito::tools::cmake::HostToolRequirement {
+            .name   = tool.name.clone(),
+            .target = tool.target.clone(),
+        });
+    }
     auto result = lito::tools::cmake::Request {
         .alias            = requirement.alias.clone(),
         .package          = requirement.package.clone(),
@@ -124,6 +132,7 @@ auto cmake_request(const ResolvedCMakeDependencyRequirement& requirement)
         .adapter_identity = requirement.adapter_identity.clone(),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
+        .host_tools       = rstd::move(host_tools),
     };
     if (requirement.adapter.is_some()) result.adapter = Some(requirement.adapter->clone());
     if (requirement.config_directory.is_some()) {
@@ -371,16 +380,35 @@ auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnaps
         return Err(
             cmake_error("identify CMake dependency usage"_str, rstd::move(identity).unwrap_err()));
     }
+    auto host_tools = Vec<cpp::ExternalHostToolUsage>::make();
+    for (const auto& snapshot : snapshots.host_tools) {
+        auto tool_identity =
+            rstd::crypto::sha256_hex(rstd::format("lito-cmake-host-tool-v1\n{}\n{}\n{}\n{}\n{}",
+                                                  identity->as_str(),
+                                                  snapshot.name.as_str(),
+                                                  snapshot.target.as_str(),
+                                                  snapshot.executable.as_path(),
+                                                  snapshot.digest.as_str())
+                                         .as_str());
+        host_tools.push(cpp::ExternalHostToolUsage {
+            .name       = snapshot.name.clone(),
+            .target     = snapshot.target.clone(),
+            .executable = snapshot.executable.clone(),
+            .digest     = snapshot.digest.clone(),
+            .identity   = rstd::move(tool_identity),
+        });
+    }
     auto links = lito::tools::cmake::materialize_link_tokens(snapshots.combined.link,
                                                              tool.area.query_build.as_path());
     if (links.is_err()) {
         return Err(cmake_error("materialize CMake link usage"_str, rstd::move(links).unwrap_err()));
     }
     return Ok(cpp::ExternalDependencyUsage {
-        .alias    = requirement.alias.clone(),
-        .provider = String::make("cmake"_str),
-        .version  = snapshots.version.clone(),
-        .targets  = rstd::move(targets),
+        .alias      = requirement.alias.clone(),
+        .provider   = String::make("cmake"_str),
+        .version    = snapshots.version.clone(),
+        .targets    = rstd::move(targets),
+        .host_tools = rstd::move(host_tools),
         .link_arguments =
             lito::link::ArgumentSequence {
                 .tokens   = rstd::move(links).unwrap(),

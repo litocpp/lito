@@ -2,6 +2,7 @@
 
 import rstd;
 import rstd.test;
+import luato;
 import lito.core;
 import lito.system;
 import lito.tools.cmake;
@@ -780,6 +781,108 @@ sources = ["main.cpp"]
     ASSERT_TRUE(package.is_ok());
     EXPECT_FALSE(package->root_is_workspace);
     EXPECT_EQ(package->name.as_str(), "demo-app"_str);
+}
+
+TEST_F(PackageResolver, ResolvesBuiltinScriptPackagesThroughRequiredDependencies) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-script-consumer"
+version = "0.1.0"
+
+[lib]
+name = "fixture-script-consumer"
+module = "fixture.script.consumer"
+archive = "fixture-script-consumer"
+sources = ["lib.cppm"]
+
+[dependencies.lito-qt]
+builtin = "qt"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.script.consumer;\n"_str },
+    };
+    auto project = materialize("builtin-script-dependency"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->packages.len(), usize(2));
+
+    const lito::package::ResolvedPackage* consumer = nullptr;
+    const lito::package::ResolvedPackage* provider = nullptr;
+    for (const auto& package : graph->packages) {
+        if (package.manifest.name == "fixture-script-consumer"_str) consumer = &package;
+        if (package.manifest.name == "lito-qt"_str) provider = &package;
+    }
+    ASSERT_NE(consumer, nullptr);
+    ASSERT_NE(provider, nullptr);
+    ASSERT_EQ(consumer->dependencies.len(), usize(1));
+    ASSERT_TRUE(consumer->dependencies[usize {}].is_Script());
+    const auto& script = consumer->dependencies[usize {}].as_Script().value;
+    EXPECT_EQ(script.name.as_str(), "lito-qt"_str);
+    EXPECT_EQ(script.require_name.as_str(), "@lito.qt"_str);
+    ASSERT_EQ(script.supports.len(), usize(1));
+    EXPECT_EQ(script.supports[usize {}], lito::manifest::ScriptHostKind::Build);
+    EXPECT_EQ(provider->source.kind, lito::source::PackageSourceKind::Builtin);
+    EXPECT_EQ(provider->source.builtin.as_str(), "qt"_str);
+    EXPECT_TRUE(provider->embedded_source.is_some());
+}
+
+TEST_F(PackageResolver, RejectsCppFieldsOnScriptDependencyContracts) {
+    const ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-script-contract-mismatch"
+version = "0.1.0"
+
+[lib]
+name = "fixture-script-contract-mismatch"
+module = "fixture.script.contract_mismatch"
+archive = "fixture-script-contract-mismatch"
+sources = ["lib.cppm"]
+
+[dependencies.lito-qt]
+builtin = "qt"
+visibility = "private"
+)toml"_str },
+        { "lib.cppm"_str, "export module fixture.script.contract_mismatch;\n"_str },
+    };
+    auto project = materialize("script-contract-mismatch"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto graph = lito::package::resolve_package_graph(project->root.as_path());
+    ASSERT_TRUE(graph.is_err());
+    EXPECT_TRUE(rstd::format("{}", graph.unwrap_err()).as_str().contains("C++ fields"_str));
+}
+
+TEST_F(PackageResolver, ScriptCatalogRejectsImporterRelativeModuleNames) {
+    const ProjectFile files[] = {
+        { "build.lua"_str, "require(\"./value\")\n"_str },
+        { "value.lua"_str, "return 42\n"_str },
+    };
+    auto project = materialize("script-relative-require"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto dependencies = Vec<String>::make();
+    auto packages     = Vec<lito::package::ResolvedScriptPackageView>::make();
+    auto catalog = lito::package::ScriptModuleCatalog::make(project->root.as_path(),
+                                                            "fixture:script-relative"_str,
+                                                            dependencies.as_slice(),
+                                                            packages.as_slice(),
+                                                            lito::manifest::ScriptHostKind::Build);
+    ASSERT_TRUE(catalog.is_ok());
+    auto modules = rstd::move(catalog).unwrap();
+    auto state   = luato::State::create(luato::StateOptions::build_script());
+    ASSERT_TRUE(state.is_ok());
+    auto lua = rstd::move(state).unwrap();
+    ASSERT_TRUE(
+        lua
+            .set_module_resolver(luato::ModuleResolverSpec::make(
+                [&modules](luato::ModuleRequest request) -> luato::Result<luato::LuaModuleSource> {
+                    return modules.resolve(rstd::move(request));
+                }))
+            .is_ok());
+    auto script = project->root.join(PathBuf::from("build.lua"_str).as_path());
+    auto entry  = modules.entry(script.as_path(), "fixture-relative-entry"_str);
+    ASSERT_TRUE(entry.is_ok());
+    auto executed = lua.execute_entry(rstd::move(entry).unwrap());
+    ASSERT_TRUE(executed.is_err());
+    EXPECT_TRUE(executed.unwrap_err().message.as_str().contains("exact safe source-root"_str));
 }
 
 TEST_F(PackageResolver, EffectiveTargetsIncludeDependencyLibraries) {

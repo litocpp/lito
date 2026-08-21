@@ -404,15 +404,20 @@ auto workspace_reference_enabled(const Toml& specification, ref<str> context)
 
 auto parse_package_dependency_source(const Toml& specification, ref<str> context)
     -> ManifestSchemaResult<lito::source::PackageSourceRequirement> {
-    auto path = optional_string(specification, "path"_str, context);
-    auto git  = optional_string(specification, "git"_str, context);
+    auto path    = optional_string(specification, "path"_str, context);
+    auto git     = optional_string(specification, "git"_str, context);
+    auto builtin = optional_string(specification, "builtin"_str, context);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     if (git.is_err()) return Err(rstd::move(git).unwrap_err());
-    auto path_value = rstd::move(path).unwrap();
-    auto git_value  = rstd::move(git).unwrap();
-    if (path_value.is_some() == git_value.is_some()) {
+    if (builtin.is_err()) return Err(rstd::move(builtin).unwrap_err());
+    auto       path_value    = rstd::move(path).unwrap();
+    auto       git_value     = rstd::move(git).unwrap();
+    auto       builtin_value = rstd::move(builtin).unwrap();
+    const auto source_count =
+        usize(path_value.is_some()) + usize(git_value.is_some()) + usize(builtin_value.is_some());
+    if (source_count != usize(1)) {
         return manifest_schema_failure<lito::source::PackageSourceRequirement>(
-            rstd::format("{} must contain exactly one of 'path' or 'git'", context));
+            rstd::format("{} must contain exactly one of 'path', 'git', or 'builtin'", context));
     }
     auto reference = parse_git_reference(specification, context);
     if (reference.is_err()) return Err(rstd::move(reference).unwrap_err());
@@ -424,6 +429,14 @@ auto parse_package_dependency_source(const Toml& specification, ref<str> context
         auto parsed = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
         if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
         return Ok(lito::source::PackageSourceRequirement::Path(rstd::move(parsed).unwrap()));
+    }
+    if (builtin_value.is_some()) {
+        auto id = rstd::move(builtin_value).unwrap();
+        if (! package_name_is_valid(id.as_str())) {
+            return manifest_schema_failure<lito::source::PackageSourceRequirement>(
+                rstd::format("{}.builtin must be a valid builtin package id", context));
+        }
+        return Ok(lito::source::PackageSourceRequirement::Builtin(rstd::move(id)));
     }
     auto url = rstd::move(git_value).unwrap();
     rstd_try(validate_git_url(url.as_str(), context));
@@ -467,20 +480,22 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
                                     development ? workspace_dev_dependency_reference_key
                                                 : workspace_dependency_reference_key));
         }
-        auto parsed_visibility = lito::dependency::DependencyVisibility::Private;
-        if (! development) {
-            auto visibility = required_string(**specification, "visibility"_str, context.as_str());
-            if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
-            auto parsed = parse_visibility(visibility->as_str(), "dependency.visibility"_str);
-            if (parsed.is_err()) return Err(rstd::move(parsed).unwrap_err());
-            parsed_visibility = rstd::move(parsed).unwrap();
+        auto parsed_visibility = Option<lito::dependency::DependencyVisibility> {};
+        if (! development && member(**specification, "visibility"_str).is_some()) {
+            auto visibility =
+                rstd_try(required_string(**specification, "visibility"_str, context.as_str()));
+            parsed_visibility =
+                Some(rstd_try(parse_visibility(visibility.as_str(), "dependency.visibility"_str)));
         }
         auto requested_features = string_array(member(**specification, "features"_str),
                                                rstd::format("{}.features", context).as_str());
         if (requested_features.is_err()) {
             return Err(rstd::move(requested_features).unwrap_err());
         }
-        auto default_features = true;
+        auto parsed_features  = member(**specification, "features"_str).is_some()
+                                    ? Some(rstd::move(requested_features).unwrap())
+                                    : Option<Vec<String>> {};
+        auto default_features = Option<bool> {};
         auto default_value    = member(**specification, "default-features"_str);
         if (default_value.is_some()) {
             auto parsed = (**default_value).as_bool();
@@ -488,13 +503,13 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
                 return manifest_schema_failure<ParsedDependencies>(
                     rstd::format("{}.default-features must be a boolean", context.as_str()));
             }
-            default_features = *parsed;
+            default_features = Some(*parsed);
         }
         if (*inherited) {
             result.workspace_dependencies.push(WorkspaceDependencyReference {
                 .name             = name.clone(),
                 .visibility       = parsed_visibility,
-                .features         = rstd::move(requested_features).unwrap(),
+                .features         = rstd::move(parsed_features),
                 .default_features = default_features,
             });
             continue;
@@ -505,7 +520,7 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
             .name             = name.clone(),
             .source           = rstd::move(source).unwrap(),
             .visibility       = parsed_visibility,
-            .features         = rstd::move(requested_features).unwrap(),
+            .features         = rstd::move(parsed_features),
             .default_features = default_features,
         });
     }
@@ -778,6 +793,43 @@ auto parse_cmake_targets(const Toml& specification, ref<str> context)
     return Ok(rstd::move(result));
 }
 
+auto parse_cmake_host_tools(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Vec<lito::dependency::CMakeHostToolRequirement>> {
+    auto value  = member(specification, "host-tools"_str);
+    auto result = Vec<lito::dependency::CMakeHostToolRequirement>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto array = (**value).as_array();
+    if (array.is_none() || (**array).is_empty()) {
+        return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+            rstd::format("{}.host-tools must be a non-empty array", context));
+    }
+    auto names = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& item : **array) {
+        auto tool =
+            rstd_try(table_value(item, rstd::format("{}.host-tools item", context).as_str()));
+        rstd_try(reject_unknown(*tool, "CMake host tool"_str, cmake_host_tool_key));
+        auto name   = rstd_try(required_string(item, "name"_str, "CMake host tool"_str));
+        auto target = rstd_try(required_string(item, "target"_str, "CMake host tool"_str));
+        if (! package_name_is_valid(name.as_str()) || ! cmake_target_is_valid(target.as_str())) {
+            return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+                rstd::format("{}.host-tools contains invalid name '{}' or target '{}'",
+                             context,
+                             name.as_str(),
+                             target.as_str()));
+        }
+        if (names.contains_key(name.as_str())) {
+            return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+                rstd::format("{}.host-tools repeats name '{}'", context, name.as_str()));
+        }
+        names.insert(name.clone(), empty {});
+        result.push(lito::dependency::CMakeHostToolRequirement {
+            .name   = rstd::move(name),
+            .target = rstd::move(target),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_cmake_components(const Toml& specification, ref<str> context)
     -> ManifestSchemaResult<Vec<String>> {
     auto value = member(specification, "components"_str);
@@ -811,11 +863,13 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
     auto source           = optional_string(specification, "source"_str, context);
     auto adapter          = optional_string(specification, "adapter"_str, context);
     auto config_directory = optional_string(specification, "config-directory"_str, context);
+    auto host_tools       = parse_cmake_host_tools(specification, context);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (components.is_err()) return Err(rstd::move(components).unwrap_err());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
     if (adapter.is_err()) return Err(rstd::move(adapter).unwrap_err());
     if (config_directory.is_err()) return Err(rstd::move(config_directory).unwrap_err());
+    if (host_tools.is_err()) return Err(rstd::move(host_tools).unwrap_err());
     if (! lito::dependency::cmake_package_name_is_valid(package->as_str())) {
         return manifest_schema_failure<WorkspaceCMakeExternalDependencyDefinition>(
             rstd::format("{}.package is unsafe", context));
@@ -859,6 +913,7 @@ auto parse_cmake_external_dependency_definition(const Toml& specification,
         .adapter          = rstd::move(adapter_path),
         .config_directory = rstd::move(directory),
         .cache            = rstd::move(cache).unwrap(),
+        .host_tools       = rstd::move(host_tools).unwrap(),
     });
 }
 
@@ -915,6 +970,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
             .config_directory = rstd::move(value.config_directory),
             .cache            = rstd::move(value.cache),
             .targets          = rstd::move(targets).unwrap(),
+            .host_tools       = rstd::move(value.host_tools),
         });
     }
     return Ok(rstd::move(result));

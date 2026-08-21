@@ -50,6 +50,7 @@ package = "LitoFixture"
 source = "fixture"
 config-directory = "lib/cmake/LitoFixture"
 cache = { LITO_FIXTURE_OPTION = true }
+host-tools = [{ name = "generator", target = "LitoFixture::generator" }]
 targets = [
   { name = "LitoFixture::fixture", visibility = "private" },
   { name = "LitoFixture::headers", visibility = "public" },
@@ -93,6 +94,10 @@ targets = [
     ASSERT_TRUE(source_requirement.config_directory.is_some());
     EXPECT_EQ(source_requirement.config_directory->as_path().to_str().unwrap(),
               "lib/cmake/LitoFixture"_str);
+    ASSERT_EQ(source_requirement.host_tools.len(), usize(1));
+    EXPECT_EQ(source_requirement.host_tools[usize {}].name.as_str(), "generator"_str);
+    EXPECT_EQ(source_requirement.host_tools[usize {}].target.as_str(),
+              "LitoFixture::generator"_str);
     ASSERT_EQ(loaded->external_sources.len(), usize(1));
     EXPECT_EQ(loaded->external_sources[usize {}].name.as_str(), "fixture"_str);
     EXPECT_TRUE(loaded->external_sources[usize {}].source.is_Path());

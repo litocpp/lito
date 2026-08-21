@@ -19,7 +19,16 @@ auto feature(ref<str> name, bool default_enabled = false) -> lito::manifest::Fea
 }
 
 auto dependency(ref<str> name, Vec<String> features = {}, bool default_features = true)
-    -> lito::package::ResolvedDependency {
+    -> lito::package::ResolvedRequiredDependency {
+    return lito::package::ResolvedRequiredDependency::Cpp(lito::package::ResolvedCppDependency {
+        .name             = String::make(name),
+        .features         = rstd::move(features),
+        .default_features = default_features,
+    });
+}
+
+auto dev_dependency(ref<str> name, Vec<String> features = {}, bool default_features = true)
+    -> lito::package::ResolvedCppDependency {
     return {
         .name             = String::make(name),
         .features         = rstd::move(features),
@@ -27,10 +36,10 @@ auto dependency(ref<str> name, Vec<String> features = {}, bool default_features 
     };
 }
 
-auto package(ref<str>                                name,
-             Vec<lito::manifest::FeatureDeclaration> features         = {},
-             Vec<lito::package::ResolvedDependency>  dependencies     = {},
-             Vec<lito::package::ResolvedDependency>  dev_dependencies = {})
+auto package(ref<str>                                       name,
+             Vec<lito::manifest::FeatureDeclaration>        features         = {},
+             Vec<lito::package::ResolvedRequiredDependency> dependencies     = {},
+             Vec<lito::package::ResolvedCppDependency>      dev_dependencies = {})
     -> lito::package::ResolvedPackage {
     return {
         .manifest =
@@ -128,11 +137,11 @@ TEST(PackageFeatures, UnifiesDependencyRequestsAndIgnoresInactiveDevEdges) {
     declarations.push(feature("first"_str));
     declarations.push(feature("second"_str));
 
-    auto first_dependencies = Vec<lito::package::ResolvedDependency>::make();
+    auto first_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
     first_dependencies.push(dependency("provider"_str, names("first"_str), false));
-    auto first_dev_dependencies = Vec<lito::package::ResolvedDependency>::make();
-    first_dev_dependencies.push(dependency("provider"_str, names("second"_str), false));
-    auto second_dependencies = Vec<lito::package::ResolvedDependency>::make();
+    auto first_dev_dependencies = Vec<lito::package::ResolvedCppDependency>::make();
+    first_dev_dependencies.push(dev_dependency("provider"_str, names("second"_str), false));
+    auto second_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
     second_dependencies.push(dependency("provider"_str, names("second"_str), false));
 
     auto packages = Vec<lito::package::ResolvedPackage>::make();
@@ -196,7 +205,7 @@ TEST(PackageFeatures, SelectsExternalDependenciesAfterGraphFeatureUnion) {
     EXPECT_EQ(graph.packages[usize {}].manifest.pkg_config_external_dependencies.len(), usize(1));
     EXPECT_TRUE(graph.packages[usize {}].manifest.cmake_external_dependencies.is_empty());
 
-    auto consumer_dependencies = Vec<lito::package::ResolvedDependency>::make();
+    auto consumer_dependencies = Vec<lito::package::ResolvedRequiredDependency>::make();
     consumer_dependencies.push(dependency("provider"_str, names("qt"_str), false));
     auto enabled_packages = Vec<lito::package::ResolvedPackage>::make();
     enabled_packages.push(package("consumer"_str, {}, rstd::move(consumer_dependencies)));

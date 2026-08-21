@@ -16,15 +16,17 @@ struct PackageInstallTarget {
 };
 
 struct PackageInstallInput {
-    String                              name;
-    String                              version;
-    PathBuf                             root;
-    PathBuf                             manifest_path;
-    Option<PathBuf>                     script;
-    Vec<PackageInstallTarget>           binaries;
-    lito::source::ResolvedPackageSource source;
-    Vec<InstallRuntimeDependency>       runtime_dependencies;
-    bool                                direct { false };
+    String                                        name;
+    String                                        version;
+    PathBuf                                       root;
+    PathBuf                                       manifest_path;
+    Option<PathBuf>                               script;
+    Vec<PackageInstallTarget>                     binaries;
+    lito::source::ResolvedPackageSource           source;
+    Vec<InstallRuntimeDependency>                 runtime_dependencies;
+    Vec<String>                                   script_dependencies;
+    Vec<lito::package::ResolvedScriptPackageView> script_packages;
+    bool                                          direct { false };
 };
 
 struct InstallArtifactRecipe {

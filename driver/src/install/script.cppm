@@ -9,6 +9,7 @@ import lito.core;
 import :install.recipe;
 import :install.package;
 import :install.script_error;
+import :package.module_catalog;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -425,12 +426,31 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
             rstd::format("package '{}' has no install script", package.name.as_str()));
     }
     auto session = InstallScriptSession(package);
-    auto state   = luato::State::create(luato::StateOptions::base());
+    auto state   = luato::State::create(luato::StateOptions::build_script());
     if (state.is_err()) {
         return Err(InstallScriptError::Lua(package.script->clone(),
                                            rstd::move(state).unwrap_err_unchecked()));
     }
-    auto lua    = rstd::move(state).unwrap_unchecked();
+    auto lua = rstd::move(state).unwrap_unchecked();
+    auto catalog =
+        lito::package::ScriptModuleCatalog::make(package.root.as_path(),
+                                                 package.source.identity.as_str(),
+                                                 package.script_dependencies.as_slice(),
+                                                 package.script_packages.as_slice(),
+                                                 lito::manifest::ScriptHostKind::Install);
+    if (catalog.is_err()) {
+        return Err(InstallScriptError::Message(rstd::format(
+            "cannot configure install script modules: {}", rstd::move(catalog).unwrap_err())));
+    }
+    auto modules    = rstd::move(catalog).unwrap();
+    auto configured = lua.set_module_resolver(luato::ModuleResolverSpec::make(
+        [&modules](luato::ModuleRequest request) -> luato::Result<luato::LuaModuleSource> {
+            return modules.resolve(rstd::move(request));
+        }));
+    if (configured.is_err()) {
+        return Err(InstallScriptError::Lua(package.script->clone(),
+                                           rstd::move(configured).unwrap_err_unchecked()));
+    }
     auto module = luato::ModuleSpec(String::make("lito"_str));
     module.set(String::make("package_name"_str), package.name.clone());
     module.set(String::make("package_version"_str), package.version.clone());
@@ -477,12 +497,22 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
             }
             return Ok(usize(1));
         }));
-    auto registered = lua.register_module(rstd::move(module));
+    auto native_module =
+        luato::NativeRequireModuleSpec(String::make("@lito"_str),
+                                       String::make("lito:install-host-api:v1"_str),
+                                       rstd::move(module));
+    native_module.set_global_alias(String::make("lito"_str));
+    auto registered = lua.register_native_require_module(rstd::move(native_module));
     if (registered.is_err()) {
         return Err(InstallScriptError::Lua(package.script->clone(),
                                            rstd::move(registered).unwrap_err_unchecked()));
     }
-    auto executed = lua.execute_file(package.script->as_path());
+    auto entry = modules.entry(package.script->as_path(), package.name.as_str());
+    if (entry.is_err()) {
+        return Err(InstallScriptError::Lua(package.script->clone(),
+                                           rstd::move(entry).unwrap_err_unchecked()));
+    }
+    auto executed = lua.execute_entry(rstd::move(entry).unwrap_unchecked());
     if (executed.is_err()) {
         auto deferred = session.take_deferred_error();
         if (deferred.is_some()) return Err(rstd::move(deferred).unwrap());

@@ -56,12 +56,23 @@ struct BuildTargetReport {
     Option<PathBuf> sysroot;
 };
 
+struct ScriptPackageReport {
+    String  package;
+    String  dependency;
+    String  source_identity;
+    String  require_name;
+    String  supports;
+    PathBuf entry;
+    String  entry_digest;
+};
+
 struct BuildSetupReport {
     BuildToolchainReport         toolchain;
     BuildTargetReport            target;
     String                       profile;
     Vec<BuildProfileValueReport> profile_values;
     Vec<BuildOptionReport>       options;
+    Vec<ScriptPackageReport>     script_packages;
 };
 
 struct BuildSetupReportSink {
@@ -79,9 +90,11 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                              const ClangToolchain&                            resolved,
                              const lito::config::ProjectBuildOptions&         options,
                              const lito::package::EffectiveLanguageStandards& standards,
-                             lito::config::StandardLibraryRuntime standard_library_runtime,
-                             const lito::cpp::ProfileSpec&        profile,
-                             const BuildPlatform&                 platform) -> void {
+                             lito::config::StandardLibraryRuntime       standard_library_runtime,
+                             const lito::cpp::ProfileSpec&              profile,
+                             const BuildPlatform&                       platform,
+                             const lito::package::ResolvedPackageGraph& graph,
+                             const Vec<String>&                         selected_packages) -> void {
     if (reporter.is_none() || reporter->notify == nullptr) return;
     auto report = BuildSetupReport {
         .toolchain =
@@ -110,6 +123,53 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
             },
         .profile = profile.name.clone(),
     };
+    for (const auto& package : graph.packages) {
+        auto selected = false;
+        for (const auto& name : selected_packages) {
+            if (package.manifest.name == name.as_str()) selected = true;
+        }
+        if (! selected) continue;
+        for (const auto& dependency : package.dependencies) {
+            if (! dependency.is_Script()) continue;
+            const auto&                           script   = dependency.as_Script().value;
+            const lito::package::ResolvedPackage* provider = nullptr;
+            for (const auto& candidate : graph.packages) {
+                if (candidate.manifest.name == script.name.as_str()) {
+                    provider = rstd::addressof(candidate);
+                    break;
+                }
+            }
+            if (provider == nullptr) continue;
+            auto digest = String::make();
+            if (provider->embedded_source.is_some()) {
+                for (const auto& entry : provider->embedded_source->entries()) {
+                    if (entry.path().as_str() == "lib.lua"_str &&
+                        entry.kind() == lito::source::SourceEntryKind::File) {
+                        digest = rstd::crypto::sha256_hex(entry.contents());
+                        break;
+                    }
+                }
+            } else {
+                auto contents = rstd::fs::read(
+                    provider->manifest.root.join(PathBuf::from("lib.lua"_str).as_path()).as_path());
+                if (contents.is_ok()) digest = rstd::crypto::sha256_hex(contents->as_slice());
+            }
+            auto supports = String::make();
+            for (auto host : script.supports) {
+                if (! supports.is_empty()) supports.push_ascii(',');
+                supports.push_str(lito::manifest::script_host_kind_name(host));
+            }
+            report.script_packages.push(ScriptPackageReport {
+                .package         = package.manifest.name.clone(),
+                .dependency      = script.name.clone(),
+                .source_identity = script.source_identity.clone(),
+                .require_name    = script.require_name.clone(),
+                .supports        = rstd::move(supports),
+                .entry           = PathBuf::from("lib.lua"_str),
+                .entry_digest    = rstd::move(digest),
+            });
+        }
+    }
     const auto source_text = [](const Option<String>& source) {
         return source.is_some() ? source->clone() : String::make("compiler default"_str);
     };

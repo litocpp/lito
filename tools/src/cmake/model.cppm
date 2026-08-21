@@ -196,6 +196,13 @@ auto clone_cmake_requirement(const Request& requirement) -> Request {
     for (const auto& target : requirement.targets) {
         targets.push(TargetRequirement { .name = target.name.clone() });
     }
+    auto host_tools = Vec<HostToolRequirement>::with_capacity(requirement.host_tools.len());
+    for (const auto& tool : requirement.host_tools) {
+        host_tools.push(HostToolRequirement {
+            .name   = tool.name.clone(),
+            .target = tool.target.clone(),
+        });
+    }
     auto result = Request {
         .alias            = requirement.alias.clone(),
         .package          = requirement.package.clone(),
@@ -204,6 +211,7 @@ auto clone_cmake_requirement(const Request& requirement) -> Request {
         .adapter_identity = requirement.adapter_identity.clone(),
         .cache            = rstd::move(cache),
         .targets          = rstd::move(targets),
+        .host_tools       = rstd::move(host_tools),
     };
     if (requirement.adapter.is_some()) result.adapter = Some(requirement.adapter->clone());
     if (requirement.config_directory.is_some()) {
@@ -295,7 +303,7 @@ auto work_area(const Request&                requirement,
     }
     auto root         = PathBuf::from(profile_cmake_root)
                             .join(PathBuf::from(identity_hash(recipe.as_str())).as_path());
-    auto query_recipe = String::make("lito-cmake-query-v5\n"_str);
+    auto query_recipe = String::make("lito-cmake-query-v6\n"_str);
     append_identity(query_recipe, requirement.alias.as_str());
     append_identity(query_recipe, requirement.package.as_str());
     for (const auto& component : requirement.components) {
@@ -319,6 +327,10 @@ auto work_area(const Request&                requirement,
     }
     for (const auto& target : requirement.targets) {
         append_identity(query_recipe, target.name.as_str());
+    }
+    for (const auto& tool : requirement.host_tools) {
+        append_identity(query_recipe, tool.name.as_str());
+        append_identity(query_recipe, tool.target.as_str());
     }
     append_identity(query_recipe, effective_target);
     auto query_root = root.join(PathBuf::from("queries"_str).as_path())

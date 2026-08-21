@@ -45,6 +45,15 @@ struct CMakeTargetRequirement {
     DependencyVisibility visibility { DependencyVisibility::Private };
 };
 
+struct CMakeHostToolRequirement {
+    String name;
+    String target;
+
+    auto clone() const -> CMakeHostToolRequirement {
+        return CMakeHostToolRequirement { .name = name.clone(), .target = target.clone() };
+    }
+};
+
 struct CMakeDependencyRequirement {
     String                              alias;
     String                              package;
@@ -55,6 +64,7 @@ struct CMakeDependencyRequirement {
     Option<PathBuf>                     config_directory;
     Vec<CMakeCacheEntry>                cache;
     Vec<CMakeTargetRequirement>         targets;
+    Vec<CMakeHostToolRequirement>       host_tools;
     Option<PathBuf>                     declaration_root;
     Option<PathBuf>                     adapter_root;
 
@@ -80,6 +90,7 @@ struct CMakeDependencyRequirement {
             .cache      = rstd::move(cache_copy),
             .targets    = rstd::move(target_copy),
         };
+        for (const auto& tool : host_tools) result.host_tools.push(tool.clone());
         if (condition.is_some()) result.condition = Some(condition->clone());
         if (source.is_some()) result.source = Some(source->clone());
         if (adapter.is_some()) result.adapter = Some(adapter->clone());

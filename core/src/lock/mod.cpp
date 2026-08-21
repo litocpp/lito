@@ -65,6 +65,9 @@ auto locked_package_source(const lito::source::ResolvedPackageSource& source) ->
     if (source.kind == lito::source::PackageSourceKind::Path) {
         return LockedSource::Path(source.path.clone());
     }
+    if (source.kind == lito::source::PackageSourceKind::Builtin) {
+        return LockedSource::Builtin(source.builtin.clone(), source.digest.clone());
+    }
     return LockedSource::Git(source.git.clone(), source.reference.clone(), source.commit.clone());
 }
 
@@ -91,6 +94,10 @@ auto locked_source_json(const LockedSource& source) -> LockResult<Json> {
         auto path = rstd_try(path_string(source.as_Package().path.as_path()));
         item.insert(String::make("kind"_str), string_json("package"_str));
         item.insert(String::make("path"_str), string_json(path.as_str()));
+    } else if (source.is_Builtin()) {
+        item.insert(String::make("digest"_str), string_json(source.as_Builtin().digest.as_str()));
+        item.insert(String::make("id"_str), string_json(source.as_Builtin().id.as_str()));
+        item.insert(String::make("kind"_str), string_json("builtin"_str));
     } else if (source.is_Git()) {
         item.insert(String::make("commit"_str), string_json(source.as_Git().commit.as_str()));
         item.insert(String::make("kind"_str), string_json("git"_str));
@@ -131,7 +138,7 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph) -> LockResult<
         auto        dependency_names =
             Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
-            dependency_names.push(dependency.name.clone());
+            dependency_names.push(String::make(resolved_dependency_name(dependency)));
         }
         for (const auto& dependency : package.dev_dependencies) {
             dependency_names.push(dependency.name.clone());
@@ -237,6 +244,10 @@ auto path_source_key(ref<str> key) -> bool {
 
 auto git_source_key(ref<str> key) -> bool {
     return key == "commit"_str || key == "kind"_str || key == "reference"_str || key == "url"_str;
+}
+
+auto builtin_source_key(ref<str> key) -> bool {
+    return key == "kind"_str || key == "id"_str || key == "digest"_str;
 }
 
 auto reference_key(ref<str> key) -> bool {
@@ -353,6 +364,19 @@ auto validate_source(const Json& value, ref<str> context, bool external_source)
         if (path.is_empty() || ! PathBuf::from(path).as_path().is_safe_relative()) {
             return lock_failure<empty>(
                 rstd::format("{}.path must be a safe non-empty package-relative path", context));
+        }
+        return Ok(empty {});
+    }
+    if (kind == "builtin"_str && ! external_source) {
+        rstd_try(reject_unknown(value, context, builtin_source_key));
+        auto id     = rstd_try(required_string(value, "id"_str, context));
+        auto digest = rstd_try(required_string(value, "digest"_str, context));
+        if (! lito::manifest::valid_package_name(id)) {
+            return lock_failure<empty>(rstd::format("{}.id must be a valid package name", context));
+        }
+        if (! lowercase_hexadecimal(digest, usize(64))) {
+            return lock_failure<empty>(
+                rstd::format("{}.digest must be 64 lowercase hexadecimal digits", context));
         }
         return Ok(empty {});
     }
@@ -603,6 +627,10 @@ auto parse_locked_source(const Json& value) -> LockedSource {
     }
     if (kind == "package"_str) {
         return LockedSource::Package(PathBuf::from(*(**value.get("path"_str)).as_str()));
+    }
+    if (kind == "builtin"_str) {
+        return LockedSource::Builtin(String::make(*(**value.get("id"_str)).as_str()),
+                                     String::make(*(**value.get("digest"_str)).as_str()));
     }
     if (kind == "git"_str) {
         return LockedSource::Git(String::make(*(**value.get("url"_str)).as_str()),

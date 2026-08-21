@@ -1,3 +1,6 @@
+module;
+#include <rstd/enum.hpp>
+
 export module lito.core:package.graph;
 
 import rstd;
@@ -7,6 +10,7 @@ import :dependency.visibility;
 import :dependency.source;
 import :manifest.package;
 import :package.identity;
+import :source.tree;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -22,7 +26,7 @@ enum class ProjectRootRole
     AssociatedTest,
 };
 
-struct ResolvedDependency {
+struct ResolvedCppDependency {
     String                                 name;
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
@@ -30,6 +34,39 @@ struct ResolvedDependency {
     Vec<String> features;
     bool        default_features { true };
 };
+
+struct ResolvedScriptDependency {
+    String                              name;
+    String                              require_name;
+    String                              source_identity;
+    Vec<lito::manifest::ScriptHostKind> supports;
+};
+
+struct ResolvedScriptPackageView {
+    String                              name;
+    String                              require_name;
+    String                              source_identity;
+    Vec<lito::manifest::ScriptHostKind> supports;
+    PathBuf                             root;
+    Option<lito::source::SourceTree>    embedded_source;
+    Vec<String>                         dependencies;
+};
+
+class ResolvedRequiredDependency {
+    RSTD_ENUM(ResolvedRequiredDependency,
+              (Cpp, (ResolvedCppDependency value;)),
+              (Script, (ResolvedScriptDependency value;)))
+};
+
+auto resolved_dependency_name_value(const ResolvedRequiredDependency& dependency) noexcept
+    -> const String& {
+    if (dependency.is_Cpp()) return dependency.as_Cpp().value.name;
+    return dependency.as_Script().value.name;
+}
+
+auto resolved_dependency_name(const ResolvedRequiredDependency& dependency) noexcept -> ref<str> {
+    return resolved_dependency_name_value(dependency).as_str();
+}
 
 struct ResolvedRuntimeDependency {
     String name;
@@ -47,8 +84,9 @@ struct ResolvedPackage {
     lito::source::ResolvedPackageSource                 source;
     PathBuf                                             source_manifest;
     lito::manifest::PackageManifest                     manifest;
-    Vec<ResolvedDependency>                             dependencies;
-    Vec<ResolvedDependency>                             dev_dependencies;
+    Option<lito::source::SourceTree>                    embedded_source;
+    Vec<ResolvedRequiredDependency>                     dependencies;
+    Vec<ResolvedCppDependency>                          dev_dependencies;
     Vec<ResolvedRuntimeDependency>                      runtime_dependencies;
     Vec<ResolvedFeature>                                features;
     Vec<lito::dependency::ResolvedExternalSourceRecord> externals;

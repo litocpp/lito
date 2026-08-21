@@ -59,6 +59,19 @@ struct ResolvedSourceGroup {
     bool         external { false };
 };
 
+enum class GeneratedArtifactRole
+{
+    Resource,
+    Metadata,
+    Auxiliary,
+};
+
+struct GeneratedArtifactContribution {
+    GeneratedArtifactRole role { GeneratedArtifactRole::Metadata };
+    PathBuf               path;
+    String                action_identity;
+};
+
 struct ResolvedTarget {
     lito::package::PackageTargetId               id;
     ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
@@ -75,9 +88,63 @@ struct ResolvedTarget {
     Vec<lito::manifest::RuntimeResourceManifest> runtime_resources;
     Vec<DependencySpec>                          dependencies;
     Vec<ResolvedExternalDependency>              external_dependencies;
+    Vec<GeneratedArtifactContribution>           generated_artifacts;
     Option<TestAttachmentTarget>                 test_attachment;
     PackageCompileMetadata                       compile_metadata;
 };
+
+auto add_generated_source(ResolvedTarget& target, PathBuf source) -> bool {
+    for (const auto& group : target.source_groups) {
+        for (const auto& existing : group.sources) {
+            if (existing.as_path() == source.as_path()) return false;
+        }
+    }
+    for (auto& group : target.source_groups) {
+        if (! group.generated || group.name != "build-script"_str) continue;
+        group.sources.push(rstd::move(source));
+        return true;
+    }
+    auto sources = Vec<PathBuf>::make();
+    sources.push(rstd::move(source));
+    target.source_groups.push(ResolvedSourceGroup {
+        .name      = String::make("build-script"_str),
+        .root      = target.root.clone(),
+        .identity  = String::make("build-script-generated"_str),
+        .sources   = rstd::move(sources),
+        .generated = true,
+    });
+    return true;
+}
+
+auto add_generated_include_directory(ResolvedTarget& target, PathBuf path) -> bool {
+    for (const auto& requirement : target.usage.private_include_directory_requirements) {
+        if (requirement.root == lito::dependency::IncludeDirectoryRoot::Generated &&
+            requirement.path.as_path() == path.as_path()) {
+            return false;
+        }
+    }
+    target.usage.private_include_directory_requirements.push(
+        lito::dependency::IncludeDirectoryRequirement {
+            .root = lito::dependency::IncludeDirectoryRoot::Generated,
+            .path = rstd::move(path),
+        });
+    return true;
+}
+
+auto add_generated_artifact(ResolvedTarget&       target,
+                            GeneratedArtifactRole role,
+                            PathBuf               path,
+                            String                action_identity) -> bool {
+    for (const auto& artifact : target.generated_artifacts) {
+        if (artifact.role == role && artifact.path.as_path() == path.as_path()) return false;
+    }
+    target.generated_artifacts.push(GeneratedArtifactContribution {
+        .role            = role,
+        .path            = rstd::move(path),
+        .action_identity = rstd::move(action_identity),
+    });
+    return true;
+}
 
 struct PackageBuildToolRequirement {
     String                               package;
@@ -92,11 +159,13 @@ enum class BuildScriptOwnerKind
 };
 
 struct BuildScriptOwner {
-    BuildScriptOwnerKind kind { BuildScriptOwnerKind::Package };
-    Option<String>       package;
-    String               source_identity;
-    PathBuf              root;
-    PathBuf              script;
+    BuildScriptOwnerKind                          kind { BuildScriptOwnerKind::Package };
+    Option<String>                                package;
+    String                                        source_identity;
+    PathBuf                                       root;
+    PathBuf                                       script;
+    Vec<String>                                   script_dependencies;
+    Vec<lito::package::ResolvedScriptPackageView> script_packages;
 };
 
 struct SelectedPackageMetadata {

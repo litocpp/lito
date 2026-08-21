@@ -7,6 +7,7 @@ import :manifest.language;
 import :manifest.target;
 import :manifest.dependency;
 import :manifest.build_tool;
+import :manifest.build_script;
 import :manifest.conditional;
 import :dependency.usage;
 import :dependency.cmake;
@@ -54,6 +55,7 @@ struct PackageManifest {
     Option<PathBuf>                                    install_script;
     Option<ProjectProfile>                             profile;
     Vec<BuildToolRequirement>                          build_tools;
+    Option<ScriptPackageManifest>                      script;
     Vec<PackageExternalSourceDeclaration>              external_sources;
     Vec<WorkspaceExternalSourceReference>              workspace_external_sources;
     Vec<SourceGroupManifest>                           source_groups;

@@ -18,6 +18,7 @@ class LockedSource {
     RSTD_ENUM(LockedSource,
               (Path, (PathBuf path;)),
               (Package, (PathBuf path;)),
+              (Builtin, (String id; String digest;)),
               (Git, (String url; lito::source::GitReference reference; String commit;)),
               (Archive, (String url; String sha256;)))
 };

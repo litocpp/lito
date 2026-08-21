@@ -845,6 +845,7 @@ auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
             .provider          = rstd::move(dependency.provider),
             .version           = rstd::move(dependency.version),
             .targets           = rstd::move(targets),
+            .host_tools        = rstd::move(dependency.host_tools),
             .link_arguments    = rstd::move(dependency.link_arguments),
             .link_requirements = rstd::move(dependency.link_requirements),
             .identity          = rstd::move(dependency.identity),
@@ -899,12 +900,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
 
     for (const auto& package : graph.packages) {
         for (const auto& dependency : package.dependencies) {
-            if (! libraries.contains_key(dependency.name.as_str())) {
+            if (! dependency.is_Cpp()) continue;
+            const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (! libraries.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(
                     rstd::format("package '{}' depends on package '{}' which does not expose a "
                                  "library target",
                                  package.manifest.name.as_str(),
-                                 dependency.name.as_str()));
+                                 cpp_dependency.name.as_str()));
             }
         }
         for (const auto& dependency : package.dev_dependencies) {
@@ -1001,18 +1004,21 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         auto dependencies = Vec<DependencySpec>::with_capacity(package.dependencies.len());
         for (const auto& dependency : package.dependencies) {
-            if (! selected.contains_key(dependency.name.as_str())) {
-                return adapter_failure<PackageMetadata>(
-                    rstd::format("resolved dependency '{}' is missing", dependency.name.as_str()));
-            }
-            auto library = libraries.get(dependency.name.as_str());
-            if (library.is_none()) {
+            if (! dependency.is_Cpp()) continue;
+            const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (! selected.contains_key(cpp_dependency.name.as_str())) {
                 return adapter_failure<PackageMetadata>(rstd::format(
-                    "resolved dependency '{}' has no library target", dependency.name.as_str()));
+                    "resolved dependency '{}' is missing", cpp_dependency.name.as_str()));
+            }
+            auto library = libraries.get(cpp_dependency.name.as_str());
+            if (library.is_none()) {
+                return adapter_failure<PackageMetadata>(
+                    rstd::format("resolved dependency '{}' has no library target",
+                                 cpp_dependency.name.as_str()));
             }
             dependencies.push(DependencySpec {
                 .target     = (**library).clone(),
-                .visibility = dependency.visibility,
+                .visibility = cpp_dependency.visibility,
             });
         }
         auto development_selected = false;
@@ -1241,6 +1247,46 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         default_targets.push(target.clone());
     }
+    auto resolved_script_packages = Vec<lito::package::ResolvedScriptPackageView>::make();
+    for (const auto& provider : graph.packages) {
+        if (provider.manifest.script.is_none()) continue;
+        auto dependencies = Vec<String>::make();
+        for (const auto& dependency : provider.dependencies) {
+            if (dependency.is_Script()) {
+                dependencies.push(dependency.as_Script().value.name.clone());
+            }
+        }
+        resolved_script_packages.push(lito::package::ResolvedScriptPackageView {
+            .name            = provider.manifest.name.clone(),
+            .require_name    = lito::manifest::script_require_name(provider.manifest.name.as_str()),
+            .source_identity = provider.source_identity.clone(),
+            .supports        = provider.manifest.script->supports.clone(),
+            .root            = provider.manifest.root.clone(),
+            .embedded_source = provider.embedded_source.is_some()
+                                   ? Some(provider.embedded_source->clone())
+                                   : Option<lito::source::SourceTree> {},
+            .dependencies    = rstd::move(dependencies),
+        });
+    }
+    const auto clone_script_packages = [&]() {
+        auto result = Vec<lito::package::ResolvedScriptPackageView>::with_capacity(
+            resolved_script_packages.len());
+        for (const auto& package : resolved_script_packages) {
+            result.push(lito::package::ResolvedScriptPackageView {
+                .name            = package.name.clone(),
+                .require_name    = package.require_name.clone(),
+                .source_identity = package.source_identity.clone(),
+                .supports        = package.supports.clone(),
+                .root            = package.root.clone(),
+                .embedded_source = package.embedded_source.is_some()
+                                       ? Some(package.embedded_source->clone())
+                                       : Option<lito::source::SourceTree> {},
+                .dependencies    = package.dependencies.clone(),
+            });
+        }
+        return result;
+    };
+
     auto build_scripts = Vec<BuildScriptOwner>::make();
     if (graph.root_is_workspace) {
         build_scripts.push(BuildScriptOwner {
@@ -1249,18 +1295,27 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             .source_identity = String::make("workspace"_str),
             .root            = graph.root_directory.clone(),
             .script          = graph.root_directory.join(PathBuf::from("build.lua"_str).as_path()),
+            .script_packages = clone_script_packages(),
         });
     }
     for (const auto& root : graph.roots) {
         if (! selected.contains_key(root.name.as_str())) continue;
-        for (const auto& package : graph.packages) {
+        for (auto& package : graph.packages) {
             if (package.manifest.name != root.name.as_str()) continue;
+            auto script_dependencies = Vec<String>::make();
+            for (const auto& dependency : package.dependencies) {
+                if (! dependency.is_Script()) continue;
+                const auto& script = dependency.as_Script().value;
+                script_dependencies.push(script.name.clone());
+            }
             build_scripts.push(BuildScriptOwner {
                 .kind            = BuildScriptOwnerKind::Package,
                 .package         = Some(root.name.clone()),
                 .source_identity = root.source_identity.clone(),
                 .root            = package.manifest.root.clone(),
                 .script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
+                .script_dependencies = rstd::move(script_dependencies),
+                .script_packages     = clone_script_packages(),
             });
             break;
         }
@@ -1362,6 +1417,7 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
             .sources               = rstd::move(sources),
             .dependencies          = rstd::move(target.dependencies),
             .external_dependencies = rstd::move(target.external_dependencies),
+            .generated_artifacts   = rstd::move(target.generated_artifacts),
             .usage                 = rstd::move(target.usage),
             .compile_tests         = rstd::move(target.compile_tests),
             .test_attachment       = rstd::move(target.test_attachment),

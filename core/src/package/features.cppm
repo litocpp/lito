@@ -100,36 +100,35 @@ auto resolve_features(ResolvedPackageGraph&       graph,
     }
     for (const auto& package : graph.packages) {
         if (! selected(package.manifest.name.as_str())) continue;
-        const auto collect =
-            [&](const Vec<ResolvedDependency>& dependencies) -> PackageResult<empty> {
-            for (const auto& dependency : dependencies) {
-                if (! selected(dependency.name.as_str())) continue;
-                auto index = indices.get(dependency.name.as_str());
-                if (index.is_none()) {
-                    return Err(PackageError::Message(rstd::format(
-                        "feature request targets missing package '{}'", dependency.name.as_str())));
-                }
-                if (dependency.default_features) {
-                    defaults[**index] = true;
-                    append_unique(default_sources[**index],
-                                  rstd::format("dependency '{}' from package '{}' default features",
-                                               dependency.name.as_str(),
-                                               package.manifest.name.as_str())
-                                      .as_str());
-                }
-                for (const auto& feature : dependency.features) {
-                    append_request(requests[**index],
-                                   feature.as_str(),
-                                   rstd::format("dependency '{}' from package '{}'",
-                                                dependency.name.as_str(),
-                                                package.manifest.name.as_str()));
-                }
+        const auto collect = [&](const ResolvedCppDependency& dependency) -> PackageResult<empty> {
+            if (! selected(dependency.name.as_str())) return Ok(empty {});
+            auto index = indices.get(dependency.name.as_str());
+            if (index.is_none()) {
+                return Err(PackageError::Message(rstd::format(
+                    "feature request targets missing package '{}'", dependency.name.as_str())));
+            }
+            if (dependency.default_features) {
+                defaults[**index] = true;
+                append_unique(default_sources[**index],
+                              rstd::format("dependency '{}' from package '{}' default features",
+                                           dependency.name.as_str(),
+                                           package.manifest.name.as_str())
+                                  .as_str());
+            }
+            for (const auto& feature : dependency.features) {
+                append_request(requests[**index],
+                               feature.as_str(),
+                               rstd::format("dependency '{}' from package '{}'",
+                                            dependency.name.as_str(),
+                                            package.manifest.name.as_str()));
             }
             return Ok(empty {});
         };
-        rstd_try(collect(package.dependencies));
+        for (const auto& dependency : package.dependencies) {
+            if (dependency.is_Cpp()) rstd_try(collect(dependency.as_Cpp().value));
+        }
         if (development(package.manifest.name.as_str())) {
-            rstd_try(collect(package.dev_dependencies));
+            for (const auto& dependency : package.dev_dependencies) rstd_try(collect(dependency));
         }
     }
     for (usize index {}; index < graph.packages.len(); ++index) {

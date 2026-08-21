@@ -4,6 +4,7 @@ import rstd;
 import :manifest.error;
 import :manifest.package;
 import :manifest.workspace;
+import :source.tree;
 
 using namespace rstd::prelude;
 
@@ -28,6 +29,10 @@ auto load_manifest_document(ref<rstd::path::Path> requested_directory)
     -> ManifestResult<ManifestDocument>;
 
 auto load_package_manifest(ref<rstd::path::Path> requested_directory)
+    -> ManifestResult<PackageManifest>;
+
+auto load_package_manifest_from_source_tree(ref<str>                        source_identity,
+                                            const lito::source::SourceTree& tree)
     -> ManifestResult<PackageManifest>;
 
 } // namespace lito::manifest

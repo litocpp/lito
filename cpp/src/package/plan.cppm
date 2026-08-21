@@ -393,6 +393,78 @@ auto refresh_compile_context_identity(CompileContext& context) -> void {
     context.scan_id = scan_context_id(context);
 }
 
+auto preprocessor_projection(const CompileContext& context) -> PreprocessorProjection {
+    auto       result         = PreprocessorProjection {};
+    const auto append_include = [&](const auto& include) {
+        auto text = include.path.as_path().to_string_lossy();
+        if (include.kind == decltype(include.kind)::System)
+            result.system_include_directories.push(rstd::move(text));
+        else
+            result.user_include_directories.push(rstd::move(text));
+    };
+    const auto append_macro = [&](const auto& macro) {
+        if (macro.action == decltype(macro.action)::Define)
+            result.definitions.push(macro.value.clone());
+        else
+            result.undefinitions.push(macro.value.clone());
+    };
+    if (context.language.is_C()) {
+        for (const auto& include : context.language.as_C().options.include_directories)
+            append_include(include);
+        for (const auto& macro : context.language.as_C().options.macros) append_macro(macro);
+    } else {
+        for (const auto& include :
+             context.language.as_Cpp().options.preprocessor.include_directories)
+            append_include(include);
+        for (const auto& macro : context.language.as_Cpp().options.preprocessor.macros)
+            append_macro(macro);
+    }
+    auto identity = String::make("lito-preprocessor-projection-v1\n"_str);
+    for (const auto& value : result.user_include_directories)
+        identity.push_str(rstd::format("include:{}:{}\n", value.len(), value.as_str()).as_str());
+    for (const auto& value : result.system_include_directories)
+        identity.push_str(rstd::format("system:{}:{}\n", value.len(), value.as_str()).as_str());
+    for (const auto& value : result.definitions)
+        identity.push_str(rstd::format("define:{}:{}\n", value.len(), value.as_str()).as_str());
+    for (const auto& value : result.undefinitions)
+        identity.push_str(rstd::format("undefine:{}:{}\n", value.len(), value.as_str()).as_str());
+    result.identity = rstd::crypto::sha256_hex(identity.as_str());
+    return result;
+}
+
+auto add_private_include_directory(CompileContext& context, PathBuf path) -> bool {
+    if (context.language.is_C()) {
+        auto& includes = context.language.as_C().options.include_directories;
+        for (const auto& include : includes) {
+            if (include.kind == lito::c::CIncludeDirectoryKind::User &&
+                include.path.as_path() == path.as_path()) {
+                return false;
+            }
+        }
+        includes.push(lito::c::CIncludeDirectory { .path = rstd::move(path) });
+    } else {
+        auto& includes = context.language.as_Cpp().options.preprocessor.include_directories;
+        for (const auto& include : includes) {
+            if (include.kind == CppIncludeDirectoryKind::User &&
+                include.path.as_path() == path.as_path()) {
+                return false;
+            }
+        }
+        includes.push(CppIncludeDirectory { .path = rstd::move(path) });
+    }
+    refresh_compile_context_identity(context);
+    return true;
+}
+
+auto add_generated_artifact_identity(CompileContext& context, ref<str> identity) -> bool {
+    for (const auto& existing : context.external_identities) {
+        if (existing == identity) return false;
+    }
+    context.external_identities.push(String::make(identity));
+    refresh_compile_context_identity(context);
+    return true;
+}
+
 auto compile_test_context(const CompileContext& base, const ResolvedCompileTestCase& test)
     -> lito::package::PackageResult<CompileContext> {
     if (! base.language.is_Cpp()) {

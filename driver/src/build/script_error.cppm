@@ -22,6 +22,7 @@ class BuildScriptError {
               (Template, (TemplateError source;)),
               (HostTool, (HostBuildToolError source;)),
               (BuildToolAction, (BuildToolActionError source;)),
+              (Package, (lito::package::PackageError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
               (Lua, (String operation; Option<PathBuf> path; luato::Error source;)),
@@ -85,6 +86,13 @@ struct Impl<convert::From<lito::BuildToolActionError>, lito::BuildScriptError> {
 };
 
 template<>
+struct Impl<convert::From<lito::package::PackageError>, lito::BuildScriptError> {
+    static auto from(lito::package::PackageError error) -> lito::BuildScriptError {
+        return lito::BuildScriptError::Package(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -100,6 +108,9 @@ struct Impl<fmt::Display, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_BuildToolAction()) {
             return as<fmt::Display>(error.as_BuildToolAction().source).fmt(formatter);
+        }
+        if (error.is_Package()) {
+            return formatter.write_str("build script package resolution failed"_str);
         }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
@@ -148,6 +159,9 @@ struct Impl<error::Error, lito::BuildScriptError> : ImplBase<lito::BuildScriptEr
         }
         if (error.is_BuildToolAction()) {
             return Some(dyn<error::Error>::from_ref(error.as_BuildToolAction().source));
+        }
+        if (error.is_Package()) {
+            return Some(dyn<error::Error>::from_ref(error.as_Package().source));
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));

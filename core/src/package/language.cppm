@@ -60,10 +60,12 @@ auto resolve_effective_language_standards(const ResolvedPackageGraph& graph,
             continue;
         }
         for (const auto& dependency : package.dependencies) {
-            if (! selected.contains_key(dependency.name.as_str())) continue;
+            if (! dependency.is_Cpp()) continue;
+            const auto& cpp_dependency = dependency.as_Cpp().value;
+            if (! selected.contains_key(cpp_dependency.name.as_str())) continue;
             const lito::manifest::PackageManifest* dependency_manifest = nullptr;
             for (const auto& candidate : graph.packages) {
-                if (candidate.manifest.name == dependency.name.as_str()) {
+                if (candidate.manifest.name == cpp_dependency.name.as_str()) {
                     dependency_manifest = rstd::addressof(candidate.manifest);
                     break;
                 }
@@ -73,7 +75,7 @@ auto resolve_effective_language_standards(const ResolvedPackageGraph& graph,
                 return Err(PackageError::Message(
                     rstd::format("C package '{}' cannot depend on C++ package '{}'",
                                  package.manifest.name.as_str(),
-                                 dependency.name.as_str())));
+                                 cpp_dependency.name.as_str())));
             }
         }
     }

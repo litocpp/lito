@@ -728,7 +728,7 @@
         },
         "archives": {
           "type": "object",
-          "minProperties": 1,
+          "minItems": 1,
           "patternProperties": {
             "^[a-z0-9]+-[A-Za-z0-9_]+$": {
               "$ref": "#/definitions/hostBuildToolArchive"
@@ -744,6 +744,23 @@
       "patternProperties": {
         "^[A-Za-z0-9_-]+$": {
           "$ref": "#/definitions/hostBuildTool"
+        }
+      },
+      "additionalProperties": false
+    },
+    "scriptPackage": {
+      "type": "object",
+      "required": [
+        "supports"
+      ],
+      "properties": {
+        "supports": {
+          "type": "array",
+          "minProperties": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["build", "install"]
+          }
         }
       },
       "additionalProperties": false
@@ -973,6 +990,9 @@
         "git": {
           "$ref": "#/definitions/gitUrl"
         },
+        "builtin": {
+          "$ref": "#/definitions/packageName"
+        },
         "branch": {
           "$ref": "#/definitions/gitSelector"
         },
@@ -1015,6 +1035,11 @@
                   },
                   {
                     "required": [
+                      "builtin"
+                    ]
+                  },
+                  {
+                    "required": [
                       "branch"
                     ]
                   },
@@ -1041,8 +1066,22 @@
                 "git"
               ],
               "not": {
-                "required": [
-                  "path"
+                "anyOf": [
+                  { "required": ["path"] },
+                  { "required": ["builtin"] }
+                ]
+              }
+            },
+            {
+              "required": ["builtin"],
+              "not": {
+                "anyOf": [
+                  { "required": ["path"] },
+                  { "required": ["git"] },
+                  { "required": ["branch"] },
+                  { "required": ["tag"] },
+                  { "required": ["rev"] },
+                  { "required": ["commit"] }
                 ]
               }
             }
@@ -1052,23 +1091,11 @@
       "additionalProperties": false
     },
     "explicitDependency": {
-      "allOf": [
-        {
-          "$ref": "#/definitions/dependencySource"
-        },
-        {
-          "required": [
-            "visibility"
-          ]
-        }
-      ]
+      "$ref": "#/definitions/dependencySource"
     },
     "workspaceDependencyReference": {
       "type": "object",
-      "required": [
-        "workspace",
-        "visibility"
-      ],
+      "required": ["workspace"],
       "properties": {
         "workspace": {
           "enum": [
@@ -1319,6 +1346,22 @@
       },
       "additionalProperties": false
     },
+    "cmakeHostTool": {
+      "type": "object",
+      "required": [
+        "name",
+        "target"
+      ],
+      "properties": {
+        "name": {
+          "$ref": "#/definitions/packageName"
+        },
+        "target": {
+          "$ref": "#/definitions/cmakeTarget"
+        }
+      },
+      "additionalProperties": false
+    },
     "cmakeExternalDependencyDefinition": {
       "type": "object",
       "required": [
@@ -1354,6 +1397,13 @@
           "uniqueItems": true,
           "items": {
             "$ref": "#/definitions/cmakeExternalTarget"
+          }
+        },
+        "host-tools": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "$ref": "#/definitions/cmakeHostTool"
           }
         },
         "condition": {
@@ -1723,6 +1773,9 @@
         },
         "build-tools": {
           "$ref": "#/definitions/hostBuildTools"
+        },
+        "script": {
+          "$ref": "#/definitions/scriptPackage"
         },
         "profile": {
           "$ref": "#/definitions/projectProfile"
