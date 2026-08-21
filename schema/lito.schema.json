@@ -114,6 +114,27 @@
         }
       ]
     },
+    "packageAuthors": {
+      "oneOf": [
+        {
+          "$ref": "#/definitions/nonEmptyStringArray"
+        },
+        {
+          "type": "object",
+          "required": [
+            "workspace"
+          ],
+          "properties": {
+            "workspace": {
+              "enum": [
+                true
+              ]
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
     "predicateFamily": {
       "enum": [
         "unix",
@@ -193,6 +214,9 @@
         },
         "license": {
           "$ref": "#/definitions/packageLicense"
+        },
+        "authors": {
+          "$ref": "#/definitions/packageAuthors"
         },
         "source-root": {
           "description": "Source and usage path base, relative to the package manifest directory. It must contain the package directory.",
@@ -1541,6 +1565,9 @@
         },
         "license": {
           "$ref": "#/definitions/nonEmptyString"
+        },
+        "authors": {
+          "$ref": "#/definitions/nonEmptyStringArray"
         }
       },
       "additionalProperties": false

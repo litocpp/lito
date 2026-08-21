@@ -24,6 +24,7 @@ default-members = ["library"]
 [workspace.package]
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+authors = ["Lito Authors <authors@example.invalid>"]
 [workspace.dependencies.fixture-associated-workspace-library]
 path = "library"
 [workspace.dependencies.fixture-associated-workspace-bench-helper]
@@ -58,6 +59,7 @@ sources = ["lib.cppm"]
 name = "fixture-associated-workspace-test"
 version.workspace = true
 license.workspace = true
+authors.workspace = true
 [[test]]
 link-stdlib = false
 name = "fixture-associated-workspace-test"
@@ -246,6 +248,10 @@ TEST_F(WorkspaceConvention, WorkspaceDiscoversAssociatedTestPackageWithInheritan
         EXPECT_EQ(package.manifest.license.source, lito::manifest::PackageLicenseSource::Workspace);
         ASSERT_TRUE(package.manifest.license.value.is_some());
         EXPECT_EQ(package.manifest.license.value->as_str(), "MIT OR Apache-2.0"_str);
+        EXPECT_EQ(package.manifest.authors.source, lito::manifest::PackageAuthorsSource::Workspace);
+        ASSERT_EQ(package.manifest.authors.values.len(), usize(1));
+        EXPECT_EQ(package.manifest.authors.values[usize {}].as_str(),
+                  "Lito Authors <authors@example.invalid>"_str);
         EXPECT_EQ(package.dependencies.len(), usize(1));
     }
 }

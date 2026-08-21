@@ -80,6 +80,22 @@ auto resolve_workspace_member_license(lito::manifest::PackageManifest&         m
     return Ok(empty {});
 }
 
+auto resolve_workspace_member_authors(lito::manifest::PackageManifest&         manifest,
+                                      const lito::manifest::WorkspaceManifest& workspace)
+    -> WorkspaceResult<empty> {
+    if (manifest.authors.source != lito::manifest::PackageAuthorsSource::Workspace) {
+        return Ok(empty {});
+    }
+    if (workspace.package.authors.is_none()) {
+        return workspace_failure<empty>(
+            rstd::format("workspace member '{}' inherits package.authors but "
+                         "workspace.package.authors is not set",
+                         manifest.name.as_str()));
+    }
+    manifest.authors.values = workspace.package.authors->clone();
+    return Ok(empty {});
+}
+
 auto clone_package_source(const lito::source::PackageSourceRequirement& source)
     -> lito::source::PackageSourceRequirement {
     if (source.is_Path()) {
@@ -329,6 +345,7 @@ auto resolve_workspace_member(lito::manifest::PackageManifest&         manifest,
     -> WorkspaceResult<empty> {
     rstd_try(resolve_workspace_member_version(manifest, workspace));
     rstd_try(resolve_workspace_member_license(manifest, workspace));
+    rstd_try(resolve_workspace_member_authors(manifest, workspace));
     return resolve_workspace_member_dependencies(manifest, workspace);
 }
 

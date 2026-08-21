@@ -13,7 +13,8 @@ Every default member must belong to `members`.
 `package` is an optional table of values inherited by member packages:
 
 - `version` is a non-empty string;
-- `license` is a non-empty string.
+- `license` is a non-empty string;
+- `authors` is a non-empty array of unique, non-empty strings.
 
 `dependencies`, `external-dependencies`, and `external-sources` contain declarations members may
 reference with `workspace = true`. Their nested fields are documented in
@@ -31,6 +32,7 @@ default-members = ["viewer"]
 [workspace.package]
 version = "1.0.0"
 license = "MIT OR Apache-2.0"
+authors = ["Example Authors <authors@example.com>"]
 ```
 
 ## `[package]`
@@ -44,6 +46,9 @@ omit it. A package discovered through `install.lua` must also resolve a version,
 has no compile target.
 
 `license` is a non-empty string or `{ workspace = true }`.
+
+`authors` is a non-empty array of unique, non-empty strings or `{ workspace = true }`. Each entry
+may contain a name, an email address, or both; Lito preserves the declared text as package metadata.
 
 `source-root` is an optional relative base for package sources and usage paths. The resolved root
 must contain the package directory. Without it, paths are based at the package manifest directory.
@@ -73,6 +78,7 @@ Example:
 name = "geometry"
 version.workspace = true
 license.workspace = true
+authors.workspace = true
 standard = "c++23"
 target = { family = "unix", not-os = "android" }
 ```

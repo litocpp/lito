@@ -81,7 +81,7 @@ jobs:
       - name: Install LLVM 22
         shell: pwsh
         env:
-          LLVM_VERSION: 22.1.2
+          LLVM_VERSION: 22.1.8
         run: |
           $installer = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION-win64.exe"
           $installDir = Join-Path $env:RUNNER_TEMP "LLVM-$env:LLVM_VERSION"

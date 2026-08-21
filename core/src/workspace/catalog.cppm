@@ -93,6 +93,13 @@ public:
                              "containing workspace",
                              manifest.name.as_str()));
         }
+        if (manifest.authors.source == lito::manifest::PackageAuthorsSource::Workspace &&
+            manifest.authors.values.is_empty()) {
+            return catalog_failure<WorkspaceCatalog>(
+                rstd::format("package '{}' inherits package.authors but is not a member of a "
+                             "containing workspace",
+                             manifest.name.as_str()));
+        }
         if (! manifest.workspace_dependencies.is_empty() ||
             ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_runtime_dependencies.is_empty() ||

@@ -18,7 +18,8 @@ using namespace lito::manifest;
 
 auto manifest_package_key(ref<str> key) -> bool {
     return key == "name"_str || key == "version"_str || key == "source-root"_str ||
-           key == "target"_str || key == "license"_str || key == "standard"_str;
+           key == "target"_str || key == "license"_str || key == "authors"_str ||
+           key == "standard"_str;
 }
 
 auto library_key(ref<str> key) -> bool {
@@ -204,11 +205,36 @@ auto package_version_key(ref<str> key) -> bool {
 }
 
 auto workspace_package_key(ref<str> key) -> bool {
-    return key == "version"_str || key == "license"_str;
+    return key == "version"_str || key == "license"_str || key == "authors"_str;
 }
 
 auto package_license_key(ref<str> key) -> bool {
     return key == "workspace"_str;
+}
+
+auto package_authors_key(ref<str> key) -> bool {
+    return key == "workspace"_str;
+}
+
+auto parse_author_list(Option<ref<Toml>> value, ref<str> context)
+    -> ManifestSchemaResult<Vec<String>> {
+    auto authors = rstd_try(string_array(value, context));
+    if (authors.is_empty()) {
+        return manifest_schema_failure<Vec<String>>(rstd::format("{} must not be empty", context));
+    }
+    for (auto index = usize {}; index < authors.len(); ++index) {
+        if (authors[index].is_empty()) {
+            return manifest_schema_failure<Vec<String>>(
+                rstd::format("{} entries must not be empty", context));
+        }
+        for (auto previous = usize {}; previous < index; ++previous) {
+            if (authors[index] == authors[previous]) {
+                return manifest_schema_failure<Vec<String>>(
+                    rstd::format("{} must not contain duplicate entries", context));
+            }
+        }
+    }
+    return Ok(rstd::move(authors));
 }
 
 auto parse_package_standard(const Toml& package)
@@ -299,5 +325,33 @@ auto parse_package_license(const Toml& package) -> ManifestSchemaResult<PackageL
     }
     return Ok(PackageLicense {
         .source = PackageLicenseSource::Workspace,
+    });
+}
+
+auto parse_package_authors(const Toml& package) -> ManifestSchemaResult<PackageAuthors> {
+    auto declared = member(package, "authors"_str);
+    if (declared.is_none()) return Ok(PackageAuthors {});
+
+    if ((**declared).as_array().is_some()) {
+        return Ok(PackageAuthors {
+            .source = PackageAuthorsSource::Explicit,
+            .values = rstd_try(parse_author_list(declared, "package.authors"_str)),
+        });
+    }
+
+    auto inherited = rstd_try(table_value(**declared, "package.authors"_str));
+    rstd_try(reject_unknown(*inherited, "package.authors"_str, package_authors_key));
+    auto workspace = member(**declared, "workspace"_str);
+    if (workspace.is_none()) {
+        return manifest_schema_failure<PackageAuthors>(
+            "package.authors is missing 'workspace'"_str);
+    }
+    auto enabled = (**workspace).as_bool();
+    if (enabled.is_none() || ! *enabled) {
+        return manifest_schema_failure<PackageAuthors>(
+            "package.authors.workspace must be true"_str);
+    }
+    return Ok(PackageAuthors {
+        .source = PackageAuthorsSource::Workspace,
     });
 }

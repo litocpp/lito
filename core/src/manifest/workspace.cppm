@@ -11,8 +11,9 @@ export namespace lito::manifest
 {
 
 struct WorkspacePackageDefaults {
-    Option<String> version;
-    Option<String> license;
+    Option<String>      version;
+    Option<String>      license;
+    Option<Vec<String>> authors;
 };
 
 struct WorkspaceManifest {

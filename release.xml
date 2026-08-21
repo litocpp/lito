@@ -1,3 +1,18 @@
+<release version="0.5.0" date="2026-08-21">
+  <description>
+    <ul>
+      <li>LLVM SDK support.</li>
+      <li>Android SDK support.</li>
+      <li>Host tool resolution.</li>
+      <li>Package installation improvements.</li>
+      <li>Conditional dependencies.</li>
+      <li>Lua/Qt code generation.</li>
+      <li>Base build profiles.</li>
+      <li>Package author metadata.</li>
+      <li>Default stdlib auto.</li>
+    </ul>
+  </description>
+</release>
 <release version="0.4.0" date="2026-08-19">
   <description>
     <ul>

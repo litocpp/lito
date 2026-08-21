@@ -26,11 +26,12 @@ protected:
     }
 };
 
-TEST_F(Manifest, PackageAndWorkspaceLicensesAreOwnedByManifest) {
+TEST_F(Manifest, PackageAndWorkspaceMetadataAreOwnedByManifest) {
     auto package_project = manifest("package-license"_str, R"toml([package]
 name = "fixture-package-license"
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+authors = ["Lito Authors <authors@example.invalid>", "Lito Contributors"]
 
 [lib]
 name = "fixture-package-license"
@@ -43,6 +44,11 @@ archive = "fixture-package-license"
     EXPECT_EQ(package->license.source, lito::manifest::PackageLicenseSource::Explicit);
     ASSERT_TRUE(package->license.value.is_some());
     EXPECT_EQ(package->license.value->as_str(), "MIT OR Apache-2.0"_str);
+    EXPECT_EQ(package->authors.source, lito::manifest::PackageAuthorsSource::Explicit);
+    ASSERT_EQ(package->authors.values.len(), usize(2));
+    EXPECT_EQ(package->authors.values[usize {}].as_str(),
+              "Lito Authors <authors@example.invalid>"_str);
+    EXPECT_EQ(package->authors.values[usize(1)].as_str(), "Lito Contributors"_str);
 
     auto workspace_project = manifest("workspace-license"_str, R"toml([workspace]
 name = "fixture-workspace-license"
@@ -51,6 +57,7 @@ members = ["package"]
 [workspace.package]
 version = "0.1.0"
 license = "MIT OR Apache-2.0"
+authors = ["Lito Authors <authors@example.invalid>"]
 )toml"_str);
     ASSERT_TRUE(workspace_project.is_ok());
     auto workspace = lito::manifest::load_manifest_document(workspace_project->root.as_path());
@@ -58,6 +65,10 @@ license = "MIT OR Apache-2.0"
     ASSERT_TRUE(workspace->workspace.is_some());
     ASSERT_TRUE(workspace->workspace->package.license.is_some());
     EXPECT_EQ(workspace->workspace->package.license->as_str(), "MIT OR Apache-2.0"_str);
+    ASSERT_TRUE(workspace->workspace->package.authors.is_some());
+    ASSERT_EQ(workspace->workspace->package.authors->len(), usize(1));
+    EXPECT_EQ((*workspace->workspace->package.authors)[usize {}].as_str(),
+              "Lito Authors <authors@example.invalid>"_str);
 }
 
 struct InvalidManifestCase {
@@ -87,6 +98,33 @@ name = "discovery-field"
 module = "fixture.discovery.field"
 archive = "fixture.discovery.field"
 discovery = "module"
+)lito"_str },
+    { "manifest-empty-authors"_str, R"lito([package]
+name = "fixture-empty-authors"
+version = "0.1.0"
+authors = []
+[lib]
+name = "fixture-empty-authors"
+module = "fixture.empty_authors"
+archive = "fixture-empty-authors"
+)lito"_str },
+    { "manifest-empty-author"_str, R"lito([package]
+name = "fixture-empty-author"
+version = "0.1.0"
+authors = [""]
+[lib]
+name = "fixture-empty-author"
+module = "fixture.empty_author"
+archive = "fixture-empty-author"
+)lito"_str },
+    { "manifest-duplicate-authors"_str, R"lito([package]
+name = "fixture-duplicate-authors"
+version = "0.1.0"
+authors = ["Lito Authors", "Lito Authors"]
+[lib]
+name = "fixture-duplicate-authors"
+module = "fixture.duplicate_authors"
+archive = "fixture-duplicate-authors"
 )lito"_str },
     { "manifest-git-commit-invalid"_str, R"lito([package]
 name = "fixture-git-commit-invalid"

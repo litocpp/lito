@@ -97,8 +97,15 @@ auto assemble_manifest_document(PathBuf                               root,
                 return manifest_schema_failure<ManifestDocument>(
                     "workspace.package.license must not be empty"_str);
             }
+            auto workspace_authors       = Option<Vec<String>> {};
+            auto workspace_authors_value = member(**workspace_package_value, "authors"_str);
+            if (workspace_authors_value.is_some()) {
+                workspace_authors = Some(rstd_try(
+                    parse_author_list(workspace_authors_value, "workspace.package.authors"_str)));
+            }
             package_defaults.version = rstd::move(workspace_version).unwrap();
             package_defaults.license = rstd::move(workspace_license).unwrap();
+            package_defaults.authors = rstd::move(workspace_authors);
         }
         auto workspace_dependencies =
             rstd_try(parse_workspace_dependencies(member(**workspace_value, "dependencies"_str)));
@@ -225,6 +232,8 @@ auto assemble_manifest_document(PathBuf                               root,
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
     auto license = parse_package_license(package_value);
     if (license.is_err()) return Err(rstd::move(license).unwrap_err());
+    auto authors = parse_package_authors(package_value);
+    if (authors.is_err()) return Err(rstd::move(authors).unwrap_err());
 
     auto usage = parse_usage(member(document, "usage"_str), source_root->as_path());
     auto conditions =
@@ -381,6 +390,7 @@ auto assemble_manifest_document(PathBuf                               root,
             .name                       = rstd::move(name).unwrap(),
             .version                    = rstd::move(version).unwrap(),
             .license                    = rstd::move(license).unwrap(),
+            .authors                    = rstd::move(authors).unwrap(),
             .standard                   = rstd::move(standard),
             .root                       = root.clone(),
             .source_root                = rstd::move(source_root).unwrap(),

@@ -15,13 +15,14 @@ the identity used by dependency keys and lock entries. Package names use ASCII l
 `-`, and `_`; a dot is not allowed.
 
 Production packages declare a version. A package containing only test or compile-test targets may
-omit it. A workspace member may inherit version and license from `[workspace.package]`:
+omit it. A workspace member may inherit version, license, and authors from `[workspace.package]`:
 
 ```toml
 [package]
 name = "geometry"
 version.workspace = true
 license.workspace = true
+authors.workspace = true
 ```
 
 The package `standard` field owns both its language and minimum standard. C standard values select
@@ -56,6 +57,7 @@ default-members = ["viewer"]
 [workspace.package]
 version = "0.4.0"
 license = "MIT OR Apache-2.0"
+authors = ["Example Authors <authors@example.com>"]
 ```
 
 `default-members` must name workspace members. It controls the default root selection, not which

@@ -44,10 +44,23 @@ struct PackageLicense {
     Option<String>       value;
 };
 
+enum class PackageAuthorsSource
+{
+    Unspecified,
+    Explicit,
+    Workspace,
+};
+
+struct PackageAuthors {
+    PackageAuthorsSource source { PackageAuthorsSource::Unspecified };
+    Vec<String>          values;
+};
+
 struct PackageManifest {
     String                                             name;
     PackageVersion                                     version;
     PackageLicense                                     license;
+    PackageAuthors                                     authors;
     Option<PackageStandardRequirement>                 standard;
     PathBuf                                            root;
     PathBuf                                            source_root;
