@@ -1298,27 +1298,23 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             .script_packages = clone_script_packages(),
         });
     }
-    for (const auto& root : graph.roots) {
-        if (! selected.contains_key(root.name.as_str())) continue;
-        for (auto& package : graph.packages) {
-            if (package.manifest.name != root.name.as_str()) continue;
-            auto script_dependencies = Vec<String>::make();
-            for (const auto& dependency : package.dependencies) {
-                if (! dependency.is_Script()) continue;
-                const auto& script = dependency.as_Script().value;
-                script_dependencies.push(script.name.clone());
-            }
-            build_scripts.push(BuildScriptOwner {
-                .kind            = BuildScriptOwnerKind::Package,
-                .package         = Some(root.name.clone()),
-                .source_identity = root.source_identity.clone(),
-                .root            = package.manifest.root.clone(),
-                .script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
-                .script_dependencies = rstd::move(script_dependencies),
-                .script_packages     = clone_script_packages(),
-            });
-            break;
+    for (auto& package : graph.packages) {
+        if (! selected.contains_key(package.manifest.name.as_str())) continue;
+        auto script_dependencies = Vec<String>::make();
+        for (const auto& dependency : package.dependencies) {
+            if (! dependency.is_Script()) continue;
+            const auto& script = dependency.as_Script().value;
+            script_dependencies.push(script.name.clone());
         }
+        build_scripts.push(BuildScriptOwner {
+            .kind            = BuildScriptOwnerKind::Package,
+            .package         = Some(package.manifest.name.clone()),
+            .source_identity = package.source_identity.clone(),
+            .root            = package.manifest.root.clone(),
+            .script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
+            .script_dependencies = rstd::move(script_dependencies),
+            .script_packages     = clone_script_packages(),
+        });
     }
     auto selected_packages      = Vec<SelectedPackageMetadata>::make();
     auto selected_root_packages = rstd::collections::BTreeMap<String, empty>::make();

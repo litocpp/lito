@@ -374,7 +374,7 @@ TEST_F(BuildCommand, DependencyPackageBuildScriptGeneratesSourceBeforeDiscovery)
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"toml([workspace]
 name = "generated-source-workspace"
-members = ["generated", "app"]
+members = ["app"]
 
 [workspace.package]
 version = "0.1.0"
@@ -384,7 +384,7 @@ path = "generated"
 )toml"_str },
         { "generated/lito.toml"_str, R"toml([package]
 name = "fixture-generated-lib"
-version = { workspace = true }
+version = "0.1.0"
 
 [lib]
 name = "fixture-generated-lib"

@@ -178,7 +178,8 @@ local function generate_qmldir(request, prefix, version, qml_files, registration
   end
   content = content .. "prefer :/qt/qml/" .. request.uri:gsub("%.", "/") .. "/\n"
   for _, path in ipairs(qml_files) do
-    content = content .. qml_type(path) .. " " .. version .. " " .. path .. "\n"
+    local qualifier = contains(request.singletons or {}, path) and "singleton " or ""
+    content = content .. qualifier .. qml_type(path) .. " " .. version .. " " .. path .. "\n"
   end
   for _, imported in ipairs(request.imports or {}) do
     if not module_name(imported) then
@@ -329,6 +330,57 @@ local function generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
   return generated
 end
 
+local function generate_static_plugin(request, prefix, registration, cache_enabled)
+  local name = output_name(request.uri)
+  local plugin_name = name .. "Plugin"
+  local resources = { name .. "_module", name .. "_raw" }
+  if cache_enabled then
+    append(resources, "qmlcache_" .. name)
+  end
+
+  local content = "#define QT_STATICPLUGIN\n" ..
+      "#include <QtCore/qtsymbolmacros.h>\n" ..
+      "#include <QtQml/qqmlextensionplugin.h>\n\n"
+  for _, resource in ipairs(resources) do
+    content = content .. "QT_DECLARE_EXTERN_RESOURCE(" .. resource .. ")\n"
+  end
+  if registration ~= nil then
+    content = content .. "QT_DECLARE_EXTERN_SYMBOL_VOID(qml_register_types_" .. name .. ")\n"
+  end
+  content = content .. "\nclass " .. plugin_name .. " : public QQmlEngineExtensionPlugin {\n" ..
+      "    Q_OBJECT\n" ..
+      "    Q_PLUGIN_METADATA(IID QQmlEngineExtensionInterface_iid)\n\n" ..
+      "public:\n" ..
+      "    explicit " .. plugin_name ..
+      "(QObject* parent = nullptr) : QQmlEngineExtensionPlugin(parent) {\n"
+  if registration ~= nil then
+    content = content .. "        QT_KEEP_SYMBOL(qml_register_types_" .. name .. ")\n"
+  end
+  for _, resource in ipairs(resources) do
+    content = content .. "        QT_KEEP_RESOURCE(" .. resource .. ")\n"
+  end
+  content = content .. "    }\n};\n"
+
+  local source = lito.write({
+    output = prefix .. "/" .. plugin_name .. ".hpp",
+    content = content,
+  }).output
+  local generated = moc.generate({
+    target = request.target,
+    qt = request.qt,
+    cwd = request.cwd or ".",
+    generated_include = prefix,
+    files = {
+      {
+        source = source,
+        mode = "separate",
+        output = prefix .. "/moc_" .. plugin_name .. ".cpp",
+      },
+    },
+  })[1]
+  return { source = source, moc = generated.cpp }
+end
+
 function qml.generate_module(request)
   if type(request) ~= "table" then
     error("qt.qml_module request must be a table")
@@ -349,6 +401,13 @@ function qml.generate_module(request)
   if #qml_files == 0 then
     error("qt.qml_module.qml_files must not be empty")
   end
+  local singletons = checked_files(request.singletons or {}, "qt.qml_module.singletons")
+  for _, path in ipairs(singletons) do
+    if not contains(qml_files, path) then
+      error("qt.qml_module singleton '" .. path .. "' is not present in qml_files")
+    end
+  end
+  request.singletons = singletons
   local resources = checked_files(request.resources or {}, "qt.qml_module.resources")
   local plugin = request.plugin or "static"
   if plugin ~= "static" and plugin ~= "none" then
@@ -389,7 +448,10 @@ function qml.generate_module(request)
                                        module_qrc, raw_qrc)
   local type_sources = generate_types(request, prefix, qml_files, module_qrc, raw_qrc,
                                       information)
+  local plugin_artifact = nil
   if plugin == "static" then
+    plugin_artifact = generate_static_plugin(request, prefix, registration,
+                                             #cache_sources ~= 0)
     lito.target_add_auxiliary_artifact(request.target, module_qrc)
   end
   return {
@@ -400,6 +462,7 @@ function qml.generate_module(request)
     raw_resource = raw_qrc,
     cache_sources = cache_sources,
     type_sources = type_sources,
+    plugin = plugin_artifact,
   }
 end
 
