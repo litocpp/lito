@@ -126,6 +126,13 @@ auto installed_descriptor(ref<str> version, const lito::system::HostInfo& host) 
         "0000000000000000000000000000000000000000000000000000000000000000"_str);
 }
 
+auto installed_descriptor_without_runtime(ref<str> version, const lito::system::HostInfo& host)
+    -> String {
+    auto value = rstd::json::from_str(installed_descriptor(version, host).as_str()).unwrap();
+    value["runtime-components"_str] = Json::Array(JsonArray::make());
+    return rstd::json::to_string(value);
+}
+
 auto materialize_installed_sdk(ref<rstd::path::Path>         data_home,
                                ref<str>                      version,
                                const lito::system::HostInfo& host) -> rstd::io::Result<PathBuf> {
@@ -185,7 +192,7 @@ TEST_F(SdkStore, ListMergesCatalogAndVersionDescriptorsWithoutNetworkOrTools) {
     auto prefix = data_home.join(PathBuf::from("lito/llvm/21.0.0"_str).as_path());
     ASSERT_TRUE(rstd::fs::create_dir_all(prefix.as_path()).is_ok());
     auto descriptor = prefix.join(PathBuf::from("sdk.json"_str).as_path());
-    auto text       = installed_descriptor("21.0.0"_str, *host);
+    auto text       = installed_descriptor_without_runtime("21.0.0"_str, *host);
     ASSERT_TRUE(rstd::fs::write(descriptor.as_path(), text.as_str().as_bytes()).is_ok());
 
     auto merged = lito::list_llvm_sdks();

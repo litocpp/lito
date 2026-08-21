@@ -642,10 +642,6 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
     }
     auto component_values = rstd_try(
         sdk_required_array(value, "runtime-components"_str, "LLVM SDK descriptor root"_str));
-    if (component_values->is_empty()) {
-        return sdk_failure<InstalledSdkDescriptor>(
-            "LLVM SDK descriptor runtime-components must not be empty"_str);
-    }
     auto components = Vec<InstalledRuntimeComponent>::with_capacity(component_values->len());
     for (usize index {}; index < component_values->len(); ++index) {
         auto component = rstd_try(parse_installed_component(
@@ -737,6 +733,7 @@ auto descriptor_matches(const InstalledSdkDescriptor& descriptor,
         descriptor.components.len() != artifact.runtime_components.len()) {
         return false;
     }
+    if (artifact.runtime_components.is_empty()) return true;
     auto recipe = libxml2_recipe();
     if (recipe.is_err()) return false;
     for (const auto& reference : artifact.runtime_components) {
@@ -2144,46 +2141,48 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
         remove_staging(staging.as_path());
         return Err(SdkError::Acquisition(rstd::move(extracted).unwrap_err()));
     }
-    auto recipe = libxml2_recipe();
-    if (recipe.is_err()) {
-        remove_staging(staging.as_path());
-        return Err(rstd::move(recipe).unwrap_err());
-    }
-    auto bootstrap_toolchain =
-        lito::config::apply_toolchain_override(request.toolchain.clone(),
-                                               lito::config::ToolchainOverride {
-                                                   .ld = Some(PathBuf::from("/usr/bin/ld"_str)),
-                                               });
     auto installed_components = Vec<InstalledRuntimeComponent>::make();
-    for (const auto& reference : (**artifact).runtime_components) {
-        auto component = lito::find_llvm_sdk_runtime_component(*catalog, reference.as_str());
-        if (component.is_none()) {
+    if (! (**artifact).runtime_components.is_empty()) {
+        auto recipe = libxml2_recipe();
+        if (recipe.is_err()) {
             remove_staging(staging.as_path());
-            return sdk_failure<SdkInstallSummary>(rstd::format(
-                "LLVM SDK artifact references unknown runtime component '{}'", reference));
+            return Err(rstd::move(recipe).unwrap_err());
         }
-        auto installed = install_runtime_component(**component,
-                                                   *recipe,
-                                                   request.version.as_str(),
-                                                   extracted->root.as_path(),
-                                                   request,
-                                                   bootstrap_toolchain,
-                                                   resolver,
-                                                   *environment);
-        if (installed.is_err()) {
+        auto bootstrap_toolchain =
+            lito::config::apply_toolchain_override(request.toolchain.clone(),
+                                                   lito::config::ToolchainOverride {
+                                                       .ld = Some(PathBuf::from("/usr/bin/ld"_str)),
+                                                   });
+        for (const auto& reference : (**artifact).runtime_components) {
+            auto component = lito::find_llvm_sdk_runtime_component(*catalog, reference.as_str());
+            if (component.is_none()) {
+                remove_staging(staging.as_path());
+                return sdk_failure<SdkInstallSummary>(rstd::format(
+                    "LLVM SDK artifact references unknown runtime component '{}'", reference));
+            }
+            auto installed = install_runtime_component(**component,
+                                                       *recipe,
+                                                       request.version.as_str(),
+                                                       extracted->root.as_path(),
+                                                       request,
+                                                       bootstrap_toolchain,
+                                                       resolver,
+                                                       *environment);
+            if (installed.is_err()) {
+                remove_staging(staging.as_path());
+                return Err(rstd::move(installed).unwrap_err());
+            }
+            installed_components.push(rstd::move(installed).unwrap());
+        }
+        auto components_root = extracted->root.join(PathBuf::from(".components"_str).as_path());
+        auto removed         = rstd::fs::remove_dir_all(components_root.as_path());
+        if (removed.is_err()) {
+            auto error = sdk_io_failure<SdkInstallSummary>("remove SDK component workspace"_str,
+                                                           components_root.as_path(),
+                                                           rstd::move(removed).unwrap_err());
             remove_staging(staging.as_path());
-            return Err(rstd::move(installed).unwrap_err());
+            return error;
         }
-        installed_components.push(rstd::move(installed).unwrap());
-    }
-    auto components_root = extracted->root.join(PathBuf::from(".components"_str).as_path());
-    auto removed         = rstd::fs::remove_dir_all(components_root.as_path());
-    if (removed.is_err()) {
-        auto error = sdk_io_failure<SdkInstallSummary>("remove SDK component workspace"_str,
-                                                       components_root.as_path(),
-                                                       rstd::move(removed).unwrap_err());
-        remove_staging(staging.as_path());
-        return error;
     }
     emit_sdk_event(request.observer,
                    SdkEventKind::Certify,

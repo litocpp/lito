@@ -50,6 +50,14 @@ def catalog_candidate(version: str, document: dict) -> dict:
             "os": "linux",
             "architecture": "x86_64",
         },
+        f"clang+llvm-{version}-x86_64-pc-windows-msvc.tar.xz": {
+            "os": "windows",
+            "architecture": "x86_64",
+        },
+        f"clang+llvm-{version}-aarch64-pc-windows-msvc.tar.xz": {
+            "os": "windows",
+            "architecture": "aarch64",
+        },
     }
     selected = {}
     for asset in document.get("assets", []):

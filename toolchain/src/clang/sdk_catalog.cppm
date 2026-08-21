@@ -513,27 +513,33 @@ auto parse_artifact(const Json&                         value,
     -> LlvmSdkCatalogResult<LlvmSdkArtifact> {
     rstd_try(known_fields(
         value, context, { "host"_str, "archive"_str, "paths"_str, "runtime-components"_str }));
-    auto host    = rstd_try(required_member(value, "host"_str, context));
-    auto archive = rstd_try(required_member(value, "archive"_str, context));
-    auto paths   = rstd_try(required_member(value, "paths"_str, context));
-    auto values  = rstd_try(required_array(value, "runtime-components"_str, context));
-    if (values->is_empty()) {
-        return catalog_failure<LlvmSdkArtifact>(
-            rstd::format("{}.runtime-components must not be empty", context));
-    }
-    auto components = Vec<String>::with_capacity(values->len());
+    auto host        = rstd_try(required_member(value, "host"_str, context));
+    auto archive     = rstd_try(required_member(value, "archive"_str, context));
+    auto paths       = rstd_try(required_member(value, "paths"_str, context));
+    auto values      = rstd_try(required_array(value, "runtime-components"_str, context));
+    auto parsed_host = rstd_try(parse_host(*host, rstd::format("{}.host", context).as_str()));
+    auto components  = Vec<String>::with_capacity(values->len());
     for (usize index {}; index < values->len(); ++index) {
         auto component = (*values)[index].as_str();
         if (component.is_none() || component->is_empty()) {
             return catalog_failure<LlvmSdkArtifact>(rstd::format(
                 "{}.runtime-components[{}] must be a non-empty string", context, index));
         }
-        if (find_runtime_component(available_components, *component).is_none()) {
+        auto definition = find_runtime_component(available_components, *component);
+        if (definition.is_none()) {
             return catalog_failure<LlvmSdkArtifact>(
                 rstd::format("{}.runtime-components[{}] references unknown component '{}'",
                              context,
                              index,
                              *component));
+        }
+        if ((**definition).recipe == LlvmSdkRuntimeRecipe::Libxml2_2_13_8_MinimalElfV1 &&
+            parsed_host.os.as_str() != "linux"_str) {
+            return catalog_failure<LlvmSdkArtifact>(
+                rstd::format("{}.runtime-components[{}] recipe '{}' requires a Linux host",
+                             context,
+                             index,
+                             llvm_sdk_runtime_recipe_name((**definition).recipe)));
         }
         for (const auto& existing : components) {
             if (existing.as_str() == *component) {
@@ -544,7 +550,7 @@ auto parse_artifact(const Json&                         value,
         components.push(String::make(*component));
     }
     return Ok(LlvmSdkArtifact {
-        .host    = rstd_try(parse_host(*host, rstd::format("{}.host", context).as_str())),
+        .host    = rstd::move(parsed_host),
         .archive = rstd_try(parse_archive(*archive, rstd::format("{}.archive", context).as_str())),
         .paths   = rstd_try(parse_paths(*paths, rstd::format("{}.paths", context).as_str())),
         .runtime_components = rstd::move(components),

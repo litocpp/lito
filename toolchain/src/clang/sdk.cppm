@@ -90,6 +90,7 @@ struct LlvmSdkCertification {
 };
 
 auto inspect_clang_sdk(const CompilerIdentity&           compiler,
+                       const TargetInfo&                 target,
                        ref<rstd::path::Path>             prefix,
                        const ClangSdkLayout&             layout,
                        const ResolvedProcessEnvironment& environment) -> ToolchainResult<ClangSdk> {
@@ -123,11 +124,15 @@ auto inspect_clang_sdk(const CompilerIdentity&           compiler,
                                              rstd::move(flags->standard_error)));
     }
     auto cxxflags         = trim_ascii(rstd::move(flags->standard_output));
-    auto standard_library = cxxflags.as_str().contains("-stdlib=libc++"_str)
+    auto standard_library = target.environment == TargetEnvironment::Msvc
+                                ? lito::config::StandardLibrary::Msvc
+                            : cxxflags.as_str().contains("-stdlib=libc++"_str)
                                 ? lito::config::StandardLibrary::Libcxx
                                 : lito::config::StandardLibrary::Libstdcxx;
-    auto exceptions       = ! cxxflags.as_str().contains("-fno-exceptions"_str);
-    auto rtti             = ! cxxflags.as_str().contains("-fno-rtti"_str);
+    auto exceptions       = ! cxxflags.as_str().contains("-fno-exceptions"_str) &&
+                            ! cxxflags.as_str().contains("/EHs-c-"_str);
+    auto rtti =
+        ! cxxflags.as_str().contains("-fno-rtti"_str) && ! cxxflags.as_str().contains("/GR-"_str);
     auto library_metadata = rstd::fs::metadata(clang_cpp.as_path());
     if (library_metadata.is_err()) {
         return Err(ToolchainError::Io(String::make("inspect libclang-cpp identity"_str),
@@ -163,14 +168,20 @@ auto resolve_clang_sdk(const CompilerIdentity&           compiler,
         return sdk_failure<ClangSdk>(
             rstd::format("Clang executable '{}' has no SDK prefix", compiler.path.as_path()));
     }
-    return inspect_clang_sdk(compiler,
-                             *prefix,
-                             ClangSdkLayout {
-                                 .cmake       = PathBuf::from("lib/cmake"_str),
-                                 .clang_cpp   = PathBuf::from("lib/libclang-cpp.so"_str),
-                                 .llvm_config = PathBuf::from("bin/llvm-config"_str),
-                             },
-                             environment);
+    auto target = parse_target_info(compiler.target.as_str());
+    if (target.is_err()) return Err(ToolchainError::Platform(rstd::move(target).unwrap_err()));
+    auto layout = target->family == TargetFamily::Windows
+                      ? ClangSdkLayout {
+                            .cmake       = PathBuf::from("lib/cmake"_str),
+                            .clang_cpp   = PathBuf::from("bin/clang-cpp.dll"_str),
+                            .llvm_config = PathBuf::from("bin/llvm-config.exe"_str),
+                        }
+                      : ClangSdkLayout {
+                            .cmake       = PathBuf::from("lib/cmake"_str),
+                            .clang_cpp   = PathBuf::from("lib/libclang-cpp.so"_str),
+                            .llvm_config = PathBuf::from("bin/llvm-config"_str),
+                        };
+    return inspect_clang_sdk(compiler, *target, *prefix, layout, environment);
 }
 
 auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
@@ -232,6 +243,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                          toolchain->compiler_identity().version.as_str()));
     }
     auto sdk = inspect_clang_sdk(toolchain->compiler_identity(),
+                                 toolchain->target_info(),
                                  canonical_prefix->as_path(),
                                  ClangSdkLayout {
                                      .cmake       = paths.cmake.clone(),
@@ -280,12 +292,18 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                                       rstd::env::temp_dir(),
                                       rstd::move(probe_directory).unwrap_err()));
     }
+    auto probe_name =
+        toolchain->target_info().family == TargetFamily::Windows ? "probe.exe"_str : "probe"_str;
     auto probe_output =
-        PathBuf::from(probe_directory->path()).join(PathBuf::from("probe"_str).as_path());
+        PathBuf::from(probe_directory->path()).join(PathBuf::from(probe_name).as_path());
     auto probe_command = Vec<String>::make();
     rstd_try(lito::toolchain::command::push_path(probe_command, toolchain->cc_path()));
-    rstd_try(lito::toolchain::command::push_path_option(
-        probe_command, "-fuse-ld="_str, toolchain->linker_identity().executable.as_path()));
+    if (toolchain->target_info().family == TargetFamily::Windows) {
+        lito::toolchain::command::push_option(probe_command, "-fuse-ld=lld"_str);
+    } else {
+        rstd_try(lito::toolchain::command::push_path_option(
+            probe_command, "-fuse-ld="_str, toolchain->linker_identity().executable.as_path()));
+    }
     lito::toolchain::command::push_option(probe_command, "-x"_str);
     lito::toolchain::command::push_option(probe_command, "c"_str);
     lito::toolchain::command::push_option(probe_command, "-"_str);
@@ -297,7 +315,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
                                          Some(probe_directory->path()));
     if (linked.is_err()) return Err(rstd::into<ToolchainError>(rstd::move(linked).unwrap_err()));
     if (linked->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make("LLVM SDK host ELF link"_str),
+        return Err(ToolchainError::Execution(String::make("LLVM SDK host executable link"_str),
                                              linked->exit_code,
                                              rstd::move(linked->standard_output),
                                              rstd::move(linked->standard_error)));
@@ -310,7 +328,7 @@ auto certify_llvm_sdk(ref<rstd::path::Path>             prefix,
         return Err(rstd::into<ToolchainError>(rstd::move(executed).unwrap_err()));
     }
     if (executed->exit_code != i32 {}) {
-        return Err(ToolchainError::Execution(String::make("LLVM SDK host ELF probe"_str),
+        return Err(ToolchainError::Execution(String::make("LLVM SDK host executable probe"_str),
                                              executed->exit_code,
                                              rstd::move(executed->standard_output),
                                              rstd::move(executed->standard_error)));

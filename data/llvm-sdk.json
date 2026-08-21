@@ -43,6 +43,56 @@
             "clang-cpp": "lib/libclang-cpp.so"
           },
           "runtime-components": ["libxml2"]
+        },
+        {
+          "host": {
+            "os": "windows",
+            "architecture": "x86_64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-x86_64-pc-windows-msvc.tar.xz",
+            "sha256": "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234",
+            "size": 862053924,
+            "root": "clang+llvm-22.1.8-x86_64-pc-windows-msvc"
+          },
+          "paths": {
+            "cc": "bin/clang.exe",
+            "cxx": "bin/clang++.exe",
+            "linker": "bin/lld-link.exe",
+            "archiver": "bin/llvm-ar.exe",
+            "strip": "bin/llvm-strip.exe",
+            "format": "bin/clang-format.exe",
+            "llvm-config": "bin/llvm-config.exe",
+            "cmake": "lib/cmake",
+            "clang-cpp": "bin/clang-cpp.dll"
+          },
+          "runtime-components": []
+        },
+        {
+          "host": {
+            "os": "windows",
+            "architecture": "aarch64"
+          },
+          "archive": {
+            "format": "tar.xz",
+            "url": "https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.8/clang%2Bllvm-22.1.8-aarch64-pc-windows-msvc.tar.xz",
+            "sha256": "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1",
+            "size": 737955068,
+            "root": "clang+llvm-22.1.8-aarch64-pc-windows-msvc"
+          },
+          "paths": {
+            "cc": "bin/clang.exe",
+            "cxx": "bin/clang++.exe",
+            "linker": "bin/lld-link.exe",
+            "archiver": "bin/llvm-ar.exe",
+            "strip": "bin/llvm-strip.exe",
+            "format": "bin/clang-format.exe",
+            "llvm-config": "bin/llvm-config.exe",
+            "cmake": "lib/cmake",
+            "clang-cpp": "bin/clang-cpp.dll"
+          },
+          "runtime-components": []
         }
       ]
     }

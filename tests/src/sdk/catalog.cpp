@@ -74,6 +74,33 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
     EXPECT_TRUE(lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host).is_none());
 }
 
+TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
+    auto catalog = lito::load_embedded_llvm_sdk_catalog();
+    ASSERT_TRUE(catalog.is_ok());
+    auto host = lito::system::HostInfo {
+        .architecture = lito::system::canonical_architecture("x86_64"_str).unwrap(),
+        .os           = String::make("windows"_str),
+    };
+    auto x64 = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
+    ASSERT_TRUE(x64.is_some());
+    EXPECT_EQ((**x64).archive.root.as_str(), "clang+llvm-22.1.8-x86_64-pc-windows-msvc"_str);
+    EXPECT_EQ((**x64).archive.sha256.as_str(),
+              "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234"_str);
+    EXPECT_EQ((**x64).paths.linker.as_path(),
+              rstd::path::PathBuf::from("bin/lld-link.exe"_str).as_path());
+    EXPECT_EQ((**x64).paths.clang_cpp.as_path(),
+              rstd::path::PathBuf::from("bin/clang-cpp.dll"_str).as_path());
+    EXPECT_TRUE((**x64).runtime_components.is_empty());
+
+    host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
+    auto arm64        = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
+    ASSERT_TRUE(arm64.is_some());
+    EXPECT_EQ((**arm64).archive.root.as_str(), "clang+llvm-22.1.8-aarch64-pc-windows-msvc"_str);
+    EXPECT_EQ((**arm64).archive.sha256.as_str(),
+              "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1"_str);
+    EXPECT_TRUE((**arm64).runtime_components.is_empty());
+}
+
 TEST(LlvmSdkCatalog, VersionsAreCanonicalAndCompareNumerically) {
     auto older = lito::parse_llvm_version("9.10.2"_str);
     auto newer = lito::parse_llvm_version("10.0.0"_str);
@@ -161,6 +188,16 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
     (**reference_values).push((**reference_values)[usize {}].clone());
     EXPECT_TRUE(
         lito::parse_llvm_sdk_catalog(rstd::json::to_string(duplicate_reference).as_str()).is_err());
+
+    auto incompatible_component = catalog_document();
+    auto windows_references =
+        incompatible_component.pointer_mut("/releases/0/artifacts/1/runtime-components"_str);
+    ASSERT_TRUE(windows_references.is_some());
+    auto windows_values = (**windows_references).as_array_mut();
+    ASSERT_TRUE(windows_values.is_some());
+    (**windows_values).push(catalog_json_string("libxml2"_str));
+    EXPECT_TRUE(lito::parse_llvm_sdk_catalog(rstd::json::to_string(incompatible_component).as_str())
+                    .is_err());
 }
 
 TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
