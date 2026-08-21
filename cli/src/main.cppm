@@ -376,12 +376,13 @@ auto project_output_path(ref<rstd::path::Path> root, rstd::path::PathBuf path)
                                         : rstd::path::PathBuf::from(root).join(path.as_path());
 }
 
-auto build_configuration(lito::config::ToolchainSpec          toolchain,
-                         lito::config::StandardLibrary        standard_library,
-                         lito::config::StandardLibraryRuntime standard_library_runtime,
-                         lito::config::ProjectBuildOptions    options,
-                         lito::config::BuildTargetRequest target) -> lito::cpp::BuildConfiguration {
-    return lito::cpp::BuildConfiguration {
+auto build_configuration(lito::config::ToolchainSpec            toolchain,
+                         lito::config::StandardLibrarySelection standard_library,
+                         lito::config::StandardLibraryRuntime   standard_library_runtime,
+                         lito::config::ProjectBuildOptions      options,
+                         lito::config::BuildTargetRequest       target)
+    -> lito::config::BuildConfigurationRequest {
+    return lito::config::BuildConfigurationRequest {
         .toolchain                = rstd::move(toolchain),
         .standard_library         = standard_library,
         .standard_library_runtime = standard_library_runtime,

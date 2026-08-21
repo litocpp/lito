@@ -88,7 +88,7 @@ auto build_request(ref<rstd::path::Path>            root,
                 .packages = rstd::move(packages),
             },
         .build_directory = PathBuf::from(output),
-        .configuration   = configuration(),
+        .configuration   = lito::config::build_configuration_request(configuration()),
         .profile         = Some(rstd::move(profile)),
     };
 }

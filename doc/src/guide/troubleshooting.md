@@ -22,6 +22,10 @@ The build setup also lists configured C, C++, and link options together with the
 environment variable. If an integration expects `CFLAGS`, `CXXFLAGS`, or `LDFLAGS`, remember that
 Lito ignores them unless the command uses `--use-env-flags`.
 
+When `toolchain.stdlib` is omitted or set to `auto`, the `Link standard library` row is the resolved
+effective-target result, not the host default. MinGW and targets without an automatic policy must
+set `toolchain.stdlib` explicitly.
+
 `--verbose` also reports missing fallback candidates and cache or materialization reuse that made a
 host capability unnecessary. Missing tools that are unrelated to the selected action are not
 errors and are not listed in the default output.

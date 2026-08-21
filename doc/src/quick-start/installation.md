@@ -35,7 +35,12 @@ These commands build Lito itself. A normal Lito package does not need a CMake fi
 
 ## Select the C++ standard library
 
-Lito defaults to libc++. Select libstdc++ for a project with a shared configuration file:
+Lito defaults to automatic selection: Linux uses libstdc++, Android and macOS use libc++, and a
+Windows MSVC target uses MSVC STL. The selection follows the effective target rather than the host
+machine. The build setup prints the concrete result before scanning.
+
+Most projects can omit `toolchain.stdlib`. Select a concrete library when the target has no
+automatic policy or the project requires a particular library:
 
 ```toml
 [toolchain]
@@ -46,3 +51,6 @@ Save this as `lito-config.toml` in the project root when the choice is a project
 `.lito/config.toml` for a machine-local choice, or pass
 `-c toolchain.stdlib=libstdc++` for one invocation. See
 [configuration precedence](../reference/config/precedence-and-locations.md).
+
+Selecting a standard library controls compilation and linking. Lito does not copy a managed LLVM
+SDK's libc++ runtime or add a runtime search path during ordinary build or install.

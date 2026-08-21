@@ -466,8 +466,9 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.environment     = request.environment.clone();
     tool_request.tools           = request.tools.clone();
     tool_request.configuration   = request.configuration.clone();
-    tool_request.configuration.toolchain.cxx    = project.compiler.path.clone();
-    tool_request.configuration.standard_library = sdk->standard_library;
+    tool_request.configuration.toolchain.cxx = project.compiler.path.clone();
+    tool_request.configuration.standard_library =
+        lito::config::standard_library_selection(sdk->standard_library);
     tool_request.lock.path           = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
     tool_request.sources.network     = request.sources.network;
     tool_request.sources.fetch_seeds = as<Clone>(request.sources.fetch_seeds).clone();

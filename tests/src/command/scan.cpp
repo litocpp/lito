@@ -170,7 +170,7 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
                 .packages = strings("fixture-preprocessor-native"_str),
             },
         .source        = PathBuf::from("preprocessor-native/src/lib.cppm"_str),
-        .configuration = configuration(),
+        .configuration = lito::config::build_configuration_request(configuration()),
     });
     ASSERT_TRUE(native.is_ok());
     ASSERT_TRUE(native->result.language.is_Cpp());
@@ -215,7 +215,7 @@ TEST_F(ScanCommand, ScanUsesNativePreprocessorAndDefinitions) {
                 .packages = strings("fixture-scan-definitions"_str),
             },
         .source        = PathBuf::from("scan-definitions/src/lib.cppm"_str),
-        .configuration = configuration(),
+        .configuration = lito::config::build_configuration_request(configuration()),
     });
     ASSERT_TRUE(definitions.is_ok());
     EXPECT_TRUE(has_import(*definitions, "fixture.scan.definitions:defined"_str));

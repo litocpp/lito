@@ -144,7 +144,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
-    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
     EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
 
     auto legacy_project = config("toolchain-legacy"_str, toolchain_legacy_config);
@@ -156,13 +156,19 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     ASSERT_TRUE(default_project.is_ok());
     auto defaults = lito::config::load_project_config(default_project->root.as_path());
     ASSERT_TRUE(defaults.is_ok());
-    EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrary::Libcxx);
+    EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrarySelection::Auto);
     EXPECT_EQ(defaults->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
     EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
+
+    auto automatic_project = config("toolchain-auto"_str, "[toolchain]\nstdlib = \"auto\"\n"_str);
+    ASSERT_TRUE(automatic_project.is_ok());
+    auto automatic = lito::config::load_project_config(automatic_project->root.as_path());
+    ASSERT_TRUE(automatic.is_ok());
+    EXPECT_EQ(automatic->standard_library, lito::config::StandardLibrarySelection::Auto);
 }
 
 TEST_F(Config, AndroidTargetAndSdkSelectionAreTyped) {
@@ -319,7 +325,7 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
     auto loaded = lito::config::load_project_config(directory.as_path());
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("local-cxx"_str).as_path());
-    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
     EXPECT_EQ(loaded->cmake.generator.as_str(), "Ninja"_str);
     ASSERT_EQ(loaded->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(loaded->cmake.search_paths[usize {}].as_path(), directory.as_path());
@@ -330,7 +336,7 @@ TEST_F(Config, SharedConfigurationIsTheBaseOfLocalConfiguration) {
         directory.as_path(), lito::config::ConfigLoadMode::LocalDisabled);
     ASSERT_TRUE(shared_only.is_ok());
     EXPECT_EQ(shared_only->toolchain.cxx.as_path(), PathBuf::from("project-cxx"_str).as_path());
-    EXPECT_EQ(shared_only->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(shared_only->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
     EXPECT_EQ(shared_only->cmake.generator.as_str(), "Ninja"_str);
     ASSERT_EQ(shared_only->cmake.search_paths.len(), usize(1));
     EXPECT_EQ(shared_only->cmake.search_paths[usize {}].as_path(), directory.as_path());
@@ -578,7 +584,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
     ASSERT_TRUE(loaded.is_ok());
     EXPECT_EQ(loaded->toolchain.cc.as_path(), PathBuf::from("generic-cc"_str).as_path());
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("generic-cxx"_str).as_path());
-    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
     EXPECT_EQ(loaded->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
     ASSERT_EQ(loaded->build_options.cpp.len(), usize(1));
     EXPECT_EQ(loaded->build_options.cpp[usize {}].source.as_str(), "config.build.options"_str);
@@ -609,7 +615,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                                           });
     ASSERT_TRUE(disabled.is_ok());
     EXPECT_EQ(disabled->toolchain.cxx.as_path(), PathBuf::from("no-config-cxx"_str).as_path());
-    EXPECT_EQ(disabled->standard_library, lito::config::StandardLibrary::Libstdcxx);
+    EXPECT_EQ(disabled->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
 
     auto invalid_standard_library = Vec<String>::make();
     invalid_standard_library.push(String::make("toolchain.stdlib=unknown"_str));
@@ -630,7 +636,7 @@ TEST_F(Config, RuntimeOverridesShareOneSchemaDecode) {
                                               .overrides = rstd::move(msvc_standard_library),
                                           });
     ASSERT_TRUE(msvc.is_ok());
-    EXPECT_EQ(msvc->standard_library, lito::config::StandardLibrary::Msvc);
+    EXPECT_EQ(msvc->standard_library, lito::config::StandardLibrarySelection::Msvc);
 
     auto static_runtime = Vec<String>::make();
     static_runtime.push(String::make("toolchain.stdlib-runtime=static"_str));

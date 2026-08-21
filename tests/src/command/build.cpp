@@ -119,7 +119,7 @@ sources = ["src/main.cpp"]
     ASSERT_TRUE(project.is_ok());
     auto request = project_build_request(
         name, project->root.as_path(), strings("fixture-standard-library-module"_str));
-    request.configuration.standard_library = family;
+    request.configuration.standard_library = lito::config::standard_library_selection(family);
     auto result                            = lito::build(request);
     if (result.is_err()) {
         auto message = error_chain_text(result.unwrap_err());

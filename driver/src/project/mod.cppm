@@ -6,6 +6,7 @@ module lito.driver:project;
 import rstd;
 import lito.tools;
 import lito.core;
+import :config.project;
 import :project.error;
 import lito.cpp;
 import :build.event;
@@ -233,6 +234,15 @@ struct ResolvedProjectSession {
     Option<AndroidCmakeProjection> android_cmake;
 };
 
+struct ResolvedBuildProject {
+    cpp::BuildConfiguration configuration;
+    ClangToolchain          toolchain;
+    ResolvedProjectSession  session;
+    Vec<BuiltTargetRuntime> target_runtimes;
+    Option<PathBuf>         target_stripper;
+    Option<AndroidNdkLease> android_sdk;
+};
+
 struct ConfiguredToolchainSelection {
     lito::config::ToolchainSpec      tools;
     Option<ResolvedAndroidToolchain> android;
@@ -240,18 +250,21 @@ struct ConfiguredToolchainSelection {
     Option<AndroidNdkLease>          android_sdk;
 };
 
-auto resolve_configured_toolchain(const cpp::BuildConfiguration&    configuration,
-                                  const ResolvedProcessEnvironment& environment)
+auto resolve_configured_toolchain(const config::BuildConfigurationRequest& configuration,
+                                  const ResolvedProcessEnvironment&        environment)
     -> ProjectResult<ConfiguredToolchainSelection> {
     if (configuration.target.is_Default()) {
         return Ok(ConfiguredToolchainSelection {
             .tools = configuration.toolchain.clone(),
         });
     }
-    if (configuration.standard_library != lito::config::StandardLibrary::Libcxx) {
+    auto explicit_standard_library =
+        lito::config::explicit_standard_library(configuration.standard_library);
+    if (explicit_standard_library.is_some() &&
+        *explicit_standard_library != lito::config::StandardLibrary::Libcxx) {
         return Err(ProjectError::Message(
             rstd::format("Android target requires standard library 'libc++'; configured '{}'",
-                         lito::config::standard_library_name(configuration.standard_library))));
+                         lito::config::standard_library_name(*explicit_standard_library))));
     }
     if (configuration.toolchain.sdk.is_none()) {
         return Err(ProjectError::Message(
@@ -346,27 +359,19 @@ auto validate_linker_profile(const ClangToolchain&                            to
     return reject_lto("linking"_str, profile.link_lto, profile.link_lto_source);
 }
 
-auto resolve_project_session(const lito::package::PackageSelection&         selection,
-                             const cpp::BuildConfiguration&                 configuration,
-                             const lito::source::PackageSourceConfig&       sources,
-                             const lito::lock::LockConfig&                  lock,
-                             const ClangToolchain&                          toolchain,
-                             lito::tools::ToolResolver&                     tool_resolver,
-                             const ResolvedProcessEnvironment&              environment,
-                             const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
-                             bool                                           locked,
-                             lito::package::PackageSelectionPurpose         purpose,
-                             usize                                          jobs,
-                             const Option<BuildEventSink>&                  observer = None(),
-                             Option<lito::workspace::WorkspaceCatalog>      catalog  = None(),
-                             const BuildPlatform*          prepared_platform         = nullptr,
-                             const AndroidCmakeProjection* android_cmake             = nullptr)
-    -> ProjectResult<ResolvedProjectSession> {
-    auto build_arguments =
-        rstd_try(parse_build_arguments(configuration, toolchain.argument_parser()));
-    auto cpp_target = cpp::explicit_cpp_target_options(build_arguments.cpp);
-    auto c_target   = cpp::explicit_c_target_options(build_arguments.c);
-    auto platform   = BuildPlatform {};
+struct ResolvedBuildContext {
+    cpp::ParsedGlobalBuildOptions build_arguments;
+    BuildPlatform                 platform;
+};
+
+auto resolve_build_context(const lito::config::ProjectBuildOptions& options,
+                           const ClangToolchain&                    toolchain,
+                           const BuildPlatform*                     prepared_platform = nullptr)
+    -> ProjectResult<ResolvedBuildContext> {
+    auto build_arguments = rstd_try(parse_build_arguments(options, toolchain.argument_parser()));
+    auto cpp_target      = cpp::explicit_cpp_target_options(build_arguments.cpp);
+    auto c_target        = cpp::explicit_c_target_options(build_arguments.c);
+    auto platform        = BuildPlatform {};
     if (prepared_platform != nullptr) {
         const auto reject_raw =
             [](ref<str>                          language,
@@ -418,13 +423,33 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                 expected.is_some() ? *expected : "<none>"_str)));
         }
     }
+    return Ok(ResolvedBuildContext {
+        .build_arguments = rstd::move(build_arguments),
+        .platform        = rstd::move(platform),
+    });
+}
+
+auto resolve_project_session(const lito::package::PackageSelection&         selection,
+                             const lito::source::PackageSourceConfig&       sources,
+                             const lito::lock::LockConfig&                  lock,
+                             lito::tools::ToolResolver&                     tool_resolver,
+                             const ResolvedProcessEnvironment&              environment,
+                             const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+                             bool                                           locked,
+                             lito::package::PackageSelectionPurpose         purpose,
+                             usize                                          jobs,
+                             ResolvedBuildContext                           context,
+                             const Option<BuildEventSink>&                  observer      = None(),
+                             Option<lito::workspace::WorkspaceCatalog>      catalog       = None(),
+                             const AndroidCmakeProjection*                  android_cmake = nullptr)
+    -> ProjectResult<ResolvedProjectSession> {
     auto project = rstd_try(resolve_project(selection,
                                             purpose,
                                             sources,
                                             lock,
                                             locked,
                                             lito::source::GitResolutionMode::ReuseLocked,
-                                            rstd::addressof(platform.effective_target),
+                                            rstd::addressof(context.platform.effective_target),
                                             tool_resolver,
                                             environment,
                                             cmake_build_overrides,
@@ -433,8 +458,8 @@ auto resolve_project_session(const lito::package::PackageSelection&         sele
                                             rstd::move(catalog)));
     return Ok(ResolvedProjectSession {
         .project         = rstd::move(project),
-        .build_arguments = rstd::move(build_arguments),
-        .platform        = rstd::move(platform),
+        .build_arguments = rstd::move(context.build_arguments),
+        .platform        = rstd::move(context.platform),
         .android_cmake   = android_cmake != nullptr ? Some(android_cmake->clone())
                                                     : Option<AndroidCmakeProjection> {},
     });
@@ -703,17 +728,17 @@ auto resolve_project_metadata(
     const Option<BuildSetupReportSink>&       setup_reporter = None(),
     Option<lito::workspace::WorkspaceCatalog> catalog        = None())
     -> ProjectResult<ResolvedProjectMetadata> {
+    auto context = rstd_try(resolve_build_context(configuration.global_options, toolchain));
     auto session = rstd_try(resolve_project_session(selection,
-                                                    configuration,
                                                     sources,
                                                     lock,
-                                                    toolchain,
                                                     tool_resolver,
                                                     environment,
                                                     cmake_build_overrides,
                                                     locked,
                                                     purpose,
                                                     jobs,
+                                                    rstd::move(context),
                                                     observer,
                                                     rstd::move(catalog)));
     return resolve_project_metadata(rstd::move(session),
@@ -731,9 +756,89 @@ auto resolve_project_metadata(
                                     setup_reporter);
 }
 
+auto resolve_build_project(const lito::package::PackageSelection&         selection,
+                           const config::BuildConfigurationRequest&       configuration,
+                           const lito::source::PackageSourceConfig&       sources,
+                           const lito::lock::LockConfig&                  lock,
+                           const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+                           lito::tools::ToolResolver&                     tool_resolver,
+                           const ResolvedProcessEnvironment&              environment,
+                           bool                                           locked,
+                           lito::package::PackageSelectionPurpose         purpose,
+                           usize                                          jobs,
+                           const Option<BuildEventSink>&                  observer = None(),
+                           Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
+    -> ProjectResult<ResolvedBuildProject> {
+    auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
+    auto target_runtimes = Vec<BuiltTargetRuntime>::make();
+    auto target_stripper = Option<PathBuf> {};
+    if (selected.android.is_some() && selected.android->shared_runtime.is_some()) {
+        target_runtimes.push(BuiltTargetRuntime {
+            .name     = selected.android->shared_runtime->name.clone(),
+            .path     = selected.android->shared_runtime->path.clone(),
+            .identity = selected.android->shared_runtime->identity.clone(),
+        });
+    }
+    if (selected.android.is_some()) {
+        target_stripper = Some(selected.android->distribution.paths().strip.clone());
+    }
+    auto created = ClangToolchain::create(selected.tools.clone(), environment);
+    if (created.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
+    }
+    auto toolchain        = rstd::move(created).unwrap();
+    auto platform         = Option<BuildPlatform> {};
+    auto cmake_projection = Option<AndroidCmakeProjection> {};
+    if (selected.android.is_some()) {
+        auto& android = *selected.android;
+        auto  resolved =
+            resolve_android_build_platform(*selected.host, toolchain.target_info(), android.target);
+        resolved.sdk_version  = Some(android.distribution.revision().text.clone());
+        resolved.sdk_identity = Some(String::make(android.distribution.identity()));
+        platform              = Some(rstd::move(resolved));
+        cmake_projection      = Some(android.cmake.clone());
+    }
+    auto context = resolve_build_context(configuration.global_options,
+                                         toolchain,
+                                         platform.is_some() ? rstd::addressof(*platform) : nullptr);
+    if (context.is_err()) return Err(rstd::move(context).unwrap_err());
+    auto standard_library = resolve_standard_library_selection(configuration.standard_library,
+                                                               context->platform.effective_target);
+    if (standard_library.is_err()) {
+        return Err(rstd::into<ProjectError>(rstd::move(standard_library).unwrap_err()));
+    }
+    auto resolved_request       = configuration.clone();
+    resolved_request.toolchain  = selected.tools.clone();
+    auto resolved_configuration = config::resolve_build_configuration(
+        rstd::move(resolved_request), rstd::move(standard_library).unwrap());
+    auto session = resolve_project_session(
+        selection,
+        sources,
+        lock,
+        tool_resolver,
+        environment,
+        cmake_build_overrides,
+        locked,
+        purpose,
+        jobs,
+        rstd::move(context).unwrap(),
+        observer,
+        rstd::move(catalog),
+        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr);
+    if (session.is_err()) return Err(rstd::move(session).unwrap_err());
+    return Ok(ResolvedBuildProject {
+        .configuration   = rstd::move(resolved_configuration),
+        .toolchain       = rstd::move(toolchain),
+        .session         = rstd::move(session).unwrap(),
+        .target_runtimes = rstd::move(target_runtimes),
+        .target_stripper = rstd::move(target_stripper),
+        .android_sdk     = rstd::move(selected.android_sdk),
+    });
+}
+
 auto prepare_build_project(
     const lito::package::PackageSelection&           selection,
-    const cpp::BuildConfiguration&                   configuration,
+    const config::BuildConfigurationRequest&         configuration,
     const lito::manifest::BuildProfileName&          profile,
     ref<rstd::path::Path>                            requested_output,
     const lito::source::PackageSourceConfig&         sources,
@@ -750,71 +855,35 @@ auto prepare_build_project(
     Option<lito::workspace::WorkspaceCatalog> catalog        = None(),
     const Option<BuildSetupReportSink>&       setup_reporter = None())
     -> ProjectResult<PreparedBuildProject> {
-    auto selected        = rstd_try(resolve_configured_toolchain(configuration, environment));
-    auto target_runtimes = Vec<BuiltTargetRuntime>::make();
-    auto target_stripper = Option<PathBuf> {};
-    if (selected.android.is_some() && selected.android->shared_runtime.is_some()) {
-        target_runtimes.push(BuiltTargetRuntime {
-            .name     = selected.android->shared_runtime->name.clone(),
-            .path     = selected.android->shared_runtime->path.clone(),
-            .identity = selected.android->shared_runtime->identity.clone(),
-        });
-    }
-    if (selected.android.is_some()) {
-        target_stripper = Some(selected.android->distribution.paths().strip.clone());
-    }
-    auto resolved_configuration      = configuration.clone();
-    resolved_configuration.toolchain = selected.tools.clone();
-    auto created = ClangToolchain::create(resolved_configuration.toolchain, environment);
-    if (created.is_err()) {
-        return Err(rstd::into<ProjectError>(rstd::move(created).unwrap_err()));
-    }
-    auto toolchain        = rstd::move(created).unwrap();
-    auto platform         = Option<BuildPlatform> {};
-    auto cmake_projection = Option<AndroidCmakeProjection> {};
-    if (selected.android.is_some()) {
-        auto& android = *selected.android;
-        auto  resolved =
-            resolve_android_build_platform(*selected.host, toolchain.target_info(), android.target);
-        resolved.sdk_version  = Some(android.distribution.revision().text.clone());
-        resolved.sdk_identity = Some(String::make(android.distribution.identity()));
-        platform              = Some(rstd::move(resolved));
-        cmake_projection      = Some(android.cmake.clone());
-    }
-    auto session = resolve_project_session(
-        selection,
-        resolved_configuration,
-        sources,
-        lock,
-        toolchain,
-        tool_resolver,
-        environment,
-        cmake_build_overrides,
-        locked,
-        purpose,
-        jobs,
-        observer,
-        rstd::move(catalog),
-        platform.is_some() ? rstd::addressof(*platform) : nullptr,
-        cmake_projection.is_some() ? rstd::addressof(*cmake_projection) : nullptr);
-    if (session.is_err()) return Err(rstd::move(session).unwrap_err());
-    auto prepared = prepare_resolved_build_project(rstd::move(session).unwrap(),
-                                                   resolved_configuration,
+    auto resolved = rstd_try(resolve_build_project(selection,
+                                                   configuration,
+                                                   sources,
+                                                   lock,
+                                                   cmake_build_overrides,
+                                                   tool_resolver,
+                                                   environment,
+                                                   locked,
+                                                   purpose,
+                                                   jobs,
+                                                   observer,
+                                                   rstd::move(catalog)));
+    auto prepared = prepare_resolved_build_project(rstd::move(resolved.session),
+                                                   resolved.configuration,
                                                    profile,
                                                    requested_output,
                                                    sources,
                                                    pkg_config,
                                                    cmake,
-                                                   rstd::move(toolchain),
+                                                   rstd::move(resolved.toolchain),
                                                    tool_resolver,
                                                    environment,
                                                    jobs,
                                                    observer,
                                                    setup_reporter);
     if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
-    prepared->target_runtimes = rstd::move(target_runtimes);
-    prepared->target_stripper = rstd::move(target_stripper);
-    prepared->android_sdk     = rstd::move(selected.android_sdk);
+    prepared->target_runtimes = rstd::move(resolved.target_runtimes);
+    prepared->target_stripper = rstd::move(resolved.target_stripper);
+    prepared->android_sdk     = rstd::move(resolved.android_sdk);
     return prepared;
 }
 

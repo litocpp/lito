@@ -3,6 +3,7 @@ export module lito.driver:command.scan;
 import rstd;
 import lito.tools;
 import lito.core;
+import :config.project;
 import :package.selection;
 export import :command.error;
 import :build.event;
@@ -22,7 +23,7 @@ struct ScanRequest {
     PathBuf                                     source;
     ProcessEnvironmentSpec                      environment;
     lito::tools::ToolSpec                       tools;
-    cpp::BuildConfiguration                     configuration;
+    config::BuildConfigurationRequest           configuration;
     lito::lock::LockConfig                      lock;
     Option<lito::manifest::BuildProfileName>    profile;
     lito::source::PackageSourceConfig           sources;

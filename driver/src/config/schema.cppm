@@ -228,17 +228,19 @@ auto configured_toolchain_sdk(const Toml& toolchain_value)
     return Ok(Some(ToolchainSdkSelection::Directory(*kind, rstd::move(directory))));
 }
 
-auto configured_standard_library(const Toml& toolchain_value) -> ConfigResult<StandardLibrary> {
+auto configured_standard_library(const Toml& toolchain_value)
+    -> ConfigResult<StandardLibrarySelection> {
     auto value = config_member(toolchain_value, "stdlib"_str);
-    if (value.is_none()) return Ok(StandardLibrary::Libcxx);
+    if (value.is_none()) return Ok(StandardLibrarySelection::Auto);
     auto text = (**value).as_str();
     if (text.is_none()) {
-        return config_failure<StandardLibrary>("config.toolchain.stdlib must be a string"_str);
+        return config_failure<StandardLibrarySelection>(
+            "config.toolchain.stdlib must be a string"_str);
     }
-    auto parsed = parse_standard_library(*text);
+    auto parsed = parse_standard_library_selection(*text);
     if (parsed.is_some()) return Ok(*parsed);
-    return config_failure<StandardLibrary>(
-        "config.toolchain.stdlib must be 'libc++', 'libstdc++', or 'msvc'"_str);
+    return config_failure<StandardLibrarySelection>(
+        "config.toolchain.stdlib must be 'auto', 'libc++', 'libstdc++', or 'msvc'"_str);
 }
 
 auto configured_standard_library_runtime(const Toml& toolchain_value)
@@ -857,7 +859,7 @@ auto decode_project_config(PathBuf               root,
     auto toolchain = rstd_try(configured_toolchain(document, rstd::move(toolchain_defaults)));
     auto tools =
         rstd_try(configured_host_tools(document, root.as_path(), rstd::move(tool_defaults)));
-    auto standard_library         = StandardLibrary::Libcxx;
+    auto standard_library         = StandardLibrarySelection::Auto;
     auto standard_library_runtime = StandardLibraryRuntime::Dynamic;
     auto toolchain_value          = config_member(document, "toolchain"_str);
     if (toolchain_value.is_some()) {

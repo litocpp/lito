@@ -13,6 +13,33 @@ using namespace rstd::literals;
 using namespace lito;
 using namespace lito_test;
 
+TEST(ToolchainStandardLibrary, ResolvesAutomaticSelectionFromEffectiveTarget) {
+    const auto resolve = [](ref<str> triple) {
+        auto target = lito::system::parse_target_info(triple).unwrap();
+        return resolve_standard_library_selection(lito::config::StandardLibrarySelection::Auto,
+                                                  target);
+    };
+    auto linux = resolve("x86_64-pc-linux-gnu"_str);
+    ASSERT_TRUE(linux.is_ok());
+    EXPECT_EQ(*linux, lito::config::StandardLibrary::Libstdcxx);
+    auto android = resolve("aarch64-linux-android"_str);
+    ASSERT_TRUE(android.is_ok());
+    EXPECT_EQ(*android, lito::config::StandardLibrary::Libcxx);
+    auto macos = resolve("aarch64-apple-darwin"_str);
+    ASSERT_TRUE(macos.is_ok());
+    EXPECT_EQ(*macos, lito::config::StandardLibrary::Libcxx);
+    auto windows = resolve("x86_64-pc-windows-msvc"_str);
+    ASSERT_TRUE(windows.is_ok());
+    EXPECT_EQ(*windows, lito::config::StandardLibrary::Msvc);
+    EXPECT_TRUE(resolve("x86_64-w64-mingw32"_str).is_err());
+
+    auto target = lito::system::parse_target_info("x86_64-pc-linux-gnu"_str).unwrap();
+    auto explicit_selection =
+        resolve_standard_library_selection(lito::config::StandardLibrarySelection::Libcxx, target);
+    ASSERT_TRUE(explicit_selection.is_ok());
+    EXPECT_EQ(*explicit_selection, lito::config::StandardLibrary::Libcxx);
+}
+
 TEST(ClangToolchain, ProjectsLanguageSpecificScanFacts) {
     auto facts = frontend::FrontendResult {};
     facts.header_inputs.push(PathBuf::from("/tmp/c-header.h"_str));

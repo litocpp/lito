@@ -26,12 +26,22 @@ Executable fields accept a searchable name or an absolute path:
 - `ld`, default `ld.lld`;
 - `ar`, default `llvm-ar`.
 
-`stdlib` is `"libc++"` or `"libstdc++"` and defaults to `"libc++"`.
+`stdlib` accepts `"auto"`, `"libc++"`, `"libstdc++"`, or `"msvc"` and defaults to `"auto"`.
+Automatic selection uses the effective build target after typed target and sysroot options have
+been resolved:
+
+- Android and macOS select libc++;
+- Linux selects libstdc++;
+- Windows with the MSVC environment selects MSVC STL;
+- MinGW and targets without a defined policy require an explicit value.
+
+The build setup reports the resolved library. `auto` is only a configuration selection; compiler,
+BMI, link, and cache identities use the resolved concrete library.
 
 ```toml
 [toolchain]
 cxx = "clang++"
-stdlib = "libstdc++"
+stdlib = "auto"
 ```
 
 ## `[tools]`

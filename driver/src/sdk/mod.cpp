@@ -1437,9 +1437,9 @@ auto install_runtime_component(const lito::LlvmSdkRuntimeComponent&            c
             .build_directory = component_root.join(PathBuf::from("build"_str).as_path()),
             .tools           = request.tools.clone(),
             .configuration =
-                lito::cpp::BuildConfiguration {
+                lito::config::BuildConfigurationRequest {
                     .toolchain         = bootstrap_toolchain.clone(),
-                    .standard_library  = lito::config::StandardLibrary::Libcxx,
+                    .standard_library  = lito::config::StandardLibrarySelection::Libcxx,
                     .bmi_mode          = lito::cpp::BmiMode::Reduced,
                     .language_standard = String::make("c++20"_str),
                 },

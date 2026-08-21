@@ -263,55 +263,51 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
     }
     auto resolver = lito::tools::ToolResolver(
         *environment, request.build.tools.clone(), request.build.tool_reporter);
-    auto toolchain = ClangToolchain::create(request.build.configuration.toolchain, *environment);
-    if (toolchain.is_err()) {
-        return install_failure<InstallSummary>(
-            rstd::format("cannot resolve install target: {}", toolchain.unwrap_err()));
-    }
-    auto resolved_toolchain = rstd::move(toolchain).unwrap();
     auto jobs =
         request.build.execution.scan.jobs.is_some() ? *request.build.execution.scan.jobs : usize(1);
     if (request.build.execution.scan.jobs.is_none()) {
         auto available = rstd::thread::available_parallelism();
         if (available.is_ok()) jobs = available->get();
     }
-    auto session          = rstd_try(install_project_failure(
-        resolve_project_session(request.build.selection,
-                                request.build.configuration,
-                                request.build.sources,
-                                request.build.lock,
-                                resolved_toolchain,
-                                resolver,
-                                *environment,
-                                request.build.cmake_build_overrides,
-                                request.build.locked,
-                                lito::package::PackageSelectionPurpose::Install,
-                                jobs,
-                                request.build.observer,
-                                Some(rstd::move(request.source.project.catalog)))));
-    auto effective_target = session.platform.effective_target.clone();
+    auto resolved         = rstd_try(install_project_failure(
+        resolve_build_project(request.build.selection,
+                              request.build.configuration,
+                              request.build.sources,
+                              request.build.lock,
+                              request.build.cmake_build_overrides,
+                              resolver,
+                              *environment,
+                              request.build.locked,
+                              lito::package::PackageSelectionPurpose::Install,
+                              jobs,
+                              request.build.observer,
+                              Some(rstd::move(request.source.project.catalog)))));
+    auto effective_target = resolved.session.platform.effective_target.clone();
     auto recipes          = rstd_try(resolve_install_recipes(
-        session.project.selection, effective_target, request.binaries, profile));
-    auto requirements     = rstd_try(
-        resolve_install_build_requirements(session.project.selection, recipes, effective_target));
+        resolved.session.project.selection, effective_target, request.binaries, profile));
+    auto requirements     = rstd_try(resolve_install_build_requirements(
+        resolved.session.project.selection, recipes, effective_target));
     for (const auto& target : requirements.targets) {
         request.build.exact_targets.push(target.clone());
     }
-    auto profile_name = request.build.profile->clone();
-    auto prepared     = rstd_try(install_project_failure(
-        prepare_resolved_build_project(rstd::move(session),
-                                       request.build.configuration,
+    auto profile_name        = request.build.profile->clone();
+    auto prepared            = rstd_try(install_project_failure(
+        prepare_resolved_build_project(rstd::move(resolved.session),
+                                       resolved.configuration,
                                        profile_name,
                                        request.build.build_directory.as_path(),
                                        request.build.sources,
                                        request.build.pkg_config,
                                        request.build.cmake,
-                                       rstd::move(resolved_toolchain),
+                                       rstd::move(resolved.toolchain),
                                        resolver,
                                        *environment,
                                        jobs,
                                        request.build.observer,
                                        request.build.setup_reporter)));
+    prepared.target_runtimes = rstd::move(resolved.target_runtimes);
+    prepared.target_stripper = rstd::move(resolved.target_stripper);
+    prepared.android_sdk     = rstd::move(resolved.android_sdk);
     rstd_try(resolve_install_artifact_link_variants(requirements, prepared.external_assets));
     for (const auto& variant : requirements.artifact_link_variants) {
         request.build.artifact_link_variants.push(variant.clone());

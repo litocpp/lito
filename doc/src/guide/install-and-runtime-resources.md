@@ -91,5 +91,11 @@ A `[[bin]].resources` entry publishes a generated directory as a typed build res
 documentation or other integrations. It is not an input to the current install recipe and is not
 copied by `lito install`.
 
+Standard-library selection is also not an install resource declaration. Setting
+`toolchain.stdlib = "auto"` resolves to a concrete compile/link library before project resolution,
+but neither automatic nor explicit selection asks `lito install` to copy libc++, libc++abi, or
+platform runtime DLLs from a managed SDK. Projects that require distributable runtime files need an
+explicit artifact or external-asset contract.
+
 See the exact [install script and resource contract](../reference/lito-toml/install-and-resources.md)
 and the [`install` command](../reference/cli/build-and-install.md).

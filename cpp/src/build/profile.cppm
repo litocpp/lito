@@ -428,10 +428,11 @@ auto belongs_to_profile_option(const Vec<String>&      tokens,
 export namespace lito::cpp
 {
 
-auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
+auto parse_build_arguments(const lito::config::ProjectBuildOptions& options,
+                           const CppArgumentParser&                 parser)
     -> lito::manifest::BuildProfileResult<ParsedGlobalBuildOptions> {
     auto result = ParsedGlobalBuildOptions {};
-    for (const auto& input : configuration.global_options.cpp) {
+    for (const auto& input : options.cpp) {
         auto parsed = parser.parse(input.arguments, input.source.as_str());
         if (parsed.is_err()) {
             return Err(lito::manifest::BuildProfileError::Options(
@@ -441,7 +442,7 @@ auto parse_build_arguments(const BuildConfiguration& configuration, const CppArg
             result.cpp.occurrences.push(rstd::move(occurrence));
         }
     }
-    for (const auto& input : configuration.global_options.c) {
+    for (const auto& input : options.c) {
         auto parsed = parser.parse_c(input.arguments, input.source.as_str());
         if (parsed.is_err()) {
             return Err(lito::manifest::BuildProfileError::Options(
@@ -451,10 +452,15 @@ auto parse_build_arguments(const BuildConfiguration& configuration, const CppArg
             result.c.occurrences.push(rstd::move(occurrence));
         }
     }
-    for (const auto& input : configuration.global_options.linker) {
+    for (const auto& input : options.linker) {
         result.linker.push(input.clone());
     }
     return Ok(rstd::move(result));
+}
+
+auto parse_build_arguments(const BuildConfiguration& configuration, const CppArgumentParser& parser)
+    -> lito::manifest::BuildProfileResult<ParsedGlobalBuildOptions> {
+    return parse_build_arguments(configuration.global_options, parser);
 }
 
 auto make_profile_spec(const BuildConfiguration&               configuration,

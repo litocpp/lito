@@ -33,6 +33,7 @@ target_sources(
          src/common/invocation.cppm
          src/common/link.cppm
          src/common/mod.cppm
+         src/common/standard_library.cppm
          src/common/statistics.cppm
          src/lib.cppm)
 target_link_libraries(

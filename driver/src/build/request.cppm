@@ -3,6 +3,7 @@ export module lito.driver:build.request;
 import rstd;
 import lito.tools;
 import lito.core;
+import :config.project;
 import :package.selection;
 import :build.event;
 import :build.setup_report;
@@ -62,7 +63,7 @@ struct BuildRequest {
     PathBuf                                   build_directory;
     ProcessEnvironmentSpec                    environment;
     lito::tools::ToolSpec                     tools;
-    cpp::BuildConfiguration                   configuration;
+    config::BuildConfigurationRequest         configuration;
     lito::lock::LockConfig                    lock;
     Option<lito::manifest::BuildProfileName>  profile;
     lito::source::PackageSourceConfig         sources;

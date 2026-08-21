@@ -66,6 +66,62 @@ auto standard_library_names() -> Vec<String> {
     return values;
 }
 
+enum class StandardLibrarySelection
+{
+    Auto,
+    Libstdcxx,
+    Libcxx,
+    Msvc,
+};
+
+constexpr auto standard_library_selection_name(StandardLibrarySelection value) noexcept
+    -> ref<str> {
+    switch (value) {
+    case StandardLibrarySelection::Auto: return "auto"_str;
+    case StandardLibrarySelection::Libstdcxx: return "libstdc++"_str;
+    case StandardLibrarySelection::Libcxx: return "libc++"_str;
+    case StandardLibrarySelection::Msvc: return "msvc"_str;
+    }
+    return ""_str;
+}
+
+auto parse_standard_library_selection(ref<str> value) noexcept -> Option<StandardLibrarySelection> {
+    if (value == standard_library_selection_name(StandardLibrarySelection::Auto)) {
+        return Some(StandardLibrarySelection::Auto);
+    }
+    if (value == standard_library_selection_name(StandardLibrarySelection::Libstdcxx)) {
+        return Some(StandardLibrarySelection::Libstdcxx);
+    }
+    if (value == standard_library_selection_name(StandardLibrarySelection::Libcxx)) {
+        return Some(StandardLibrarySelection::Libcxx);
+    }
+    if (value == standard_library_selection_name(StandardLibrarySelection::Msvc)) {
+        return Some(StandardLibrarySelection::Msvc);
+    }
+    return None();
+}
+
+constexpr auto explicit_standard_library(StandardLibrarySelection value) noexcept
+    -> Option<StandardLibrary> {
+    switch (value) {
+    case StandardLibrarySelection::Auto: return None();
+    case StandardLibrarySelection::Libstdcxx: return Some(StandardLibrary::Libstdcxx);
+    case StandardLibrarySelection::Libcxx: return Some(StandardLibrary::Libcxx);
+    case StandardLibrarySelection::Msvc: return Some(StandardLibrary::Msvc);
+    }
+    return None();
+}
+
+constexpr auto standard_library_selection(StandardLibrary value) noexcept
+    -> StandardLibrarySelection {
+    switch (value) {
+    case StandardLibrary::Libstdcxx: return StandardLibrarySelection::Libstdcxx;
+    case StandardLibrary::Libcxx: return StandardLibrarySelection::Libcxx;
+    case StandardLibrary::Msvc: return StandardLibrarySelection::Msvc;
+    }
+    rstd::unreachable();
+}
+
 enum class StandardLibraryRuntime
 {
     Dynamic,

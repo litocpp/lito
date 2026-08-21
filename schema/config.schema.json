@@ -76,6 +76,16 @@
         },
         "ar": {
           "$ref": "#/definitions/tool"
+        },
+        "stdlib": {
+          "description": "C++ standard library selection. Auto resolves from the effective build target.",
+          "type": "string",
+          "enum": [
+            "auto",
+            "libc++",
+            "libstdc++",
+            "msvc"
+          ]
         }
       },
       "additionalProperties": false
