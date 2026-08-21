@@ -1,6 +1,3 @@
-module;
-#include <initializer_list>
-
 export module lito.core:parse.json;
 
 import rstd;
@@ -46,14 +43,14 @@ auto required_normal_relative_path(const rstd::json::Value& value,
                                    const NodePath& path) -> ParseResult<NormalRelativePath>;
 auto required_path_component(const rstd::json::Value& value, ref<str> key, const NodePath& path)
     -> ParseResult<PathComponent>;
-auto reject_unknown(const rstd::json::Map&          value,
-                    const NodePath&                 path,
-                    std::initializer_list<ref<str>> allowed) -> ParseResult<empty>;
+auto reject_unknown(const rstd::json::Map&     value,
+                    const NodePath&            path,
+                    initializer_list<ref<str>> allowed) -> ParseResult<empty>;
 auto reject_unknown(const rstd::json::Map& value, const NodePath& path, bool (*allowed)(ref<str>))
     -> ParseResult<empty>;
-auto reject_unknown(const rstd::json::Value&        value,
-                    const NodePath&                 path,
-                    std::initializer_list<ref<str>> allowed) -> ParseResult<empty>;
+auto reject_unknown(const rstd::json::Value&   value,
+                    const NodePath&            path,
+                    initializer_list<ref<str>> allowed) -> ParseResult<empty>;
 auto reject_unknown(const rstd::json::Value& value, const NodePath& path, bool (*allowed)(ref<str>))
     -> ParseResult<empty>;
 

@@ -1,5 +1,4 @@
 module;
-#include <initializer_list>
 #include <rstd/macro.hpp>
 
 module lito.core;
@@ -452,10 +451,9 @@ auto lito::parse::json::required_path_component(const rstd::json::Value& value,
     return path_component(*member, path.field(key));
 }
 
-auto lito::parse::json::reject_unknown(const rstd::json::Map&          value,
-                                       const NodePath&                 path,
-                                       std::initializer_list<ref<str>> allowed)
-    -> ParseResult<empty> {
+auto lito::parse::json::reject_unknown(const rstd::json::Map&     value,
+                                       const NodePath&            path,
+                                       initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     auto keys = value.keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         auto known = false;
@@ -482,10 +480,9 @@ auto lito::parse::json::reject_unknown(const rstd::json::Map& value,
     return Ok(empty {});
 }
 
-auto lito::parse::json::reject_unknown(const rstd::json::Value&        value,
-                                       const NodePath&                 path,
-                                       std::initializer_list<ref<str>> allowed)
-    -> ParseResult<empty> {
+auto lito::parse::json::reject_unknown(const rstd::json::Value&   value,
+                                       const NodePath&            path,
+                                       initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     return reject_unknown(*rstd_try(object(value, path)), path, allowed);
 }
 
@@ -667,10 +664,9 @@ auto lito::parse::toml::required_path_component(const rstd::toml::Value& value,
     return path_component(*member, path.field(key));
 }
 
-auto lito::parse::toml::reject_unknown(const rstd::toml::Table&        value,
-                                       const NodePath&                 path,
-                                       std::initializer_list<ref<str>> allowed)
-    -> ParseResult<empty> {
+auto lito::parse::toml::reject_unknown(const rstd::toml::Table&   value,
+                                       const NodePath&            path,
+                                       initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     auto keys = value.keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         auto known = false;
@@ -697,10 +693,9 @@ auto lito::parse::toml::reject_unknown(const rstd::toml::Table& value,
     return Ok(empty {});
 }
 
-auto lito::parse::toml::reject_unknown(const rstd::toml::Value&        value,
-                                       const NodePath&                 path,
-                                       std::initializer_list<ref<str>> allowed)
-    -> ParseResult<empty> {
+auto lito::parse::toml::reject_unknown(const rstd::toml::Value&   value,
+                                       const NodePath&            path,
+                                       initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     return reject_unknown(*rstd_try(table(value, path)), path, allowed);
 }
 

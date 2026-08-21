@@ -1,6 +1,3 @@
-module;
-#include <initializer_list>
-
 export module lito.core:parse.toml;
 
 import rstd;
@@ -43,14 +40,14 @@ auto required_normal_relative_path(const rstd::toml::Value& value,
                                    const NodePath& path) -> ParseResult<NormalRelativePath>;
 auto required_path_component(const rstd::toml::Value& value, ref<str> key, const NodePath& path)
     -> ParseResult<PathComponent>;
-auto reject_unknown(const rstd::toml::Table&        value,
-                    const NodePath&                 path,
-                    std::initializer_list<ref<str>> allowed) -> ParseResult<empty>;
+auto reject_unknown(const rstd::toml::Table&   value,
+                    const NodePath&            path,
+                    initializer_list<ref<str>> allowed) -> ParseResult<empty>;
 auto reject_unknown(const rstd::toml::Table& value, const NodePath& path, bool (*allowed)(ref<str>))
     -> ParseResult<empty>;
-auto reject_unknown(const rstd::toml::Value&        value,
-                    const NodePath&                 path,
-                    std::initializer_list<ref<str>> allowed) -> ParseResult<empty>;
+auto reject_unknown(const rstd::toml::Value&   value,
+                    const NodePath&            path,
+                    initializer_list<ref<str>> allowed) -> ParseResult<empty>;
 auto reject_unknown(const rstd::toml::Value& value, const NodePath& path, bool (*allowed)(ref<str>))
     -> ParseResult<empty>;
 
