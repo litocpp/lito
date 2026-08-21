@@ -29,6 +29,7 @@ class SdkError {
               (Platform, (lito::system::PlatformError source;)),
               (System, (lito::system::SystemError source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
+              (Parse, (lito::parse::Error source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Message, (String message;)))
 };
@@ -218,6 +219,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<lito::parse::Error>, lito::SdkError> {
+    static auto from(lito::parse::Error error) -> lito::SdkError {
+        return lito::SdkError::Parse(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -265,6 +273,7 @@ struct Impl<fmt::Display, lito::SdkError> : ImplBase<lito::SdkError> {
             return formatter.write_fmt(fmt::Arguments::make("cannot parse LLVM SDK descriptor '{}'",
                                                             error.as_Json().path.as_path()));
         }
+        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_fmt(
@@ -308,6 +317,7 @@ struct Impl<error::Error, lito::SdkError> : ImplBase<lito::SdkError> {
         }
         if (error.is_System()) return Some(dyn<error::Error>::from_ref(error.as_System().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         return None();
     }

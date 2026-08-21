@@ -59,8 +59,10 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
         .name          = String::make("archive"_str),
         .architectures = Vec<String>::make(),
         .source        = lito::lock::LockedSource::Archive(
-            String::make("https://example.invalid/archive.tar.gz"_str),
-            String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)),
+            lito::parse::FetchUrl::parse("https://example.invalid/archive.tar.gz"_str).unwrap(),
+            rstd::crypto::Sha256Digest::parse_hex(
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
+                .unwrap()),
     });
     auto first  = lito::lock::flatpak_sources_json(project);
     auto second = lito::lock::flatpak_sources_json(project);

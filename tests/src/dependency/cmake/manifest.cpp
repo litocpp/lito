@@ -469,7 +469,7 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     EXPECT_EQ(variants[usize {}].architecture.as_str(), "aarch64"_str);
     EXPECT_EQ(variants[usize {}].url.as_str(), "https://example.com/fixture-linuxarm64.tar.gz"_str);
     EXPECT_EQ(variants[usize(1)].architecture.as_str(), "x86_64"_str);
-    EXPECT_EQ(variants[usize(1)].sha256.as_str(),
+    EXPECT_EQ(variants[usize(1)].sha256.to_hex().as_str(),
               "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str);
 }
 
@@ -525,15 +525,17 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     auto variants = Vec<lito::dependency::ExternalArchiveVariant>::make();
     variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
-        .url          = String::make("https://example.com/arm64.tar.gz"_str),
-        .sha256 =
-            String::make("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str),
+        .url    = lito::parse::FetchUrl::parse("https://example.com/arm64.tar.gz"_str).unwrap(),
+        .sha256 = rstd::crypto::Sha256Digest::parse_hex(
+                      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str)
+                      .unwrap(),
     });
     variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
-        .url          = String::make("https://example.com/x64.tar.gz"_str),
-        .sha256 =
-            String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str),
+        .url          = lito::parse::FetchUrl::parse("https://example.com/x64.tar.gz"_str).unwrap(),
+        .sha256       = rstd::crypto::Sha256Digest::parse_hex(
+                            "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
+                            .unwrap(),
     });
     auto requirement = lito::PreparedCMakeDependencyRequirement {
         .alias   = String::make("fixture"_str),
@@ -551,7 +553,7 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     ASSERT_TRUE(arm.is_ok());
     ASSERT_TRUE(arm->source.is_Archive());
     EXPECT_EQ(arm->source.as_Archive().url.as_str(), "https://example.com/arm64.tar.gz"_str);
-    EXPECT_EQ(arm->source.as_Archive().sha256.as_str(),
+    EXPECT_EQ(arm->source.as_Archive().sha256.to_hex().as_str(),
               "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str);
 
     auto missing = lito::resolve_cmake_requirement_for_platform(

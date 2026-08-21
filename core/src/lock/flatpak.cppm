@@ -215,7 +215,7 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
             const auto& source = external.source.as_Archive();
             rstd_try(add_candidate(
                 candidates,
-                lito::source::archive_fetch_identity(source.url.as_str(), source.sha256.as_str()),
+                lito::source::archive_fetch_identity(source.url.clone(), source.sha256.clone()),
                 external.architectures,
                 rstd::format("external '{}'", owner.as_str())));
         }
@@ -259,7 +259,8 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
             auto destination = rstd::format(".lito/fetch-seed/archives/{}", stable_key.as_str());
             flatpak.insert(String::make("dest"_str), flatpak_string(destination.as_str()));
             flatpak.insert(String::make("dest-filename"_str), flatpak_string("source.archive"_str));
-            flatpak.insert(String::make("sha256"_str), flatpak_string(source.sha256.as_str()));
+            auto sha256 = source.sha256.to_hex();
+            flatpak.insert(String::make("sha256"_str), flatpak_string(sha256.as_str()));
             flatpak.insert(String::make("type"_str), flatpak_string("file"_str));
             flatpak.insert(String::make("url"_str), flatpak_string(source.url.as_str()));
             catalog.insert(String::make("kind"_str), flatpak_string("archive"_str));

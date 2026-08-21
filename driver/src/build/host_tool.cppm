@@ -62,7 +62,7 @@ auto host_tool_receipt_identity(const cpp::PackageBuildToolRequirement&         
                      host.os.as_str(),
                      host.architecture.name.as_str(),
                      archive.url.as_str(),
-                     archive.sha256.as_str(),
+                     archive.sha256,
                      owned.requirement.executable.as_path(),
                      source_identity,
                      digest)
@@ -100,7 +100,7 @@ auto host_tool_receipt_matches(ref<rstd::path::Path>                           r
               matches("host_os"_str, host.os.as_str()) &&
               matches("host_architecture"_str, host.architecture.name.as_str()) &&
               matches("url"_str, archive.url.as_str()) &&
-              matches("archive_sha256"_str, archive.sha256.as_str()) &&
+              matches("archive_sha256"_str, archive.sha256.to_hex().as_str()) &&
               matches("executable"_str,
                       owned.requirement.executable.as_path().to_string_lossy().as_str()) &&
               matches("source_identity"_str, source_identity) &&
@@ -127,8 +127,8 @@ auto write_host_tool_receipt(ref<rstd::path::Path>                           rec
     document.insert(String::make("host_os"_str), Json::String(host.os.clone()));
     document.insert(String::make("host_architecture"_str),
                     Json::String(host.architecture.name.clone()));
-    document.insert(String::make("url"_str), Json::String(archive.url.clone()));
-    document.insert(String::make("archive_sha256"_str), Json::String(archive.sha256.clone()));
+    document.insert(String::make("url"_str), Json::String(String::make(archive.url.as_str())));
+    document.insert(String::make("archive_sha256"_str), Json::String(archive.sha256.to_hex()));
     document.insert(String::make("executable"_str),
                     Json::String(owned.requirement.executable.as_path().to_string_lossy()));
     document.insert(String::make("source_identity"_str),
@@ -251,7 +251,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
         archives.push(lito::source::ArchiveSourceFetchRequest {
             .owner  = owned.package.clone(),
             .name   = owned.requirement.alias.clone(),
-            .url    = archive->url.clone(),
+            .url    = archive->url.fetch_url()->clone(),
             .sha256 = archive->sha256.clone(),
         });
         selected.push(rstd::move(archive));
@@ -296,7 +296,7 @@ auto resolve_host_build_tools(const cpp::PackageMetadata&              metadata,
                          host.os.as_str(),
                          host.architecture.name.as_str(),
                          archive.url.as_str(),
-                         archive.sha256.as_str(),
+                         archive.sha256,
                          requirement.executable.as_path(),
                          acquired[index].identity.as_str())
                 .as_str());

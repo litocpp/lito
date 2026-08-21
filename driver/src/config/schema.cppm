@@ -17,6 +17,8 @@ using namespace lito::tools;
 using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
+using lito::parse::NodePath;
+namespace parse_toml = lito::parse::toml;
 using namespace lito::config;
 
 template<typename T>
@@ -38,14 +40,6 @@ auto config_io_failure(ref<str>               operation,
 
 auto config_member(const Toml& value, ref<str> key) -> Option<ref<Toml>> {
     return value.get(key);
-}
-
-auto config_table(const Toml& value, ref<str> context) -> ConfigResult<ref<Table>> {
-    auto table = value.as_table();
-    if (table.is_none()) {
-        return config_failure<ref<Table>>(rstd::format("{} must be a table", context));
-    }
-    return Ok(*table);
 }
 
 auto normalize_host_tool_provider_shorthand(Toml& document) -> void {
@@ -138,18 +132,6 @@ auto cmake_override_key(ref<str> key) -> bool {
     return key == "source"_str;
 }
 
-auto reject_config_unknown(const Table& table, ref<str> context, bool (*allowed)(ref<str>))
-    -> ConfigResult<empty> {
-    auto keys = table.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! allowed((**key).as_str())) {
-            return config_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
-        }
-    }
-    return Ok(empty {});
-}
-
 auto configured_executable(const Toml& value, ref<str> context) -> ConfigResult<PathBuf> {
     auto text = value.as_str();
     if (text.is_none()) {
@@ -174,36 +156,22 @@ auto configured_tool_override(const Toml& toolchain_value, ref<str> key, ref<str
     return Ok(Some(rstd_try(configured_executable(**value, field.as_str()))));
 }
 
-auto required_config_string(const Toml& value, ref<str> key, ref<str> context)
-    -> ConfigResult<String> {
-    auto member = config_member(value, key);
-    if (member.is_none()) {
-        return config_failure<String>(rstd::format("{} is missing '{}'", context, key));
-    }
-    auto text = (**member).as_str();
-    if (text.is_none() || text->is_empty()) {
-        return config_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
-    }
-    return Ok(String::make(*text));
-}
-
 auto configured_toolchain_sdk(const Toml& toolchain_value)
     -> ConfigResult<Option<ToolchainSdkSelection>> {
     auto value = config_member(toolchain_value, "sdk"_str);
     if (value.is_none()) return Ok(Option<ToolchainSdkSelection> {});
-    auto table = rstd_try(config_table(**value, "config.toolchain.sdk"_str));
-    rstd_try(reject_config_unknown(*table, "config.toolchain.sdk"_str, toolchain_sdk_config_key));
-    auto kind_text =
-        rstd_try(required_config_string(**value, "kind"_str, "config.toolchain.sdk"_str));
-    auto kind = parse_sdk_kind(kind_text.as_str());
+    auto path  = NodePath::root("config.toolchain.sdk"_str);
+    auto table = rstd_try(parse_toml::table(**value, path));
+    rstd_try(parse_toml::reject_unknown(*table, path, toolchain_sdk_config_key));
+    auto kind_text = rstd_try(parse_toml::required_non_empty_string(**value, "kind"_str, path));
+    auto kind      = parse_sdk_kind(kind_text.as_str());
     if (kind.is_none()) {
         return config_failure<Option<ToolchainSdkSelection>>(
             "config.toolchain.sdk.kind must be 'llvm' or 'android-ndk'"_str);
     }
-    auto version = config_member(**value, "version"_str);
-    auto path    = config_member(**value, "path"_str);
-    if (version.is_some() == path.is_some()) {
+    auto version  = config_member(**value, "version"_str);
+    auto sdk_path = config_member(**value, "path"_str);
+    if (version.is_some() == sdk_path.is_some()) {
         return config_failure<Option<ToolchainSdkSelection>>(
             "config.toolchain.sdk must contain exactly one of 'version' or 'path'"_str);
     }
@@ -215,7 +183,7 @@ auto configured_toolchain_sdk(const Toml& toolchain_value)
         }
         return Ok(Some(ToolchainSdkSelection::Managed(*kind, String::make(*text))));
     }
-    auto text = (**path).as_str();
+    auto text = (**sdk_path).as_str();
     if (text.is_none() || text->is_empty()) {
         return config_failure<Option<ToolchainSdkSelection>>(
             "config.toolchain.sdk.path must be a non-empty absolute path"_str);
@@ -263,13 +231,14 @@ auto configured_build_target(const Toml& document) -> ConfigResult<BuildTargetRe
     if (build.is_none()) return Ok(BuildTargetRequest::Default());
     auto target = config_member(**build, "target"_str);
     if (target.is_none()) return Ok(BuildTargetRequest::Default());
-    auto table = rstd_try(config_table(**target, "config.build.target"_str));
-    rstd_try(reject_config_unknown(*table, "config.build.target"_str, build_target_config_key));
-    auto kind = rstd_try(required_config_string(**target, "kind"_str, "config.build.target"_str));
+    auto path  = NodePath::root("config.build.target"_str);
+    auto table = rstd_try(parse_toml::table(**target, path));
+    rstd_try(parse_toml::reject_unknown(*table, path, build_target_config_key));
+    auto kind = rstd_try(parse_toml::required_non_empty_string(**target, "kind"_str, path));
     if (kind.as_str() != "android"_str) {
         return config_failure<BuildTargetRequest>("config.build.target.kind must be 'android'"_str);
     }
-    auto abi = rstd_try(required_config_string(**target, "abi"_str, "config.build.target"_str));
+    auto abi         = rstd_try(parse_toml::required_non_empty_string(**target, "abi"_str, path));
     auto minimum_api = config_member(**target, "min-api"_str);
     if (minimum_api.is_none()) {
         return config_failure<BuildTargetRequest>("config.build.target is missing 'min-api'"_str);
@@ -314,10 +283,9 @@ auto configured_build_options(const Toml& document) -> ConfigResult<ProjectBuild
     auto result = ProjectBuildOptions {};
     auto value  = config_member(document, "build"_str);
     if (value.is_none()) return Ok(rstd::move(result));
-    auto table = config_table(**value, "config.build"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.build"_str, build_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.build"_str)));
+    rstd_try(
+        parse_toml::reject_unknown(*table, NodePath::root("config.build"_str), build_config_key));
     auto cpp = rstd_try(configured_build_option_input(config_member(**value, "options"_str),
                                                       "config.build.options"_str));
     if (cpp.is_some()) result.cpp.push(rstd::move(cpp).unwrap());
@@ -327,10 +295,9 @@ auto configured_build_options(const Toml& document) -> ConfigResult<ProjectBuild
 
     auto c = config_member(**value, "c"_str);
     if (c.is_none()) return Ok(rstd::move(result));
-    auto c_table = config_table(**c, "config.build.c"_str);
-    if (c_table.is_err()) return Err(rstd::move(c_table).unwrap_err());
-    auto c_known = reject_config_unknown(**c_table, "config.build.c"_str, c_build_config_key);
-    if (c_known.is_err()) return Err(rstd::move(c_known).unwrap_err());
+    auto c_table = rstd_try(parse_toml::table(**c, NodePath::root("config.build.c"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *c_table, NodePath::root("config.build.c"_str), c_build_config_key));
     auto c_options = rstd_try(configured_build_option_input(config_member(**c, "options"_str),
                                                             "config.build.c.options"_str));
     if (c_options.is_some()) result.c.push(rstd::move(c_options).unwrap());
@@ -417,10 +384,9 @@ auto configured_directories(const Toml&           table,
 auto configured_pkg_config(const Toml& value, ref<rstd::path::Path> project_root)
     -> ConfigResult<lito::dependency::PkgConfigProviderConfig> {
     auto result = lito::dependency::PkgConfigProviderConfig {};
-    auto table  = config_table(value, "config.tools.pkg-config"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.tools.pkg-config"_str, pkg_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table  = rstd_try(parse_toml::table(value, NodePath::root("config.tools.pkg-config"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *table, NodePath::root("config.tools.pkg-config"_str), pkg_config_key));
     result.search_paths  = rstd_try(configured_directories(
         value, "search-path"_str, "config.tools.pkg-config"_str, project_root));
     result.library_paths = rstd_try(configured_directories(
@@ -451,10 +417,9 @@ auto configured_environment(const Toml& document, ref<rstd::path::Path> project_
     -> ConfigResult<ProcessEnvironmentSpec> {
     auto value = config_member(document, "environment"_str);
     if (value.is_none()) return Ok(ProcessEnvironmentSpec {});
-    auto table = config_table(**value, "config.environment"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.environment"_str, environment_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.environment"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *table, NodePath::root("config.environment"_str), environment_config_key));
     auto append_path =
         configured_directories(**value, "append-path"_str, "config.environment"_str, project_root);
     if (append_path.is_err()) return Err(rstd::move(append_path).unwrap_err());
@@ -468,10 +433,9 @@ auto configured_cmake(const Toml& value, ref<rstd::path::Path> project_root)
     auto result = lito::dependency::CMakeProviderConfig {
         .generator = String::make("Ninja"_str),
     };
-    auto table = config_table(value, "config.tools.cmake"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.tools.cmake"_str, cmake_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(value, NodePath::root("config.tools.cmake"_str)));
+    rstd_try(
+        parse_toml::reject_unknown(*table, NodePath::root("config.tools.cmake"_str), cmake_key));
     auto generator = config_member(value, "generator"_str);
     if (generator.is_some()) {
         auto text = (**generator).as_str();
@@ -491,9 +455,9 @@ auto configured_cmake_build_overrides(const Toml& cmake)
     auto result    = lito::dependency::CMakeBuildOverrideSet {};
     auto overrides = config_member(cmake, "overrides"_str);
     if (overrides.is_none()) return Ok(rstd::move(result));
-    auto table = config_table(**overrides, "config.tools.cmake.overrides"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto keys = (**table).keys();
+    auto table = rstd_try(
+        parse_toml::table(**overrides, NodePath::root("config.tools.cmake.overrides"_str)));
+    auto keys = table->keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& package = **key;
         auto        context = rstd::format("config.tools.cmake.overrides.'{}'", package.as_str());
@@ -501,11 +465,11 @@ auto configured_cmake_build_overrides(const Toml& cmake)
             return config_failure<lito::dependency::CMakeBuildOverrideSet>(
                 rstd::format("{} package name is unsafe", context.as_str()));
         }
-        auto specification = (**table).get(package.as_str());
-        auto fields        = config_table(**specification, context.as_str());
-        if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
-        auto known = reject_config_unknown(**fields, context.as_str(), cmake_override_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto specification = table->get(package.as_str());
+        auto fields =
+            rstd_try(parse_toml::table(**specification, NodePath::root(context.as_str())));
+        rstd_try(parse_toml::reject_unknown(
+            *fields, NodePath::root(context.as_str()), cmake_override_key));
         auto source = config_member(**specification, "source"_str);
         if (source.is_none()) {
             return config_failure<lito::dependency::CMakeBuildOverrideSet>(
@@ -541,8 +505,9 @@ auto configured_toolchain(const Toml& document, ToolchainSpec toolchain)
     -> ConfigResult<ToolchainSpec> {
     auto toolchain_value = config_member(document, "toolchain"_str);
     if (toolchain_value.is_none()) return Ok(rstd::move(toolchain));
-    auto table = rstd_try(config_table(**toolchain_value, "config.toolchain"_str));
-    rstd_try(reject_config_unknown(*table, "config.toolchain"_str, toolchain_config_key));
+    auto path  = NodePath::root("config.toolchain"_str);
+    auto table = rstd_try(parse_toml::table(**toolchain_value, path));
+    rstd_try(parse_toml::reject_unknown(*table, path, toolchain_config_key));
     return Ok(apply_toolchain_override(
         rstd::move(toolchain),
         ToolchainOverride {
@@ -577,10 +542,9 @@ auto configured_host_tools(const Toml&           document,
     };
     auto value = config_member(document, "tools"_str);
     if (value.is_none()) return Ok(rstd::move(result));
-    auto table = config_table(**value, "config.tools"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.tools"_str, tools_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.tools"_str)));
+    rstd_try(
+        parse_toml::reject_unknown(*table, NodePath::root("config.tools"_str), tools_config_key));
     auto tar = rstd_try(configured_tool_override(**value, "tar"_str, "config.tools"_str));
     if (tar.is_some()) result.executables.tar = rstd::move(tar).unwrap();
     auto bsdtar = rstd_try(configured_tool_override(**value, "bsdtar"_str, "config.tools"_str));
@@ -657,10 +621,9 @@ auto configured_lock(const Toml& document, ref<rstd::path::Path> project_root)
     -> ConfigResult<lito::lock::LockConfig> {
     auto value = config_member(document, "lock"_str);
     if (value.is_none()) return Ok(default_lock_config(project_root));
-    auto table = config_table(**value, "config.lock"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.lock"_str, lock_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.lock"_str)));
+    rstd_try(
+        parse_toml::reject_unknown(*table, NodePath::root("config.lock"_str), lock_config_key));
     auto path_value = config_member(**value, "path"_str);
     if (path_value.is_none()) {
         return config_failure<lito::lock::LockConfig>("config.lock is missing 'path'"_str);
@@ -710,10 +673,9 @@ auto configured_install(const Toml& document, ref<rstd::path::Path> project_root
     -> ConfigResult<InstallConfig> {
     auto value = config_member(document, "install"_str);
     if (value.is_none()) return Ok(InstallConfig {});
-    auto table = config_table(**value, "config.install"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.install"_str, install_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.install"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *table, NodePath::root("config.install"_str), install_config_key));
     auto root_value = config_member(**value, "root"_str);
     if (root_value.is_none()) {
         return config_failure<InstallConfig>("config.install is missing 'root'"_str);
@@ -731,10 +693,8 @@ auto configured_doc(const Toml& document, ref<rstd::path::Path> project_root)
     -> ConfigResult<DocConfig> {
     auto value = config_member(document, "doc"_str);
     if (value.is_none()) return Ok(DocConfig {});
-    auto table = config_table(**value, "config.doc"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    auto known = reject_config_unknown(**table, "config.doc"_str, doc_config_key);
-    if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+    auto table = rstd_try(parse_toml::table(**value, NodePath::root("config.doc"_str)));
+    rstd_try(parse_toml::reject_unknown(*table, NodePath::root("config.doc"_str), doc_config_key));
     auto path_value = config_member(**value, "litodoc-path"_str);
     if (path_value.is_none()) return Ok(DocConfig {});
     auto text = (**path_value).as_str();
@@ -770,9 +730,9 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
         return Ok(lito::source::PackageSourceConfig { .patches = rstd::move(patches) });
     }
 
-    auto patch_table = config_table(**patch_value, "config.patch"_str);
-    if (patch_table.is_err()) return Err(rstd::move(patch_table).unwrap_err());
-    auto keys = (**patch_table).keys();
+    auto patch_table =
+        rstd_try(parse_toml::table(**patch_value, NodePath::root("config.patch"_str)));
+    auto keys = patch_table->keys();
     for (auto key = keys.next(); key.is_some(); key = keys.next()) {
         const auto& url = **key;
         if (url.is_empty()) {
@@ -788,12 +748,11 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
                 "config.patch Git URL '{}' must not contain a URL fragment", url.as_str()));
         }
 
-        auto specification = (**patch_table).get(url.as_str());
+        auto specification = patch_table->get(url.as_str());
         auto context       = rstd::format("config.patch.'{}'", url.as_str());
-        auto table         = config_table(**specification, context.as_str());
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_config_unknown(**table, context.as_str(), patch_config_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
+        auto table = rstd_try(parse_toml::table(**specification, NodePath::root(context.as_str())));
+        rstd_try(
+            parse_toml::reject_unknown(*table, NodePath::root(context.as_str()), patch_config_key));
         auto value = config_member(**specification, "path"_str);
         if (value.is_none()) {
             return config_failure<lito::source::PackageSourceConfig>(
@@ -845,10 +804,9 @@ auto decode_project_config(PathBuf               root,
                            EnvironmentFlagPolicy environment_flags = EnvironmentFlagPolicy::Ignore,
                            Option<ProjectConfigDefaults> defaults  = None())
     -> ConfigResult<ProjectConfig> {
-    auto root_table = config_table(document, "config root"_str);
-    if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
-    auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
-    if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
+    auto root_table = rstd_try(parse_toml::table(document, NodePath::root("config root"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *root_table, NodePath::root("config root"_str), root_config_key));
 
     auto tool_defaults      = lito::tools::ToolSpec {};
     auto toolchain_defaults = default_toolchain();
@@ -907,10 +865,9 @@ auto decode_host_tool_command_config(PathBuf                       root,
                                      const Toml&                   document,
                                      Option<ProjectConfigDefaults> defaults = None())
     -> ConfigResult<HostToolCommandConfig> {
-    auto root_table = config_table(document, "config root"_str);
-    if (root_table.is_err()) return Err(rstd::move(root_table).unwrap_err());
-    auto root_known = reject_config_unknown(**root_table, "config root"_str, root_config_key);
-    if (root_known.is_err()) return Err(rstd::move(root_known).unwrap_err());
+    auto root_table = rstd_try(parse_toml::table(document, NodePath::root("config root"_str)));
+    rstd_try(parse_toml::reject_unknown(
+        *root_table, NodePath::root("config root"_str), root_config_key));
 
     auto tool_defaults      = lito::tools::ToolSpec {};
     auto toolchain_defaults = default_toolchain();

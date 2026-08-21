@@ -55,7 +55,7 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsTheCertifiedCurrentHostArtifact) {
     };
     auto artifact = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(artifact.is_some());
-    EXPECT_EQ((**artifact).archive.sha256.as_str(),
+    EXPECT_EQ((**artifact).archive.sha256.to_hex().as_str(),
               "df0e1ecf16caf3489a272a5eea4eec9b0d82878f6477fa309504f918a0006384"_str);
     ASSERT_EQ((**artifact).runtime_components.len(), usize(1));
     EXPECT_EQ((**artifact).runtime_components[usize {}].as_str(), "libxml2"_str);
@@ -83,8 +83,9 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
     };
     auto x64 = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(x64.is_some());
-    EXPECT_EQ((**x64).archive.root.as_str(), "clang+llvm-22.1.8-x86_64-pc-windows-msvc"_str);
-    EXPECT_EQ((**x64).archive.sha256.as_str(),
+    EXPECT_EQ((**x64).archive.root.as_str().unwrap(),
+              "clang+llvm-22.1.8-x86_64-pc-windows-msvc"_str);
+    EXPECT_EQ((**x64).archive.sha256.to_hex().as_str(),
               "d96c2cc1736f4eb7fa43cb9bbdf56d93551a9ae0a9aadb9c99c3c3b2b712a234"_str);
     EXPECT_EQ((**x64).paths.linker.as_path(),
               rstd::path::PathBuf::from("bin/lld-link.exe"_str).as_path());
@@ -95,8 +96,9 @@ TEST(LlvmSdkCatalog, EmbeddedCatalogSelectsWindowsDevelopmentArchives) {
     host.architecture = lito::system::canonical_architecture("aarch64"_str).unwrap();
     auto arm64        = lito::find_llvm_sdk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(arm64.is_some());
-    EXPECT_EQ((**arm64).archive.root.as_str(), "clang+llvm-22.1.8-aarch64-pc-windows-msvc"_str);
-    EXPECT_EQ((**arm64).archive.sha256.as_str(),
+    EXPECT_EQ((**arm64).archive.root.as_str().unwrap(),
+              "clang+llvm-22.1.8-aarch64-pc-windows-msvc"_str);
+    EXPECT_EQ((**arm64).archive.sha256.to_hex().as_str(),
               "de718c58ebbc5f61d58c17b90457fcf42983bc2c4a4aba3e010d108713bfd7f1"_str);
     EXPECT_TRUE((**arm64).runtime_components.is_empty());
 }
@@ -205,7 +207,7 @@ TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
     ASSERT_TRUE(catalog.is_ok());
     ASSERT_EQ(catalog->releases.len(), usize(1));
     EXPECT_EQ(catalog->license.id.as_str(), "android-sdk-license"_str);
-    EXPECT_EQ(catalog->license.sha256.as_str(),
+    EXPECT_EQ(catalog->license.sha256.to_hex().as_str(),
               "efa8d9576e4816922a4676b8b9f8040f05fa22e371fbac5042c4551b08d5a43e"_str);
     EXPECT_EQ(catalog->releases[usize {}].revision.text.as_str(), "29.0.14206865"_str);
     EXPECT_EQ(catalog->releases[usize {}].release_name.as_str(), "r29"_str);
@@ -216,10 +218,10 @@ TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
     };
     auto artifact = lito::find_android_ndk_artifact(catalog->releases[usize {}], host);
     ASSERT_TRUE(artifact.is_some());
-    EXPECT_EQ((**artifact).archive.sha256.as_str(),
+    EXPECT_EQ((**artifact).archive.sha256.to_hex().as_str(),
               "4abbbcdc842f3d4879206e9695d52709603e52dd68d3c1fff04b3b5e7a308ecf"_str);
     EXPECT_EQ((**artifact).archive.size, u64(783549481));
-    EXPECT_EQ((**artifact).archive.root.as_str(), "android-ndk-r29"_str);
+    EXPECT_EQ((**artifact).archive.root.as_str().unwrap(), "android-ndk-r29"_str);
 }
 
 TEST(AndroidNdkCatalog, RevisionAndRepositorySchemaAreStrict) {

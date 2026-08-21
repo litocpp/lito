@@ -56,6 +56,7 @@ sources = [
   "src/package/language.cpp",
   "src/package/features.cpp",
   "src/package/test.cpp",
+  "src/parse/mod.cpp",
   "src/source/cache.cpp",
   "src/source/discovery.cpp",
   "src/source/git.cpp",
@@ -104,6 +105,10 @@ workspace = true
 visibility = "private"
 
 [dependencies.rstd-json]
+workspace = true
+visibility = "private"
+
+[dependencies.rstd-toml]
 workspace = true
 visibility = "private"
 

@@ -211,14 +211,6 @@ auto validate_git_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<
     return Ok(empty {});
 }
 
-auto validate_archive_url(ref<str> value, ref<str> context) -> ManifestSchemaResult<empty> {
-    if (! archive_url_is_valid(value)) {
-        return manifest_schema_failure<empty>(
-            rstd::format("{}.archive is not a valid archive URL", context));
-    }
-    return Ok(empty {});
-}
-
 auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
     -> ManifestSchemaResult<Option<Vec<lito::dependency::ExternalArchiveVariant>>> {
     if (value.is_none()) return Ok(Option<Vec<lito::dependency::ExternalArchiveVariant>> {});
@@ -238,16 +230,11 @@ auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
         auto        fields        = table_value(**entry, entry_context.as_str());
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
         rstd_try(reject_unknown(**fields, entry_context.as_str(), cmake_archive_variant_key));
-        auto archive = required_string(**entry, "archive"_str, entry_context.as_str());
-        auto sha256  = required_string(**entry, "sha256"_str, entry_context.as_str());
-        if (archive.is_err()) return Err(rstd::move(archive).unwrap_err());
-        if (sha256.is_err()) return Err(rstd::move(sha256).unwrap_err());
-        rstd_try(validate_archive_url(archive->as_str(), entry_context.as_str()));
-        if (! sha256_is_valid(sha256->as_str())) {
-            return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
-                rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest",
-                             entry_context.as_str()));
-        }
+        auto entry_path = lito::parse::NodePath::root(entry_context.as_str());
+        auto parsed_url =
+            rstd_try(lito::parse::toml::required_fetch_url(**entry, "archive"_str, entry_path));
+        auto parsed_sha   = rstd_try(lito::parse::toml::required_sha256(
+            **entry, "sha256"_str, entry_path, lito::parse::Sha256TextMode::Flexible));
         auto architecture = canonical_architecture(name.as_str());
         if (architecture.is_err()) {
             return manifest_schema_failure<Option<Vec<lito::dependency::ExternalArchiveVariant>>>(
@@ -262,8 +249,8 @@ auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
         }
         variants.push(lito::dependency::ExternalArchiveVariant {
             .architecture = rstd::move(architecture).unwrap(),
-            .url          = rstd::move(archive).unwrap(),
-            .sha256       = rstd::move(sha256).unwrap(),
+            .url          = rstd::move(parsed_url),
+            .sha256       = rstd::move(parsed_sha),
         });
     }
     rstd::slice_::sort_unstable_by(variants.as_mut_slice().as_mut_ref(),
@@ -309,13 +296,8 @@ auto parse_external_source_requirement(const Toml& specification, ref<str> conte
                                                                    rstd::move(reference)));
     }
     if (archive.is_some()) {
-        auto url  = rstd::move(archive).unwrap();
-        auto hash = rstd::move(sha256).unwrap();
-        rstd_try(validate_archive_url(url.as_str(), context));
-        if (! sha256_is_valid(hash.as_str())) {
-            return manifest_schema_failure<lito::dependency::ExternalSourceRequirement>(
-                rstd::format("{}.sha256 must be a full hexadecimal SHA-256 digest", context));
-        }
+        auto url  = rstd_try(parse_archive_url(archive->as_str(), context));
+        auto hash = rstd_try(parse_manifest_sha256(sha256->as_str(), context));
         return Ok(lito::dependency::ExternalSourceRequirement::Archive(rstd::move(url),
                                                                        rstd::move(hash)));
     }

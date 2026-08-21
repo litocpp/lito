@@ -31,6 +31,7 @@ class InstallStoreCause {
               (Source, (InstallSourceError source;)),
               (Io, (String operation; PathBuf path; rstd::io::error::Error source;)),
               (Json, (PathBuf path; rstd::json::Error source;)),
+              (Parse, (lito::parse::Error source;)),
               (Transform, (String package; String entry; String operation; ToolchainError source;)),
               (Message, (String message;)))
 };
@@ -116,6 +117,13 @@ struct Impl<convert::From<lito::InstallSourceError>, lito::InstallStoreError> {
 };
 
 template<>
+struct Impl<convert::From<lito::parse::Error>, lito::InstallStoreError> {
+    static auto from(lito::parse::Error error) -> lito::InstallStoreError {
+        return lito::InstallStoreError::Cause(lito::InstallStoreCause::Parse(rstd::move(error)));
+    }
+};
+
+template<>
 struct Impl<fmt::Display, lito::InstallStoreCause> : ImplBase<lito::InstallStoreCause> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
@@ -132,6 +140,7 @@ struct Impl<fmt::Display, lito::InstallStoreCause> : ImplBase<lito::InstallStore
             return formatter.write_fmt(fmt::Arguments::make("cannot parse install metadata '{}'",
                                                             error.as_Json().path.as_path()));
         }
+        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         if (error.is_Transform()) {
             const auto& value = error.as_Transform();
             return formatter.write_fmt(
@@ -160,6 +169,7 @@ struct Impl<error::Error, lito::InstallStoreCause> : ImplBase<lito::InstallStore
         }
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         if (error.is_Transform()) {
             return Some(dyn<error::Error>::from_ref(error.as_Transform().source));
         }

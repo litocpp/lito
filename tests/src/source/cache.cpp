@@ -151,15 +151,16 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_TRUE(status->success());
     auto archive_bytes = rstd::fs::read(archive.as_path());
     ASSERT_TRUE(archive_bytes.is_ok());
-    auto digest = rstd::crypto::sha256_hex(archive_bytes->as_slice());
-    auto url    = String::make("file://"_str);
+    auto digest   = rstd::crypto::sha256_digest(archive_bytes->as_slice());
+    auto url_text = String::make("file://"_str);
     for (const auto byte : archive.as_path().as_os_str().as_encoded_bytes()) {
         if (byte == u8(' ')) {
-            url.push_str("%20"_str);
+            url_text.push_str("%20"_str);
         } else {
-            url.push_ascii(byte);
+            url_text.push_ascii(byte);
         }
     }
+    auto url = lito::parse::FetchUrl::parse(url_text.as_str()).unwrap();
 
     auto data_home = directory.join(PathBuf::from("data"_str).as_path());
     auto data_text = data_home.as_path().to_str();
@@ -247,7 +248,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_TRUE(
         release_layout->scan_cache_directory().as_path().starts_with(release_layout->output()));
 
-    auto fetch_identity = lito::source::archive_fetch_identity(url.as_str(), digest.as_str());
+    auto fetch_identity = lito::source::archive_fetch_identity(url.clone(), digest.clone());
     auto file_key       = lito::source::fetch_identity_stable_key(fetch_identity);
     auto file_bucket    = data_home.join(PathBuf::from("lito/files"_str).as_path())
                               .join(PathBuf::from(file_key).as_path());
@@ -267,7 +268,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         ++entry_count;
     }
     EXPECT_EQ(entry_count, usize(1));
-    auto archive_identity = lito::source::archive_source_identity(url.as_str(), digest.as_str());
+    auto archive_identity = lito::source::archive_source_identity(url, digest);
     auto debug_receipt    = debug_layout->archive_materialization(archive_identity.as_str())
                                 .join(PathBuf::from("source-v2"_str).as_path());
     auto receipt          = rstd::fs::read_to_string(debug_receipt.as_path());
@@ -404,11 +405,12 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     EXPECT_TRUE(unavailable_message.as_str().contains("lito-missing-cmake"_str));
 
     requests.push(lito::source::ArchiveSourceFetchRequest {
-        .owner = String::make("fixture"_str),
-        .name  = String::make("offline"_str),
-        .url   = String::make("https://example.invalid/offline.tar"_str),
-        .sha256 =
-            String::make("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str),
+        .owner  = String::make("fixture"_str),
+        .name   = String::make("offline"_str),
+        .url    = lito::parse::FetchUrl::parse("https://example.invalid/offline.tar"_str).unwrap(),
+        .sha256 = rstd::crypto::Sha256Digest::parse_hex(
+                      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
+                      .unwrap(),
     });
     auto offline_tools = lito::tools::ToolSpec {};
     offline_tools.curl = PathBuf::from("lito-missing-curl"_str);

@@ -35,6 +35,10 @@ class StandardLibraryModuleError {
          (StandardLibraryModuleErrorContext context; rstd::path::PathBuf manifest;
           Option<String>                                                 entry;
           String                                                         message;)),
+        (Parse,
+         (StandardLibraryModuleErrorContext context; rstd::path::PathBuf manifest;
+          Option<String>                                                 entry;
+          lito::parse::Error                                             source;)),
         (Io,
          (StandardLibraryModuleErrorContext context; String operation; rstd::path::PathBuf path;
           Option<rstd::path::PathBuf>                                                      manifest;

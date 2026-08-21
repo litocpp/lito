@@ -5,6 +5,7 @@ export module lito.core:lock.document;
 
 import rstd;
 import :source.git;
+import :parse;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -20,7 +21,7 @@ class LockedSource {
               (Package, (PathBuf path;)),
               (Builtin, (String id; String digest;)),
               (Git, (String url; lito::source::GitReference reference; String commit;)),
-              (Archive, (String url; String sha256;)))
+              (Archive, (lito::parse::FetchUrl url; rstd::crypto::Sha256Digest sha256;)))
 };
 
 struct LockedPackageExternalSource {

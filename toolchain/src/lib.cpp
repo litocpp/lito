@@ -77,6 +77,18 @@ auto Impl<fmt::Display, lito::StandardLibraryModuleError>::fmt(fmt::Formatter& f
         return formatter.write_fmt(fmt::Arguments::make(
             "standard library module manifest '{}': {}", value.manifest.as_path(), value.message));
     }
+    if (error.is_Parse()) {
+        const auto& value = error.as_Parse();
+        if (value.entry.is_some()) {
+            return formatter.write_fmt(
+                fmt::Arguments::make("standard library module manifest '{}' entry '{}': {}",
+                                     value.manifest.as_path(),
+                                     value.entry->as_str(),
+                                     value.source));
+        }
+        return formatter.write_fmt(fmt::Arguments::make(
+            "standard library module manifest '{}': {}", value.manifest.as_path(), value.source));
+    }
     const auto& value = error.as_Io();
     if (value.manifest.is_some() && value.entry.is_some()) {
         return formatter.write_fmt(
@@ -105,6 +117,7 @@ auto Impl<fmt::Debug, lito::StandardLibraryModuleError>::fmt(fmt::Formatter& for
 auto Impl<error::Error, lito::StandardLibraryModuleError>::source() const noexcept
     -> Option<error::ErrorRef> {
     const auto& error = this->self();
+    if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
     if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
     return None();
 }

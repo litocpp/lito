@@ -30,7 +30,8 @@ auto git_requirement_identity(ref<str> url, const GitReference& reference) -> St
         "git\n{}\n{}\n{}", url, git_reference_kind_name(reference.kind), reference.value.as_str());
 }
 
-auto archive_source_identity(ref<str> url, ref<str> sha256) -> String {
+auto archive_source_identity(const lito::parse::FetchUrl&      url,
+                             const rstd::crypto::Sha256Digest& sha256) -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
@@ -48,10 +49,10 @@ struct PackageSourceFetchRequest {
 };
 
 struct ArchiveSourceFetchRequest {
-    String owner;
-    String name;
-    String url;
-    String sha256;
+    String                     owner;
+    String                     name;
+    lito::parse::FetchUrl      url;
+    rstd::crypto::Sha256Digest sha256;
 };
 
 struct ExternalSourceFetchOutcome {
@@ -315,7 +316,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     auto request_keys = rstd::collections::BTreeMap<String, usize>::make();
     auto bindings     = Vec<usize>::with_capacity(requests.len());
     for (auto& request : requests) {
-        auto key      = archive_source_identity(request.url.as_str(), request.sha256.as_str());
+        auto key      = archive_source_identity(request.url, request.sha256);
         auto existing = request_keys.get(key.as_str());
         if (existing.is_some()) {
             bindings.push(usize(**existing));
@@ -331,8 +332,7 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
     auto pending         = Vec<ArchiveSourceFetchRequest>::make();
     auto pending_indices = Vec<usize>::make();
     for (usize index {}; index < unique.len(); ++index) {
-        auto identity =
-            archive_source_identity(unique[index].url.as_str(), unique[index].sha256.as_str());
+        auto identity = archive_source_identity(unique[index].url, unique[index].sha256);
         auto reused =
             rstd_try(inspect_archive_materialization(materialization_root, identity.as_str()));
         materialized.push(rstd::move(reused));
@@ -360,13 +360,14 @@ auto acquire_archive_frontier(Vec<ArchiveSourceFetchRequest>    requests,
         auto requests =
             Vec<lito::tools::acquisition::VerifiedArchiveRequest>::with_capacity(pending.len());
         for (auto& request : pending) {
-            auto identity = archive_fetch_identity(request.url.as_str(), request.sha256.as_str());
+            auto identity = archive_fetch_identity(request.url.clone(), request.sha256.clone());
             auto seed     = rstd_try(locate_fetch_seed(source_config.fetch_seeds, identity));
             requests.push(lito::tools::acquisition::VerifiedArchiveRequest {
-                .label  = request.name.is_empty() ? request.url.clone() : request.name.clone(),
-                .url    = request.url.clone(),
-                .sha256 = request.sha256.clone(),
-                .seed   = rstd::move(seed),
+                .label                = request.name.is_empty() ? String::make(request.url.as_str())
+                                                                : request.name.clone(),
+                .url                  = request.url.clone(),
+                .sha256               = request.sha256.clone(),
+                .seed                 = rstd::move(seed),
                 .download_requirement = archive_tool_requirement(
                     request, lito::tools::HostToolCapability::HttpDownload),
                 .extraction_requirement = archive_tool_requirement(

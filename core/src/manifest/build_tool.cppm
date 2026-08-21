@@ -2,6 +2,7 @@ export module lito.core:manifest.build_tool;
 
 import rstd;
 import lito.system;
+import :parse;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -11,9 +12,9 @@ export namespace lito::manifest
 {
 
 struct BuildToolArchiveManifest {
-    HostInfo host;
-    String   url;
-    String   sha256;
+    HostInfo                   host;
+    lito::parse::HttpsUrl      url;
+    rstd::crypto::Sha256Digest sha256;
 };
 
 struct BuildToolRequirement {

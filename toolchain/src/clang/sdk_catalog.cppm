@@ -18,6 +18,7 @@ export namespace lito
 class LlvmSdkCatalogError {
     RSTD_ENUM(LlvmSdkCatalogError,
               (Json, (rstd::json::Error source;)),
+              (Parse, (lito::parse::Error source;)),
               (Message, (String message;)))
 };
 
@@ -67,11 +68,11 @@ struct LlvmSdkPaths {
 };
 
 struct LlvmSdkArchive {
-    String format;
-    String url;
-    String sha256;
-    u64    size {};
-    String root;
+    String                     format;
+    lito::parse::HttpsUrl      url;
+    rstd::crypto::Sha256Digest sha256;
+    u64                        size {};
+    lito::parse::PathComponent root;
 
     auto clone() const -> LlvmSdkArchive {
         return LlvmSdkArchive {
@@ -158,8 +159,10 @@ struct LlvmSdkCatalog {
 
 auto parse_llvm_version(ref<str> value) -> LlvmSdkCatalogResult<LlvmVersion>;
 auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalog>;
-auto validate_llvm_sdk_archive_identity(ref<str> url, ref<str> sha256, u64 size, ref<str> context)
-    -> LlvmSdkCatalogResult<empty>;
+auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&      url,
+                                        const rstd::crypto::Sha256Digest& sha256,
+                                        u64                               size,
+                                        ref<str> context) -> LlvmSdkCatalogResult<empty>;
 auto validate_llvm_sdk_paths(const LlvmSdkPaths& paths, ref<str> context)
     -> LlvmSdkCatalogResult<empty>;
 auto embedded_llvm_sdk_catalog_text() noexcept -> ref<str>;
@@ -185,6 +188,7 @@ struct Impl<fmt::Display, lito::LlvmSdkCatalogError> : ImplBase<lito::LlvmSdkCat
             return formatter.write_raw("cannot parse LLVM SDK catalog",
                                        sizeof("cannot parse LLVM SDK catalog") - 1);
         }
+        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         return formatter.write_str(error.as_Message().message.as_str());
     }
 };
@@ -201,7 +205,15 @@ struct Impl<error::Error, lito::LlvmSdkCatalogError> : ImplBase<lito::LlvmSdkCat
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         return None();
+    }
+};
+
+template<>
+struct Impl<convert::From<lito::parse::Error>, lito::LlvmSdkCatalogError> {
+    static auto from(lito::parse::Error error) -> lito::LlvmSdkCatalogError {
+        return lito::LlvmSdkCatalogError::Parse(rstd::move(error));
     }
 };
 
@@ -217,124 +229,40 @@ auto catalog_failure(String message) -> LlvmSdkCatalogResult<T> {
 
 auto known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> LlvmSdkCatalogResult<empty> {
-    auto object = value.as_object();
-    if (object.is_none()) {
-        return catalog_failure<empty>(rstd::format("{} must be an object", context));
-    }
-    auto keys = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto known = false;
-        for (const auto name : names) {
-            if ((**key).as_str() == name) known = true;
-        }
-        if (! known) {
-            return catalog_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
-        }
-    }
-    return Ok(empty {});
+    return Ok(rstd_try(
+        lito::parse::json::reject_unknown(value, lito::parse::NodePath::root(context), names)));
 }
 
 auto required_member(const Json& value, ref<str> key, ref<str> context)
     -> LlvmSdkCatalogResult<ref<Json>> {
-    auto member = value.get(key);
-    if (member.is_none()) {
-        return catalog_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
-    }
-    return Ok(*member);
+    return Ok(rstd_try(
+        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto required_string(const Json& value, ref<str> key, ref<str> context)
     -> LlvmSdkCatalogResult<String> {
-    auto member = rstd_try(required_member(value, key, context));
-    auto text   = member->as_str();
-    if (text.is_none() || text->is_empty()) {
-        return catalog_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
-    }
-    return Ok(String::make(*text));
+    return Ok(rstd_try(lito::parse::json::required_non_empty_string(
+        value, key, lito::parse::NodePath::root(context))));
 }
 
 auto required_u64(const Json& value, ref<str> key, ref<str> context) -> LlvmSdkCatalogResult<u64> {
-    auto member = rstd_try(required_member(value, key, context));
-    auto number = member->as_u64();
-    if (number.is_none()) {
-        return catalog_failure<u64>(
-            rstd::format("{}.{} must be an unsigned integer", context, key));
-    }
-    return Ok(*number);
+    return Ok(rstd_try(
+        lito::parse::json::required_u64(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto required_array(const Json& value, ref<str> key, ref<str> context)
     -> LlvmSdkCatalogResult<ref<rstd::json::Array>> {
-    auto member = rstd_try(required_member(value, key, context));
-    auto array  = member->as_array();
-    if (array.is_none()) {
-        return catalog_failure<ref<rstd::json::Array>>(
-            rstd::format("{}.{} must be an array", context, key));
-    }
-    return Ok(*array);
+    return Ok(rstd_try(
+        lito::parse::json::required_array(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto parse_decimal(ref<str> text, ref<str> context) -> LlvmSdkCatalogResult<u64> {
-    if (text.is_empty()) return catalog_failure<u64>(rstd::format("{} is empty", context));
-    if (text.len() > usize(1) && text.as_bytes()[usize {}] == u8('0')) {
-        return catalog_failure<u64>(rstd::format("{} has a leading zero", context));
+    auto parsed = lito::parse::parse_canonical_u64_decimal(text);
+    if (parsed.is_err()) {
+        return catalog_failure<u64>(
+            rstd::format("{} is invalid: {}", context, rstd::move(parsed).unwrap_err()));
     }
-    u64 value {};
-    for (const auto byte : text.as_bytes()) {
-        if (byte < u8('0') || byte > u8('9')) {
-            return catalog_failure<u64>(rstd::format("{} is not numeric", context));
-        }
-        const auto digit = u64((byte - u8('0')).to_primitive());
-        if (value > (u64::MAX - digit) / u64(10)) {
-            return catalog_failure<u64>(rstd::format("{} is out of range", context));
-        }
-        value = value * u64(10) + digit;
-    }
-    return Ok(value);
-}
-
-auto normal_relative_path(ref<str> value) -> bool {
-    auto path = PathBuf::from(value);
-    if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) return false;
-    auto components = path.as_path().components();
-    auto count      = usize {};
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) return false;
-        ++count;
-    }
-    return count != usize {};
-}
-
-auto single_component(ref<str> value) -> bool {
-    auto path       = PathBuf::from(value);
-    auto components = path.as_path().components();
-    auto first      = components.next();
-    return first.is_some() && first->is_normal() && components.next().is_none();
-}
-
-auto lowercase_sha256(ref<str> value) -> bool {
-    if (value.len() != usize(64)) return false;
-    for (const auto byte : value.as_bytes()) {
-        if ((byte >= u8('0') && byte <= u8('9')) || (byte >= u8('a') && byte <= u8('f'))) {
-            continue;
-        }
-        return false;
-    }
-    return true;
-}
-
-auto valid_https_url(ref<str> value) -> bool {
-    if (! value.starts_with("https://"_str) || value.len() <= usize(8) ||
-        value.as_bytes()[usize(8)] == u8('/') || value.as_bytes()[usize(8)] == u8('-') ||
-        value.contains("#"_str)) {
-        return false;
-    }
-    for (const auto byte : value.as_bytes()) {
-        if (byte <= u8(0x20) || byte == u8(0x7f) || byte == u8('\\')) return false;
-    }
-    return true;
+    return Ok(*parsed);
 }
 
 auto parse_host(const Json& value, ref<str> context)
@@ -364,20 +292,18 @@ auto parse_host(const Json& value, ref<str> context)
 auto parse_archive(const Json& value, ref<str> context) -> LlvmSdkCatalogResult<LlvmSdkArchive> {
     rstd_try(known_fields(
         value, context, { "format"_str, "url"_str, "sha256"_str, "size"_str, "root"_str }));
+    auto path   = lito::parse::NodePath::root(context);
     auto format = rstd_try(required_string(value, "format"_str, context));
-    auto url    = rstd_try(required_string(value, "url"_str, context));
-    auto sha256 = rstd_try(required_string(value, "sha256"_str, context));
+    auto url    = rstd_try(lito::parse::json::required_https_url(value, "url"_str, path));
+    auto sha256 = rstd_try(lito::parse::json::required_sha256(
+        value, "sha256"_str, path, lito::parse::Sha256TextMode::Canonical));
     auto size   = rstd_try(required_u64(value, "size"_str, context));
-    auto root   = rstd_try(required_string(value, "root"_str, context));
+    auto root   = rstd_try(lito::parse::json::required_path_component(value, "root"_str, path));
     if (format.as_str() != "tar.xz"_str) {
         return catalog_failure<LlvmSdkArchive>(
             rstd::format("{}.format '{}' is not supported", context, format));
     }
-    rstd_try(validate_llvm_sdk_archive_identity(url.as_str(), sha256.as_str(), size, context));
-    if (! single_component(root.as_str())) {
-        return catalog_failure<LlvmSdkArchive>(
-            rstd::format("{}.root must be one normal path component", context));
-    }
+    rstd_try(validate_llvm_sdk_archive_identity(url, sha256, size, context));
     return Ok(LlvmSdkArchive {
         .format = rstd::move(format),
         .url    = rstd::move(url),
@@ -430,7 +356,7 @@ auto parse_runtime_component(const Json& value, ref<str> context)
     auto name        = rstd_try(required_string(value, "name"_str, context));
     auto version     = rstd_try(required_string(value, "version"_str, context));
     auto recipe_text = rstd_try(required_string(value, "recipe"_str, context));
-    if (! single_component(name.as_str())) {
+    if (lito::parse::PathComponent::parse(name.as_str()).is_err()) {
         return catalog_failure<LlvmSdkRuntimeComponent>(
             rstd::format("{}.name must be one normal component", context));
     }
@@ -452,15 +378,16 @@ auto parse_runtime_component(const Json& value, ref<str> context)
     auto file    = rstd_try(required_string(*runtime, "file"_str, runtime_context.as_str()));
     auto soname  = rstd_try(required_string(*runtime, "soname"_str, runtime_context.as_str()));
     auto license = rstd_try(required_string(*runtime, "license"_str, runtime_context.as_str()));
-    if (! normal_relative_path(file.as_str()) || ! file.as_str().starts_with("lib/"_str)) {
+    if (lito::parse::NormalRelativePath::parse(file.as_str()).is_err() ||
+        ! file.as_str().starts_with("lib/"_str)) {
         return catalog_failure<LlvmSdkRuntimeComponent>(
             rstd::format("{}.file must be a normal path under lib", runtime_context.as_str()));
     }
-    if (! single_component(soname.as_str())) {
+    if (lito::parse::PathComponent::parse(soname.as_str()).is_err()) {
         return catalog_failure<LlvmSdkRuntimeComponent>(
             rstd::format("{}.soname must be a file name", runtime_context.as_str()));
     }
-    if (! normal_relative_path(license.as_str()) ||
+    if (lito::parse::NormalRelativePath::parse(license.as_str()).is_err() ||
         ! license.as_str().starts_with("share/licenses/"_str)) {
         return catalog_failure<LlvmSdkRuntimeComponent>(rstd::format(
             "{}.license must be a normal path under share/licenses", runtime_context.as_str()));
@@ -473,7 +400,8 @@ auto parse_runtime_component(const Json& value, ref<str> context)
     auto links = Vec<PathBuf>::with_capacity(link_values->len());
     for (usize index {}; index < link_values->len(); ++index) {
         auto text = (*link_values)[index].as_str();
-        if (text.is_none() || ! normal_relative_path(*text) || ! text->starts_with("lib/"_str)) {
+        if (text.is_none() || lito::parse::NormalRelativePath::parse(*text).is_err() ||
+            ! text->starts_with("lib/"_str)) {
             return catalog_failure<LlvmSdkRuntimeComponent>(rstd::format(
                 "{}.links[{}] must be a normal path under lib", runtime_context.as_str(), index));
         }
@@ -703,15 +631,10 @@ auto parse_llvm_sdk_catalog(ref<str> text) -> LlvmSdkCatalogResult<LlvmSdkCatalo
     });
 }
 
-auto validate_llvm_sdk_archive_identity(ref<str> url, ref<str> sha256, u64 size, ref<str> context)
-    -> LlvmSdkCatalogResult<empty> {
-    if (! valid_https_url(url)) {
-        return catalog_failure<empty>(rstd::format("{}.url must be an HTTPS URL", context));
-    }
-    if (! lowercase_sha256(sha256)) {
-        return catalog_failure<empty>(
-            rstd::format("{}.sha256 must be 64 lowercase hexadecimal digits", context));
-    }
+auto validate_llvm_sdk_archive_identity(const lito::parse::HttpsUrl&,
+                                        const rstd::crypto::Sha256Digest&,
+                                        u64      size,
+                                        ref<str> context) -> LlvmSdkCatalogResult<empty> {
     if (size == u64 {}) {
         return catalog_failure<empty>(rstd::format("{}.size must be greater than zero", context));
     }
@@ -727,7 +650,7 @@ auto validate_llvm_sdk_paths(const LlvmSdkPaths& paths, ref<str> context)
     };
     for (const auto path : path_values) {
         auto text = path.to_str();
-        if (text.is_none() || ! normal_relative_path(*text)) {
+        if (text.is_none() || lito::parse::NormalRelativePath::parse(*text).is_err()) {
             return catalog_failure<empty>(
                 rstd::format("{} must contain normal relative paths", context));
         }

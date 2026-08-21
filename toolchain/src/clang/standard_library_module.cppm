@@ -52,6 +52,15 @@ auto manifest_failure(const cpp::ResolvedStandardLibrary& library,
 }
 
 template<typename T>
+auto manifest_parse_failure(const cpp::ResolvedStandardLibrary& library,
+                            ref<rstd::path::Path>               path,
+                            lito::parse::Error                  source,
+                            Option<String> entry = None()) -> ToolchainResult<T> {
+    return module_failure<T>(StandardLibraryModuleError::Parse(
+        module_error_context(library), PathBuf::from(path), rstd::move(entry), rstd::move(source)));
+}
+
+template<typename T>
 auto module_io_failure(const cpp::ResolvedStandardLibrary& library,
                        ref<str>                            operation,
                        ref<rstd::path::Path>               path,
@@ -84,10 +93,11 @@ auto required_member(const Json&                         value,
                      ref<str>                            entry,
                      const cpp::ResolvedStandardLibrary& library,
                      ref<rstd::path::Path>               manifest) -> ToolchainResult<ref<Json>> {
-    auto member = value.get(key);
-    if (member.is_none()) {
-        return manifest_failure<ref<Json>>(
-            library, manifest, rstd::format("missing '{}'", key), Some(String::make(entry)));
+    auto member =
+        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(entry));
+    if (member.is_err()) {
+        return manifest_parse_failure<ref<Json>>(
+            library, manifest, rstd::move(member).unwrap_err(), Some(String::make(entry)));
     }
     return Ok(*member);
 }
@@ -98,12 +108,10 @@ auto required_string(const Json&                         value,
                      const cpp::ResolvedStandardLibrary& library,
                      ref<rstd::path::Path>               manifest) -> ToolchainResult<ref<str>> {
     auto member = rstd_try(required_member(value, key, entry, library, manifest));
-    auto text   = member->as_str();
-    if (text.is_none()) {
-        return manifest_failure<ref<str>>(library,
-                                          manifest,
-                                          rstd::format("'{}' must be a string", key),
-                                          Some(String::make(entry)));
+    auto text   = lito::parse::json::string(*member, lito::parse::NodePath::root(entry).field(key));
+    if (text.is_err()) {
+        return manifest_parse_failure<ref<str>>(
+            library, manifest, rstd::move(text).unwrap_err(), Some(String::make(entry)));
     }
     return Ok(*text);
 }

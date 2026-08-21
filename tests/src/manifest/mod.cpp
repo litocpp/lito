@@ -587,9 +587,11 @@ TEST_F(Manifest, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
               project->root.join(PathBuf::from("lito.toml"_str).as_path()).as_path());
     ASSERT_TRUE(file.cause.is_Schema());
     const auto& schema = file.cause.as_Schema().source;
-    ASSERT_TRUE(schema.is_UnknownField());
-    EXPECT_EQ(schema.as_UnknownField().node.value.as_str(), "manifest.lib"_str);
-    EXPECT_EQ(schema.as_UnknownField().field.as_str(), "discovery"_str);
+    ASSERT_TRUE(schema.is_Parse());
+    const auto& parse = schema.as_Parse().source;
+    ASSERT_TRUE(parse.is_UnknownField());
+    EXPECT_EQ(rstd::format("{}", parse.as_UnknownField().node), "manifest.lib"_str);
+    EXPECT_EQ(parse.as_UnknownField().field.as_str(), "discovery"_str);
 
     auto manifest_source = as<rstd::error::Error>(error).source();
     ASSERT_TRUE(manifest_source.is_some());
@@ -966,7 +968,7 @@ sha256 = "1111111111111111111111111111111111111111111111111111111111111111"
             .os           = String::make("linux"_str),
         });
     ASSERT_TRUE(selected.is_ok());
-    EXPECT_EQ((**selected).sha256.as_str(),
+    EXPECT_EQ((**selected).sha256.to_hex().as_str(),
               "1111111111111111111111111111111111111111111111111111111111111111"_str);
 
     auto unsupported = lito::select_host_build_tool_archive(

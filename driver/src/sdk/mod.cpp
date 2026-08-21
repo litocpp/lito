@@ -102,9 +102,9 @@ auto libxml2_recipe() -> lito::SdkResult<EmbeddedSdkRecipe> {
 }
 
 struct InstalledFileRecord {
-    PathBuf path;
-    u64     size {};
-    String  sha256;
+    PathBuf                    path;
+    u64                        size {};
+    rstd::crypto::Sha256Digest sha256;
 };
 
 struct InstalledLinkRecord {
@@ -133,8 +133,8 @@ struct InstalledRuntimeComponent {
 struct InstalledSdkDescriptor {
     String                         version;
     lito::system::HostInfo         host;
-    String                         url;
-    String                         sha256;
+    lito::parse::HttpsUrl          url;
+    rstd::crypto::Sha256Digest     sha256;
     u64                            size {};
     lito::LlvmSdkPaths             paths;
     lito::LlvmSdkCertification     certification;
@@ -216,102 +216,64 @@ auto json_string(ref<str> value) -> Json {
 
 auto sdk_known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> lito::SdkResult<empty> {
-    auto object = value.as_object();
-    if (object.is_none()) return sdk_failure<empty>(rstd::format("{} must be an object", context));
-    auto keys = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto known = false;
-        for (const auto name : names) {
-            if ((**key).as_str() == name) known = true;
-        }
-        if (! known) {
-            return sdk_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
-        }
-    }
-    return Ok(empty {});
+    return Ok(rstd_try(
+        lito::parse::json::reject_unknown(value, lito::parse::NodePath::root(context), names)));
 }
 
 auto sdk_required_member(const Json& value, ref<str> key, ref<str> context)
     -> lito::SdkResult<ref<Json>> {
-    auto member = value.get(key);
-    if (member.is_none()) {
-        return sdk_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
-    }
-    return Ok(*member);
+    return Ok(rstd_try(
+        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto sdk_required_string(const Json& value, ref<str> key, ref<str> context)
     -> lito::SdkResult<String> {
-    auto member = rstd_try(sdk_required_member(value, key, context));
-    auto text   = member->as_str();
-    if (text.is_none() || text->is_empty()) {
-        return sdk_failure<String>(rstd::format("{}.{} must be a non-empty string", context, key));
-    }
-    return Ok(String::make(*text));
+    return Ok(rstd_try(lito::parse::json::required_non_empty_string(
+        value, key, lito::parse::NodePath::root(context))));
 }
 
 auto sdk_required_u64(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<u64> {
-    auto member = rstd_try(sdk_required_member(value, key, context));
-    auto number = member->as_u64();
-    if (number.is_none()) {
-        return sdk_failure<u64>(rstd::format("{}.{} must be an unsigned integer", context, key));
-    }
-    return Ok(*number);
+    return Ok(rstd_try(
+        lito::parse::json::required_u64(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto sdk_required_bool(const Json& value, ref<str> key, ref<str> context) -> lito::SdkResult<bool> {
-    auto member  = rstd_try(sdk_required_member(value, key, context));
-    auto boolean = member->as_bool();
-    if (boolean.is_none()) {
-        return sdk_failure<bool>(rstd::format("{}.{} must be a boolean", context, key));
-    }
-    return Ok(*boolean);
+    auto member = rstd_try(sdk_required_member(value, key, context));
+    return Ok(rstd_try(
+        lito::parse::json::boolean(*member, lito::parse::NodePath::root(context).field(key))));
 }
 
 auto sdk_required_array(const Json& value, ref<str> key, ref<str> context)
     -> lito::SdkResult<ref<JsonArray>> {
-    auto member = rstd_try(sdk_required_member(value, key, context));
-    auto array  = member->as_array();
-    if (array.is_none()) {
-        return sdk_failure<ref<JsonArray>>(rstd::format("{}.{} must be an array", context, key));
-    }
-    return Ok(*array);
+    return Ok(rstd_try(
+        lito::parse::json::required_array(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto descriptor_path(String text, ref<str> context) -> lito::SdkResult<PathBuf> {
-    auto path = PathBuf::from(rstd::move(text));
-    if (path.is_empty() || ! path.as_path().is_safe_relative()) {
-        return sdk_failure<PathBuf>(rstd::format("{} must be a safe relative path", context));
+    auto path = lito::parse::NormalRelativePath::parse(rstd::move(text));
+    if (path.is_err()) {
+        return sdk_failure<PathBuf>(
+            rstd::format("{} is invalid: {}", context, rstd::move(path).unwrap_err()));
     }
-    auto components = path.as_path().components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) {
-            return sdk_failure<PathBuf>(rstd::format("{} must be a normal relative path", context));
-        }
-    }
-    return Ok(rstd::move(path));
+    return Ok(rstd::move(path).unwrap().into_path());
 }
 
 auto descriptor_file_name(String text, ref<str> context) -> lito::SdkResult<PathBuf> {
-    auto path       = PathBuf::from(rstd::move(text));
-    auto components = path.as_path().components();
-    auto first      = components.next();
-    if (first.is_none() || ! first->is_normal() || components.next().is_some()) {
-        return sdk_failure<PathBuf>(rstd::format("{} must be a relative file name", context));
+    auto path = lito::parse::PathComponent::parse(rstd::move(text));
+    if (path.is_err()) {
+        return sdk_failure<PathBuf>(
+            rstd::format("{} is invalid: {}", context, rstd::move(path).unwrap_err()));
     }
-    return Ok(rstd::move(path));
+    return Ok(rstd::move(path).unwrap().into_path());
 }
 
 auto descriptor_sha256(ref<str> value, ref<str> context) -> lito::SdkResult<String> {
-    if (value.len() != usize(64)) {
-        return sdk_failure<String>(rstd::format("{} must be a lowercase SHA-256", context));
+    auto parsed = lito::parse::parse_sha256(value, lito::parse::Sha256TextMode::Canonical);
+    if (parsed.is_err()) {
+        return sdk_failure<String>(
+            rstd::format("{} is invalid: {}", context, rstd::move(parsed).unwrap_err()));
     }
-    for (const auto byte : value.as_bytes()) {
-        if ((byte >= u8('0') && byte <= u8('9')) || (byte >= u8('a') && byte <= u8('f'))) continue;
-        return sdk_failure<String>(rstd::format("{} must be a lowercase SHA-256", context));
-    }
-    return Ok(String::make(value));
+    return Ok(parsed->to_hex());
 }
 
 auto paths_json(const lito::LlvmSdkPaths& paths) -> Json {
@@ -335,7 +297,7 @@ auto installed_file_json(const InstalledFileRecord& file) -> Json {
     auto value = JsonMap::make();
     value.insert(String::make("path"_str), json_string(file.path.as_path().to_str().unwrap()));
     value.insert(String::make("size"_str), Json::Number(rstd::json::Number::from_u64(file.size)));
-    value.insert(String::make("sha256"_str), json_string(file.sha256.as_str()));
+    value.insert(String::make("sha256"_str), json_string(file.sha256.to_hex().as_str()));
     return Json::Object(rstd::move(value));
 }
 
@@ -422,7 +384,7 @@ auto descriptor_json(const InstalledSdkDescriptor& descriptor) -> Json {
 
     auto archive = JsonMap::make();
     archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
-    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.as_str()));
+    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.to_hex().as_str()));
     archive.insert(String::make("size"_str),
                    Json::Number(rstd::json::Number::from_u64(descriptor.size)));
 
@@ -463,14 +425,14 @@ auto serialize_descriptor(const InstalledSdkDescriptor& descriptor) -> String {
 auto parse_installed_file(const Json& value, ref<str> context)
     -> lito::SdkResult<InstalledFileRecord> {
     rstd_try(sdk_known_fields(value, context, { "path"_str, "size"_str, "sha256"_str }));
-    auto path = rstd_try(descriptor_path(rstd_try(sdk_required_string(value, "path"_str, context)),
-                                         rstd::format("{}.path", context).as_str()));
-    auto sha256 = rstd_try(sdk_required_string(value, "sha256"_str, context));
+    auto node = lito::parse::NodePath::root(context);
+    auto path = rstd_try(lito::parse::json::required_normal_relative_path(value, "path"_str, node));
+    auto digest = rstd_try(lito::parse::json::required_sha256(
+        value, "sha256"_str, node, lito::parse::Sha256TextMode::Canonical));
     return Ok(InstalledFileRecord {
-        .path   = rstd::move(path),
+        .path   = rstd::move(path).into_path(),
         .size   = rstd_try(sdk_required_u64(value, "size"_str, context)),
-        .sha256 = rstd_try(
-            descriptor_sha256(sha256.as_str(), rstd::format("{}.sha256", context).as_str())),
+        .sha256 = rstd::move(digest),
     });
 }
 
@@ -605,13 +567,14 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
         rstd_try(sdk_required_member(value, "archive"_str, "LLVM SDK descriptor root"_str));
     rstd_try(sdk_known_fields(
         *archive, "LLVM SDK descriptor archive"_str, { "url"_str, "sha256"_str, "size"_str }));
-    auto url =
-        rstd_try(sdk_required_string(*archive, "url"_str, "LLVM SDK descriptor archive"_str));
-    auto sha256 =
-        rstd_try(sdk_required_string(*archive, "sha256"_str, "LLVM SDK descriptor archive"_str));
+    auto archive_path = lito::parse::NodePath::root("LLVM SDK descriptor archive"_str);
+    auto parsed_url =
+        rstd_try(lito::parse::json::required_https_url(*archive, "url"_str, archive_path));
+    auto parsed_sha256 = rstd_try(lito::parse::json::required_sha256(
+        *archive, "sha256"_str, archive_path, lito::parse::Sha256TextMode::Canonical));
     auto size = rstd_try(sdk_required_u64(*archive, "size"_str, "LLVM SDK descriptor archive"_str));
     auto archive_identity = lito::validate_llvm_sdk_archive_identity(
-        url.as_str(), sha256.as_str(), size, "LLVM SDK descriptor archive"_str);
+        parsed_url, parsed_sha256, size, "LLVM SDK descriptor archive"_str);
     if (archive_identity.is_err()) {
         return Err(lito::SdkError::Catalog(rstd::move(archive_identity).unwrap_err()));
     }
@@ -662,8 +625,8 @@ auto parse_descriptor(const Json& value) -> lito::SdkResult<InstalledSdkDescript
                 .architecture = rstd::move(architecture).unwrap(),
                 .os           = rstd::move(os),
             },
-        .url    = rstd::move(url),
-        .sha256 = rstd::move(sha256),
+        .url    = rstd::move(parsed_url),
+        .sha256 = rstd::move(parsed_sha256),
         .size   = size,
         .paths  = rstd::move(paths),
         .certification =
@@ -727,8 +690,7 @@ auto descriptor_matches(const InstalledSdkDescriptor& descriptor,
     if (descriptor.version != release.version.text.as_str() ||
         descriptor.host.os != artifact.host.os.as_str() ||
         descriptor.host.architecture != artifact.host.architecture ||
-        descriptor.sha256 != artifact.archive.sha256.as_str() ||
-        descriptor.size != artifact.archive.size ||
+        descriptor.sha256 != artifact.archive.sha256 || descriptor.size != artifact.archive.size ||
         ! paths_equal(descriptor.paths, artifact.paths) ||
         descriptor.components.len() != artifact.runtime_components.len()) {
         return false;
@@ -772,7 +734,7 @@ auto validate_installed_components(ref<rstd::path::Path>                 prefix,
                                                rstd::addressof(component.license) };
         for (const auto* expected : files) {
             auto actual = rstd_try(installed_file_record(prefix, expected->path.as_path()));
-            if (actual.size != expected->size || actual.sha256 != expected->sha256.as_str()) {
+            if (actual.size != expected->size || actual.sha256 != expected->sha256) {
                 return sdk_failure<empty>(rstd::format(
                     "installed SDK file '{}' differs from sdk.json", expected->path.as_path()));
             }
@@ -1371,7 +1333,7 @@ auto installed_file_record(ref<rstd::path::Path> root, ref<rstd::path::Path> rel
     return Ok(InstalledFileRecord {
         .path   = PathBuf::from(relative),
         .size   = metadata->size(),
-        .sha256 = rstd::crypto::sha256_hex(contents->as_slice()),
+        .sha256 = rstd::crypto::sha256_digest(contents->as_slice()),
     });
 }
 
@@ -2103,7 +2065,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
     auto acquisitions = Vec<lito::tools::acquisition::VerifiedArchiveRequest>::make();
     acquisitions.push(lito::tools::acquisition::VerifiedArchiveRequest {
         .label                  = rstd::format("llvm-sdk@{}", request.version.as_str()),
-        .url                    = (**artifact).archive.url.clone(),
+        .url                    = (**artifact).archive.url.fetch_url()->clone(),
         .sha256                 = (**artifact).archive.sha256.clone(),
         .expected_size          = Some(u64((**artifact).archive.size.to_primitive())),
         .download_requirement   = download_requirement.clone(),
@@ -2130,7 +2092,7 @@ auto install_llvm_sdk(SdkInstallRequest request) -> SdkResult<SdkInstallSummary>
     auto extracted = lito::tools::acquisition::extract_verified_archive(
         rstd::move(verified_files[usize {}]),
         staging.as_path(),
-        Some((**artifact).archive.root.as_str()),
+        Some((**artifact).archive.root.as_str().unwrap()),
         *extractor,
         *environment,
         lito::tools::acquisition::AcquisitionEventSink {
@@ -2234,17 +2196,17 @@ namespace
 {
 
 struct AndroidInstalledDescriptor {
-    String                  revision;
-    lito::system::HostInfo  host;
-    String                  url;
-    String                  sha256;
-    u64                     size {};
-    String                  root;
-    String                  license_id;
-    String                  license_sha256;
-    String                  distribution_identity;
-    AndroidNdkCertification certification;
-    String                  identity;
+    String                     revision;
+    lito::system::HostInfo     host;
+    lito::parse::HttpsUrl      url;
+    rstd::crypto::Sha256Digest sha256;
+    u64                        size {};
+    lito::parse::PathComponent root;
+    String                     license_id;
+    rstd::crypto::Sha256Digest license_sha256;
+    String                     distribution_identity;
+    AndroidNdkCertification    certification;
+    String                     identity;
 };
 
 struct AndroidActiveState {
@@ -2284,11 +2246,11 @@ auto android_descriptor_payload(const AndroidInstalledDescriptor& descriptor) ->
                         descriptor.host.os.as_str(),
                         descriptor.host.architecture.as_str(),
                         descriptor.url.as_str(),
-                        descriptor.sha256.as_str(),
+                        descriptor.sha256,
                         descriptor.size,
-                        descriptor.root.as_str(),
+                        descriptor.root.as_str().unwrap(),
                         descriptor.license_id.as_str(),
-                        descriptor.license_sha256.as_str(),
+                        descriptor.license_sha256,
                         descriptor.distribution_identity.as_str(),
                         descriptor.certification.identity.as_str());
 }
@@ -2300,13 +2262,14 @@ auto android_descriptor_json(const AndroidInstalledDescriptor& descriptor) -> Js
                 json_string(descriptor.host.architecture.as_str()));
     auto archive = JsonMap::make();
     archive.insert(String::make("url"_str), json_string(descriptor.url.as_str()));
-    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.as_str()));
+    archive.insert(String::make("sha256"_str), json_string(descriptor.sha256.to_hex().as_str()));
     archive.insert(String::make("size"_str),
                    Json::Number(rstd::json::Number::from_u64(descriptor.size)));
-    archive.insert(String::make("root"_str), json_string(descriptor.root.as_str()));
+    archive.insert(String::make("root"_str), json_string(descriptor.root.as_str().unwrap()));
     auto license = JsonMap::make();
     license.insert(String::make("id"_str), json_string(descriptor.license_id.as_str()));
-    license.insert(String::make("sha256"_str), json_string(descriptor.license_sha256.as_str()));
+    license.insert(String::make("sha256"_str),
+                   json_string(descriptor.license_sha256.to_hex().as_str()));
     auto certification = JsonMap::make();
     certification.insert(String::make("compiler-version"_str),
                          json_string(descriptor.certification.compiler_version.as_str()));
@@ -2395,27 +2358,29 @@ auto parse_android_descriptor(const Json& value) -> lito::SdkResult<AndroidInsta
         *certification,
         "Android NDK descriptor certification"_str,
         { "compiler-version"_str, "linker-version"_str, "target"_str, "identity"_str }));
-    auto result = AndroidInstalledDescriptor {
+    auto archive_path = lito::parse::NodePath::root("Android NDK descriptor archive"_str);
+    auto archive_url =
+        rstd_try(lito::parse::json::required_https_url(*archive, "url"_str, archive_path));
+    auto archive_sha256 = rstd_try(lito::parse::json::required_sha256(
+        *archive, "sha256"_str, archive_path, lito::parse::Sha256TextMode::Canonical));
+    auto archive_root =
+        rstd_try(lito::parse::json::required_path_component(*archive, "root"_str, archive_path));
+    auto license_sha256 = rstd_try(lito::parse::json::required_sha256(
+        *license,
+        "sha256"_str,
+        lito::parse::NodePath::root("Android NDK descriptor license"_str),
+        lito::parse::Sha256TextMode::Canonical));
+    auto result         = AndroidInstalledDescriptor {
         .revision = rstd::move(revision),
         .host     = rstd_try(parse_android_host(*host_value, "Android NDK descriptor host"_str)),
-        .url      = rstd_try(
-            sdk_required_string(*archive, "url"_str, "Android NDK descriptor archive"_str)),
-        .sha256 = rstd_try(descriptor_sha256(
-            rstd_try(
-                sdk_required_string(*archive, "sha256"_str, "Android NDK descriptor archive"_str))
-                .as_str(),
-            "Android NDK descriptor archive sha256"_str)),
+        .url      = rstd::move(archive_url),
+        .sha256   = rstd::move(archive_sha256),
         .size =
             rstd_try(sdk_required_u64(*archive, "size"_str, "Android NDK descriptor archive"_str)),
-        .root = rstd_try(
-            sdk_required_string(*archive, "root"_str, "Android NDK descriptor archive"_str)),
+        .root = rstd::move(archive_root),
         .license_id =
             rstd_try(sdk_required_string(*license, "id"_str, "Android NDK descriptor license"_str)),
-        .license_sha256        = rstd_try(descriptor_sha256(
-            rstd_try(
-                sdk_required_string(*license, "sha256"_str, "Android NDK descriptor license"_str))
-                .as_str(),
-            "Android NDK descriptor license sha256"_str)),
+        .license_sha256        = rstd::move(license_sha256),
         .distribution_identity = rstd_try(descriptor_sha256(
             rstd_try(sdk_required_string(value, "distribution-identity"_str, context)).as_str(),
             "Android NDK descriptor distribution identity"_str)),
@@ -2486,12 +2451,11 @@ auto android_descriptor_matches(const AndroidInstalledDescriptor& descriptor,
     return descriptor.revision == release.revision.text.as_str() &&
            descriptor.host.os == artifact.host.os.as_str() &&
            descriptor.host.architecture == artifact.host.architecture &&
-           descriptor.url == artifact.archive.url.as_str() &&
-           descriptor.sha256 == artifact.archive.sha256.as_str() &&
+           descriptor.url == artifact.archive.url && descriptor.sha256 == artifact.archive.sha256 &&
            descriptor.size == artifact.archive.size &&
-           descriptor.root == artifact.archive.root.as_str() &&
+           descriptor.root.as_str() == artifact.archive.root.as_str() &&
            descriptor.license_id == catalog.license.id.as_str() &&
-           descriptor.license_sha256 == catalog.license.sha256.as_str();
+           descriptor.license_sha256 == catalog.license.sha256;
 }
 
 auto resolve_android_installation(const SdkStoreLayout&         layout,
@@ -2522,7 +2486,7 @@ auto resolve_android_installation(const SdkStoreLayout&         layout,
                          revision,
                          host_text(host).as_str()));
     }
-    auto root         = prefix.join(PathBuf::from(descriptor.root.as_str()).as_path());
+    auto root         = prefix.join(PathBuf::from(descriptor.root.as_str().unwrap()).as_path());
     auto distribution = lito::open_android_ndk(root.as_path(), host);
     if (distribution.is_err()) {
         return Err(lito::SdkError::AndroidNdk(rstd::move(distribution).unwrap_err()));
@@ -3025,7 +2989,7 @@ auto install_android_ndk(AndroidNdkInstallRequest request) -> SdkResult<SdkInsta
     auto acquisitions = Vec<lito::tools::acquisition::VerifiedArchiveRequest>::make();
     acquisitions.push(lito::tools::acquisition::VerifiedArchiveRequest {
         .label                  = rstd::format("android-ndk@{}", request.version),
-        .url                    = (**artifact).archive.url.clone(),
+        .url                    = (**artifact).archive.url.fetch_url()->clone(),
         .sha256                 = (**artifact).archive.sha256.clone(),
         .expected_size          = Some(u64((**artifact).archive.size.to_primitive())),
         .download_requirement   = download_requirement.clone(),
@@ -3052,7 +3016,7 @@ auto install_android_ndk(AndroidNdkInstallRequest request) -> SdkResult<SdkInsta
     auto extracted = lito::tools::acquisition::extract_verified_archive(
         rstd::move(verified_files[usize {}]),
         staging.as_path(),
-        Some((**artifact).archive.root.as_str()),
+        Some((**artifact).archive.root.as_str().unwrap()),
         *extractor,
         *environment,
         lito::tools::acquisition::AcquisitionEventSink {

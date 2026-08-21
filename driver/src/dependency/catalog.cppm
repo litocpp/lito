@@ -171,11 +171,11 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             });
             continue;
         }
-        auto url    = String::make();
-        auto sha256 = String::make();
+        auto url    = Option<lito::parse::FetchUrl> {};
+        auto sha256 = Option<rstd::crypto::Sha256Digest> {};
         if (source.source.is_Archive()) {
-            url    = source.source.as_Archive().url.clone();
-            sha256 = source.source.as_Archive().sha256.clone();
+            url    = Some(source.source.as_Archive().url.clone());
+            sha256 = Some(source.source.as_Archive().sha256.clone());
         } else if (source.source.is_ArchitectureArchives()) {
             const lito::dependency::ExternalArchiveVariant* selected_variant = nullptr;
             for (const auto& variant : source.source.as_ArchitectureArchives().variants) {
@@ -191,8 +191,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                  source.name.as_str(),
                                  platform.effective_target.architecture.as_str()));
             }
-            url    = selected_variant->url.clone();
-            sha256 = selected_variant->sha256.clone();
+            url    = Some(selected_variant->url.clone());
+            sha256 = Some(selected_variant->sha256.clone());
         } else {
             return lito::dependency::dependency_failure<PreparedExternalCatalog>(
                 rstd::format("external source '{}:{}' was not acquired",
@@ -203,8 +203,8 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         source_archives.push(lito::source::ArchiveSourceFetchRequest {
             .owner  = graph.packages[source.package].manifest.name.clone(),
             .name   = source.name.clone(),
-            .url    = rstd::move(url),
-            .sha256 = rstd::move(sha256),
+            .url    = rstd::move(url).unwrap(),
+            .sha256 = rstd::move(sha256).unwrap(),
         });
     }
     if (! source_archives.is_empty()) {

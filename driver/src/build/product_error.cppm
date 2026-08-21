@@ -5,6 +5,7 @@ export module lito.driver:build.product_error;
 
 import rstd;
 import rstd.json;
+import lito.core;
 
 using namespace rstd::prelude;
 
@@ -15,6 +16,7 @@ class BuildProductError {
     RSTD_ENUM(BuildProductError,
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
               (Json, (rstd::path::PathBuf path; rstd::json::Error source;)),
+              (Parse, (lito::parse::Error source;)),
               (Message, (String message;)))
 };
 
@@ -25,6 +27,13 @@ using BuildProductResult = Result<T, BuildProductError>;
 
 export namespace rstd
 {
+
+template<>
+struct Impl<convert::From<lito::parse::Error>, lito::BuildProductError> {
+    static auto from(lito::parse::Error error) -> lito::BuildProductError {
+        return lito::BuildProductError::Parse(rstd::move(error));
+    }
+};
 
 template<>
 struct Impl<fmt::Display, lito::BuildProductError> : ImplBase<lito::BuildProductError> {
@@ -39,6 +48,7 @@ struct Impl<fmt::Display, lito::BuildProductError> : ImplBase<lito::BuildProduct
             return formatter.write_fmt(fmt::Arguments::make("cannot parse build product '{}'",
                                                             error.as_Json().path.as_path()));
         }
+        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         return formatter.write_str(error.as_Message().message.as_str());
     }
 };
@@ -56,6 +66,7 @@ struct Impl<error::Error, lito::BuildProductError> : ImplBase<lito::BuildProduct
         const auto& error = this->self();
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         return None();
     }
 };

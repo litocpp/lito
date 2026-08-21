@@ -161,7 +161,7 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                         "build-tool:{}:{}", tool.alias.as_str(), archive.host.os.as_str()),
                     .architectures = rstd::move(architectures),
                     .source        = lito::dependency::ResolvedExternalSource::Archive(
-                        archive.url.clone(), archive.sha256.clone()),
+                        archive.url.fetch_url()->clone(), archive.sha256.clone()),
                 });
             }
         }

@@ -228,7 +228,8 @@ set(LitoFixture_VERSION "1.2.3")
     EXPECT_TRUE(app.manifest.workspace_cmake_external_dependencies.is_empty());
     EXPECT_TRUE(app.manifest.workspace_external_sources.is_empty());
     ASSERT_EQ(app.dependencies.len(), usize(1));
-    EXPECT_EQ(app.dependencies[usize {}].name.as_str(), "fixture-workspace-inherited-library"_str);
+    EXPECT_EQ(lito::package::resolved_dependency_name(app.dependencies[usize {}]),
+              "fixture-workspace-inherited-library"_str);
     ASSERT_EQ(app.manifest.dependencies.len(), usize(1));
     ASSERT_TRUE(app.manifest.dependencies[usize {}].declaration_root.is_some());
     EXPECT_EQ(app.manifest.dependencies[usize {}].declaration_root->as_path(), directory.as_path());

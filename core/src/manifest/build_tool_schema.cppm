@@ -110,19 +110,14 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
             auto archive_table = rstd_try(table_value(**archive_value, archive_context.as_str()));
             rstd_try(
                 reject_unknown(*archive_table, archive_context.as_str(), build_tool_archive_key));
-            auto url =
-                rstd_try(required_string(**archive_value, "url"_str, archive_context.as_str()));
-            auto sha256 =
-                rstd_try(required_string(**archive_value, "sha256"_str, archive_context.as_str()));
-            if (! url.as_str().starts_with("https://"_str) ||
-                ! archive_url_is_valid(url.as_str())) {
-                return manifest_schema_failure<Vec<BuildToolRequirement>>(
-                    rstd::format("{}.url must be an HTTPS archive URL", archive_context));
-            }
-            if (! sha256_is_valid(sha256.as_str())) {
-                return manifest_schema_failure<Vec<BuildToolRequirement>>(rstd::format(
-                    "{}.sha256 must be a 64-character hexadecimal digest", archive_context));
-            }
+            auto archive_path = lito::parse::NodePath::root(archive_context.as_str());
+            auto https_url    = rstd_try(
+                lito::parse::toml::required_https_url(**archive_value, "url"_str, archive_path));
+            auto digest =
+                rstd_try(lito::parse::toml::required_sha256(**archive_value,
+                                                            "sha256"_str,
+                                                            archive_path,
+                                                            lito::parse::Sha256TextMode::Flexible));
             auto parsed_host =
                 rstd_try(parse_host_key((**host).as_str(), archive_context.as_str()));
             for (const auto& existing : archives) {
@@ -137,8 +132,8 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
             }
             archives.push(BuildToolArchiveManifest {
                 .host   = rstd::move(parsed_host),
-                .url    = rstd::move(url),
-                .sha256 = rstd::move(sha256),
+                .url    = rstd::move(https_url),
+                .sha256 = rstd::move(digest),
             });
         }
         if (archives.is_empty()) {

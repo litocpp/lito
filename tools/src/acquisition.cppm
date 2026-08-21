@@ -5,6 +5,7 @@ module;
 export module lito.tools:acquisition;
 
 import rstd;
+import lito.core;
 import lito.system;
 import :error;
 import :model;
@@ -50,8 +51,8 @@ struct AcquisitionEventSink {
 
 struct VerifiedArchiveRequest {
     String                           label;
-    String                           url;
-    String                           sha256;
+    lito::parse::FetchUrl            url;
+    rstd::crypto::Sha256Digest       sha256;
     Option<u64>                      expected_size;
     Option<PathBuf>                  seed;
     lito::tools::HostToolRequirement download_requirement;
@@ -207,11 +208,13 @@ auto process_path(Vec<String>& arguments, ref<rstd::path::Path> path) -> Acquisi
     return Ok(empty {});
 }
 
-auto archive_identity(ref<str> url, ref<str> sha256) -> String {
+auto archive_identity(const lito::parse::FetchUrl& url, const rstd::crypto::Sha256Digest& sha256)
+    -> String {
     return rstd::format("archive+{}#sha256:{}", url, sha256);
 }
 
-auto archive_fetch_key(ref<str> url, ref<str> sha256) -> String {
+auto archive_fetch_key(const lito::parse::FetchUrl& url, const rstd::crypto::Sha256Digest& sha256)
+    -> String {
     auto identity = rstd::format("lito-fetch-v1\narchive\n{}\n{}", url, sha256);
     return rstd::crypto::sha256_hex(identity.as_str());
 }
@@ -234,7 +237,8 @@ auto ordinary_file_metadata(ref<rstd::path::Path> path)
         "inspect acquisition file"_str, path, rstd::move(error));
 }
 
-auto file_digest_matches(ref<rstd::path::Path> path, ref<str> expected) -> AcquisitionResult<bool> {
+auto file_digest_matches(ref<rstd::path::Path> path, const rstd::crypto::Sha256Digest& expected)
+    -> AcquisitionResult<bool> {
     auto opened = rstd::fs::File::open(path);
     if (opened.is_err()) {
         return io_failure<bool>("open acquisition file"_str, path, rstd::move(opened).unwrap_err());
@@ -251,7 +255,7 @@ auto file_digest_matches(ref<rstd::path::Path> path, ref<str> expected) -> Acqui
         if (*read == usize {}) break;
         state.update(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
     }
-    return Ok(rstd::crypto::sha256_hex(rstd::move(state).finalize()).as_str() == expected);
+    return Ok(rstd::move(state).finalize_digest() == expected);
 }
 
 auto verified_file(ref<rstd::path::Path> path, const VerifiedArchiveRequest& request)
@@ -261,9 +265,9 @@ auto verified_file(ref<rstd::path::Path> path, const VerifiedArchiveRequest& req
     if (request.expected_size.is_some() && metadata->len() != *request.expected_size) {
         return Ok(None());
     }
-    if (! rstd_try(file_digest_matches(path, request.sha256.as_str()))) return Ok(None());
+    if (! rstd_try(file_digest_matches(path, request.sha256))) return Ok(None());
     return Ok(Some(VerifiedFile {
-        .identity = archive_identity(request.url.as_str(), request.sha256.as_str()),
+        .identity = archive_identity(request.url, request.sha256),
         .path     = PathBuf::from(path),
         .size     = metadata->len(),
     }));
@@ -292,7 +296,7 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
                          const ResolvedProcessEnvironment& environment,
                          AcquisitionEventSink observer) -> AcquisitionResult<VerifiedFile> {
     (void)session;
-    auto key     = archive_fetch_key(request.url.as_str(), request.sha256.as_str());
+    auto key     = archive_fetch_key(request.url, request.sha256);
     auto bucket  = layout.bucket(key.as_str());
     auto created = rstd::fs::create_dir_all(bucket.as_path());
     if (created.is_err()) {
@@ -316,7 +320,7 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
     arguments.push(String::make("--output"_str));
     rstd_try(process_path(arguments, staging.as_path()));
     arguments.push(String::make("--"_str));
-    arguments.push(request.url.clone());
+    arguments.push(String::make(request.url.as_str()));
     if (observer.notify != nullptr) {
         observer.notify(observer.context,
                         AcquisitionEvent {
@@ -352,7 +356,7 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
         return failure<VerifiedFile>(rstd::format(
             "download '{}' has size {}, expected {}", request.url, actual, *request.expected_size));
     }
-    auto matches = file_digest_matches(staging.as_path(), request.sha256.as_str());
+    auto matches = file_digest_matches(staging.as_path(), request.sha256);
     if (matches.is_err()) {
         (void)rstd::fs::remove_file(staging.as_path());
         return Err(rstd::move(matches).unwrap_err());
@@ -379,7 +383,7 @@ auto acquire_cached_file(VerifiedArchiveRequest            request,
                                         rstd::move(published).unwrap_err());
     }
     return Ok(VerifiedFile {
-        .identity = archive_identity(request.url.as_str(), request.sha256.as_str()),
+        .identity = archive_identity(request.url, request.sha256),
         .path     = rstd::move(source),
         .size     = staged_metadata->len(),
     });
@@ -476,8 +480,7 @@ auto acquire_verified_files(Vec<VerifiedArchiveRequest>       requests,
         }
         auto downloads = Vec<usize>::make();
         for (const auto index : pending) {
-            auto key =
-                archive_fetch_key(requests[index].url.as_str(), requests[index].sha256.as_str());
+            auto key = archive_fetch_key(requests[index].url, requests[index].sha256);
             auto cached =
                 rstd_try(verified_file(layout->source(key.as_str()).as_path(), requests[index]));
             if (cached.is_some()) {

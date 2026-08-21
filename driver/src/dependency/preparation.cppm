@@ -17,7 +17,7 @@ class PreparedCMakeDependencySource {
     RSTD_ENUM(PreparedCMakeDependencySource,
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
-              (Archive, (String url; String sha256;)),
+              (Archive, (lito::parse::FetchUrl url; rstd::crypto::Sha256Digest sha256;)),
               (ArchitectureArchives, (Vec<lito::dependency::ExternalArchiveVariant> variants;)))
 };
 
@@ -73,7 +73,7 @@ class SelectedCMakeDependencySource {
     RSTD_ENUM(SelectedCMakeDependencySource,
               (Find),
               (Directory, (PathBuf root; String identity; bool cacheable;)),
-              (Archive, (String url; String sha256;)))
+              (Archive, (lito::parse::FetchUrl url; rstd::crypto::Sha256Digest sha256;)))
 };
 
 struct SelectedCMakeDependencyRequirement {

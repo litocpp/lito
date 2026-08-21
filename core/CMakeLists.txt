@@ -5,6 +5,7 @@ target_sources(
   PRIVATE src/lib.cpp
           src/lock/mod.cpp
           src/manifest/mod.cpp
+          src/parse/mod.cpp
           src/template/mod.cpp)
 target_sources(
   lito.core
@@ -64,6 +65,11 @@ target_sources(
          src/package/mod.cppm
          src/package/runtime.cppm
          src/package/selection_error.cppm
+         src/parse/error.cppm
+         src/parse/json.cppm
+         src/parse/mod.cppm
+         src/parse/toml.cppm
+         src/parse/value.cppm
          src/source/error.cppm
          src/source/fetch.cppm
          src/source/git.cppm

@@ -49,42 +49,20 @@ auto catalog_json_string(ref<str> value) -> Json {
 
 auto known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> InstallStoreResult<empty> {
-    auto object = value.as_object();
-    if (object.is_none()) {
-        return catalog_failure<empty>(rstd::format("{} must be an object", context));
-    }
-    auto keys = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto known = false;
-        for (auto name : names) {
-            if ((**key).as_str() == name) known = true;
-        }
-        if (! known) {
-            return catalog_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
-        }
-    }
-    return Ok(empty {});
+    return Ok(rstd_try(
+        lito::parse::json::reject_unknown(value, lito::parse::NodePath::root(context), names)));
 }
 
 auto required_member(const Json& value, ref<str> key, ref<str> context)
     -> InstallStoreResult<ref<Json>> {
-    auto member = value.get(key);
-    if (member.is_none()) {
-        return catalog_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
-    }
-    return Ok(*member);
+    return Ok(rstd_try(
+        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto required_string(const Json& value, ref<str> key, ref<str> context)
     -> InstallStoreResult<String> {
-    auto member = rstd_try(required_member(value, key, context));
-    auto text   = member->as_str();
-    if (text.is_none() || text->is_empty()) {
-        return catalog_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
-    }
-    return Ok(String::make(*text));
+    return Ok(rstd_try(lito::parse::json::required_non_empty_string(
+        value, key, lito::parse::NodePath::root(context))));
 }
 
 auto relative_link_target_is_valid(ref<rstd::path::Path> path) -> bool {

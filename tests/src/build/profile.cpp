@@ -255,11 +255,10 @@ exceptions = false
     const auto& cause = error.as_File().source.cause;
     ASSERT_TRUE(cause.is_Schema());
     const auto& schema = cause.as_Schema().source;
-    ASSERT_TRUE(schema.is_InvalidValue());
+    ASSERT_TRUE(schema.is_Domain());
+    EXPECT_TRUE(schema.as_Domain().message.as_str().contains("manifest.profile.exceptions"_str));
     EXPECT_TRUE(
-        schema.as_InvalidValue().reason.as_str().contains("manifest.profile.exceptions"_str));
-    EXPECT_TRUE(
-        schema.as_InvalidValue().reason.as_str().contains("manifest.profile.base.exceptions"_str));
+        schema.as_Domain().message.as_str().contains("manifest.profile.base.exceptions"_str));
 }
 
 TEST_F(BuildProfile, ProjectProfileKeepsCppPolicyAndOneCommonCodegenPolicy) {

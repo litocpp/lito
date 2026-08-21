@@ -4,6 +4,7 @@ module;
 export module lito.core:source.fetch;
 
 import rstd;
+import :parse;
 
 using namespace rstd::prelude;
 
@@ -13,15 +14,16 @@ export namespace lito::source
 class FetchIdentity {
     RSTD_ENUM(FetchIdentity,
               (Git, (String url; String commit;)),
-              (Archive, (String url; String sha256;)))
+              (Archive, (lito::parse::FetchUrl url; rstd::crypto::Sha256Digest sha256;)))
 };
 
 auto git_fetch_identity(ref<str> url, ref<str> commit) -> FetchIdentity {
     return FetchIdentity::Git(String::make(url), String::make(commit));
 }
 
-auto archive_fetch_identity(ref<str> url, ref<str> sha256) -> FetchIdentity {
-    return FetchIdentity::Archive(String::make(url), String::make(sha256));
+auto archive_fetch_identity(lito::parse::FetchUrl url, rstd::crypto::Sha256Digest sha256)
+    -> FetchIdentity {
+    return FetchIdentity::Archive(rstd::move(url), rstd::move(sha256));
 }
 
 auto fetch_identity_text(const FetchIdentity& identity) -> String {
@@ -32,7 +34,7 @@ auto fetch_identity_text(const FetchIdentity& identity) -> String {
     }
     return rstd::format("lito-fetch-v1\narchive\n{}\n{}",
                         identity.as_Archive().url.as_str(),
-                        identity.as_Archive().sha256.as_str());
+                        identity.as_Archive().sha256);
 }
 
 auto fetch_identity_stable_key(const FetchIdentity& identity) -> String {

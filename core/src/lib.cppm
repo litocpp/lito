@@ -12,6 +12,7 @@ export import :lock;
 export import :lock.flatpak;
 export import :manifest;
 export import :package;
+export import :parse;
 export import :source;
 export import :workspace;
 

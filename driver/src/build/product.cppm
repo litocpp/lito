@@ -24,9 +24,9 @@ export namespace lito
 {
 
 struct BuildProductFileIdentity {
-    PathBuf path;
-    u64     size {};
-    String  sha256;
+    PathBuf                    path;
+    u64                        size {};
+    rstd::crypto::Sha256Digest sha256;
 };
 
 struct CompletedBuildProduct {
@@ -129,52 +129,28 @@ auto product_path(ref<rstd::path::Path> path) -> BuildProductResult<Json> {
 
 auto product_known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
     -> BuildProductResult<empty> {
-    auto object = value.as_object();
-    if (object.is_none()) {
-        return product_failure<empty>(rstd::format("{} must be an object", context));
-    }
-    auto keys = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto known = false;
-        for (auto name : names) {
-            if ((**key).as_str() == name) known = true;
-        }
-        if (! known) {
-            return product_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
-        }
-    }
-    return Ok(empty {});
+    return Ok(rstd_try(
+        lito::parse::json::reject_unknown(value, lito::parse::NodePath::root(context), names)));
 }
 
 auto product_member(const Json& value, ref<str> key, ref<str> context)
     -> BuildProductResult<ref<Json>> {
-    auto member = value.get(key);
-    if (member.is_none()) {
-        return product_failure<ref<Json>>(rstd::format("{} is missing '{}'", context, key));
-    }
-    return Ok(*member);
+    return Ok(rstd_try(
+        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto product_required_string(const Json& value, ref<str> key, ref<str> context)
     -> BuildProductResult<String> {
-    auto member = rstd_try(product_member(value, key, context));
-    auto text   = member->as_str();
-    if (text.is_none() || text->is_empty()) {
-        return product_failure<String>(
-            rstd::format("{}.{} must be a non-empty string", context, key));
-    }
-    return Ok(String::make(*text));
+    return Ok(rstd_try(lito::parse::json::required_non_empty_string(
+        value, key, lito::parse::NodePath::root(context))));
 }
 
 auto product_required_text(const Json& value, ref<str> key, ref<str> context)
     -> BuildProductResult<String> {
     auto member = rstd_try(product_member(value, key, context));
-    auto text   = member->as_str();
-    if (text.is_none()) {
-        return product_failure<String>(rstd::format("{}.{} must be a string", context, key));
-    }
-    return Ok(String::make(*text));
+    auto text   = rstd_try(
+        lito::parse::json::string(*member, lito::parse::NodePath::root(context).field(key)));
+    return Ok(String::make(text));
 }
 
 auto product_required_path(const Json& value, ref<str> key, ref<str> context)
@@ -216,13 +192,8 @@ auto resolve_product_build_path(ref<rstd::path::Path> base,
 
 auto product_required_array(const Json& value, ref<str> key, ref<str> context)
     -> BuildProductResult<ref<JsonArray>> {
-    auto member = rstd_try(product_member(value, key, context));
-    auto array  = member->as_array();
-    if (array.is_none()) {
-        return product_failure<ref<JsonArray>>(
-            rstd::format("{}.{} must be an array", context, key));
-    }
-    return Ok(ref<JsonArray>::from_raw_parts(rstd::addressof(**array)));
+    return Ok(rstd_try(
+        lito::parse::json::required_array(value, key, lito::parse::NodePath::root(context))));
 }
 
 auto product_string_array(const Vec<String>& values) -> Json {
@@ -619,7 +590,7 @@ auto file_identity_json(const CompletedBuildProduct& product, const BuildProduct
         result.insert(String::make("path"_str), rstd_try(product_path(file.path.as_path())));
     }
     result.insert(String::make("size"_str), Json::Number(rstd::json::Number::from_u64(file.size)));
-    result.insert(String::make("sha256"_str), product_string(file.sha256.as_str()));
+    result.insert(String::make("sha256"_str), product_string(file.sha256.to_hex().as_str()));
     return Ok(Json::Object(rstd::move(result)));
 }
 
@@ -633,19 +604,11 @@ auto parse_file_identity(const Json& value, ref<rstd::path::Path> base, ref<str>
         return product_failure<BuildProductFileIdentity>(
             rstd::format("{}.size must be an unsigned integer", context));
     }
-    auto sha256 = rstd_try(product_required_string(value, "sha256"_str, context));
-    if (sha256.len() != usize(64)) {
-        return product_failure<BuildProductFileIdentity>(
-            rstd::format("{}.sha256 must contain 64 hexadecimal characters", context));
-    }
-    for (auto byte : sha256.as_str()) {
-        const auto valid =
-            (byte >= u8('0') && byte <= u8('9')) || (byte >= u8('a') && byte <= u8('f'));
-        if (! valid) {
-            return product_failure<BuildProductFileIdentity>(
-                rstd::format("{}.sha256 must be lowercase hexadecimal", context));
-        }
-    }
+    auto digest =
+        rstd_try(lito::parse::json::required_sha256(value,
+                                                    "sha256"_str,
+                                                    lito::parse::NodePath::root(context),
+                                                    lito::parse::Sha256TextMode::Canonical));
     auto owner = rstd_try(product_required_string(value, "owner"_str, context));
     auto path  = PathBuf::make();
     if (owner == "build"_str) {
@@ -663,7 +626,7 @@ auto parse_file_identity(const Json& value, ref<rstd::path::Path> base, ref<str>
     return Ok(BuildProductFileIdentity {
         .path   = rstd::move(path),
         .size   = *size,
-        .sha256 = rstd::move(sha256),
+        .sha256 = rstd::move(digest),
     });
 }
 
@@ -1018,7 +981,7 @@ auto append_file_identity(Vec<BuildProductFileIdentity>& files, ref<rstd::path::
     files.push(BuildProductFileIdentity {
         .path   = rstd::move(canonical).unwrap(),
         .size   = inspected->len(),
-        .sha256 = rstd::crypto::sha256_hex(contents->as_slice()),
+        .sha256 = rstd::crypto::sha256_digest(contents->as_slice()),
     });
     return Ok(empty {});
 }
@@ -1237,8 +1200,8 @@ auto validate_product_file_identities(const CompletedBuildProduct& product)
                                              file.path.as_path(),
                                              rstd::move(contents).unwrap_err());
         }
-        auto digest = rstd::crypto::sha256_hex(contents->as_slice());
-        if (digest != file.sha256.as_str()) {
+        auto digest = rstd::crypto::sha256_digest(contents->as_slice());
+        if (digest != file.sha256) {
             return product_failure<empty>(
                 rstd::format("completed build file '{}' content changed", file.path.as_path()));
         }

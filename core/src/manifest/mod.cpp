@@ -16,6 +16,7 @@ import :manifest.target_schema;
 import :manifest.dependency_schema;
 import :manifest.build_tool_schema;
 import :manifest.build_script_schema;
+import :parse;
 import :source.tree;
 
 using namespace rstd::prelude;
@@ -454,8 +455,7 @@ auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_iden
         auto path = PathBuf::from("builtin/lito.toml"_str);
         return Err(ManifestError::File(ManifestFileError {
             .path  = rstd::move(path),
-            .cause = ManifestFileCause::Schema(ManifestSchemaError::InvalidValue(
-                ManifestNodePath::make("manifest source"_str),
+            .cause = ManifestFileCause::Schema(ManifestSchemaError::Domain(
                 String::make("builtin source identity must not be empty"_str))),
         }));
     }
@@ -472,9 +472,10 @@ auto lito::manifest::load_package_manifest_from_source_tree(ref<str> source_iden
     if (manifest_entry == nullptr) {
         return Err(ManifestError::File(ManifestFileError {
             .path  = rstd::move(path),
-            .cause = ManifestFileCause::Schema(ManifestSchemaError::MissingField(
-                ManifestNodePath::make("builtin package source"_str),
-                String::make("lito.toml"_str))),
+            .cause = ManifestFileCause::Schema(
+                ManifestSchemaError::Parse(lito::parse::Error::MissingField(
+                    lito::parse::NodePath::root("builtin package source"_str),
+                    String::make("lito.toml"_str)))),
         }));
     }
     auto decoded = String::from_utf8(Vec<u8>::from(manifest_entry->contents()));

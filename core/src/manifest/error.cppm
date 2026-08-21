@@ -6,6 +6,7 @@ export module lito.core:manifest.error;
 import rstd;
 import rstd.toml;
 import :manifest.profile;
+import :parse.error;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -14,14 +15,6 @@ export namespace lito::manifest
 {
 
 enum class ManifestKind;
-
-struct ManifestNodePath {
-    String value;
-
-    static auto make(ref<str> value) -> ManifestNodePath {
-        return ManifestNodePath { String::make(value) };
-    }
-};
 
 class ManifestLocatorError {
     RSTD_ENUM(ManifestLocatorError,
@@ -33,13 +26,9 @@ class ManifestLocatorError {
 
 class ManifestSchemaError {
     RSTD_ENUM(ManifestSchemaError,
-              (UnknownField, (ManifestNodePath node; String field;)),
-              (MissingField, (ManifestNodePath node; String field;)),
-              (WrongType, (ManifestNodePath node; String expected;)),
-              (InvalidValue, (ManifestNodePath node; String reason;)),
-              (Io,
-               (ManifestNodePath node; String operation; PathBuf path;
-                rstd::io::error::Error                           source;)),
+              (Domain, (String message;)),
+              (Parse, (lito::parse::Error source;)),
+              (Io, (String node; String operation; PathBuf path; rstd::io::error::Error source;)),
               (Locate, (ManifestLocatorError source;)),
               (Profile, (BuildProfileError source;)))
 };
@@ -79,6 +68,13 @@ export namespace rstd
 {
 
 template<>
+struct Impl<convert::From<lito::parse::Error>, lito::manifest::ManifestSchemaError> {
+    static auto from(lito::parse::Error error) -> lito::manifest::ManifestSchemaError {
+        return lito::manifest::ManifestSchemaError::Parse(rstd::move(error));
+    }
+};
+
+template<>
 struct Impl<convert::From<lito::manifest::ManifestLocatorError>,
             lito::manifest::ManifestSchemaError> {
     static auto from(lito::manifest::ManifestLocatorError error)
@@ -106,22 +102,6 @@ template<>
 struct Impl<convert::From<lito::manifest::ManifestFileError>, lito::manifest::ManifestError> {
     static auto from(lito::manifest::ManifestFileError error) -> lito::manifest::ManifestError {
         return lito::manifest::ManifestError::File(rstd::move(error));
-    }
-};
-
-template<>
-struct Impl<fmt::Display, lito::manifest::ManifestNodePath>
-    : ImplBase<lito::manifest::ManifestNodePath> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        return formatter.write_str(this->self().value.as_str());
-    }
-};
-
-template<>
-struct Impl<fmt::Debug, lito::manifest::ManifestNodePath>
-    : ImplBase<lito::manifest::ManifestNodePath> {
-    auto fmt(fmt::Formatter& formatter) const -> bool {
-        return formatter.write_str(this->self().value.as_str());
     }
 };
 
@@ -172,24 +152,8 @@ struct Impl<fmt::Display, lito::manifest::ManifestSchemaError>
     : ImplBase<lito::manifest::ManifestSchemaError> {
     auto fmt(fmt::Formatter& formatter) const -> bool {
         const auto& error = this->self();
-        if (error.is_UnknownField()) {
-            const auto& value = error.as_UnknownField();
-            return formatter.write_fmt(
-                fmt::Arguments::make("{} contains unknown field '{}'", value.node, value.field));
-        }
-        if (error.is_MissingField()) {
-            const auto& value = error.as_MissingField();
-            return formatter.write_fmt(
-                fmt::Arguments::make("{} is missing '{}'", value.node, value.field));
-        }
-        if (error.is_WrongType()) {
-            const auto& value = error.as_WrongType();
-            return formatter.write_fmt(
-                fmt::Arguments::make("{} must be {}", value.node, value.expected));
-        }
-        if (error.is_InvalidValue()) {
-            return formatter.write_str(error.as_InvalidValue().reason.as_str());
-        }
+        if (error.is_Domain()) return formatter.write_str(error.as_Domain().message.as_str());
+        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_fmt(fmt::Arguments::make(
@@ -217,6 +181,7 @@ struct Impl<error::Error, lito::manifest::ManifestSchemaError>
     : ImplBase<lito::manifest::ManifestSchemaError> {
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
+        if (value.is_Parse()) return Some(dyn<error::Error>::from_ref(value.as_Parse().source));
         if (value.is_Io()) return Some(dyn<error::Error>::from_ref(value.as_Io().source));
         if (value.is_Locate()) return Some(dyn<error::Error>::from_ref(value.as_Locate().source));
         if (value.is_Profile()) {
