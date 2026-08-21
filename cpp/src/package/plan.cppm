@@ -514,7 +514,7 @@ auto resolve_source_selection(const PackageMetadata&                     package
             Vec<lito::package::PackageTargetId>::with_capacity(exact_targets.len());
         for (const auto& exact : exact_targets) {
             auto found = false;
-            for (const auto& candidate : package.default_targets) {
+            for (const auto& candidate : package.available_targets) {
                 if (candidate == exact) {
                     found = true;
                     break;

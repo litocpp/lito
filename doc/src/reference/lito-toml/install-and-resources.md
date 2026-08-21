@@ -57,6 +57,7 @@ The `lito` Lua module exposes these values:
 It exposes these functions:
 
 - `env(NAME)`, returning a UTF-8 string or `nil` when the variable is unset;
+- `read_file(PATH)`, returning a package-owned UTF-8 file without interpreting its contents;
 - `render_template({ input = PATH, values = TABLE })`, returning rendered text;
 - `install(RECIPE)`, declaring the complete package recipe.
 

@@ -131,6 +131,60 @@ TEST_F(InstallCommand, InstallOnlyRecipeDoesNotRequireBuildArtifacts) {
     EXPECT_EQ(rstd::fs::read_to_string(resource.as_path()).unwrap().as_str(), "fixture\n"_str);
 }
 
+TEST_F(InstallCommand, InstallRecipeCanSelectPreparedLibraryArtifact) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-install-library"
+version = "1.0.0"
+standard = "c99"
+
+[lib]
+name = "fixture-install-library"
+kind = "shared"
+artifact = "fixture-install-library"
+sources = ["library.c"]
+)toml"_str },
+        { "install.lua"_str, R"lua(lito.install({
+    artifacts = {
+        {
+            target = { kind = "lib", name = "fixture-install-library" },
+            destination = "lib/libfixture-install-library.so",
+        },
+    },
+})
+)lua"_str },
+        { "library.c"_str, "int fixture_install_library(void) { return 42; }\n"_str },
+    };
+    auto project = materialize("install-library-artifact"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto fixture = project->root.clone();
+    auto output  = build_root("install-library-artifact"_str);
+    auto prefix  = install_root("install-library-artifact"_str);
+    auto source =
+        lito::resolve_install_source(lito::InstallSourceRequirement::LocalProject(fixture.clone()));
+    ASSERT_TRUE(source.is_ok());
+    auto request = lito::InstallRequest {
+        .source = rstd::move(source).unwrap(),
+        .build  = build_request(fixture.as_path(),
+                                output.as_path(),
+                                strings("fixture-install-library"_str),
+                                build_profile("release"_str)),
+        .destination =
+            lito::InstallDestination::Prefix(lito::InstallPrefix { .path = prefix.clone() }),
+    };
+    request.build.locked = false;
+    auto result          = lito::install(rstd::move(request));
+    if (result.is_err()) {
+        rstd::io::eprintln("{}", error_chain_text(result.unwrap_err()));
+        FAIL();
+        return;
+    }
+    EXPECT_TRUE(
+        rstd::fs::exists(
+            prefix.join(PathBuf::from("lib/libfixture-install-library.so"_str).as_path()).as_path())
+            .unwrap());
+}
+
 TEST_F(InstallCommand, NoBuildInstallsPublishedProductWithoutCompilerTools) {
     constexpr ProjectFile files[] = {
         { "lito.toml"_str, R"([package]

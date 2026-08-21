@@ -182,6 +182,7 @@ struct PackageMetadata {
     Vec<BuildScriptOwner>               build_scripts;
     String                              default_profile;
     Vec<lito::package::PackageTargetId> default_targets;
+    Vec<lito::package::PackageTargetId> available_targets;
     Vec<SelectedPackageMetadata>        selected_packages;
     Vec<PackageBuildToolRequirement>    build_tools;
     lito::config::ToolchainSpec         toolchain;

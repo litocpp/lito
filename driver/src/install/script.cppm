@@ -152,9 +152,20 @@ auto environment_value(String name) -> luato::Result<Option<String>> {
     return Ok(Some(rstd::move(text).unwrap()));
 }
 
+struct InstallScriptInput {
+    PathBuf source;
+    String  contents;
+};
+
 class InstallScriptSession {
 public:
     explicit InstallScriptSession(const PackageInstallInput& package): package_(package) {}
+
+    auto read_file(String input_text) -> InstallScriptResult<String> {
+        auto input = read_input(rstd::move(input_text), "read_file.path"_str);
+        if (input.is_err()) return Err(rstd::move(input).unwrap_err());
+        return Ok(rstd::move(input).unwrap().contents);
+    }
 
     auto install(luato::Table table) -> luato::Result<empty> {
         if (recipe_.is_some()) {
@@ -348,47 +359,17 @@ public:
                                                    rstd::move(raw_values).unwrap_err_unchecked()));
         }
         auto input =
-            recipe_path(rstd::move(input_text).unwrap_unchecked(), "render_template.input"_str);
-        if (input.is_err()) {
-            return Err(InstallScriptError::Binding(package_.script->clone(),
-                                                   rstd::move(input).unwrap_err_unchecked()));
-        }
-        auto source   = package_.root.join(input->as_path());
-        auto metadata = rstd::fs::symlink_metadata(source.as_path());
-        if (metadata.is_err()) {
-            return script_io_failure<String>("inspect install template"_str,
-                                             source.as_path(),
-                                             rstd::move(metadata).unwrap_err());
-        }
-        if (! metadata->is_file() || metadata->is_symlink()) {
-            return script_failure<String>(rstd::format(
-                "install template '{}' is not a regular non-symlink file", source.as_path()));
-        }
-        auto canonical = rstd::fs::canonicalize(source.as_path());
-        if (canonical.is_err()) {
-            return script_io_failure<String>("resolve install template"_str,
-                                             source.as_path(),
-                                             rstd::move(canonical).unwrap_err());
-        }
-        if (canonical->as_path().strip_prefix(package_.root.as_path()).is_none()) {
-            return script_failure<String>(
-                rstd::format("install template '{}' escapes package root", source.as_path()));
-        }
-        auto contents = rstd::fs::read_to_string(canonical->as_path());
-        if (contents.is_err()) {
-            return script_io_failure<String>("read install template"_str,
-                                             canonical->as_path(),
-                                             rstd::move(contents).unwrap_err());
-        }
+            read_input(rstd::move(input_text).unwrap_unchecked(), "render_template.input"_str);
+        if (input.is_err()) return Err(rstd::move(input).unwrap_err());
         auto values = configure_values(rstd::move(raw_values).unwrap_unchecked());
         if (values.is_err()) {
             return Err(InstallScriptError::Binding(package_.script->clone(),
                                                    rstd::move(values).unwrap_err_unchecked()));
         }
         auto rendered =
-            render_configure_template(contents->as_str(), *values, canonical->as_path());
+            render_configure_template(input->contents.as_str(), *values, input->source.as_path());
         if (rendered.is_err()) {
-            return Err(InstallScriptError::Template(rstd::move(canonical).unwrap(),
+            return Err(InstallScriptError::Template(rstd::move(input).unwrap().source,
                                                     rstd::move(rendered).unwrap_err()));
         }
         return Ok(rstd::move(rendered).unwrap());
@@ -409,6 +390,43 @@ public:
     auto take_deferred_error() -> Option<InstallScriptError> { return rstd::move(deferred_error_); }
 
 private:
+    auto read_input(String input_text, ref<str> context)
+        -> InstallScriptResult<InstallScriptInput> {
+        auto input = recipe_path(rstd::move(input_text), context);
+        if (input.is_err()) {
+            return Err(InstallScriptError::Binding(package_.script->clone(),
+                                                   rstd::move(input).unwrap_err_unchecked()));
+        }
+        auto source   = package_.root.join(input->as_path());
+        auto metadata = rstd::fs::symlink_metadata(source.as_path());
+        if (metadata.is_err()) {
+            return script_io_failure<InstallScriptInput>(
+                "inspect install input"_str, source.as_path(), rstd::move(metadata).unwrap_err());
+        }
+        if (! metadata->is_file() || metadata->is_symlink()) {
+            return script_failure<InstallScriptInput>(rstd::format(
+                "install input '{}' is not a regular non-symlink file", source.as_path()));
+        }
+        auto canonical = rstd::fs::canonicalize(source.as_path());
+        if (canonical.is_err()) {
+            return script_io_failure<InstallScriptInput>(
+                "resolve install input"_str, source.as_path(), rstd::move(canonical).unwrap_err());
+        }
+        if (canonical->as_path().strip_prefix(package_.root.as_path()).is_none()) {
+            return script_failure<InstallScriptInput>(
+                rstd::format("install input '{}' escapes package root", source.as_path()));
+        }
+        auto contents = rstd::fs::read_to_string(canonical->as_path());
+        if (contents.is_err()) {
+            return script_io_failure<InstallScriptInput>(
+                "read install input"_str, canonical->as_path(), rstd::move(contents).unwrap_err());
+        }
+        return Ok(InstallScriptInput {
+            .source   = rstd::move(canonical).unwrap(),
+            .contents = rstd::move(contents).unwrap(),
+        });
+    }
+
     const PackageInstallInput& package_;
     Option<InstallRecipe>      recipe_;
     Option<InstallScriptError> deferred_error_;
@@ -481,6 +499,22 @@ auto execute_install_script(const PackageInstallInput& package, const InstallScr
                 return Err(luato::Error::binding(rstd::move(text)));
             }
             frame.push(rstd::move(rendered).unwrap());
+            return Ok(usize(1));
+        }));
+    module.add(luato::NativeFunctionSpec::make(
+        String::make("read_file"_str),
+        usize(1),
+        [&session](luato::CallFrame& frame) -> luato::BindingResult {
+            auto path = frame.required<String>(usize {});
+            if (path.is_err()) return Err(rstd::move(path).unwrap_err_unchecked());
+            auto contents = session.read_file(rstd::move(path).unwrap_unchecked());
+            if (contents.is_err()) {
+                auto error = rstd::move(contents).unwrap_err();
+                auto text  = rstd::format("{}", error);
+                session.defer_error(rstd::move(error));
+                return Err(luato::Error::binding(rstd::move(text)));
+            }
+            frame.push(rstd::move(contents).unwrap());
             return Ok(usize(1));
         }));
     module.add(luato::NativeFunctionSpec::make(

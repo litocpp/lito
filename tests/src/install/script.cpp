@@ -56,9 +56,10 @@ TEST_F(InstallScript, InstallScriptProducesAnOwnedRecipeOnce) {
           "[package]\nname = \"fixture-install-script\"\nversion = \"2.4.6\"\n"_str },
         { "fragment.in"_str, "@NAME@ @VERSION@\n"_str },
         { "manifest.in"_str,
-          "@FRAGMENT@@PROFILE@ @TARGET@ @ARCH@ @ENVIRONMENT@ @ENVIRONMENT_EMPTY@ @ENVIRONMENT_UNSET@ @ENVIRONMENT_UNSET_COUNT@\n"_str },
-        { "resource.txt"_str, "resource\n"_str },
-        { "install.lua"_str, R"lua(local rendered = lito.render_template({
+          "@FRAGMENT@@RAW@@PROFILE@ @TARGET@ @ARCH@ @ENVIRONMENT@ @ENVIRONMENT_EMPTY@ @ENVIRONMENT_UNSET@ @ENVIRONMENT_UNSET_COUNT@\n"_str },
+        { "resource.txt"_str, "resource @literal@\n"_str },
+        { "install.lua"_str, R"lua(local raw = lito.read_file("resource.txt")
+local rendered = lito.render_template({
     input = "fragment.in",
     values = { NAME = lito.package_name, VERSION = lito.package_version },
 })
@@ -78,7 +79,7 @@ lito.install({
         input = "manifest.in",
         destination = "share/fixture/manifest.txt",
         values = {
-            FRAGMENT = rendered, PROFILE = lito.profile, TARGET = lito.target,
+            FRAGMENT = rendered, RAW = raw, PROFILE = lito.profile, TARGET = lito.target,
             ARCH = lito.target_arch,
             ENVIRONMENT = lito.env("LITO_TEST_INSTALL_ENVIRONMENT"),
             ENVIRONMENT_EMPTY = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") == "",
@@ -127,6 +128,9 @@ lito.install({
     auto fragment = recipe->templates[usize {}].values.get("FRAGMENT"_str);
     ASSERT_TRUE(fragment.is_some());
     EXPECT_EQ((**fragment).string(), "fixture-install-script 2.4.6\n"_str);
+    auto raw = recipe->templates[usize {}].values.get("RAW"_str);
+    ASSERT_TRUE(raw.is_some());
+    EXPECT_EQ((**raw).string(), "resource @literal@\n"_str);
     auto environment_value = recipe->templates[usize {}].values.get("ENVIRONMENT"_str);
     ASSERT_TRUE(environment_value.is_some());
     EXPECT_EQ((**environment_value).string(), "fixture-environment"_str);

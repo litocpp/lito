@@ -419,14 +419,17 @@ auto external_usage_metadata(lito::dependency::DependencyVisibility visibility,
     });
     auto default_targets = Vec<lito::package::PackageTargetId>::make();
     default_targets.push(targets[usize(1)].id.clone());
+    auto available_targets = Vec<lito::package::PackageTargetId>::make();
+    available_targets.push(default_targets[usize {}].clone());
     auto profiles = Vec<lito::cpp::ProfileSpec>::make();
     profiles.push(default_profile(parser));
     return Ok(lito::cpp::PackageMetadata {
-        .name            = String::make("external-usage"_str),
-        .default_profile = String::make("debug"_str),
-        .default_targets = rstd::move(default_targets),
-        .profiles        = rstd::move(profiles),
-        .targets         = rstd::move(targets),
+        .name              = String::make("external-usage"_str),
+        .default_profile   = String::make("debug"_str),
+        .default_targets   = rstd::move(default_targets),
+        .available_targets = rstd::move(available_targets),
+        .profiles          = rstd::move(profiles),
+        .targets           = rstd::move(targets),
     });
 }
 } // namespace lito_test

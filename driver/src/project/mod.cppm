@@ -648,6 +648,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     auto metadata       = cpp::adapt_package_graph_metadata(rstd::move(project.graph),
                                                             project.selected_package_names,
                                                             project.selected_targets,
+                                                            project.effective_targets,
                                                             resolved_configuration,
                                                             rstd::move(resolved_profile),
                                                             session.platform,

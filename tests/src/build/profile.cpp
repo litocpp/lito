@@ -936,6 +936,7 @@ linker-options = ["-Wl,--pop-state"]
     auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                             packages,
                                                             targets,
+                                                            targets,
                                                             build_configuration,
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
@@ -994,6 +995,7 @@ options = ["-O2"]
     auto metadata = lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                             packages,
                                                             targets,
+                                                            targets,
                                                             build_configuration,
                                                             rstd::move(profile).unwrap(),
                                                             native_platform(),
@@ -1038,6 +1040,7 @@ options = ["-O2"]
     auto c_metadata =
         lito::cpp::adapt_package_graph_metadata(rstd::move(c_graph).unwrap(),
                                                 c_packages,
+                                                c_targets,
                                                 c_targets,
                                                 build_configuration,
                                                 rstd::move(c_profile).unwrap(),
@@ -1154,6 +1157,7 @@ options = ["-ULITO_FEAT_API"]
         auto metadata =
             lito::cpp::adapt_package_graph_metadata(rstd::move(graph).unwrap(),
                                                     packages,
+                                                    targets,
                                                     targets,
                                                     build_configuration,
                                                     rstd::move(profile).unwrap(),

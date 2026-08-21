@@ -857,6 +857,7 @@ auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
 auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        graph,
                                   const Vec<String>&                         selected_package_names,
                                   const Vec<lito::package::PackageTargetId>& selected_targets,
+                                  const Vec<lito::package::PackageTargetId>& available_targets,
                                   const BuildConfiguration&                  configuration,
                                   ProfileSpec                                profile,
                                   const BuildPlatform&                       platform,
@@ -1247,6 +1248,15 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         }
         default_targets.push(target.clone());
     }
+    auto selectable_targets =
+        Vec<lito::package::PackageTargetId>::with_capacity(available_targets.len());
+    for (const auto& target : available_targets) {
+        if (! selected.contains_key(target.package.as_str())) {
+            return adapter_failure<PackageMetadata>(
+                rstd::format("available target package '{}' is missing", target.package.as_str()));
+        }
+        selectable_targets.push(target.clone());
+    }
     auto resolved_script_packages = Vec<lito::package::ResolvedScriptPackageView>::make();
     for (const auto& provider : graph.packages) {
         if (provider.manifest.script.is_none()) continue;
@@ -1311,7 +1321,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             .package         = Some(package.manifest.name.clone()),
             .source_identity = package.source_identity.clone(),
             .root            = package.manifest.root.clone(),
-            .script = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
+            .script          = package.manifest.root.join(PathBuf::from("build.lua"_str).as_path()),
             .script_dependencies = rstd::move(script_dependencies),
             .script_packages     = clone_script_packages(),
         });
@@ -1344,6 +1354,7 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         .build_scripts     = rstd::move(build_scripts),
         .default_profile   = rstd::move(default_profile),
         .default_targets   = rstd::move(default_targets),
+        .available_targets = rstd::move(selectable_targets),
         .selected_packages = rstd::move(selected_packages),
         .build_tools       = rstd::move(build_tools),
         .toolchain =
