@@ -168,7 +168,8 @@ TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
     auto update = lito::lock::load_lock_session(fixture->root.as_path(),
                                                 lito::lock::LockConfig {},
                                                 false,
-                                                lito::source::GitResolutionMode::Refresh);
+                                                lito::source::GitResolutionMode::Refresh,
+                                                lito::lock::InvalidLockPolicy::Replace);
     ASSERT_TRUE(update.is_err());
     auto locked = lito::lock::load_lock_session(fixture->root.as_path(), true);
     ASSERT_TRUE(locked.is_err());

@@ -22,6 +22,12 @@ enum class LockStatus
     Updated,
 };
 
+enum class InvalidLockPolicy
+{
+    Reject,
+    Replace,
+};
+
 class LockSession {
     bool                                  locked_ { false };
     PathBuf                               root_;
@@ -40,7 +46,8 @@ public:
     friend auto load_lock_session(ref<rstd::path::Path>           root,
                                   const LockConfig&               config,
                                   bool                            locked,
-                                  lito::source::GitResolutionMode git) -> LockResult<LockSession>;
+                                  lito::source::GitResolutionMode git,
+                                  InvalidLockPolicy invalid) -> LockResult<LockSession>;
     friend auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
         -> LockResult<LockStatus>;
 };
@@ -48,16 +55,18 @@ public:
 auto load_locked_project(ref<rstd::path::Path> root, const LockConfig& config = {})
     -> LockResult<LockedProject>;
 
-auto load_lock_session(ref<rstd::path::Path>           root,
-                       const LockConfig&               config,
-                       bool                            locked,
-                       lito::source::GitResolutionMode git =
-                           lito::source::GitResolutionMode::ReuseLocked) -> LockResult<LockSession>;
+auto load_lock_session(
+    ref<rstd::path::Path>           root,
+    const LockConfig&               config,
+    bool                            locked,
+    lito::source::GitResolutionMode git     = lito::source::GitResolutionMode::ReuseLocked,
+    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject) -> LockResult<LockSession>;
 
-auto load_lock_session(ref<rstd::path::Path>           root,
-                       bool                            locked,
-                       lito::source::GitResolutionMode git =
-                           lito::source::GitResolutionMode::ReuseLocked) -> LockResult<LockSession>;
+auto load_lock_session(
+    ref<rstd::path::Path>           root,
+    bool                            locked,
+    lito::source::GitResolutionMode git     = lito::source::GitResolutionMode::ReuseLocked,
+    InvalidLockPolicy               invalid = InvalidLockPolicy::Reject) -> LockResult<LockSession>;
 
 auto sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
     -> LockResult<LockStatus>;

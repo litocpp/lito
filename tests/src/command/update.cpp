@@ -57,6 +57,59 @@ sources = ["main.cpp"]
     EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
 }
 
+TEST_F(Update, DependencyUpdateReplacesInvalidCurrentLock) {
+    struct InvalidLockCase {
+        ref<str> name;
+        ref<str> contents;
+    };
+    constexpr InvalidLockCase invalid[] = {
+        {
+            "unknown-field"_str,
+            R"json({
+  "packages": [{
+    "build-dependencies": [],
+    "dependencies": [],
+    "externals": [],
+    "manifest": "lito.toml",
+    "name": "fixture-invalid-update",
+    "runtime-dependencies": [],
+    "source": { "kind": "path", "path": "." },
+    "version": "1.0.0"
+  }],
+  "version": 2
+})json"_str,
+        },
+        { "malformed-json"_str, "{"_str },
+    };
+    for (const auto& item : invalid) {
+        SCOPED_TRACE(item.name);
+        const ProjectFile files[] = {
+            {
+                "lito.toml"_str,
+                R"toml([package]
+name = "fixture-invalid-update"
+version = "1.0.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-invalid-update"
+sources = ["main.cpp"]
+)toml"_str,
+            },
+            { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+            { "lito.lock"_str, item.contents },
+        };
+        auto project = materialize(item.name, files);
+        ASSERT_TRUE(project.is_ok());
+        auto updated = lito::update_dependencies(lito::UpdateRequest {
+            .root = project->root.clone(),
+        });
+        ASSERT_TRUE(updated.is_ok());
+        EXPECT_EQ(*updated, lito::lock::LockStatus::Updated);
+        EXPECT_TRUE(lito::lock::load_locked_project(project->root.as_path()).is_ok());
+    }
+}
+
 TEST_F(Update, DependencyUpdateWritesConfiguredLocalLock) {
     const ProjectFile files[] = {
         { ".lito/config.toml"_str, "[lock]\npath = \".lito/lito.lock\"\n"_str },

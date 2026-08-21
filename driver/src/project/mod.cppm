@@ -49,23 +49,25 @@ auto observer_value(const Option<BuildEventSink>& observer) -> BuildEventSink {
     return observer.is_some() ? *observer : BuildEventSink {};
 }
 
-auto start_project_resolution(const lito::package::PackageSelection&    selection,
-                              lito::package::PackageSelectionPurpose    purpose,
-                              const lito::source::PackageSourceConfig&  sources,
-                              const lito::lock::LockConfig&             lock,
-                              bool                                      locked,
-                              lito::source::GitResolutionMode           git,
-                              const TargetInfo*                         target,
-                              lito::tools::ToolResolver*                tool_resolver,
-                              const ResolvedProcessEnvironment&         environment,
-                              usize                                     jobs     = usize(1),
-                              BuildEventSink                            observer = {},
-                              Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
-                              lito::source::SourceMaterializationPolicy materialization =
-                                  lito::source::SourceMaterializationPolicy::Materialize)
+auto start_project_resolution(
+    const lito::package::PackageSelection&    selection,
+    lito::package::PackageSelectionPurpose    purpose,
+    const lito::source::PackageSourceConfig&  sources,
+    const lito::lock::LockConfig&             lock,
+    bool                                      locked,
+    lito::source::GitResolutionMode           git,
+    const TargetInfo*                         target,
+    lito::tools::ToolResolver*                tool_resolver,
+    const ResolvedProcessEnvironment&         environment,
+    usize                                     jobs     = usize(1),
+    BuildEventSink                            observer = {},
+    Option<lito::workspace::WorkspaceCatalog> catalog  = None(),
+    lito::source::SourceMaterializationPolicy materialization =
+        lito::source::SourceMaterializationPolicy::Materialize,
+    lito::lock::InvalidLockPolicy invalid_lock = lito::lock::InvalidLockPolicy::Reject)
     -> ProjectResult<StartedProjectResolution> {
-    auto lock_session =
-        rstd_try(lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git));
+    auto lock_session = rstd_try(
+        lito::lock::load_lock_session(selection.root.as_path(), lock, locked, git, invalid_lock));
     auto resolution            = lock_session.take_resolution_options();
     resolution.sources         = sources.clone();
     resolution.materialization = materialization;
@@ -100,32 +102,37 @@ auto start_project_resolution(const lito::package::PackageSelection&    selectio
     });
 }
 
-auto resolve_project(const lito::package::PackageSelection&         selection,
-                     lito::package::PackageSelectionPurpose         purpose,
-                     const lito::source::PackageSourceConfig&       sources,
-                     const lito::lock::LockConfig&                  lock_config,
-                     bool                                           locked,
-                     lito::source::GitResolutionMode                git,
-                     const TargetInfo*                              target,
-                     lito::tools::ToolResolver&                     tool_resolver,
-                     const ResolvedProcessEnvironment&              environment,
-                     const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
-                     usize                                          jobs     = usize(1),
-                     BuildEventSink                                 observer = {},
-                     Option<lito::workspace::WorkspaceCatalog>      catalog  = None())
+auto resolve_project(
+    const lito::package::PackageSelection&         selection,
+    lito::package::PackageSelectionPurpose         purpose,
+    const lito::source::PackageSourceConfig&       sources,
+    const lito::lock::LockConfig&                  lock_config,
+    bool                                           locked,
+    lito::source::GitResolutionMode                git,
+    const TargetInfo*                              target,
+    lito::tools::ToolResolver&                     tool_resolver,
+    const ResolvedProcessEnvironment&              environment,
+    const lito::dependency::CMakeBuildOverrideSet& cmake_build_overrides,
+    usize                                          jobs     = usize(1),
+    BuildEventSink                                 observer = {},
+    Option<lito::workspace::WorkspaceCatalog>      catalog  = None(),
+    lito::lock::InvalidLockPolicy invalid_lock              = lito::lock::InvalidLockPolicy::Reject)
     -> ProjectResult<ProjectResolution> {
-    auto started = rstd_try(start_project_resolution(selection,
-                                                     purpose,
-                                                     sources,
-                                                     lock_config,
-                                                     locked,
-                                                     git,
-                                                     target,
-                                                     rstd::addressof(tool_resolver),
-                                                     environment,
-                                                     jobs,
-                                                     observer,
-                                                     rstd::move(catalog)));
+    auto started =
+        rstd_try(start_project_resolution(selection,
+                                          purpose,
+                                          sources,
+                                          lock_config,
+                                          locked,
+                                          git,
+                                          target,
+                                          rstd::addressof(tool_resolver),
+                                          environment,
+                                          jobs,
+                                          observer,
+                                          rstd::move(catalog),
+                                          lito::source::SourceMaterializationPolicy::Materialize,
+                                          invalid_lock));
     auto declared_sources =
         rstd_try(resolve_external_dependency_sources(started.selection.graph,
                                                      rstd::move(started.external),
@@ -841,7 +848,9 @@ auto update_project_dependencies(ref<rstd::path::Path>                    root,
                                              environment,
                                              lito::dependency::CMakeBuildOverrideSet {},
                                              jobs,
-                                             observer_value(observer)));
+                                             observer_value(observer),
+                                             None(),
+                                             lito::lock::InvalidLockPolicy::Replace));
     return Ok(resolved.lock);
 }
 

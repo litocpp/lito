@@ -765,13 +765,27 @@ auto lito::lock::load_locked_project(ref<rstd::path::Path> root, const LockConfi
 auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
                                    const LockConfig&               config,
                                    bool                            locked,
-                                   lito::source::GitResolutionMode git) -> LockResult<LockSession> {
+                                   lito::source::GitResolutionMode git,
+                                   InvalidLockPolicy invalid) -> LockResult<LockSession> {
     if (locked && git == lito::source::GitResolutionMode::Refresh) {
         return lock_failure<LockSession>("--locked cannot refresh Git dependencies"_str);
     }
+    if (locked && invalid == InvalidLockPolicy::Replace) {
+        return lock_failure<LockSession>("--locked cannot replace an invalid lock file"_str);
+    }
     auto destination = resolve_lock_path(root, config);
     auto loaded      = load_existing(destination.as_path());
-    if (loaded.is_err()) return Err(rstd::move(loaded).unwrap_err());
+    if (loaded.is_err()) {
+        auto error = rstd::move(loaded).unwrap_err();
+        if (invalid != InvalidLockPolicy::Replace || ! error.is_Json()) {
+            return Err(rstd::move(error));
+        }
+        auto session         = LockSession {};
+        session.root_        = PathBuf::from(root);
+        session.destination_ = rstd::move(destination);
+        session.options_ = lito::source::SourceResolutionOptions { .locked = false, .git = git };
+        return Ok(rstd::move(session));
+    }
     auto existing = rstd::move(loaded).unwrap();
     if (existing.is_none()) {
         if (locked) {
@@ -801,7 +815,20 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
         session.options_ = lito::source::SourceResolutionOptions { .locked = false, .git = git };
         return Ok(rstd::move(session));
     }
-    rstd_try(validate_current_lock(*existing));
+    auto validation = validate_current_lock(*existing);
+    if (validation.is_err()) {
+        const auto version = lock_document_version(*existing);
+        if (invalid != InvalidLockPolicy::Replace ||
+            (version.is_some() && *version > LOCK_FORMAT_VERSION)) {
+            return Err(rstd::move(validation).unwrap_err());
+        }
+        auto session         = LockSession {};
+        session.root_        = PathBuf::from(root);
+        session.destination_ = rstd::move(destination);
+        session.existing_    = rstd::move(existing);
+        session.options_ = lito::source::SourceResolutionOptions { .locked = false, .git = git };
+        return Ok(rstd::move(session));
+    }
 
     auto options = lito::source::SourceResolutionOptions { .locked = locked, .git = git };
     auto project = Some(parse_locked_project(*existing));
@@ -818,8 +845,9 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
 
 auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
                                    bool                            locked,
-                                   lito::source::GitResolutionMode git) -> LockResult<LockSession> {
-    return load_lock_session(root, LockConfig {}, locked, git);
+                                   lito::source::GitResolutionMode git,
+                                   InvalidLockPolicy invalid) -> LockResult<LockSession> {
+    return load_lock_session(root, LockConfig {}, locked, git, invalid);
 }
 
 auto lito::lock::sync_lock(const lito::package::ResolvedPackageGraph& graph, LockSession session)
