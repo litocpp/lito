@@ -1,5 +1,6 @@
 add_library(lito.toolchain STATIC)
 target_compile_features(lito.toolchain PUBLIC cxx_std_20)
+target_sources(lito.toolchain PRIVATE src/lib.cpp)
 target_sources(
   lito.toolchain
   PUBLIC FILE_SET
