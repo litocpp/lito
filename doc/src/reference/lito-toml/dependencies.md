@@ -4,10 +4,12 @@ Dependency table keys are package names and must match the package found at the 
 
 ## `[dependencies.NAME]`
 
-A normal package dependency has exactly one source:
+A normal package dependency has exactly one source. `NAME` is always the provider package name;
+package aliases are not supported:
 
 - `path = "RELATIVE"`;
 - `git = "URL"`, optionally with exactly one of `branch`, `tag`, `rev`, or `commit`;
+- `version = "REQUIREMENT"` for a Registry package, optionally with `registry = "NAME"`;
 - `workspace = true` to reuse `[workspace.dependencies.NAME]`.
 
 `commit` is a full 40-digit hexadecimal Git object ID. Git URLs and selectors must be non-empty, may
@@ -29,23 +31,28 @@ visibility = "private"
 git = "https://github.com/litocpp/rstd.git"
 branch = "main"
 visibility = "public"
+
+[dependencies.geometry-codec]
+version = "^1.4"
+registry = "internal"
+visibility = "private"
 ```
 
 ## `[dev-dependencies.NAME]`
 
-Development dependencies use the same path/Git/workspace sources and feature fields but do not
+Development dependencies use the same package sources and feature fields but do not
 accept `visibility`. They are considered when selected targets are tests, benchmarks, or compile
 tests.
 
 ## `[runtime-dependencies.NAME]`
 
-Runtime dependencies use path, Git, or workspace sources and do not accept `visibility`, `features`,
-or `default-features`. They belong to runtime/install planning rather than compilation.
+Runtime dependencies use the same package sources and do not accept `visibility`, `features`, or
+`default-features`. They belong to runtime/install planning rather than compilation.
 
 ## `[workspace.dependencies.NAME]`
 
-The workspace declaration provides exactly one `path` or `git` source. It does not contain
-visibility or feature requests:
+The workspace declaration provides exactly one package source. It does not contain visibility or
+feature requests:
 
 ```toml
 [workspace.dependencies.geometry]

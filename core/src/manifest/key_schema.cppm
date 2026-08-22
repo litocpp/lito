@@ -80,8 +80,7 @@ auto dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "visibility"_str ||
            key == "builtin"_str || key == "workspace"_str || key == "features"_str ||
-           key == "default-features"_str || key == "version"_str || key == "package"_str ||
-           key == "registry"_str;
+           key == "default-features"_str || key == "version"_str || key == "registry"_str;
 }
 
 auto dev_dependency_key(ref<str> key) -> bool {
@@ -91,7 +90,7 @@ auto dev_dependency_key(ref<str> key) -> bool {
 auto workspace_dependency_key(ref<str> key) -> bool {
     return key == "path"_str || key == "git"_str || key == "branch"_str || key == "tag"_str ||
            key == "rev"_str || key == "commit"_str || key == "builtin"_str ||
-           key == "version"_str || key == "package"_str || key == "registry"_str;
+           key == "version"_str || key == "registry"_str;
 }
 
 auto workspace_dependency_reference_key(ref<str> key) -> bool {

@@ -391,25 +391,22 @@ auto workspace_reference_enabled(const Toml& specification, ref<str> context)
 
 auto parse_package_dependency_source(const Toml& specification,
                                      ref<str>    context,
-                                     ref<str>    dependency_alias)
+                                     ref<str>    dependency_name)
     -> ManifestSchemaResult<lito::source::PackageSourceRequirement> {
     auto path     = optional_string(specification, "path"_str, context);
     auto git      = optional_string(specification, "git"_str, context);
     auto builtin  = optional_string(specification, "builtin"_str, context);
     auto version  = optional_string(specification, "version"_str, context);
-    auto package  = optional_string(specification, "package"_str, context);
     auto registry = optional_string(specification, "registry"_str, context);
     if (path.is_err()) return Err(rstd::move(path).unwrap_err());
     if (git.is_err()) return Err(rstd::move(git).unwrap_err());
     if (builtin.is_err()) return Err(rstd::move(builtin).unwrap_err());
     if (version.is_err()) return Err(rstd::move(version).unwrap_err());
-    if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (registry.is_err()) return Err(rstd::move(registry).unwrap_err());
     auto       path_value     = rstd::move(path).unwrap();
     auto       git_value      = rstd::move(git).unwrap();
     auto       builtin_value  = rstd::move(builtin).unwrap();
     auto       version_value  = rstd::move(version).unwrap();
-    auto       package_value  = rstd::move(package).unwrap();
     auto       registry_value = rstd::move(registry).unwrap();
     const auto source_count   = usize(path_value.is_some()) + usize(git_value.is_some()) +
                                 usize(builtin_value.is_some()) + usize(version_value.is_some());
@@ -423,9 +420,9 @@ auto parse_package_dependency_source(const Toml& specification,
         return manifest_schema_failure<lito::source::PackageSourceRequirement>(
             rstd::format("{} Git selector requires 'git'", context));
     }
-    if (version_value.is_none() && (package_value.is_some() || registry_value.is_some())) {
+    if (version_value.is_none() && registry_value.is_some()) {
         return manifest_schema_failure<lito::source::PackageSourceRequirement>(
-            rstd::format("{}.package and .registry require a Registry 'version'", context));
+            rstd::format("{}.registry requires a Registry 'version'", context));
     }
     if (path_value.is_some()) {
         auto parsed = relative_path(rstd::move(path_value).unwrap(), "dependency.path"_str);
@@ -441,11 +438,10 @@ auto parse_package_dependency_source(const Toml& specification,
         return Ok(lito::source::PackageSourceRequirement::Builtin(rstd::move(id)));
     }
     if (version_value.is_some()) {
-        auto package_text   = package_value.is_some() ? package_value->as_str() : dependency_alias;
-        auto parsed_package = lito::registry::RegistryPackageName::parse(package_text);
+        auto parsed_package = lito::registry::RegistryPackageName::parse(dependency_name);
         if (parsed_package.is_err()) {
             return manifest_schema_failure<lito::source::PackageSourceRequirement>(rstd::format(
-                "{}.package '{}' is not a canonical Registry package name", context, package_text));
+                "{} name '{}' is not a canonical Registry package name", context, dependency_name));
         }
         auto parsed_requirement =
             lito::registry::VersionRequirement::parse(version_value->as_str());

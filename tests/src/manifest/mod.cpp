@@ -72,7 +72,7 @@ authors = ["Lito Authors <authors@example.invalid>"]
               "Lito Authors <authors@example.invalid>"_str);
 }
 
-TEST_F(Manifest, RegistryDependencyKeepsAliasPackageAndRequirementDistinct) {
+TEST_F(Manifest, RegistryDependencyUsesDependencyName) {
     auto project = manifest("registry-dependency"_str, R"toml([package]
 name = "fixture-registry-dependency"
 version = "0.1.0"
@@ -82,9 +82,8 @@ name = "fixture-registry-dependency"
 module = "fixture.registry_dependency"
 archive = "fixture-registry-dependency"
 
-[dependencies.local-alias]
+[dependencies.upstream-package]
 version = "^1.4"
-package = "upstream-package"
 registry = "internal"
 visibility = "private"
 )toml"_str);
@@ -93,7 +92,7 @@ visibility = "private"
     ASSERT_TRUE(loaded.is_ok());
     ASSERT_EQ(loaded->dependencies.len(), usize(1));
     const auto& dependency = loaded->dependencies[usize {}];
-    EXPECT_EQ(dependency.name.as_str(), "local-alias"_str);
+    EXPECT_EQ(dependency.name.as_str(), "upstream-package"_str);
     ASSERT_TRUE(dependency.source.is_Registry());
     const auto& source = dependency.source.as_Registry();
     ASSERT_TRUE(source.registry.is_some());
@@ -636,6 +635,20 @@ members = ["member"]
 [package]
 name = "fixture-workspace-mixed"
 version = "0.1.0"
+)lito"_str },
+    { "registry-package-alias"_str, R"lito([package]
+name = "fixture-registry-package-alias"
+version = "0.1.0"
+
+[lib]
+name = "fixture-registry-package-alias"
+module = "fixture.registry_package_alias"
+archive = "fixture-registry-package-alias"
+
+[dependencies.local-name]
+version = "1.0.0"
+package = "upstream-package"
+visibility = "private"
 )lito"_str },
 };
 

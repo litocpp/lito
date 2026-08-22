@@ -17,7 +17,10 @@ Supported package sources are:
 
 - `path`, resolved relative to the declaring manifest;
 - `git`, optionally with exactly one of `branch`, `tag`, `rev`, or a full 40-digit `commit`;
+- Registry `version`, optionally selecting a configured `registry`;
 - `workspace = true`, which reuses the workspace declaration with the same name.
+
+The dependency key is always the provider package name. Package aliases are not supported.
 
 A package dependency declares `visibility`:
 
