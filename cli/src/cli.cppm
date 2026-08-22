@@ -165,6 +165,13 @@ struct SdkUninstallOptions {
     String version;
 };
 
+struct RegistryInspectOptions {
+    bool            capabilities {};
+    Option<String>  protocol;
+    Option<PathBuf> archive;
+    Option<String>  request_json;
+};
+
 class LockCommand {
     RSTD_ENUM(LockCommand, (Export, (LockExportOptions options;)))
 };
@@ -192,6 +199,10 @@ class SdkCommand {
               (AndroidNdk, (SdkActionCommand command;)))
 };
 
+class RegistryCommand {
+    RSTD_ENUM(RegistryCommand, (Inspect, (RegistryInspectOptions options;)))
+};
+
 class CliCommand {
     RSTD_ENUM(CliCommand,
               (Build, (BuildOptions options;)),
@@ -204,7 +215,8 @@ class CliCommand {
               (Update, (UpdateOptions options;)),
               (Lock, (LockCommand command;)),
               (Config, (ConfigCommand command;)),
-              (Sdk, (SdkCommand command;)))
+              (Sdk, (SdkCommand command;)),
+              (Registry, (RegistryCommand command;)))
 };
 
 class CliOutcome {
@@ -501,20 +513,39 @@ struct SdkSchema {
     auto decode(const Matches& matches) const -> Result<SdkCommand, CliDecodeError>;
 };
 
+struct RegistryInspectSchema {
+    CommandKey     command;
+    ArgKey<bool>   capabilities;
+    ArgKey<String> protocol;
+    ArgKey<String> archive;
+    ArgKey<String> request_json;
+    ArgKey<bool>   json;
+
+    auto decode(const Matches& matches) const -> Result<RegistryInspectOptions, CliDecodeError>;
+};
+
+struct RegistrySchema {
+    CommandKey            command;
+    RegistryInspectSchema inspect;
+
+    auto decode(const Matches& matches) const -> Result<RegistryCommand, CliDecodeError>;
+};
+
 struct CliSchema {
-    RootArgs      root;
-    BuildSchema   build;
-    InstallSchema install;
-    TestSchema    test;
-    BenchSchema   bench;
-    DocSchema     doc;
-    ScanSchema    scan;
-    FormatSchema  format;
-    UpdateSchema  update;
-    LockSchema    lock;
-    ConfigSchema  config;
-    SdkSchema     sdk;
-    Parser        parser;
+    RootArgs       root;
+    BuildSchema    build;
+    InstallSchema  install;
+    TestSchema     test;
+    BenchSchema    bench;
+    DocSchema      doc;
+    ScanSchema     scan;
+    FormatSchema   format;
+    UpdateSchema   update;
+    LockSchema     lock;
+    ConfigSchema   config;
+    SdkSchema      sdk;
+    RegistrySchema registry;
+    Parser         parser;
 };
 
 template<typename Schema>
@@ -1087,18 +1118,65 @@ auto make_sdk_definition() -> CommandDefinition<SdkSchema> {
     };
 }
 
+auto make_registry_definition() -> CommandDefinition<RegistrySchema> {
+    auto inspect = Command::make("inspect"_str);
+    inspect.about("Inspect a Registry package archive"_str);
+    auto inspect_key = inspect.key();
+    auto capabilities =
+        inspect.add_arg(Arg<bool>::flag("capabilities"_str)
+                            .long_name("capabilities"_str)
+                            .help("Report the versioned inspector capabilities"_str));
+    auto protocol = inspect.add_arg(Arg<String>::value("protocol"_str, string_parser())
+                                        .long_name("protocol"_str)
+                                        .value_name("PROTOCOL"_str)
+                                        .help("Select the inspector wire protocol"_str));
+    auto archive  = inspect.add_arg(Arg<String>::value("archive"_str, string_parser())
+                                        .long_name("archive"_str)
+                                        .value_name("FILE"_str)
+                                        .help("Read the staged package archive"_str));
+    auto request_json =
+        inspect.add_arg(Arg<String>::value("request-json"_str, string_parser())
+                            .long_name("request-json"_str)
+                            .value_name("FILE"_str)
+                            .help("Read the inspection request JSON ('-' for stdin)"_str));
+    auto json = inspect.add_arg(
+        Arg<bool>::flag("json"_str).long_name("json"_str).help("Emit only protocol JSON"_str));
+
+    auto command = Command::make("registry"_str);
+    command.about("Registry protocol operations"_str);
+    command.require_subcommand();
+    auto key = command.key();
+    command.add_subcommand(rstd::move(inspect));
+    return {
+        RegistrySchema {
+            .command = key,
+            .inspect =
+                RegistryInspectSchema {
+                    .command      = inspect_key,
+                    .capabilities = capabilities,
+                    .protocol     = protocol,
+                    .archive      = archive,
+                    .request_json = request_json,
+                    .json         = json,
+                },
+        },
+        rstd::move(command),
+    };
+}
+
 auto make_schema() -> Result<CliSchema, DefinitionError> {
-    auto build   = make_build_definition();
-    auto install = make_install_definition();
-    auto test    = make_test_definition();
-    auto bench   = make_bench_definition();
-    auto doc     = make_doc_definition();
-    auto scan    = make_scan_definition();
-    auto format  = make_format_definition();
-    auto update  = make_update_definition();
-    auto lock    = make_lock_definition();
-    auto config  = make_config_definition();
-    auto sdk     = make_sdk_definition();
+    auto build    = make_build_definition();
+    auto install  = make_install_definition();
+    auto test     = make_test_definition();
+    auto bench    = make_bench_definition();
+    auto doc      = make_doc_definition();
+    auto scan     = make_scan_definition();
+    auto format   = make_format_definition();
+    auto update   = make_update_definition();
+    auto lock     = make_lock_definition();
+    auto config   = make_config_definition();
+    auto sdk      = make_sdk_definition();
+    auto registry = make_registry_definition();
 
     auto root = Command::make("lito"_str);
     root.about("Module-first C++ builder"_str);
@@ -1125,23 +1203,25 @@ auto make_schema() -> Result<CliSchema, DefinitionError> {
     root.add_subcommand(rstd::move(lock.command));
     root.add_subcommand(rstd::move(config.command));
     root.add_subcommand(rstd::move(sdk.command));
+    root.add_subcommand(rstd::move(registry.command));
 
     auto parser = rstd::move(root).build();
     if (parser.is_err()) return Err(rstd::move(parser).unwrap_err());
     return Ok(CliSchema {
-        .root    = rstd::move(root_args),
-        .build   = rstd::move(build.schema),
-        .install = rstd::move(install.schema),
-        .test    = rstd::move(test.schema),
-        .bench   = rstd::move(bench.schema),
-        .doc     = rstd::move(doc.schema),
-        .scan    = rstd::move(scan.schema),
-        .format  = rstd::move(format.schema),
-        .update  = rstd::move(update.schema),
-        .lock    = rstd::move(lock.schema),
-        .config  = rstd::move(config.schema),
-        .sdk     = rstd::move(sdk.schema),
-        .parser  = rstd::move(parser).unwrap(),
+        .root     = rstd::move(root_args),
+        .build    = rstd::move(build.schema),
+        .install  = rstd::move(install.schema),
+        .test     = rstd::move(test.schema),
+        .bench    = rstd::move(bench.schema),
+        .doc      = rstd::move(doc.schema),
+        .scan     = rstd::move(scan.schema),
+        .format   = rstd::move(format.schema),
+        .update   = rstd::move(update.schema),
+        .lock     = rstd::move(lock.schema),
+        .config   = rstd::move(config.schema),
+        .sdk      = rstd::move(sdk.schema),
+        .registry = rstd::move(registry.schema),
+        .parser   = rstd::move(parser).unwrap(),
     });
 }
 
@@ -1574,6 +1654,42 @@ auto SdkSchema::decode(const Matches& matches) const -> Result<SdkCommand, CliDe
     return Err(CliDecodeError::CommandMismatch(String::make("sdk"_str)));
 }
 
+auto RegistryInspectSchema::decode(const Matches& matches) const
+    -> Result<RegistryInspectOptions, CliDecodeError> {
+    auto reports_capabilities = rstd_try(flag_value(matches, capabilities));
+    auto emits_json           = rstd_try(flag_value(matches, json));
+    if (! emits_json) {
+        return Err(
+            CliDecodeError::InvalidUsage(String::make("registry inspect requires --json"_str)));
+    }
+    auto selected_protocol = rstd_try(optional_value(matches, protocol));
+    auto archive_path      = rstd_try(optional_value(matches, archive));
+    auto request           = rstd_try(optional_value(matches, request_json));
+    if (reports_capabilities) {
+        if (selected_protocol.is_some() || archive_path.is_some() || request.is_some()) {
+            return Err(CliDecodeError::InvalidUsage(String::make(
+                "registry inspect --capabilities conflicts with archive inspection options"_str)));
+        }
+    } else if (selected_protocol.is_none() || archive_path.is_none() || request.is_none()) {
+        return Err(CliDecodeError::InvalidUsage(String::make(
+            "registry inspect requires --protocol, --archive, and --request-json"_str)));
+    }
+    return Ok(RegistryInspectOptions {
+        .capabilities = reports_capabilities,
+        .protocol     = selected_protocol.is_some() ? Some((**selected_protocol).clone()) : None(),
+        .archive = archive_path.is_some() ? Some(PathBuf::from((**archive_path).clone())) : None(),
+        .request_json = request.is_some() ? Some((**request).clone()) : None(),
+    });
+}
+
+auto RegistrySchema::decode(const Matches& matches) const
+    -> Result<RegistryCommand, CliDecodeError> {
+    if (auto child = matches.subcommand_matches(inspect.command); child.is_some()) {
+        return Ok(RegistryCommand::Inspect(rstd_try(inspect.decode(**child))));
+    }
+    return Err(CliDecodeError::CommandMismatch(String::make("registry"_str)));
+}
+
 auto decode_command(const CliSchema& schema, const Matches& matches)
     -> Result<CliCommand, CliDecodeError> {
     if (auto child = matches.subcommand_matches(schema.build.command); child.is_some()) {
@@ -1620,6 +1736,10 @@ auto decode_command(const CliSchema& schema, const Matches& matches)
         auto command = rstd_try(schema.sdk.decode(**child));
         return Ok(CliCommand::Sdk(rstd::move(command)));
     }
+    if (auto child = matches.subcommand_matches(schema.registry.command); child.is_some()) {
+        auto command = rstd_try(schema.registry.decode(**child));
+        return Ok(CliCommand::Registry(rstd::move(command)));
+    }
     return Err(CliDecodeError::CommandMismatch(String::make("lito"_str)));
 }
 
@@ -1652,6 +1772,10 @@ auto decode_invocation(const CliSchema& schema, const Matches& matches)
     if (command.is_Config() && (no_config || ! overrides.is_empty())) {
         return Err(CliDecodeError::InvalidUsage(String::make(
             "the config command cannot be combined with --no-config or --config"_str)));
+    }
+    if (command.is_Registry() && (no_config || ! overrides.is_empty())) {
+        return Err(CliDecodeError::InvalidUsage(String::make(
+            "the registry command cannot be combined with --no-config or --config"_str)));
     }
     return Ok(CliInvocation {
         .working_directory = PathBuf::from(rstd::move(directory)),

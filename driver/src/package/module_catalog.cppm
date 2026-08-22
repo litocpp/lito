@@ -4,6 +4,7 @@ module;
 export module lito.driver:package.module_catalog;
 
 import rstd;
+import lito.crypto;
 import luato;
 import lito.core;
 
@@ -69,7 +70,7 @@ auto source_tree_file(const lito::source::SourceTree& tree, ref<str> path) -> Op
 }
 
 auto module_identity(ref<str> owner, ref<str> path, slice<u8> bytes) -> String {
-    return rstd::format("lua:{}:{}:{}", owner, path, rstd::crypto::sha256_hex(bytes).as_str());
+    return rstd::format("lua:{}:{}:{}", owner, path, lito::crypto::sha256_hex(bytes).as_str());
 }
 
 auto ScriptModuleCatalog::make(ref<rstd::path::Path>            root,

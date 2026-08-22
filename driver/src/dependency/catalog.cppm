@@ -4,6 +4,7 @@ module;
 export module lito.driver:dependency.catalog;
 
 import rstd;
+import lito.crypto;
 import lito.tools;
 import lito.core;
 import lito.cpp;
@@ -172,7 +173,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
             continue;
         }
         auto url    = Option<lito::parse::FetchUrl> {};
-        auto sha256 = Option<rstd::crypto::Sha256Digest> {};
+        auto sha256 = Option<lito::crypto::Sha256Digest> {};
         if (source.source.is_Archive()) {
             url    = Some(source.source.as_Archive().url.clone());
             sha256 = Some(source.source.as_Archive().sha256.clone());

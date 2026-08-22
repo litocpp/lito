@@ -4,6 +4,7 @@ module;
 export module lito.core:parse.value;
 
 import rstd;
+import lito.crypto;
 
 using namespace rstd::prelude;
 
@@ -18,12 +19,12 @@ enum class Sha256TextMode
 
 class Sha256Error {
     RSTD_ENUM(Sha256Error,
-              (Digest, (rstd::crypto::Sha256DigestParseError source;)),
+              (Digest, (lito::crypto::Sha256DigestParseError source;)),
               (NonCanonicalCase, (usize index;)))
 };
 
 auto parse_sha256(ref<str> value, Sha256TextMode mode)
-    -> Result<rstd::crypto::Sha256Digest, Sha256Error>;
+    -> Result<lito::crypto::Sha256Digest, Sha256Error>;
 
 class UrlError {
     RSTD_ENUM(UrlError,

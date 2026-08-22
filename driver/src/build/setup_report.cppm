@@ -1,6 +1,7 @@
 export module lito.driver:build.setup_report;
 
 import rstd;
+import lito.crypto;
 import lito.core;
 import lito.cpp;
 import lito.toolchain;
@@ -145,14 +146,14 @@ auto emit_build_setup_report(const Option<BuildSetupReportSink>&              re
                 for (const auto& entry : provider->embedded_source->entries()) {
                     if (entry.path().as_str() == "lib.lua"_str &&
                         entry.kind() == lito::source::SourceEntryKind::File) {
-                        digest = rstd::crypto::sha256_hex(entry.contents());
+                        digest = lito::crypto::sha256_hex(entry.contents());
                         break;
                     }
                 }
             } else {
                 auto contents = rstd::fs::read(
                     provider->manifest.root.join(PathBuf::from("lib.lua"_str).as_path()).as_path());
-                if (contents.is_ok()) digest = rstd::crypto::sha256_hex(contents->as_slice());
+                if (contents.is_ok()) digest = lito::crypto::sha256_hex(contents->as_slice());
             }
             auto supports = String::make();
             for (auto host : script.supports) {

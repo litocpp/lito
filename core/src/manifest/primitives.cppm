@@ -4,6 +4,7 @@ module;
 module lito.core:manifest.primitives;
 
 import rstd;
+import lito.crypto;
 import rstd.toml;
 import :manifest.error;
 import :parse;
@@ -123,10 +124,10 @@ auto parse_archive_url(ref<str> value, ref<str> context)
 }
 
 auto parse_manifest_sha256(ref<str> value, ref<str> context)
-    -> ManifestSchemaResult<rstd::crypto::Sha256Digest> {
+    -> ManifestSchemaResult<lito::crypto::Sha256Digest> {
     auto parsed = lito::parse::parse_sha256(value, lito::parse::Sha256TextMode::Flexible);
     if (parsed.is_err()) {
-        return manifest_schema_failure<rstd::crypto::Sha256Digest>(
+        return manifest_schema_failure<lito::crypto::Sha256Digest>(
             rstd::format("{}.sha256 is invalid: {}", context, rstd::move(parsed).unwrap_err()));
     }
     return Ok(rstd::move(parsed).unwrap());

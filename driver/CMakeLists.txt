@@ -1,4 +1,6 @@
 add_library(lito.driver STATIC)
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LITO_ARCHIVE REQUIRED IMPORTED_TARGET libarchive)
 target_compile_features(lito.driver PUBLIC cxx_std_20)
 target_sources(
   lito.driver
@@ -60,6 +62,7 @@ target_sources(
          src/config/document.cppm
          src/config/mod.cppm
          src/config/project.cppm
+         src/config/registry.cppm
          src/config/schema.cppm
          src/dependency/cmake.cppm
          src/dependency/catalog.cppm
@@ -95,6 +98,12 @@ target_sources(
          src/source/manager.cppm
          src/source/mod.cppm
          src/project/error.cppm
+         src/registry/archive.cppm
+         src/registry/blob.cppm
+         src/registry/http.cppm
+         src/registry/index.cppm
+         src/registry/inspection_protocol.cppm
+         src/registry/mod.cppm
          src/build/compile_test.cppm
          src/build/compile_plan.cppm
          src/build/package_discovery.cppm
@@ -120,4 +129,10 @@ target_sources(
 target_link_libraries(
   lito.driver
   PUBLIC lito.core lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
-  PRIVATE luato::luato rstd.bench rstd.json rstd.toml)
+  PRIVATE luato::luato rstd.bench rstd.json rstd.toml PkgConfig::LITO_ARCHIVE)
+
+if(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY)
+  target_compile_definitions(
+    lito.driver
+    PRIVATE LITO_OFFICIAL_REGISTRY_PUBLIC_KEY="${LITO_OFFICIAL_REGISTRY_PUBLIC_KEY}")
+endif()

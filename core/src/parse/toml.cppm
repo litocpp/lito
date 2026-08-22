@@ -1,6 +1,7 @@
 export module lito.core:parse.toml;
 
 import rstd;
+import lito.crypto;
 import rstd.toml;
 import :parse.error;
 import :parse.value;
@@ -30,7 +31,7 @@ auto required_non_empty_string(const rstd::toml::Value& value, ref<str> key, con
 auto required_sha256(const rstd::toml::Value& value,
                      ref<str>                 key,
                      const NodePath&          path,
-                     Sha256TextMode           mode) -> ParseResult<rstd::crypto::Sha256Digest>;
+                     Sha256TextMode           mode) -> ParseResult<lito::crypto::Sha256Digest>;
 auto required_fetch_url(const rstd::toml::Value& value, ref<str> key, const NodePath& path)
     -> ParseResult<FetchUrl>;
 auto required_https_url(const rstd::toml::Value& value, ref<str> key, const NodePath& path)
@@ -52,7 +53,7 @@ auto reject_unknown(const rstd::toml::Value& value, const NodePath& path, bool (
     -> ParseResult<empty>;
 
 auto sha256(const rstd::toml::Value& value, const NodePath& path, Sha256TextMode mode)
-    -> ParseResult<rstd::crypto::Sha256Digest>;
+    -> ParseResult<lito::crypto::Sha256Digest>;
 auto fetch_url(const rstd::toml::Value& value, const NodePath& path) -> ParseResult<FetchUrl>;
 auto https_url(const rstd::toml::Value& value, const NodePath& path) -> ParseResult<HttpsUrl>;
 auto normal_relative_path(const rstd::toml::Value& value, const NodePath& path)

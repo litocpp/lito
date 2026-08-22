@@ -88,7 +88,7 @@ TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
         { "invalid"_str, "{"_str },
         { "stale"_str,
           R"json({"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock-outdated","runtime-dependencies":[],"source":{"kind":"path","path":"."},"version":"1.0.0"}],"version":2})json"_str },
-        { "future-version"_str, R"json({"packages":[],"version":3})json"_str },
+        { "future-version"_str, R"json({"packages":[],"version":4})json"_str },
         { "git-reference-mismatch"_str,
           R"json({"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"commit":"0000000000000000000000000000000000000001","kind":"git","reference":{"kind":"commit","value":"1111111111111111111111111111111111111111"},"url":"https://example.invalid/repository.git"}}],"version":2})json"_str },
         { "dangling-dependency"_str,
@@ -118,7 +118,7 @@ TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
     ASSERT_TRUE(loaded.is_err());
     auto version_error = rstd::move(loaded).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("supports version 2"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("supports version 3"_str));
 }
 
 TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
@@ -160,7 +160,7 @@ TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
 }
 
 TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
-    constexpr auto future_lock = R"json({"packages":[],"version":3})json"_str;
+    constexpr auto future_lock = R"json({"packages":[],"version":4})json"_str;
     auto           fixture     = project("future-version"_str, future_lock);
     ASSERT_TRUE(fixture.is_ok());
     auto loading = lito::lock::load_lock_session(fixture->root.as_path(), false);
@@ -175,11 +175,11 @@ TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
     ASSERT_TRUE(locked.is_err());
     auto loading_error = rstd::move(loading).unwrap_err();
     ASSERT_TRUE(loading_error.is_Schema());
-    EXPECT_TRUE(loading_error.as_Schema().message.as_str().contains("supports version 2"_str));
+    EXPECT_TRUE(loading_error.as_Schema().message.as_str().contains("supports version 3"_str));
     auto update_error = rstd::move(update).unwrap_err();
     ASSERT_TRUE(update_error.is_Schema());
-    EXPECT_TRUE(update_error.as_Schema().message.as_str().contains("supports version 2"_str));
+    EXPECT_TRUE(update_error.as_Schema().message.as_str().contains("supports version 3"_str));
     auto locked_error = rstd::move(locked).unwrap_err();
     ASSERT_TRUE(locked_error.is_Schema());
-    EXPECT_TRUE(locked_error.as_Schema().message.as_str().contains("supports version 2"_str));
+    EXPECT_TRUE(locked_error.as_Schema().message.as_str().contains("supports version 3"_str));
 }

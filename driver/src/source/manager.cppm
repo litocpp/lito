@@ -4,6 +4,7 @@ module;
 export module lito.driver:source.manager;
 
 import rstd;
+import lito.crypto;
 import lito.core;
 import lito.tools;
 import lito.system;
@@ -126,6 +127,10 @@ class SourceManager {
             return Ok(
                 rstd::format("path\n{}\n{}", declaring_root, source.as_Path().path.as_path()));
         }
+        if (source.is_Registry()) {
+            return source_failure<String>(
+                "Registry dependency requires RegistrySourceResolver materialization"_str);
+        }
         const auto& git = source.as_Git();
         return Ok(git_requirement_identity(git.url.as_str(), git.reference));
     }
@@ -170,19 +175,7 @@ class SourceManager {
     }
 
     auto clone_source(const ResolvedPackageSource& source) const -> ResolvedPackageSource {
-        return ResolvedPackageSource {
-            .identity       = source.identity.clone(),
-            .kind           = source.kind,
-            .root_directory = source.root_directory.clone(),
-            .path           = source.path.clone(),
-            .git            = source.git.clone(),
-            .reference =
-                GitReference {
-                    .kind  = source.reference.kind,
-                    .value = source.reference.value.clone(),
-                },
-            .commit = source.commit.clone(),
-        };
+        return source.clone();
     }
 
     auto clone_external_outcome(const ExternalSourceFetchOutcome& outcome)
@@ -492,7 +485,7 @@ class SourceManager {
             prefix = String::make("repository"_str);
         }
         prefix.push('-');
-        prefix.push_str(rstd::crypto::sha256_hex(url).as_str());
+        prefix.push_str(lito::crypto::sha256_hex(url).as_str());
         return prefix;
     }
 
@@ -541,7 +534,7 @@ class SourceManager {
     auto fetch(ref<rstd::path::Path> repository, ref<str> url, ref<str> revision)
         -> SourceResult<String> {
         auto local_reference =
-            rstd::format("refs/lito/fetch/{}", rstd::crypto::sha256_hex(revision).as_str());
+            rstd::format("refs/lito/fetch/{}", lito::crypto::sha256_hex(revision).as_str());
         auto source = rstd::format("{}#{}", url, revision);
         emit_fetch(source.as_str(), repository);
         auto git = rstd_try(git_client(url));
@@ -903,6 +896,10 @@ public:
     auto resolve_external_source(const PackageSourceRequirement& requirement,
                                  ref<rstd::path::Path>           declaring_root)
         -> SourceResult<ResolvedPackageSource> {
+        if (requirement.is_Registry()) {
+            return source_failure<ResolvedPackageSource>(
+                "Registry dependency requires RegistrySourceResolver materialization"_str);
+        }
         if (requirement.is_Git()) {
             return resolve_git(requirement.as_Git().url.as_str(), requirement.as_Git().reference);
         }
@@ -918,6 +915,10 @@ public:
 
     auto acquire(const PackageSourceRequirement& requirement, ref<rstd::path::Path> declaring_root)
         -> SourceResult<usize> {
+        if (requirement.is_Registry()) {
+            return source_failure<usize>(
+                "Registry dependency requires RegistrySourceResolver materialization"_str);
+        }
         if (requirement.is_Git()) {
             const auto& git = requirement.as_Git();
             return acquire_git(git.url.as_str(), git.reference);
@@ -1196,6 +1197,10 @@ public:
     auto acquire_external(const PackageSourceRequirement& requirement,
                           ref<rstd::path::Path> declaring_root) -> SourceResult<AcquiredSource> {
         auto acquired = [&]() -> SourceResult<usize> {
+            if (requirement.is_Registry()) {
+                return source_failure<usize>(
+                    "Registry dependency requires RegistrySourceResolver materialization"_str);
+            }
             if (requirement.is_Git()) {
                 const auto& git = requirement.as_Git();
                 return acquire_git(git.url.as_str(), git.reference);

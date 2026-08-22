@@ -172,6 +172,59 @@ public:
     }
 };
 
+class LitoConfigRoot {
+    PathBuf root_;
+
+    explicit LitoConfigRoot(PathBuf root): root_(rstd::move(root)) {}
+
+public:
+    static auto resolve() -> SystemResult<LitoConfigRoot> {
+        auto root       = PathBuf::make();
+        auto configured = rstd::env::var("XDG_CONFIG_HOME"_str);
+        if (configured.is_some() && ! configured->is_empty()) {
+            auto candidate = PathBuf::from(rstd::move(configured).unwrap());
+            if (! candidate.as_path().is_absolute()) {
+                return Err(SystemError::Storage(
+                    String::make("XDG_CONFIG_HOME must be an absolute path"_str)));
+            }
+            root = rstd::move(candidate);
+        }
+        if (root.is_empty()) {
+#if defined(_WIN32)
+            auto local_app_data = rstd::env::var("LOCALAPPDATA"_str);
+            if (local_app_data.is_none() || local_app_data->is_empty()) {
+                return Err(SystemError::Storage(
+                    String::make("Lito config root requires XDG_CONFIG_HOME or LOCALAPPDATA"_str)));
+            }
+            root = PathBuf::from(rstd::move(local_app_data).unwrap());
+            if (! root.as_path().is_absolute()) {
+                return Err(SystemError::Storage(
+                    String::make("LOCALAPPDATA must be an absolute path"_str)));
+            }
+#else
+            auto home = rstd::env::var("HOME"_str);
+            if (home.is_none() || home->is_empty()) {
+                return Err(SystemError::Storage(
+                    String::make("Lito config root requires XDG_CONFIG_HOME or HOME"_str)));
+            }
+            root = PathBuf::from(rstd::move(home).unwrap());
+            if (! root.as_path().is_absolute()) {
+                return Err(SystemError::Storage(String::make("HOME must be an absolute path"_str)));
+            }
+            root.push(PathBuf::from(".config"_str).as_path());
+#endif
+        }
+        root.push(PathBuf::from("lito"_str).as_path());
+        return Ok(LitoConfigRoot { rstd::move(root) });
+    }
+
+    auto root() const noexcept -> ref<rstd::path::Path> { return root_.as_path(); }
+    auto registries() const -> PathBuf { return join(root_.as_path(), "registries.toml"_str); }
+    auto registry_credentials() const -> PathBuf {
+        return join(root_.as_path(), "registry-credentials.toml"_str);
+    }
+};
+
 class LitoDataRoot {
     PathBuf root_;
 
@@ -215,6 +268,7 @@ public:
     }
 
     auto root() const noexcept -> ref<rstd::path::Path> { return root_.as_path(); }
+    auto registry_cache_root() const -> PathBuf { return join(root_.as_path(), "registry"_str); }
 
     auto acquire_source_cache() const -> SystemResult<SourceCacheSession> {
         auto created = rstd::fs::create_dir_all(root_.as_path());

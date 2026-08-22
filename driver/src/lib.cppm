@@ -6,6 +6,7 @@ export import lito.tools;
 export import lito.toolchain;
 
 export import :config;
+export import :registry;
 export import :source;
 export import :package;
 export import :build;

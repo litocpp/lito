@@ -23,6 +23,10 @@ visibility = "public"
 workspace = true
 visibility = "public"
 
+[external-dependencies.pkg-config.libarchive]
+module = "libarchive"
+visibility = "link"
+
 [dependencies.lito-frontend]
 workspace = true
 visibility = "public"

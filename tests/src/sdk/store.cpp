@@ -2,6 +2,7 @@
 #include <rstd/macro.hpp>
 
 import rstd;
+import lito.crypto;
 import rstd.json;
 import rstd.test;
 import lito.driver;
@@ -164,9 +165,9 @@ auto materialize_installed_sdk(ref<rstd::path::Path>         data_home,
         installed_descriptor_with_files(version,
                                         host,
                                         u64(runtime_contents.len().to_primitive()),
-                                        rstd::crypto::sha256_hex(runtime_contents).as_str(),
+                                        lito::crypto::sha256_hex(runtime_contents).as_str(),
                                         u64(license_contents.len().to_primitive()),
-                                        rstd::crypto::sha256_hex(license_contents).as_str());
+                                        lito::crypto::sha256_hex(license_contents).as_str());
     auto descriptor = prefix.join(PathBuf::from("sdk.json"_str).as_path());
     rstd_try(rstd::fs::write(descriptor.as_path(), text.as_str().as_bytes()));
     return Ok(rstd::move(prefix));

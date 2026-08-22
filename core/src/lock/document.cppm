@@ -4,8 +4,13 @@ module;
 export module lito.core:lock.document;
 
 import rstd;
+import lito.crypto;
 import :source.git;
 import :parse;
+import :registry.archive;
+import :registry.digest;
+import :registry.identity;
+import :registry.version;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -13,7 +18,7 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::lock
 {
 
-inline constexpr auto LOCK_FORMAT_VERSION = u64(2);
+inline constexpr auto LOCK_FORMAT_VERSION = u64(3);
 
 class LockedSource {
     RSTD_ENUM(LockedSource,
@@ -21,7 +26,15 @@ class LockedSource {
               (Package, (PathBuf path;)),
               (Builtin, (String id; String digest;)),
               (Git, (String url; lito::source::GitReference reference; String commit;)),
-              (Archive, (lito::parse::FetchUrl url; rstd::crypto::Sha256Digest sha256;)))
+              (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
+              (Registry,
+               (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
+                lito::registry::ReleaseDigest                                              release;
+                lito::registry::SourceDigest                                               source;
+                lito::registry::ManifestDigest                                             manifest;
+                lito::registry::BlobDigest                                                 blob;
+                lito::registry::RegistryBlobSize      blob_size;
+                lito::registry::RegistryArchiveFormat format;)))
 };
 
 struct LockedPackageExternalSource {
@@ -31,6 +44,7 @@ struct LockedPackageExternalSource {
 };
 
 struct LockedPackage {
+    String                           id;
     String                           name;
     Option<String>                   version;
     LockedSource                     source;

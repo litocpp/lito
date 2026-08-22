@@ -4,6 +4,7 @@ module;
 export module lito.driver:install.identity;
 
 import rstd;
+import lito.crypto;
 import :install.error;
 import :install.package;
 import :install.source;
@@ -32,7 +33,7 @@ auto install_package_id(ref<str> name, ref<str> source_identity) -> InstallStore
     auto key = String::make(name);
     key.push_ascii('\n');
     key.push_str(source_identity);
-    return Ok(rstd::format("{}-{}", name, rstd::crypto::sha256_hex(key.as_str()).as_str()));
+    return Ok(rstd::format("{}-{}", name, lito::crypto::sha256_hex(key.as_str()).as_str()));
 }
 
 auto resolve_install_package_identity(ref<str> name, const InstallSourceProvenance& provenance)

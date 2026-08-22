@@ -22,3 +22,11 @@ visibility = "private"
 [dependencies.rstd-nostd]
 workspace = true
 visibility = "link"
+
+[dependencies.lito-utf8proc]
+workspace = true
+visibility = "private"
+
+[external-dependencies.pkg-config.libsodium]
+module = "libsodium"
+visibility = "link"

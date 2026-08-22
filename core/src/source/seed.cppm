@@ -23,6 +23,7 @@ enum class FetchSeedKind
 {
     Git,
     Archive,
+    RegistryBlob,
 };
 
 struct FetchSeedEntry {
@@ -98,6 +99,9 @@ auto required_seed_string(const Json& value, ref<str> key, ref<str> context)
 auto identity_kind(ref<str> identity) -> Option<FetchSeedKind> {
     if (identity.starts_with("lito-fetch-v1\ngit\n"_str)) return Some(FetchSeedKind::Git);
     if (identity.starts_with("lito-fetch-v1\narchive\n"_str)) return Some(FetchSeedKind::Archive);
+    if (identity.starts_with("lito-fetch-v1\nregistry-blob\n"_str)) {
+        return Some(FetchSeedKind::RegistryBlob);
+    }
     return None();
 }
 
@@ -147,9 +151,10 @@ auto load_fetch_seed_catalog(ref<rstd::path::Path> root) -> SourceResult<FetchSe
             return source_failure<FetchSeedCatalog>(
                 "fetch seed source identity has an unsupported version or kind"_str);
         }
-        const auto expected = kind == "git"_str       ? Some(FetchSeedKind::Git)
-                              : kind == "archive"_str ? Some(FetchSeedKind::Archive)
-                                                      : Option<FetchSeedKind> {};
+        const auto expected = kind == "git"_str             ? Some(FetchSeedKind::Git)
+                              : kind == "archive"_str       ? Some(FetchSeedKind::Archive)
+                              : kind == "registry-blob"_str ? Some(FetchSeedKind::RegistryBlob)
+                                                            : Option<FetchSeedKind> {};
         if (expected.is_none() || *expected != *parsed_kind) {
             return source_failure<FetchSeedCatalog>(
                 "fetch seed source kind does not match its identity"_str);

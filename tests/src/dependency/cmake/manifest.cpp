@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.crypto;
 import lito.tools;
 import rstd.test;
 import lito.core;
@@ -526,14 +527,14 @@ TEST_F(CMakeManifest, CMakeArchitectureArchivesAreSelectedForEffectiveTarget) {
     variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("aarch64"_str) },
         .url    = lito::parse::FetchUrl::parse("https://example.com/arm64.tar.gz"_str).unwrap(),
-        .sha256 = rstd::crypto::Sha256Digest::parse_hex(
+        .sha256 = lito::crypto::Sha256Digest::parse_hex(
                       "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"_str)
                       .unwrap(),
     });
     variants.push(lito::dependency::ExternalArchiveVariant {
         .architecture = lito::system::Architecture { .name = String::make("x86_64"_str) },
         .url          = lito::parse::FetchUrl::parse("https://example.com/x64.tar.gz"_str).unwrap(),
-        .sha256       = rstd::crypto::Sha256Digest::parse_hex(
+        .sha256       = lito::crypto::Sha256Digest::parse_hex(
                             "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
                             .unwrap(),
     });

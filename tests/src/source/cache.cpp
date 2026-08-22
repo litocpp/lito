@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.crypto;
 import lito.tools;
 import rstd.test;
 import lito.core;
@@ -151,7 +152,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
     ASSERT_TRUE(status->success());
     auto archive_bytes = rstd::fs::read(archive.as_path());
     ASSERT_TRUE(archive_bytes.is_ok());
-    auto digest   = rstd::crypto::sha256_digest(archive_bytes->as_slice());
+    auto digest   = lito::crypto::sha256_digest(archive_bytes->as_slice());
     auto url_text = String::make("file://"_str);
     for (const auto byte : archive.as_path().as_os_str().as_encoded_bytes()) {
         if (byte == u8(' ')) {
@@ -408,7 +409,7 @@ TEST_F(Source, ArchiveDownloadCacheIsGlobalAndExtractionIsProfileLocal) {
         .owner  = String::make("fixture"_str),
         .name   = String::make("offline"_str),
         .url    = lito::parse::FetchUrl::parse("https://example.invalid/offline.tar"_str).unwrap(),
-        .sha256 = rstd::crypto::Sha256Digest::parse_hex(
+        .sha256 = lito::crypto::Sha256Digest::parse_hex(
                       "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
                       .unwrap(),
     });

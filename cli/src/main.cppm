@@ -459,6 +459,61 @@ void apply_source_options(lito::source::PackageSourceConfig& sources,
     }
 }
 
+struct InspectorInputError {
+    String message;
+};
+
+auto read_inspector_standard_input() -> Result<String, InspectorInputError> {
+    constexpr auto maximum_size = usize(1024 * 1024);
+    auto           input        = rstd::io::stdin();
+    auto           bytes        = Vec<u8>::make();
+    auto           buffer       = array<u8, 16384> {};
+    while (true) {
+        auto read = as<rstd::io::Read>(input).read(buffer.as_mut_slice());
+        if (read.is_err()) {
+            return Err(InspectorInputError {
+                .message = rstd::format("cannot read inspection request from stdin: {}",
+                                        rstd::move(read).unwrap_err()),
+            });
+        }
+        if (*read == usize {}) break;
+        if (bytes.len() > maximum_size - *read) {
+            return Err(InspectorInputError {
+                .message = String::make("inspection request exceeds 1 MiB"_str),
+            });
+        }
+        bytes.extend_from_slice(slice<u8>::from_raw_parts(buffer.as_ptr(), *read));
+    }
+    auto text = String::from_utf8(rstd::move(bytes));
+    if (text.is_err()) {
+        return Err(InspectorInputError {
+            .message = String::make("inspection request is not UTF-8"_str),
+        });
+    }
+    return Ok(rstd::move(text).unwrap());
+}
+
+auto read_inspector_request(ref<str> source, ref<rstd::path::Path> root)
+    -> Result<String, InspectorInputError> {
+    if (source == "-"_str) return read_inspector_standard_input();
+    auto path = rstd::path::PathBuf::from(source);
+    if (path.as_path().is_relative()) path = rstd::path::PathBuf::from(root).join(path.as_path());
+    auto text = rstd::fs::read_to_string(path.as_path());
+    if (text.is_err()) {
+        return Err(InspectorInputError {
+            .message = rstd::format("cannot read inspection request '{}': {}",
+                                    path.as_path(),
+                                    rstd::move(text).unwrap_err()),
+        });
+    }
+    if (text->len() > usize(1024 * 1024)) {
+        return Err(InspectorInputError {
+            .message = String::make("inspection request exceeds 1 MiB"_str),
+        });
+    }
+    return Ok(rstd::move(text).unwrap());
+}
+
 template<typename E>
     requires Impled<E, rstd::error::Error>
 void report_error(const E& error) {
@@ -499,6 +554,50 @@ extern "C++" int main() {
         return static_cast<int>(result.exit_code.to_primitive());
     }
     auto invocation = rstd::move(parsed).as_Parsed();
+    if (invocation.command.is_Registry()) {
+        auto command = rstd::move(invocation.command).as_Registry().command;
+        auto options = rstd::move(command).as_Inspect().options;
+        if (options.capabilities) {
+            rstd::io::println("{}", lito::registry::registry_inspector_capabilities_json());
+            return 0;
+        }
+        if (options.protocol->as_str() != lito::registry::REGISTRY_INSPECTION_PROTOCOL) {
+            rstd::io::eprintln("lito: unsupported Registry inspector protocol '{}': expected '{}'",
+                               options.protocol->as_str(),
+                               lito::registry::REGISTRY_INSPECTION_PROTOCOL);
+            return 1;
+        }
+        auto request_text = read_inspector_request(options.request_json->as_str(),
+                                                   invocation.working_directory.as_path());
+        if (request_text.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(request_text).unwrap_err().message);
+            return 1;
+        }
+        auto request =
+            lito::registry::parse_registry_inspection_request(request_text->as_str().as_bytes());
+        if (request.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(request).unwrap_err().message);
+            return 1;
+        }
+        auto archive = rstd::move(*options.archive);
+        if (archive.as_path().is_relative()) {
+            archive = invocation.working_directory.join(archive.as_path());
+        }
+        auto verified = lito::registry::verify_registry_blob_file(
+            rstd::move(archive), request->package, request->blob);
+        if (verified.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(verified).unwrap_err().message);
+            return 1;
+        }
+        auto inspected = lito::registry::PackageArchiveInspector::inspect_candidate(
+            *verified, request->package, request->version, request->limits);
+        if (inspected.is_err()) {
+            rstd::io::eprintln("lito: {}", rstd::move(inspected).unwrap_err().message);
+            return 1;
+        }
+        rstd::io::println("{}", lito::registry::serialize_verified_publish_candidate(*inspected));
+        return 0;
+    }
     if (invocation.command.is_Config()) {
         auto command = rstd::move(invocation.command).as_Config().command;
         if (command.is_Path()) {

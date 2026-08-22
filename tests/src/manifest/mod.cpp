@@ -71,6 +71,41 @@ authors = ["Lito Authors <authors@example.invalid>"]
               "Lito Authors <authors@example.invalid>"_str);
 }
 
+TEST_F(Manifest, RegistryDependencyKeepsAliasPackageAndRequirementDistinct) {
+    auto project = manifest("registry-dependency"_str, R"toml([package]
+name = "fixture-registry-dependency"
+version = "0.1.0"
+
+[lib]
+name = "fixture-registry-dependency"
+module = "fixture.registry_dependency"
+archive = "fixture-registry-dependency"
+
+[dependencies.local-alias]
+version = "^1.4"
+package = "upstream-package"
+registry = "internal"
+visibility = "private"
+)toml"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_package_manifest(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    ASSERT_EQ(loaded->dependencies.len(), usize(1));
+    const auto& dependency = loaded->dependencies[usize {}];
+    EXPECT_EQ(dependency.name.as_str(), "local-alias"_str);
+    ASSERT_TRUE(dependency.source.is_Registry());
+    const auto& source = dependency.source.as_Registry();
+    ASSERT_TRUE(source.registry.is_some());
+    EXPECT_EQ(source.registry->as_str(), "internal"_str);
+    EXPECT_EQ(source.package.as_str(), "upstream-package"_str);
+    auto matching = lito::registry::SemanticVersion::parse("1.9.0"_str);
+    auto rejected = lito::registry::SemanticVersion::parse("2.0.0"_str);
+    ASSERT_TRUE(matching.is_ok());
+    ASSERT_TRUE(rejected.is_ok());
+    EXPECT_TRUE(source.requirement.matches(*matching));
+    EXPECT_FALSE(source.requirement.matches(*rejected));
+}
+
 struct InvalidManifestCase {
     ref<str> name;
     ref<str> contents;

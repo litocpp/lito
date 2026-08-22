@@ -4,6 +4,7 @@ module;
 export module lito.driver:build.product;
 
 import rstd;
+import lito.crypto;
 import rstd.json;
 import lito.core;
 import lito.cpp;
@@ -26,7 +27,7 @@ export namespace lito
 struct BuildProductFileIdentity {
     PathBuf                    path;
     u64                        size {};
-    rstd::crypto::Sha256Digest sha256;
+    lito::crypto::Sha256Digest sha256;
 };
 
 struct CompletedBuildProduct {
@@ -94,7 +95,7 @@ auto validate_completed_build_product(const CompletedBuildProduct& product,
 namespace lito
 {
 
-inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(1);
+inline constexpr auto BUILD_PRODUCT_SCHEMA = u64(2);
 
 template<typename T>
 auto product_failure(String message) -> BuildProductResult<T> {
@@ -264,6 +265,8 @@ auto parse_artifact_kind(ref<str> value) -> BuildProductResult<cpp::ArtifactKind
 
 auto target_json(const lito::package::PackageTargetId& target) -> Json {
     auto result = JsonMap::make();
+    result.insert(String::make("package-instance"_str),
+                  product_string(target.package_instance.as_str()));
     result.insert(String::make("package"_str), product_string(target.package.as_str()));
     result.insert(String::make("kind"_str), product_string(package_target_kind_text(target.kind)));
     result.insert(String::make("name"_str), product_string(target.name.as_str()));
@@ -272,14 +275,21 @@ auto target_json(const lito::package::PackageTargetId& target) -> Json {
 
 auto parse_target(const Json& value, ref<str> context)
     -> BuildProductResult<lito::package::PackageTargetId> {
-    rstd_try(product_known_fields(value, context, { "package"_str, "kind"_str, "name"_str }));
-    auto package = rstd_try(product_required_string(value, "package"_str, context));
-    auto kind    = rstd_try(product_required_string(value, "kind"_str, context));
-    auto name    = rstd_try(product_required_string(value, "name"_str, context));
+    rstd_try(product_known_fields(
+        value, context, { "package-instance"_str, "package"_str, "kind"_str, "name"_str }));
+    auto instance = rstd_try(product_required_string(value, "package-instance"_str, context));
+    auto package  = rstd_try(product_required_string(value, "package"_str, context));
+    auto kind     = rstd_try(product_required_string(value, "kind"_str, context));
+    auto name     = rstd_try(product_required_string(value, "name"_str, context));
+    if (instance.is_empty()) {
+        return product_failure<lito::package::PackageTargetId>(
+            rstd::format("{}.package-instance must not be empty", context));
+    }
     return Ok(lito::package::PackageTargetId {
-        .package = rstd::move(package),
-        .kind    = rstd_try(parse_package_target_kind(kind.as_str())),
-        .name    = rstd::move(name),
+        .package_instance = lito::package::PackageInstanceKey(rstd::move(instance)),
+        .package          = rstd::move(package),
+        .kind             = rstd_try(parse_package_target_kind(kind.as_str())),
+        .name             = rstd::move(name),
     });
 }
 
@@ -523,6 +533,7 @@ auto parse_external_assets(const Json& value, ref<rstd::path::Path> base, ref<st
 auto selected_package_json(const cpp::SelectedPackageMetadata& package)
     -> BuildProductResult<Json> {
     auto result = JsonMap::make();
+    result.insert(String::make("instance"_str), product_string(package.instance.as_str()));
     result.insert(String::make("name"_str), product_string(package.name.as_str()));
     result.insert(String::make("source"_str), product_string(package.source_identity.as_str()));
     result.insert(String::make("root"_str), rstd_try(product_path(package.root.as_path())));
@@ -535,7 +546,7 @@ auto selected_package_json(const cpp::SelectedPackageMetadata& package)
 auto parse_selected_package(const Json& value, ref<str> context)
     -> BuildProductResult<cpp::SelectedPackageMetadata> {
     rstd_try(product_known_fields(
-        value, context, { "name"_str, "version"_str, "source"_str, "root"_str }));
+        value, context, { "instance"_str, "name"_str, "version"_str, "source"_str, "root"_str }));
     auto version       = Option<String> {};
     auto version_value = value.get("version"_str);
     if (version_value.is_some()) {
@@ -546,7 +557,13 @@ auto parse_selected_package(const Json& value, ref<str> context)
         }
         version = Some(String::make(*text));
     }
+    auto instance = rstd_try(product_required_string(value, "instance"_str, context));
+    if (instance.is_empty()) {
+        return product_failure<cpp::SelectedPackageMetadata>(
+            rstd::format("{}.instance must not be empty", context));
+    }
     return Ok(cpp::SelectedPackageMetadata {
+        .instance        = lito::package::PackageInstanceKey(rstd::move(instance)),
         .name            = rstd_try(product_required_string(value, "name"_str, context)),
         .version         = rstd::move(version),
         .source_identity = rstd_try(product_required_string(value, "source"_str, context)),
@@ -705,7 +722,7 @@ auto product_payload_json(const CompletedBuildProduct& product) -> BuildProductR
 auto product_identity(const CompletedBuildProduct& product) -> BuildProductResult<String> {
     auto payload = rstd_try(product_payload_json(product));
     auto text    = rstd::json::to_string(payload);
-    return Ok(rstd::crypto::sha256_hex(text.as_str()));
+    return Ok(lito::crypto::sha256_hex(text.as_str()));
 }
 
 auto product_json(const CompletedBuildProduct& product) -> BuildProductResult<Json> {
@@ -981,7 +998,7 @@ auto append_file_identity(Vec<BuildProductFileIdentity>& files, ref<rstd::path::
     files.push(BuildProductFileIdentity {
         .path   = rstd::move(canonical).unwrap(),
         .size   = inspected->len(),
-        .sha256 = rstd::crypto::sha256_digest(contents->as_slice()),
+        .sha256 = lito::crypto::sha256_digest(contents->as_slice()),
     });
     return Ok(empty {});
 }
@@ -1200,7 +1217,7 @@ auto validate_product_file_identities(const CompletedBuildProduct& product)
                                              file.path.as_path(),
                                              rstd::move(contents).unwrap_err());
         }
-        auto digest = rstd::crypto::sha256_digest(contents->as_slice());
+        auto digest = lito::crypto::sha256_digest(contents->as_slice());
         if (digest != file.sha256) {
             return product_failure<empty>(
                 rstd::format("completed build file '{}' content changed", file.path.as_path()));

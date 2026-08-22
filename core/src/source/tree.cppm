@@ -1,9 +1,14 @@
 module;
+#include <cstddef>
+#include <cstdlib>
 #include <rstd/enum.hpp>
+#include <utf8proc.h>
 
 export module lito.core:source.tree;
 
 import rstd;
+import lito.crypto;
+import :registry.digest;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -27,6 +32,7 @@ class SourceTreeError {
     RSTD_ENUM(SourceTreeError,
               (InvalidPath, (String path; String reason;)),
               (Conflict, (String path; String reason;)),
+              (Protocol, (String message;)),
               (DestinationExists, (rstd::path::PathBuf path;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)))
 };
@@ -36,8 +42,10 @@ using SourceTreeResult = Result<T, SourceTreeError>;
 
 class SourcePath {
     String value_;
+    String collision_key_;
 
-    explicit SourcePath(String value): value_(rstd::move(value)) {}
+    SourcePath(String value, String collision_key)
+        : value_(rstd::move(value)), collision_key_(rstd::move(collision_key)) {}
 
 public:
     static auto parse(ref<str> value) -> SourceTreeResult<SourcePath>;
@@ -46,9 +54,12 @@ public:
         return ref<rstd::path::Path>(value_.as_str());
     }
     auto as_str() const noexcept -> ref<str> { return value_.as_str(); }
+    auto collision_key() const noexcept -> ref<str> { return collision_key_.as_str(); }
     auto less(const SourcePath& other) const noexcept -> bool { return value_ < other.as_str(); }
-    auto clone() const -> SourcePath { return SourcePath(value_.clone()); }
+    auto clone() const -> SourcePath { return SourcePath(value_.clone(), collision_key_.clone()); }
 };
+
+inline constexpr auto PORTABLE_SOURCE_PATH_UNICODE_VERSION = "16.0.0"_str;
 
 class SourceTreeEntry {
     SourcePath      path_;
@@ -108,6 +119,9 @@ struct SourceMaterialization {
 auto materialize_source_tree(const SourceTree& tree, ref<rstd::path::Path> destination)
     -> SourceTreeResult<SourceMaterialization>;
 
+auto canonical_source_digest(const SourceTree& tree)
+    -> SourceTreeResult<lito::registry::SourceDigest>;
+
 } // namespace lito::source
 
 using namespace lito::source;
@@ -116,8 +130,90 @@ auto invalid_source_path(ref<str> path, ref<str> reason) -> SourceTreeResult<Sou
     return Err(SourceTreeError::InvalidPath(String::make(path), String::make(reason)));
 }
 
+auto invalid_source_path(ref<str> path, String reason) -> SourceTreeResult<SourcePath> {
+    return Err(SourceTreeError::InvalidPath(String::make(path), rstd::move(reason)));
+}
+
+auto unicode_mapping(ref<str> value, utf8proc_option_t options) -> SourceTreeResult<String> {
+    utf8proc_uint8_t* output = nullptr;
+    auto              length =
+        utf8proc_map(reinterpret_cast<const utf8proc_uint8_t*>(value.as_bytes().as_raw_ptr()),
+                     static_cast<utf8proc_ssize_t>(value.len().to_primitive()),
+                     &output,
+                     options);
+    if (length < 0 || output == nullptr) {
+        auto message = length < 0 ? utf8proc_errmsg(length) : "utf8proc returned no output";
+        auto text    = rstd::ffi::CStr::from_ptr(message).to_str();
+        return Err(SourceTreeError::Protocol(
+            text.is_ok() ? rstd::format("cannot normalize portable source path: {}", text.unwrap())
+                         : String::make("cannot normalize portable source path"_str)));
+    }
+    auto bytes = Vec<u8>::from(slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(output),
+                                                         usize(static_cast<std::size_t>(length))));
+    std::free(output);
+    return Ok(String::from_utf8_unchecked(rstd::move(bytes)));
+}
+
+auto reserved_windows_component(ref<str> component) noexcept -> bool {
+    auto base   = component.split_once("."_str);
+    auto name   = base.is_some() ? base->template get<0>() : component;
+    auto folded = String::make();
+    for (auto value : name.as_bytes()) {
+        auto byte = value.to_primitive();
+        if (byte > 0x7f) return false;
+        folded.push_ascii(byte >= 'A' && byte <= 'Z' ? u8(byte + ('a' - 'A')) : value);
+    }
+    if (folded == "con"_str || folded == "prn"_str || folded == "aux"_str || folded == "nul"_str) {
+        return true;
+    }
+    if (folded.len() != usize(4)) return false;
+    auto prefix = folded.as_str().get(usize {}, usize(3)).unwrap();
+    auto digit  = folded.as_str().as_bytes()[usize(3)].to_primitive();
+    return (prefix == "com"_str || prefix == "lpt"_str) && digit >= '1' && digit <= '9';
+}
+
+auto validate_unicode_codepoints(ref<str> path) -> SourceTreeResult<empty> {
+    auto remaining = path.as_bytes();
+    while (! remaining.is_empty()) {
+        utf8proc_int32_t codepoint {};
+        auto             width =
+            utf8proc_iterate(reinterpret_cast<const utf8proc_uint8_t*>(remaining.as_raw_ptr()),
+                             static_cast<utf8proc_ssize_t>(remaining.len().to_primitive()),
+                             &codepoint);
+        if (width <= 0) {
+            return Err(SourceTreeError::InvalidPath(String::make(path),
+                                                    String::make("path is not valid UTF-8"_str)));
+        }
+        auto value = static_cast<rstd::uint32_t>(codepoint);
+        if (value <= 0x1f || (value >= 0x7f && value <= 0x9f) ||
+            (value >= 0xfdd0 && value <= 0xfdef) || (value & 0xffff) >= 0xfffe) {
+            return Err(SourceTreeError::InvalidPath(
+                String::make(path),
+                String::make("path contains a forbidden Unicode codepoint"_str)));
+        }
+        auto consumed = usize(static_cast<std::size_t>(width));
+        remaining     = slice<u8>::from_raw_parts(remaining.as_raw_ptr() + consumed.to_primitive(),
+                                                  remaining.len() - consumed);
+    }
+    return Ok(empty {});
+}
+
 auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourcePath> {
     if (value.is_empty()) return invalid_source_path(value, "path must not be empty"_str);
+    if (value.len() > usize(1024)) {
+        return invalid_source_path(value, "path must not exceed 1024 UTF-8 bytes"_str);
+    }
+    auto linked_unicode = rstd::ffi::CStr::from_ptr(utf8proc_unicode_version()).to_str();
+    if (linked_unicode.is_err() || *linked_unicode != PORTABLE_SOURCE_PATH_UNICODE_VERSION) {
+        return Err(SourceTreeError::Protocol(
+            String::make("portable source path Unicode data version is incompatible"_str)));
+    }
+    rstd_try(validate_unicode_codepoints(value));
+    auto normalized = rstd_try(
+        unicode_mapping(value, static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE)));
+    if (normalized.as_str() != value) {
+        return invalid_source_path(value, "path must already be Unicode NFC"_str);
+    }
     if (value.starts_with("/"_str) || value.ends_with("/"_str)) {
         return invalid_source_path(value, "path must be relative without trailing separators"_str);
     }
@@ -128,14 +224,31 @@ auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourceP
         return invalid_source_path(value, "path must not contain NUL"_str);
     }
     auto remaining = value;
+    auto depth     = usize {};
     while (true) {
+        ++depth;
+        if (depth > usize(64)) {
+            return invalid_source_path(value, "path must not exceed 64 components"_str);
+        }
         auto separated = remaining.split_once("/"_str);
         auto component = separated.is_some() ? separated->template get<0>() : remaining;
+        if (component.len() > usize(255)) {
+            return invalid_source_path(value, "path component must not exceed 255 UTF-8 bytes"_str);
+        }
         if (component == "."_str || component == ".."_str) {
             return invalid_source_path(value, "path must not contain '.' or '..'"_str);
         }
-        if (component.contains(":"_str)) {
-            return invalid_source_path(value, "path must not contain platform prefixes"_str);
+        if (component.contains(":"_str) || component.contains("<"_str) ||
+            component.contains(">"_str) || component.contains("\""_str) ||
+            component.contains("|"_str) || component.contains("?"_str) ||
+            component.contains("*"_str)) {
+            return invalid_source_path(value, "path contains a Windows-forbidden character"_str);
+        }
+        if (component.ends_with("."_str) || component.ends_with(" "_str)) {
+            return invalid_source_path(value, "path component must not end with dot or space"_str);
+        }
+        if (reserved_windows_component(component)) {
+            return invalid_source_path(value, "path contains a Windows reserved component"_str);
         }
         if (separated.is_none()) break;
         remaining = separated->template get<1>();
@@ -144,7 +257,10 @@ auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourceP
     if (! path.as_path().is_safe_relative()) {
         return invalid_source_path(value, "path escapes its materialization root"_str);
     }
-    return Ok(SourcePath(String::make(value)));
+    auto collision_key = rstd_try(unicode_mapping(
+        value,
+        static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_CASEFOLD | UTF8PROC_COMPOSE)));
+    return Ok(SourcePath(String::make(value), rstd::move(collision_key)));
 }
 
 auto source_tree_conflict(ref<str> path, String reason) -> SourceTreeResult<empty> {
@@ -175,6 +291,11 @@ auto lito::source::SourceTree::add_entry(SourceTreeEntry entry) -> SourceTreeRes
             return source_tree_conflict(
                 entry.path().as_str(),
                 rstd::format("{} already exists", entry_kind_name(existing.kind())));
+        }
+        if (existing.path().collision_key() == entry.path().collision_key()) {
+            return source_tree_conflict(
+                entry.path().as_str(),
+                rstd::format("portable path collides with '{}'", existing.path().as_str()));
         }
         auto existing_is_parent = entry.path().as_path().starts_with(existing.path().as_path());
         if (existing_is_parent && existing.kind() == SourceEntryKind::File) {
@@ -217,6 +338,33 @@ auto lito::source::SourceTree::add_bytes(ref<str> path, slice<u8> contents, Sour
 auto lito::source::SourceTree::add_text(ref<str> path, ref<str> contents, SourceFileMode mode)
     -> SourceTreeResult<empty> {
     return add_bytes(path, contents.as_bytes(), mode);
+}
+
+auto lito::source::canonical_source_digest(const SourceTree& tree)
+    -> SourceTreeResult<lito::registry::SourceDigest> {
+    auto state = lito::crypto::Sha256::make();
+    state.update("lito-source-tree-v1\0"_str.as_bytes());
+    for (const auto& entry : tree.entries()) {
+        if (entry.kind() == SourceEntryKind::Directory) continue;
+        const auto path = entry.path().as_str();
+        if (path.len() > usize(u32::MAX.to_primitive())) {
+            return Err(SourceTreeError::Protocol(
+                String::make("source path is too large for canonical framing"_str)));
+        }
+        const auto marker = array<u8, 1> { u8(0x01) };
+        state.update(marker.as_slice());
+        const auto path_length = u32(path.len().to_primitive()).to_be_bytes();
+        state.update(path_length.as_slice());
+        state.update(path.as_bytes());
+        const auto mode = array<u8, 1> {
+            entry.mode() == SourceFileMode::Executable ? u8(0x01) : u8(0x00),
+        };
+        state.update(mode.as_slice());
+        const auto content_length = u64(entry.contents().len().to_primitive()).to_be_bytes();
+        state.update(content_length.as_slice());
+        state.update(entry.contents());
+    }
+    return Ok(lito::registry::SourceDigest(rstd::move(state).finalize_digest()));
 }
 
 auto lito::source::SourceTree::replace_bytes(ref<str> path, slice<u8> contents, SourceFileMode mode)
@@ -376,6 +524,9 @@ struct Impl<fmt::Display, lito::source::SourceTreeError> : ImplBase<lito::source
             const auto& value = error.as_Conflict();
             return formatter.write_fmt(
                 fmt::Arguments::make("source tree conflict at '{}': {}", value.path, value.reason));
+        }
+        if (error.is_Protocol()) {
+            return formatter.write_str(error.as_Protocol().message.as_str());
         }
         if (error.is_DestinationExists()) {
             return formatter.write_fmt(

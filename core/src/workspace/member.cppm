@@ -104,6 +104,12 @@ auto clone_package_source(const lito::source::PackageSourceRequirement& source)
     if (source.is_Builtin()) {
         return lito::source::PackageSourceRequirement::Builtin(source.as_Builtin().id.clone());
     }
+    if (source.is_Registry()) {
+        return lito::source::PackageSourceRequirement::Registry(
+            source.as_Registry().registry.clone(),
+            source.as_Registry().package.clone(),
+            source.as_Registry().requirement.clone());
+    }
     return lito::source::PackageSourceRequirement::Git(
         source.as_Git().url.clone(),
         lito::source::GitReference {

@@ -111,31 +111,33 @@ auto selected_by_purpose(ProjectRootRole         role,
     return kind == PackageTargetKind::Library || kind == PackageTargetKind::Binary;
 }
 
-auto append_selected_targets(Vec<PackageTargetId>&                  output,
-                             const lito::manifest::PackageManifest& package,
-                             ProjectRootRole                        role,
-                             PackageSelectionPurpose                purpose) -> bool {
+auto append_selected_targets(Vec<PackageTargetId>&   output,
+                             const ResolvedPackage&  package,
+                             ProjectRootRole         role,
+                             PackageSelectionPurpose purpose) -> bool {
     auto selected = false;
-    for (const auto& target : package.targets) {
+    for (const auto& target : package.manifest.targets) {
         const auto kind = lito::manifest::package_target_kind(target);
         if (! selected_by_purpose(role, kind, purpose)) continue;
         output.push(PackageTargetId {
-            .package = package.name.clone(),
-            .kind    = kind,
-            .name    = String::make(lito::manifest::package_target_name(target)),
+            .package_instance = package.instance.clone(),
+            .package          = package.manifest.name.clone(),
+            .kind             = kind,
+            .name             = String::make(lito::manifest::package_target_name(target)),
         });
         selected = true;
     }
-    if (! package.compile_tests.is_empty() &&
+    if (! package.manifest.compile_tests.is_empty() &&
         selected_by_purpose(role, PackageTargetKind::CompileTest, purpose)) {
         output.push(PackageTargetId {
-            .package = package.name.clone(),
-            .kind    = PackageTargetKind::CompileTest,
-            .name    = package.name.clone(),
+            .package_instance = package.instance.clone(),
+            .package          = package.manifest.name.clone(),
+            .kind             = PackageTargetKind::CompileTest,
+            .name             = package.manifest.name.clone(),
         });
         selected = true;
     }
-    if (purpose == PackageSelectionPurpose::Install && package.install_script.is_some()) {
+    if (purpose == PackageSelectionPurpose::Install && package.manifest.install_script.is_some()) {
         selected = true;
     }
     return selected;
@@ -220,9 +222,10 @@ auto effective_compile_targets(const ResolvedPackageGraph& graph,
         for (const auto& target : package.manifest.targets) {
             if (! target.is_Library()) continue;
             append(PackageTargetId {
-                .package = package.manifest.name.clone(),
-                .kind    = PackageTargetKind::Library,
-                .name    = String::make(lito::manifest::package_target_name(target)),
+                .package_instance = package.instance.clone(),
+                .package          = package.manifest.name.clone(),
+                .kind             = PackageTargetKind::Library,
+                .name             = String::make(lito::manifest::package_target_name(target)),
             });
             break;
         }
@@ -269,26 +272,26 @@ auto resolve_package_selection_with_environment_impl(
             if (! defaults.is_empty() && root.role != ProjectRootRole::AssociatedTest &&
                 ! defaults.contains_key(name.as_str()))
                 continue;
-            auto                                   supported = true;
-            const lito::manifest::PackageManifest* manifest  = nullptr;
+            auto                   supported        = true;
+            const ResolvedPackage* selected_package = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str()) {
-                        supported = package.manifest.target.matches(*target);
-                        manifest  = rstd::addressof(package.manifest);
+                        supported        = package.manifest.target.matches(*target);
+                        selected_package = rstd::addressof(package);
                         break;
                     }
                 }
             } else {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str()) {
-                        manifest = rstd::addressof(package.manifest);
+                        selected_package = rstd::addressof(package);
                         break;
                     }
                 }
             }
-            if (manifest != nullptr && supported &&
-                append_selected_targets(selected_targets, *manifest, root.role, purpose)) {
+            if (selected_package != nullptr && supported &&
+                append_selected_targets(selected_targets, *selected_package, root.role, purpose)) {
                 selected_roots.push(name.clone());
             }
         }
@@ -310,11 +313,11 @@ auto resolve_package_selection_with_environment_impl(
                 return package_selection_failure<ResolvedPackageSelection>(
                     rstd::format("project has no root package named '{}'", name.as_str()));
             }
-            const lito::manifest::PackageManifest* manifest = nullptr;
+            const ResolvedPackage* selected_package = nullptr;
             if (target != nullptr) {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() != name.as_str()) continue;
-                    manifest = rstd::addressof(package.manifest);
+                    selected_package = rstd::addressof(package);
                     if (! package.manifest.target.matches(*target)) {
                         return package_selection_failure<ResolvedPackageSelection>(
                             rstd::format("package '{}' does not support target '{}'",
@@ -326,13 +329,13 @@ auto resolve_package_selection_with_environment_impl(
             } else {
                 for (const auto& package : graph.packages) {
                     if (package.manifest.name.as_str() == name.as_str()) {
-                        manifest = rstd::addressof(package.manifest);
+                        selected_package = rstd::addressof(package);
                         break;
                     }
                 }
             }
-            if (manifest == nullptr ||
-                ! append_selected_targets(selected_targets, *manifest, **role, purpose)) {
+            if (selected_package == nullptr ||
+                ! append_selected_targets(selected_targets, *selected_package, **role, purpose)) {
                 return package_selection_failure<ResolvedPackageSelection>(
                     rstd::format("project package '{}' has no {} target", name.as_str(), purpose));
             }
@@ -366,17 +369,17 @@ auto resolve_package_selection_with_environment_impl(
                 }
             }
             if (already_selected) continue;
-            const lito::manifest::PackageManifest* manifest = nullptr;
+            const ResolvedPackage* selected_package = nullptr;
             for (const auto& package : graph.packages) {
                 if (package.manifest.name == name.as_str()) {
-                    manifest = rstd::addressof(package.manifest);
+                    selected_package = rstd::addressof(package);
                     break;
                 }
             }
             auto appended = Vec<PackageTargetId>::make();
-            if (manifest == nullptr ||
+            if (selected_package == nullptr ||
                 ! append_selected_targets(
-                    appended, *manifest, ProjectRootRole::PrimaryPackage, purpose)) {
+                    appended, *selected_package, ProjectRootRole::PrimaryPackage, purpose)) {
                 return package_selection_failure<ResolvedPackageSelection>(
                     rstd::format("runtime package '{}' has no install target", name.as_str()));
             }

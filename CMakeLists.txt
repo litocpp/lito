@@ -25,6 +25,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ON CACHE BOOL "Enable link-time optimization")
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF)
 
+set(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY "" CACHE STRING
+    "Base64url Ed25519 public key embedded for the official Registry")
+
 add_compile_options(
   "$<$<COMPILE_LANGUAGE:CXX>:-fmodules-reduced-bmi>"
   "$<$<COMPILE_LANGUAGE:CXX>:-Wall>"
@@ -53,7 +56,7 @@ include(FetchContent)
 FetchContent_Declare(
   rstd
   GIT_REPOSITORY https://github.com/litocpp/rstd.git
-  GIT_TAG 4f41e0edc67adc797c60f16e56b5923ca4f4cf89)
+  GIT_TAG 5193a95120b04fa0df77c54491f55783aedce51b)
 
 FetchContent_MakeAvailable(rstd)
 
@@ -63,6 +66,15 @@ FetchContent_Declare(
   GIT_REPOSITORY https://github.com/litocpp/luato.git
   GIT_TAG 00d5cfacd85f44f98727d3cd7e2f78ec96689552)
 FetchContent_MakeAvailable(luato)
+
+set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
+set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+  utf8proc
+  URL https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v2.10.0.tar.gz
+  URL_HASH SHA256=6f4f1b639daa6dca9f80bc5db1233e9cbaa31a67790887106160b33ef743f136
+  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
+FetchContent_MakeAvailable(utf8proc)
 
 add_subdirectory(frontend)
 add_subdirectory(core)

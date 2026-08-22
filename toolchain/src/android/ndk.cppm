@@ -5,6 +5,7 @@ module;
 export module lito.toolchain.android:ndk;
 
 import rstd;
+import lito.crypto;
 import rstd.json;
 import lito.core;
 
@@ -617,9 +618,9 @@ auto open_android_ndk(ref<rstd::path::Path> root, const lito::system::HostInfo& 
     auto cmake_text =
         rstd_try(read_text(paths.cmake_toolchain.as_path(), "Android CMake toolchain"_str));
     identity_document.push_str("cmake="_str);
-    identity_document.push_str(rstd::crypto::sha256_hex(cmake_text.as_str()).as_str());
+    identity_document.push_str(lito::crypto::sha256_hex(cmake_text.as_str()).as_str());
     identity_document.push_ascii('\n');
-    auto identity = rstd::crypto::sha256_hex(identity_document.as_str());
+    auto identity = lito::crypto::sha256_hex(identity_document.as_str());
     return Ok(AndroidNdkDistribution(rstd::move(canonical).unwrap(),
                                      rstd::move(revision),
                                      rstd::move(release_name).unwrap(),
@@ -708,7 +709,7 @@ auto resolve_android_toolchain(AndroidNdkDistribution                    distrib
         shared_runtime = Some(AndroidRuntimeArtifact {
             .name     = String::make("libc++_shared.so"_str),
             .path     = rstd::move(runtime_path),
-            .identity = rstd::crypto::sha256_hex(runtime_identity.as_str()),
+            .identity = lito::crypto::sha256_hex(runtime_identity.as_str()),
         });
     }
     auto tools = distribution.toolchain_spec();

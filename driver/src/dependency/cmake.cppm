@@ -5,6 +5,7 @@ module;
 export module lito.driver:dependency.cmake;
 
 import rstd;
+import lito.crypto;
 import lito.tools;
 import lito.tools.cmake;
 import lito.core;
@@ -383,7 +384,7 @@ auto materialize_cmake_usage(const CMakePackagePlan& plan, const CMakeUsageSnaps
     auto host_tools = Vec<cpp::ExternalHostToolUsage>::make();
     for (const auto& snapshot : snapshots.host_tools) {
         auto tool_identity =
-            rstd::crypto::sha256_hex(rstd::format("lito-cmake-host-tool-v1\n{}\n{}\n{}\n{}\n{}",
+            lito::crypto::sha256_hex(rstd::format("lito-cmake-host-tool-v1\n{}\n{}\n{}\n{}\n{}",
                                                   identity->as_str(),
                                                   snapshot.name.as_str(),
                                                   snapshot.target.as_str(),

@@ -38,6 +38,12 @@ auto clone_dependency_source(const lito::source::PackageSourceRequirement& sourc
     if (source.is_Builtin()) {
         return lito::source::PackageSourceRequirement::Builtin(source.as_Builtin().id.clone());
     }
+    if (source.is_Registry()) {
+        return lito::source::PackageSourceRequirement::Registry(
+            source.as_Registry().registry.clone(),
+            source.as_Registry().package.clone(),
+            source.as_Registry().requirement.clone());
+    }
     return lito::source::PackageSourceRequirement::Git(
         source.as_Git().url.clone(),
         lito::source::GitReference {
@@ -256,6 +262,10 @@ class PackageGraphResolver {
                 });
                 continue;
             }
+            if (request.source.is_Registry()) {
+                return package_resolution_failure<Vec<AcquiredDependencySource>>(
+                    "Registry dependency requires RegistrySourceResolver materialization"_str);
+            }
             positions.push(usize(index));
             if (request.source.is_Git()) {
                 prepared.push(rstd::move(request));
@@ -386,7 +396,18 @@ class PackageGraphResolver {
             .builtin        = String::make(builtin),
             .digest         = package.digest.clone(),
         };
+        auto instance = lito::package::resolved_package_instance_id(resolved_source, expected_name);
+        if (instance.is_err()) {
+            return package_resolution_failure<String>(
+                rstd::format("cannot construct package instance '{}': {}",
+                             expected_name,
+                             instance.unwrap_err()));
+        }
+        auto instance_id  = rstd::move(instance).unwrap();
+        auto instance_key = lito::package::PackageInstanceKey::from(instance_id);
         packages_.push(ResolvedPackage {
+            .coordinate           = Some(rstd::move(instance_id)),
+            .instance             = rstd::move(instance_key),
             .source_identity      = rstd::move(package.source_identity),
             .source               = rstd::move(resolved_source),
             .source_manifest      = PathBuf::from("lito.toml"_str),
@@ -450,6 +471,7 @@ class PackageGraphResolver {
             }
             return Ok(ResolvedRequiredDependency::Script(ResolvedScriptDependency {
                 .name            = provider->manifest.name.clone(),
+                .instance        = provider->instance.clone(),
                 .require_name    = rstd::move(require_name),
                 .source_identity = provider->source_identity.clone(),
                 .supports        = provider->manifest.script->supports.clone(),
@@ -466,6 +488,7 @@ class PackageGraphResolver {
             declaration.features.is_some() ? declaration.features->clone() : Vec<String>::make();
         return Ok(ResolvedRequiredDependency::Cpp(ResolvedCppDependency {
             .name       = provider->manifest.name.clone(),
+            .instance   = provider->instance.clone(),
             .visibility = declaration.visibility.is_some()
                               ? *declaration.visibility
                               : lito::dependency::DependencyVisibility::Private,
@@ -687,6 +710,14 @@ public:
             runtime_dependencies.push(ResolvedRuntimeDependency {
                 .name = rstd::move(dependency_name).unwrap(),
             });
+            const auto* provider = resolved_package(
+                runtime_dependencies[runtime_dependencies.len() - usize(1)].name.as_str());
+            if (provider == nullptr) {
+                return package_resolution_failure<String>(
+                    "resolved runtime dependency is missing from the package graph"_str);
+            }
+            runtime_dependencies[runtime_dependencies.len() - usize(1)].instance =
+                provider->instance.clone();
         }
         rstd::slice_::sort_unstable_by(
             runtime_dependencies.as_mut_slice().as_mut_ref(),
@@ -697,7 +728,19 @@ public:
         active_.remove(loaded.package.name.as_str());
         active_path_.pop();
         active_kinds_.pop();
+        auto instance = lito::package::resolved_package_instance_id(loaded.source,
+                                                                    loaded.package.name.as_str());
+        if (instance.is_err()) {
+            return package_resolution_failure<String>(
+                rstd::format("cannot construct package instance '{}': {}",
+                             loaded.package.name.as_str(),
+                             instance.unwrap_err()));
+        }
+        auto instance_id  = rstd::move(instance).unwrap();
+        auto instance_key = lito::package::PackageInstanceKey::from(instance_id);
         packages_.push(ResolvedPackage {
+            .coordinate           = Some(rstd::move(instance_id)),
+            .instance             = rstd::move(instance_key),
             .source_identity      = rstd::move(loaded.source_identity),
             .source               = rstd::move(loaded.source),
             .source_manifest      = rstd::move(loaded.manifest),

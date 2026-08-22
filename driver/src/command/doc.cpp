@@ -4,6 +4,7 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.crypto;
 import rstd.json;
 import lito.core;
 import :command.doc.event;
@@ -206,7 +207,7 @@ auto request_identity(const DocumentationBuildUnit&       unit,
                                     dependency.artifact_identity.as_str())
                            .as_str());
     }
-    return rstd::crypto::sha256_hex(value.as_str());
+    return lito::crypto::sha256_hex(value.as_str());
 }
 
 struct ExtractionTask {
@@ -406,7 +407,7 @@ auto site_manifest_json(const BuildSummary&     summary,
             }
             package.responses.push(PackageResponses::Response {
                 .path   = plan.response.clone(),
-                .digest = rstd::crypto::sha256_hex(contents->as_str()),
+                .digest = lito::crypto::sha256_hex(contents->as_str()),
             });
             if (unit.root_module.is_some()) {
                 if (package.root_module.is_empty()) {

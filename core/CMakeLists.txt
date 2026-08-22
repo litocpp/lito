@@ -20,6 +20,7 @@ target_sources(
          src/config/project.cppm
          src/config/toolchain.cppm
          src/condition/mod.cppm
+         src/crypto.cppm
          src/lib.cppm
          src/dependency/condition.cppm
          src/dependency/cmake.cppm
@@ -70,6 +71,19 @@ target_sources(
          src/parse/mod.cppm
          src/parse/toml.cppm
          src/parse/value.cppm
+        src/registry/artifact.cppm
+        src/registry/digest.cppm
+        src/registry/archive.cppm
+        src/registry/config.cppm
+        src/registry/canonical.cppm
+        src/registry/crypto.cppm
+        src/registry/inspection.cppm
+        src/registry/metadata.cppm
+        src/registry/solver.cppm
+         src/registry/error.cppm
+         src/registry/identity.cppm
+         src/registry/mod.cppm
+         src/registry/version.cppm
          src/source/error.cppm
          src/source/fetch.cppm
          src/source/git.cppm
@@ -95,4 +109,8 @@ target_sources(
 target_link_libraries(
   lito.core
   PUBLIC rstd.std
-  PRIVATE rstd.json rstd.toml)
+  PRIVATE rstd.json rstd.toml utf8proc)
+
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LITO_SODIUM REQUIRED IMPORTED_TARGET libsodium)
+target_link_libraries(lito.core PRIVATE PkgConfig::LITO_SODIUM)

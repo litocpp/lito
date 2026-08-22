@@ -3,6 +3,7 @@ export module lito.core;
 import rstd;
 
 export import lito.system;
+export import lito.crypto;
 export import :artifact;
 export import :config;
 export import :condition;
@@ -13,6 +14,7 @@ export import :lock.flatpak;
 export import :manifest;
 export import :package;
 export import :parse;
+export import :registry;
 export import :source;
 export import :workspace;
 

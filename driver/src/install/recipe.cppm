@@ -16,6 +16,7 @@ struct PackageInstallTarget {
 };
 
 struct PackageInstallInput {
+    lito::package::PackageInstanceKey             instance;
     String                                        name;
     String                                        version;
     PathBuf                                       root;

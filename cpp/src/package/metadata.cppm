@@ -169,10 +169,11 @@ struct BuildScriptOwner {
 };
 
 struct SelectedPackageMetadata {
-    String         name;
-    Option<String> version;
-    String         source_identity;
-    PathBuf        root;
+    lito::package::PackageInstanceKey instance;
+    String                            name;
+    Option<String>                    version;
+    String                            source_identity;
+    PathBuf                           root;
 };
 
 struct PackageMetadata {

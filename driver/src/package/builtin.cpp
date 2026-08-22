@@ -4,6 +4,7 @@ module;
 module lito.driver;
 
 import rstd;
+import lito.crypto;
 import lito.core;
 import :package.builtin;
 
@@ -63,9 +64,9 @@ auto builtin_digest(ref<str> id, const lito::source::SourceTree& tree) -> String
         identity.push_ascii('\n');
         identity.push_str(entry.path().as_str());
         identity.push_ascii('\n');
-        identity.push_str(rstd::crypto::sha256_hex(entry.contents()).as_str());
+        identity.push_str(lito::crypto::sha256_hex(entry.contents()).as_str());
     }
-    return rstd::crypto::sha256_hex(identity.as_str());
+    return lito::crypto::sha256_hex(identity.as_str());
 }
 
 auto lito::package::load_builtin_package(ref<str> id) -> PackageResult<BuiltinPackage> {

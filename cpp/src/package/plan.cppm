@@ -4,6 +4,7 @@ module;
 export module lito.cpp:package.plan;
 
 import rstd;
+import lito.crypto;
 import lito.core;
 import :bmi;
 import :build.plan;
@@ -428,7 +429,7 @@ auto preprocessor_projection(const CompileContext& context) -> PreprocessorProje
         identity.push_str(rstd::format("define:{}:{}\n", value.len(), value.as_str()).as_str());
     for (const auto& value : result.undefinitions)
         identity.push_str(rstd::format("undefine:{}:{}\n", value.len(), value.as_str()).as_str());
-    result.identity = rstd::crypto::sha256_hex(identity.as_str());
+    result.identity = lito::crypto::sha256_hex(identity.as_str());
     return result;
 }
 
@@ -513,25 +514,25 @@ auto resolve_source_selection(const PackageMetadata&                     package
         selected_identities =
             Vec<lito::package::PackageTargetId>::with_capacity(exact_targets.len());
         for (const auto& exact : exact_targets) {
-            auto found = false;
+            const lito::package::PackageTargetId* found = nullptr;
             for (const auto& candidate : package.available_targets) {
-                if (candidate == exact) {
-                    found = true;
+                if (lito::package::package_target_matches_selector(candidate, exact)) {
+                    found = rstd::addressof(candidate);
                     break;
                 }
             }
-            if (! found) {
+            if (found == nullptr) {
                 return plan_failure<SourceTargetSelection>(rstd::format(
                     "unknown exact target '{}'", lito::package::package_target_id_text(exact)));
             }
             for (const auto& prior : selected_identities) {
-                if (prior == exact) {
+                if (prior == *found) {
                     return plan_failure<SourceTargetSelection>(
                         rstd::format("exact target '{}' was selected more than once",
                                      lito::package::package_target_id_text(exact)));
                 }
             }
-            selected_identities.push(exact.clone());
+            selected_identities.push(found->clone());
         }
     } else if (requested_targets.is_empty()) {
         selected_identities =

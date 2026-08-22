@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import lito.crypto;
 import rstd.test;
 import lito.core;
 import lito.system;
@@ -60,7 +61,7 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
         .architectures = Vec<String>::make(),
         .source        = lito::lock::LockedSource::Archive(
             lito::parse::FetchUrl::parse("https://example.invalid/archive.tar.gz"_str).unwrap(),
-            rstd::crypto::Sha256Digest::parse_hex(
+            lito::crypto::Sha256Digest::parse_hex(
                 "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"_str)
                 .unwrap()),
     });
