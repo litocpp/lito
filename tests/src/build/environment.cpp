@@ -137,3 +137,61 @@ extern "C" auto fixture_environment_two() -> int {
     EXPECT_TRUE(contents->as_str().contains("build.compile"_str));
     EXPECT_TRUE(contents->as_str().contains("aggregate timing"_str));
 }
+
+TEST_F(BuildEnvironment, BuildEventsUseReadablePackageTargets) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-visible-events"
+version = "0.1.0"
+
+[lib]
+name = "fixture-visible-events"
+module = "fixture.visible.events"
+archive = "fixture_visible_events"
+sources = ["lib.cpp"]
+
+[[bin]]
+name = "fixture-visible-events"
+sources = ["main.cpp"]
+link-stdlib = false
+)toml"_str },
+        { "lib.cpp"_str, "extern \"C\" auto fixture_visible_events() -> int { return 0; }\n"_str },
+        { "main.cpp"_str, "int main() { return 0; }\n"_str },
+    };
+    auto project = materialize("visible-build-events"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto output  = build_root("visible-build-events"_str);
+    auto request = build_request(
+        project->root.as_path(), output.as_path(), strings("fixture-visible-events"_str));
+    auto captured    = CompileProgressCapture {};
+    request.observer = Some(lito::BuildEventSink {
+        .context = rstd::addressof(captured),
+        .notify  = capture_compile_progress,
+    });
+    auto summary     = lito::build(request);
+    ASSERT_TRUE(summary.is_ok());
+    ASSERT_EQ(captured.target_event_kinds.len(), captured.target_names.len());
+    auto saw_scan    = false;
+    auto saw_compile = false;
+    auto saw_archive = false;
+    auto saw_link    = false;
+    for (usize index {}; index < captured.target_names.len(); ++index) {
+        const auto& target = captured.target_names[index];
+        EXPECT_FALSE(target.as_str().contains("lito-pkg-"_str));
+        if (captured.target_event_kinds[index] == lito::BuildEventKind::Archive) {
+            saw_archive = true;
+            EXPECT_EQ(target.as_str(), "fixture-visible-events::lib::fixture-visible-events"_str);
+        } else if (captured.target_event_kinds[index] == lito::BuildEventKind::Link) {
+            saw_link = true;
+            EXPECT_EQ(target.as_str(), "fixture-visible-events::bin::fixture-visible-events"_str);
+        } else if (captured.target_event_kinds[index] == lito::BuildEventKind::Scan) {
+            saw_scan = true;
+        } else if (captured.target_event_kinds[index] == lito::BuildEventKind::Compile) {
+            saw_compile = true;
+        }
+    }
+    EXPECT_TRUE(saw_scan);
+    EXPECT_TRUE(saw_compile);
+    EXPECT_TRUE(saw_archive);
+    EXPECT_TRUE(saw_link);
+}

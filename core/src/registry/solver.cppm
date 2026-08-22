@@ -87,6 +87,9 @@ struct RegistryConstraintTrace {
 class RegistrySolverError {
     RSTD_ENUM(RegistrySolverError,
               (Provider, (RegistryIndexError error;)),
+              (SourceConflict,
+               (RegistryPackageId selected; String selected_source; RegistryPackageId incoming;
+                String incoming_source;)),
               (Incompatibility,
                (RegistryPackageId package; Vec<RegistryConstraintTrace> constraints;
                 Vec<String>                                             candidates;)),
@@ -294,10 +297,10 @@ class Solver {
         return Ok(rstd::move(result));
     }
 
-    static auto state_position(const Vec<PackageState>& states, const RegistryPackageId& package)
+    static auto state_position(const Vec<PackageState>& states, const RegistryPackageName& name)
         -> Option<usize> {
         for (usize index {}; index < states.len(); ++index) {
-            if (same_package(states[index].package, package)) return Some(index);
+            if (states[index].package.name == name) return Some(index);
         }
         return None();
     }
@@ -306,7 +309,7 @@ class Solver {
                                const RegistryPackageId& package,
                                VersionRequirement       requirement,
                                String                   source) -> RegistrySolverResult<empty> {
-        auto position = state_position(states, package);
+        auto position = state_position(states, package.name);
         if (position.is_none()) {
             if (states.len() >= usize(1024)) {
                 return Err(RegistrySolverError::Limit(
@@ -322,6 +325,13 @@ class Solver {
                 .constraints = rstd::move(constraints),
             });
             return Ok(empty {});
+        }
+        if (! same_package(states[*position].package, package)) {
+            return Err(RegistrySolverError::SourceConflict(
+                states[*position].package.clone(),
+                states[*position].constraints[usize {}].source.clone(),
+                package.clone(),
+                rstd::move(source)));
         }
         states[*position].constraints.push(PackageConstraint {
             .requirement = rstd::move(requirement),
@@ -440,7 +450,12 @@ class Solver {
             const auto& release =
                 indices_[selected_index_position].index.releases()[release_position];
             auto appended = append_dependencies(branch, package, release);
-            if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
+            if (appended.is_err()) {
+                auto error = rstd::move(appended).unwrap_err();
+                if (error.is_Limit()) return Err(rstd::move(error));
+                failure = Some(rstd::move(error));
+                continue;
+            }
             auto solved = search(rstd::move(branch), depth + usize(1));
             if (solved.is_ok()) return solved;
             failure = Some(rstd::move(solved).unwrap_err());
@@ -493,6 +508,17 @@ auto rstd::Impl<rstd::fmt::Display, lito::registry::RegistrySolverError>::fmt(
             rstd::format("cannot load Registry index for '{}': {}",
                          lito::registry::registry_package_id_text(provider.package).as_str(),
                          provider.message.as_str());
+        return formatter.write_str(message.as_str());
+    }
+    if (error.is_SourceConflict()) {
+        const auto& conflict = error.as_SourceConflict();
+        auto        message  = rstd::format(
+            "Registry package '{}' is required from conflicting sources '{}' ({}) and '{}' ({})",
+            conflict.selected.name.as_str(),
+            conflict.selected.registry.as_str(),
+            conflict.selected_source.as_str(),
+            conflict.incoming.registry.as_str(),
+            conflict.incoming_source.as_str());
         return formatter.write_str(message.as_str());
     }
     if (error.is_Limit()) return formatter.write_str(error.as_Limit().message.as_str());

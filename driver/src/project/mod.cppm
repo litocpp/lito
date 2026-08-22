@@ -591,10 +591,9 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
         if (! selected) continue;
         for (auto& target : package.manifest.targets) {
             auto id = lito::package::PackageTargetId {
-                .package_instance = package.instance.clone(),
-                .package          = package.manifest.name.clone(),
-                .kind             = lito::manifest::package_target_kind(target),
-                .name             = String::make(lito::manifest::package_target_name(target)),
+                .package = package.manifest.name.clone(),
+                .kind    = lito::manifest::package_target_kind(target),
+                .name    = String::make(lito::manifest::package_target_name(target)),
             };
             auto target_selected = false;
             for (const auto& selected_target : project.effective_targets) {

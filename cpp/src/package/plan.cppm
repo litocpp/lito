@@ -516,7 +516,7 @@ auto resolve_source_selection(const PackageMetadata&                     package
         for (const auto& exact : exact_targets) {
             const lito::package::PackageTargetId* found = nullptr;
             for (const auto& candidate : package.available_targets) {
-                if (lito::package::package_target_matches_selector(candidate, exact)) {
+                if (candidate == exact) {
                     found = rstd::addressof(candidate);
                     break;
                 }

@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import rstd.json;
 import rstd.test;
 import lito.driver;
 import lito.core;
@@ -157,6 +158,25 @@ TEST_F(ScanCache, ScanCacheReusesAndInvalidatesOwnedInputs) {
     EXPECT_EQ(warm->frontend.persistent_scan_hits, usize(1));
     EXPECT_EQ(warm->frontend.analyze_builds, usize {});
     EXPECT_EQ(warm->compiled, usize {});
+
+    auto scan_record = cold->product.build_directory.join(
+        PathBuf::from(
+            "lito-scan-cache/fixture-scan-cache/lib/fixture-scan-cache/src/lib.cppm.json"_str)
+            .as_path());
+    auto scan_record_text = rstd::fs::read_to_string(scan_record.as_path());
+    ASSERT_TRUE(scan_record_text.is_ok());
+    auto scan_record_json = rstd::json::from_str(scan_record_text->as_str());
+    ASSERT_TRUE(scan_record_json.is_ok());
+    (*scan_record_json)["source-origin"_str] =
+        rstd::json::Value::String(String::make("path+different-package-source"_str));
+    auto changed_record = rstd::json::to_string(
+        *scan_record_json, rstd::json::FormatOptions { .pretty = true, .indent = usize(2) });
+    ASSERT_TRUE(rstd::fs::write(scan_record.as_path(), changed_record.as_str().as_bytes()).is_ok());
+    auto changed_origin =
+        lito::build(build_request(fixture.as_path(), output.as_path(), Vec<String>::make()));
+    ASSERT_TRUE(changed_origin.is_ok());
+    EXPECT_EQ(changed_origin->frontend.persistent_scan_context, usize(1));
+    EXPECT_EQ(changed_origin->frontend.analyze_builds, usize(1));
 
     auto staged_optional = fixture.join(PathBuf::from("staged/optional.hpp"_str).as_path());
     auto high_optional   = fixture.join(PathBuf::from("high/optional.hpp"_str).as_path());

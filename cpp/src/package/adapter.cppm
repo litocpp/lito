@@ -705,10 +705,9 @@ auto library_targets(const lito::package::ResolvedPackageGraph& graph)
                 continue;
             result.insert(package.manifest.name.clone(),
                           lito::package::PackageTargetId {
-                              .package_instance = package.instance.clone(),
-                              .package          = package.manifest.name.clone(),
-                              .kind             = lito::package::PackageTargetKind::Library,
-                              .name = String::make(lito::manifest::package_target_name(target)),
+                              .package = package.manifest.name.clone(),
+                              .kind    = lito::package::PackageTargetKind::Library,
+                              .name    = String::make(lito::manifest::package_target_name(target)),
                           });
             break;
         }
@@ -1055,10 +1054,9 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
         for (auto& manifest_target : package.manifest.targets) {
             const auto kind = lito::manifest::package_target_kind(manifest_target);
             auto       id   = lito::package::PackageTargetId {
-                .package_instance = package.instance.clone(),
-                .package          = package.manifest.name.clone(),
-                .kind             = kind,
-                .name = String::make(lito::manifest::package_target_name(manifest_target)),
+                .package = package.manifest.name.clone(),
+                .kind    = kind,
+                .name    = String::make(lito::manifest::package_target_name(manifest_target)),
             };
             auto& source = lito::manifest::package_target_source(manifest_target);
             auto  source_groups =
@@ -1087,9 +1085,10 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 });
             }
             targets.push(ResolvedTarget {
-                .id            = rstd::move(id),
-                .artifact_kind = target_artifact_kind(manifest_target),
-                .language      = package_language,
+                .id                      = rstd::move(id),
+                .package_source_identity = package.source_identity.clone(),
+                .artifact_kind           = target_artifact_kind(manifest_target),
+                .language                = package_language,
                 .artifact_name =
                     String::make(lito::manifest::package_target_artifact_name(manifest_target)),
                 .link_stdlib   = lito::manifest::package_target_links_stdlib(manifest_target),
@@ -1126,14 +1125,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             targets.push(ResolvedTarget {
                 .id =
                     lito::package::PackageTargetId {
-                        .package_instance = package.instance.clone(),
-                        .package          = package.manifest.name.clone(),
-                        .kind             = lito::package::PackageTargetKind::CompileTest,
-                        .name             = package.manifest.name.clone(),
+                        .package = package.manifest.name.clone(),
+                        .kind    = lito::package::PackageTargetKind::CompileTest,
+                        .name    = package.manifest.name.clone(),
                     },
-                .artifact_kind = ArtifactKind::CompileTest,
-                .language      = package_language,
-                .artifact_name = package.manifest.name.clone(),
+                .package_source_identity = package.source_identity.clone(),
+                .artifact_kind           = ArtifactKind::CompileTest,
+                .language                = package_language,
+                .artifact_name           = package.manifest.name.clone(),
                 .source =
                     lito::manifest::TargetSourceManifest {
                         .discovery        = lito::manifest::SourceDiscoveryMode::Explicit,
@@ -1217,14 +1216,14 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             attachments.push(ResolvedTarget {
                 .id =
                     lito::package::PackageTargetId {
-                        .package_instance = test.id.package_instance.clone(),
-                        .package          = test.id.package.clone(),
-                        .kind             = lito::package::PackageTargetKind::TestAttachment,
-                        .name             = rstd::move(synthetic_name),
+                        .package = test.id.package.clone(),
+                        .kind    = lito::package::PackageTargetKind::TestAttachment,
+                        .name    = rstd::move(synthetic_name),
                     },
-                .artifact_kind = ArtifactKind::TestAttachmentArchive,
-                .language      = library->language,
-                .artifact_name = library->artifact_name.clone(),
+                .package_source_identity = test.package_source_identity.clone(),
+                .artifact_kind           = ArtifactKind::TestAttachmentArchive,
+                .language                = library->language,
+                .artifact_name           = library->artifact_name.clone(),
                 .source =
                     lito::manifest::TargetSourceManifest {
                         .module           = library->source.module.clone(),
@@ -1342,7 +1341,6 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
             version = Some(package.manifest.version.value->clone());
         }
         selected_packages.push(SelectedPackageMetadata {
-            .instance        = package.instance.clone(),
             .name            = package.manifest.name.clone(),
             .version         = rstd::move(version),
             .source_identity = package.source_identity.clone(),
@@ -1417,23 +1415,24 @@ auto finalize_package(PackageMetadata metadata, Vec<ResolvedTargetSources> sourc
         auto artifact_name = output_name(target.artifact_kind, target.artifact_name.as_str());
         auto archive_stem  = target.artifact_name.clone();
         targets.push(TargetSpec {
-            .id                    = rstd::move(target.id),
-            .artifact_kind         = target.artifact_kind,
-            .language              = target.language,
-            .artifact_name         = rstd::move(artifact_name),
-            .link_stdlib           = target.link_stdlib,
-            .archive_stem          = rstd::move(archive_stem),
-            .module_affiliation    = rstd::move(target.source.module),
-            .root                  = rstd::move(target.root),
-            .source_root           = rstd::move(target.source_root),
-            .sources               = rstd::move(sources),
-            .dependencies          = rstd::move(target.dependencies),
-            .external_dependencies = rstd::move(target.external_dependencies),
-            .generated_artifacts   = rstd::move(target.generated_artifacts),
-            .usage                 = rstd::move(target.usage),
-            .compile_tests         = rstd::move(target.compile_tests),
-            .test_attachment       = rstd::move(target.test_attachment),
-            .compile_metadata      = rstd::move(target.compile_metadata),
+            .id                      = rstd::move(target.id),
+            .package_source_identity = rstd::move(target.package_source_identity),
+            .artifact_kind           = target.artifact_kind,
+            .language                = target.language,
+            .artifact_name           = rstd::move(artifact_name),
+            .link_stdlib             = target.link_stdlib,
+            .archive_stem            = rstd::move(archive_stem),
+            .module_affiliation      = rstd::move(target.source.module),
+            .root                    = rstd::move(target.root),
+            .source_root             = rstd::move(target.source_root),
+            .sources                 = rstd::move(sources),
+            .dependencies            = rstd::move(target.dependencies),
+            .external_dependencies   = rstd::move(target.external_dependencies),
+            .generated_artifacts     = rstd::move(target.generated_artifacts),
+            .usage                   = rstd::move(target.usage),
+            .compile_tests           = rstd::move(target.compile_tests),
+            .test_attachment         = rstd::move(target.test_attachment),
+            .compile_metadata        = rstd::move(target.compile_metadata),
         });
     }
 

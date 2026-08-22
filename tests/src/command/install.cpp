@@ -248,6 +248,24 @@ sources = ["src/main.cpp"]
     auto product_state = output.join(PathBuf::from(".lito/build-product.json"_str).as_path());
     auto product_json  = rstd::fs::read_to_string(product_state.as_path());
     ASSERT_TRUE(product_json.is_ok());
+    EXPECT_TRUE(product_json->as_str().contains("\"schema\": 1"_str));
+    EXPECT_FALSE(product_json->as_str().contains("\"package-instance\""_str));
+    EXPECT_FALSE(product_json->as_str().contains("\"instance\""_str));
+    EXPECT_FALSE(product_json->as_str().contains("lito-pkg-"_str));
+
+    ASSERT_TRUE(
+        rstd::fs::write(
+            product_state.as_path(),
+            R"({"schema":2,"state":"complete","generation":"old","product":{}})"_str.as_bytes())
+            .is_ok());
+    auto unsupported =
+        lito::load_completed_build_product(fixture.as_path(), output.as_path(), "release"_str);
+    ASSERT_TRUE(unsupported.is_err());
+    EXPECT_TRUE(
+        error_chain_text(unsupported.unwrap_err()).as_str().contains("unsupported schema"_str));
+    ASSERT_TRUE(
+        rstd::fs::write(product_state.as_path(), product_json->as_str().as_bytes()).is_ok());
+
     ASSERT_TRUE(
         rstd::fs::write(
             product_state.as_path(),

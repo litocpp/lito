@@ -257,7 +257,6 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         auto version = Option<String> {};
         if (package.version.is_some()) version = Some(package.version->clone());
         selected_packages.push(cpp::SelectedPackageMetadata {
-            .instance        = package.instance.clone(),
             .name            = package.name.clone(),
             .version         = rstd::move(version),
             .source_identity = package.source_identity.clone(),
@@ -679,7 +678,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
             }
             build_timing.record(BuildOperation::Strip, *stripped);
         }
-        auto link_identity = String::make("lito-built-artifact-link-v2\n"_str);
+        auto link_identity = String::make("lito-built-artifact-link-v3\n"_str);
         link_identity.push_str(toolchain.linker_identity().build_identity.as_str());
         link_identity.push_ascii('\n');
         link_identity.push_str("target="_str);
@@ -701,6 +700,10 @@ auto build_with_environment_impl(const BuildRequest&                       reque
         link_identity.push_ascii('\n');
         link_identity.push_str(target_identity.as_str());
         link_identity.push_ascii('\n');
+        link_identity.push_str(rstd::format("package-source={}:{}\n",
+                                            target_spec.package_source_identity.len(),
+                                            target_spec.package_source_identity.as_str())
+                                   .as_str());
         link_identity.push_str("lto="_str);
         link_identity.push_str(cpp::cpp_lto_option(link_lto));
         link_identity.push_ascii('\n');

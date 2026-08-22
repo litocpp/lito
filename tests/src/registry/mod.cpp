@@ -27,6 +27,13 @@ auto registry_package(ref<str> name) -> lito::registry::RegistryPackageId {
     };
 }
 
+auto registry_package_from(ref<str> registry, ref<str> name) -> lito::registry::RegistryPackageId {
+    return lito::registry::RegistryPackageId {
+        .registry = lito::registry::RegistryId::parse(registry).unwrap(),
+        .name     = lito::registry::RegistryPackageName::parse(name).unwrap(),
+    };
+}
+
 struct SolverFixtureProvider {
     lito::registry::Ed25519PublicKey key;
     usize                            loads {};
@@ -374,6 +381,59 @@ TEST(RegistrySolver, BacktracksDeterministicallyAcrossPackageConstraints) {
     EXPECT_EQ(solved->packages[usize(1)].package.name.as_str(), "sample"_str);
     EXPECT_EQ(solved->packages[usize(1)].release.version.text().as_str(), "1.2.3"_str);
     EXPECT_EQ(fixture_provider.loads, usize(2));
+}
+
+TEST(RegistrySolver, MergesRequirementsForTheSamePackage) {
+    auto fixture_provider = solver_fixture_provider();
+    auto roots            = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push(lito::registry::RegistrySolverRequirement {
+        .package     = registry_package("sample"_str),
+        .requirement = lito::registry::VersionRequirement::parse(">=1, <2"_str).unwrap(),
+        .source      = String::make("workspace dependency 'sample'"_str),
+    });
+    roots.push(lito::registry::RegistrySolverRequirement {
+        .package     = registry_package("sample"_str),
+        .requirement = lito::registry::VersionRequirement::parse("<1.5"_str).unwrap(),
+        .source      = String::make("package dependency 'sample'"_str),
+    });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        lito::registry::RegistrySolverInput { .roots = rstd::move(roots) },
+        solver_provider(fixture_provider));
+    ASSERT_TRUE(solved.is_ok());
+    ASSERT_EQ(solved->packages.len(), usize(2));
+    auto sample_count = usize {};
+    for (const auto& package : solved->packages) {
+        if (package.package.name.as_str() != "sample"_str) continue;
+        ++sample_count;
+        EXPECT_EQ(package.release.version.text().as_str(), "1.2.3"_str);
+    }
+    EXPECT_EQ(sample_count, usize(1));
+    EXPECT_EQ(fixture_provider.loads, usize(2));
+}
+
+TEST(RegistrySolver, RejectsTheSameNameFromDifferentRegistries) {
+    auto fixture_provider = solver_fixture_provider();
+    auto roots            = Vec<lito::registry::RegistrySolverRequirement>::make();
+    roots.push(lito::registry::RegistrySolverRequirement {
+        .package     = registry_package_from("https://registry.example/"_str, "sample"_str),
+        .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+        .source      = String::make("workspace dependency 'sample'"_str),
+    });
+    roots.push(lito::registry::RegistrySolverRequirement {
+        .package     = registry_package_from("https://mirror.example/"_str, "sample"_str),
+        .requirement = lito::registry::VersionRequirement::parse("^1"_str).unwrap(),
+        .source      = String::make("package dependency 'sample'"_str),
+    });
+    auto solved = lito::registry::RegistryVersionSolver::solve(
+        lito::registry::RegistrySolverInput { .roots = rstd::move(roots) },
+        solver_provider(fixture_provider));
+    ASSERT_TRUE(solved.is_err());
+    auto error = rstd::move(solved).unwrap_err();
+    ASSERT_TRUE(error.is_SourceConflict());
+    EXPECT_EQ(error.as_SourceConflict().selected.registry.as_str(),
+              "https://registry.example/"_str);
+    EXPECT_EQ(error.as_SourceConflict().incoming.registry.as_str(), "https://mirror.example/"_str);
+    EXPECT_EQ(fixture_provider.loads, usize {});
 }
 
 TEST(RegistrySolver, ExcludesFreshYankedVersions) {

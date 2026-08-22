@@ -344,6 +344,8 @@ auto regular_file_count(ref<rstd::path::Path> directory) -> Option<usize> {
 
 struct CompileProgressCapture {
     Vec<lito::BuildProgress>             values;
+    Vec<lito::BuildEventKind>            target_event_kinds;
+    Vec<String>                          target_names;
     Vec<PathBuf>                         requested_tools;
     Vec<PathBuf>                         resolved_tools;
     Vec<lito::tools::HostToolCapability> host_tools;
@@ -357,6 +359,12 @@ struct CompileProgressCapture {
 
 void capture_compile_progress(void* raw_context, const lito::BuildEvent& event) noexcept {
     auto& capture = *static_cast<CompileProgressCapture*>(raw_context);
+    if (event.kind == lito::BuildEventKind::Scan || event.kind == lito::BuildEventKind::Compile ||
+        event.kind == lito::BuildEventKind::Archive || event.kind == lito::BuildEventKind::Link) {
+        auto kind = event.kind;
+        capture.target_event_kinds.push(rstd::move(kind));
+        capture.target_names.push(String::make(event.target));
+    }
     if (event.kind != lito::BuildEventKind::Compile) return;
     if (event.progress.is_none()) {
         capture.missing = true;

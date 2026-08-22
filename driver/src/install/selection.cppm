@@ -87,10 +87,6 @@ auto validate_completed_build_selection(const CompletedBuildProduct&            
                              recorded.source_identity.as_str(),
                              matched->source_identity.as_str()));
         }
-        if (matched->instance != recorded.instance) {
-            return selection_failure<empty>(rstd::format(
-                "completed build package '{}' instance identity changed", recorded.name.as_str()));
-        }
     }
     return Ok(empty {});
 }
@@ -118,10 +114,9 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             binaries.push(PackageInstallTarget {
                 .target =
                     lito::package::PackageTargetId {
-                        .package_instance = package->instance.clone(),
-                        .package          = package->manifest.name.clone(),
-                        .kind             = lito::package::PackageTargetKind::Binary,
-                        .name = String::make(lito::manifest::package_target_name(candidate)),
+                        .package = package->manifest.name.clone(),
+                        .kind    = lito::package::PackageTargetKind::Binary,
+                        .name    = String::make(lito::manifest::package_target_name(candidate)),
                     },
                 .artifact_name =
                     String::make(lito::manifest::package_target_artifact_name(candidate)),
@@ -173,7 +168,6 @@ auto resolve_install_packages(const lito::package::ResolvedPackageSelection& sel
             });
         }
         result.push(PackageInstallInput {
-            .instance             = package->instance.clone(),
             .name                 = package->manifest.name.clone(),
             .version              = package->manifest.version.value->clone(),
             .root                 = package->manifest.root.clone(),
@@ -280,9 +274,10 @@ auto resolve_install_build_requirements(const lito::package::ResolvedPackageSele
                     });
                 }
                 requirements.runtime_search.push(InstallArtifactRuntimeSearchRequirement {
-                    .target      = artifact.target.clone(),
-                    .destination = artifact.destination.clone(),
-                    .assets      = rstd::move(assets),
+                    .target                  = artifact.target.clone(),
+                    .package_source_identity = owner->source_identity.clone(),
+                    .destination             = artifact.destination.clone(),
+                    .assets                  = rstd::move(assets),
                 });
             }
             auto duplicate = false;
@@ -343,9 +338,13 @@ auto resolve_install_artifact_link_variants(InstallBuildRequirements&   requirem
                              lito::package::package_target_id_text(requirement.target),
                              rstd::move(runpath).unwrap_err()));
         }
-        auto identity = String::make("lito-install-link-v2\n"_str);
+        auto identity = String::make("lito-install-link-v3\n"_str);
         identity.push_str(lito::package::package_target_id_text(requirement.target).as_str());
         identity.push_ascii('\n');
+        identity.push_str(rstd::format("package-source={}:{}\n",
+                                       requirement.package_source_identity.len(),
+                                       requirement.package_source_identity.as_str())
+                              .as_str());
         identity.push_str(lito::artifact::elf_runpath_identity(*runpath).as_str());
         requirements.artifact_link_variants.push(RequestedArtifactLinkVariant {
             .target = requirement.target.clone(),

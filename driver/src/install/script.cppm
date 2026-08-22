@@ -243,10 +243,9 @@ public:
                 recipe.artifacts.push(InstallArtifactRecipe {
                     .target =
                         lito::package::PackageTargetId {
-                            .package_instance = package_.instance.clone(),
-                            .package          = package_.name.clone(),
-                            .kind             = target_kind,
-                            .name             = rstd::move(name),
+                            .package = package_.name.clone(),
+                            .kind    = target_kind,
+                            .name    = rstd::move(name),
                         },
                     .destination    = rstd::move(destination),
                     .runtime_search = rstd::move(runtime_search),

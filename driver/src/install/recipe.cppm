@@ -16,7 +16,6 @@ struct PackageInstallTarget {
 };
 
 struct PackageInstallInput {
-    lito::package::PackageInstanceKey             instance;
     String                                        name;
     String                                        version;
     PathBuf                                       root;
@@ -102,6 +101,7 @@ struct InstallRuntimeSearchAsset {
 
 struct InstallArtifactRuntimeSearchRequirement {
     lito::package::PackageTargetId target;
+    String                         package_source_identity;
     PathBuf                        destination;
     Vec<InstallRuntimeSearchAsset> assets;
 };

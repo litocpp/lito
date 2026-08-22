@@ -28,7 +28,6 @@ enum class ProjectRootRole
 
 struct ResolvedCppDependency {
     String                                 name;
-    PackageInstanceKey                     instance;
     lito::dependency::DependencyVisibility visibility {
         lito::dependency::DependencyVisibility::Private
     };
@@ -38,7 +37,6 @@ struct ResolvedCppDependency {
 
 struct ResolvedScriptDependency {
     String                              name;
-    PackageInstanceKey                  instance;
     String                              require_name;
     String                              source_identity;
     Vec<lito::manifest::ScriptHostKind> supports;
@@ -71,8 +69,7 @@ auto resolved_dependency_name(const ResolvedRequiredDependency& dependency) noex
 }
 
 struct ResolvedRuntimeDependency {
-    String             name;
-    PackageInstanceKey instance;
+    String name;
 };
 
 struct ResolvedFeature {
@@ -83,8 +80,6 @@ struct ResolvedFeature {
 };
 
 struct ResolvedPackage {
-    Option<ResolvedPackageInstanceId>                   coordinate;
-    PackageInstanceKey                                  instance;
     String                                              source_identity;
     lito::source::ResolvedPackageSource                 source;
     PathBuf                                             source_manifest;
@@ -96,34 +91,6 @@ struct ResolvedPackage {
     Vec<ResolvedFeature>                                features;
     Vec<lito::dependency::ResolvedExternalSourceRecord> externals;
 };
-
-auto resolved_package_instance_id(const lito::source::ResolvedPackageSource& source,
-                                  ref<str>                                   package)
-    -> lito::registry::RegistryValueResult<ResolvedPackageInstanceId> {
-    if (source.kind == lito::source::PackageSourceKind::Path) {
-        return Ok(ResolvedPackageInstanceId::Path(source.path.clone(), String::make(package)));
-    }
-    if (source.kind == lito::source::PackageSourceKind::Git) {
-        return Ok(ResolvedPackageInstanceId::Git(
-            source.git.clone(), source.commit.clone(), String::make(package)));
-    }
-    if (source.kind == lito::source::PackageSourceKind::Builtin) {
-        return Ok(ResolvedPackageInstanceId::Builtin(
-            source.builtin.clone(), source.digest.clone(), String::make(package)));
-    }
-    if (source.registry_package.is_none() || source.registry_version.is_none() ||
-        source.release_digest.is_none()) {
-        return lito::registry::registry_value_failure<ResolvedPackageInstanceId>(
-            "resolved Registry source is missing exact release identity"_str);
-    }
-    if (source.registry_package->name.as_str() != package) {
-        return lito::registry::registry_value_failure<ResolvedPackageInstanceId>(
-            "resolved Registry package name does not match its manifest"_str);
-    }
-    return Ok(ResolvedPackageInstanceId::Registry(source.registry_package->clone(),
-                                                  source.registry_version->clone(),
-                                                  source.release_digest->clone()));
-}
 
 struct ResolvedProjectRoot {
     String          name;

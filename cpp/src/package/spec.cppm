@@ -22,6 +22,7 @@ using TargetId = usize;
 
 struct TargetSpec {
     lito::package::PackageTargetId     id;
+    String                             package_source_identity;
     ArtifactKind                       artifact_kind { ArtifactKind::StaticLibrary };
     lito::manifest::PackageLanguage    language { lito::manifest::PackageLanguage::Cpp };
     String                             artifact_name;

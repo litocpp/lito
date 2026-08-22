@@ -120,20 +120,18 @@ auto append_selected_targets(Vec<PackageTargetId>&   output,
         const auto kind = lito::manifest::package_target_kind(target);
         if (! selected_by_purpose(role, kind, purpose)) continue;
         output.push(PackageTargetId {
-            .package_instance = package.instance.clone(),
-            .package          = package.manifest.name.clone(),
-            .kind             = kind,
-            .name             = String::make(lito::manifest::package_target_name(target)),
+            .package = package.manifest.name.clone(),
+            .kind    = kind,
+            .name    = String::make(lito::manifest::package_target_name(target)),
         });
         selected = true;
     }
     if (! package.manifest.compile_tests.is_empty() &&
         selected_by_purpose(role, PackageTargetKind::CompileTest, purpose)) {
         output.push(PackageTargetId {
-            .package_instance = package.instance.clone(),
-            .package          = package.manifest.name.clone(),
-            .kind             = PackageTargetKind::CompileTest,
-            .name             = package.manifest.name.clone(),
+            .package = package.manifest.name.clone(),
+            .kind    = PackageTargetKind::CompileTest,
+            .name    = package.manifest.name.clone(),
         });
         selected = true;
     }
@@ -222,10 +220,9 @@ auto effective_compile_targets(const ResolvedPackageGraph& graph,
         for (const auto& target : package.manifest.targets) {
             if (! target.is_Library()) continue;
             append(PackageTargetId {
-                .package_instance = package.instance.clone(),
-                .package          = package.manifest.name.clone(),
-                .kind             = PackageTargetKind::Library,
-                .name             = String::make(lito::manifest::package_target_name(target)),
+                .package = package.manifest.name.clone(),
+                .kind    = PackageTargetKind::Library,
+                .name    = String::make(lito::manifest::package_target_name(target)),
             });
             break;
         }

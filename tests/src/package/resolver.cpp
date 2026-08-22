@@ -721,6 +721,20 @@ TEST_F(PackageResolver, InvalidDependencyGraphsAreRejectedByResolverOwner) {
     }
 }
 
+TEST_F(PackageResolver, SameNameConflictReportsBothSources) {
+    auto tree = package_resolver_same_name_root_tree();
+    ASSERT_TRUE(tree.is_ok());
+    auto project = materialize("package-resolver-same-name-sources"_str, *tree);
+    ASSERT_TRUE(project.is_ok());
+    auto requested = project->root.join(PathBuf::from("root"_str).as_path());
+    auto resolved  = lito::package::resolve_package_graph(requested.as_path());
+    ASSERT_TRUE(resolved.is_err());
+    auto message = rstd::format("{}", rstd::move(resolved).unwrap_err());
+    EXPECT_TRUE(message.as_str().contains("package conflict for 'fixture-same-dependency'"_str));
+    EXPECT_TRUE(message.as_str().contains("path+../one"_str));
+    EXPECT_TRUE(message.as_str().contains("path+../two"_str));
+}
+
 TEST_F(PackageResolver, ProjectNameComesFromRootManifest) {
     const ProjectFile workspace_files[] = {
         {

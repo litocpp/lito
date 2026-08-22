@@ -74,6 +74,7 @@ struct GeneratedArtifactContribution {
 
 struct ResolvedTarget {
     lito::package::PackageTargetId               id;
+    String                                       package_source_identity;
     ArtifactKind                                 artifact_kind { ArtifactKind::StaticLibrary };
     lito::manifest::PackageLanguage              language { lito::manifest::PackageLanguage::Cpp };
     String                                       artifact_name;
@@ -169,11 +170,10 @@ struct BuildScriptOwner {
 };
 
 struct SelectedPackageMetadata {
-    lito::package::PackageInstanceKey instance;
-    String                            name;
-    Option<String>                    version;
-    String                            source_identity;
-    PathBuf                           root;
+    String         name;
+    Option<String> version;
+    String         source_identity;
+    PathBuf        root;
 };
 
 struct PackageMetadata {
