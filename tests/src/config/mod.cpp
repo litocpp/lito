@@ -103,16 +103,16 @@ TEST_F(Config, InvalidHostToolProviderConfigurationReportsTheNestedKey) {
     constexpr ConfigCase cases[] = {
         { "integer-cmake"_str,
           "[tools]\ncmake = 7\n"_str,
-          "config.tools.cmake must be a table"_str },
+          "type mismatch: expected map, found signed integer at $.tools.cmake"_str },
         { "array-pkg-config"_str,
           "[tools]\npkg-config = []\n"_str,
-          "config.tools.pkg-config must be a table"_str },
+          "type mismatch: expected map, found sequence at $.tools.pkg-config"_str },
         { "empty-cmake-executable"_str,
           "[tools.cmake]\nexecutable = \"\"\n"_str,
-          "config.tools.cmake.executable must not be empty"_str },
+          "invalid value: executable must not be empty at $.tools.cmake.executable"_str },
         { "unknown-pkg-config-field"_str,
           "[tools.pkg-config]\nargs = []\n"_str,
-          "config.tools.pkg-config contains unknown field 'args'"_str },
+          "unknown field: args at $.tools.pkg-config.args"_str },
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -833,7 +833,7 @@ TEST_F(Config, InvalidBuildOptionConfigurationAndEnvironmentAreSourceAware) {
     ASSERT_TRUE(unknown_result.is_err());
     EXPECT_TRUE(error_chain_text(unknown_result.unwrap_err())
                     .as_str()
-                    .contains("config.build.c contains unknown field 'unknown'"_str));
+                    .contains("unknown field: unknown at $.build.c.unknown"_str));
 
     auto invalid = config("build-options-invalid"_str, "[build]\noptions = [\"\"]\n"_str);
     ASSERT_TRUE(invalid.is_ok());
@@ -841,7 +841,8 @@ TEST_F(Config, InvalidBuildOptionConfigurationAndEnvironmentAreSourceAware) {
     ASSERT_TRUE(invalid_result.is_err());
     EXPECT_TRUE(error_chain_text(invalid_result.unwrap_err())
                     .as_str()
-                    .contains("config.build.options entries must be non-empty strings"_str));
+                    .contains("invalid value: compiler option must not be empty at "
+                              "$.build.options[0]"_str));
 
     auto cxx_flags   = EnvironmentVariableGuard("CXXFLAGS"_str, "-DVALUE='unterminated"_str);
     auto environment = lito::config::load_project_config(

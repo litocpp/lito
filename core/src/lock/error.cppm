@@ -5,6 +5,7 @@ export module lito.core:lock.error;
 
 import rstd;
 import rstd.json;
+import rstd.serde;
 import :parse.error;
 
 using namespace rstd::prelude;
@@ -16,6 +17,7 @@ class LockError {
     RSTD_ENUM(LockError,
               (Schema, (String message;)),
               (Parse, (lito::parse::Error source;)),
+              (Data, (rstd::serde::Error source;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
               (Json, (rstd::path::PathBuf path; rstd::json::Error source;)))
 };
@@ -41,6 +43,9 @@ struct Impl<fmt::Display, lito::lock::LockError> : ImplBase<lito::lock::LockErro
         const auto& error = this->self();
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
         if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
+        if (error.is_Data()) {
+            return formatter.write_raw("lock data is invalid", sizeof("lock data is invalid") - 1);
+        }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_fmt(
@@ -63,6 +68,7 @@ struct Impl<error::Error, lito::lock::LockError> : ImplBase<lito::lock::LockErro
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
+        if (error.is_Data()) return Some(dyn<error::Error>::from_ref(error.as_Data().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
         return None();

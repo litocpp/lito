@@ -64,6 +64,7 @@ target_sources(
          src/config/project.cppm
          src/config/registry.cppm
          src/config/schema.cppm
+         src/config/wire.cppm
          src/dependency/cmake.cppm
          src/dependency/catalog.cppm
          src/dependency/external_source.cppm
@@ -129,7 +130,7 @@ target_sources(
 target_link_libraries(
   lito.driver
   PUBLIC lito.core lito.cpp lito.tools lito.toolchain lito.frontend rstd.std
-  PRIVATE luato::luato rstd.bench rstd.json rstd.toml PkgConfig::LITO_ARCHIVE)
+  PRIVATE luato::luato rstd.bench rstd.json rstd.serde rstd.toml PkgConfig::LITO_ARCHIVE)
 
 if(LITO_OFFICIAL_REGISTRY_PUBLIC_KEY)
   target_compile_definitions(

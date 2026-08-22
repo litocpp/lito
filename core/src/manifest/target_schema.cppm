@@ -4,6 +4,7 @@ module;
 module lito.core:manifest.target_schema;
 
 import rstd;
+import rstd.serde;
 import rstd.toml;
 import :manifest.target;
 import :manifest.conditional;
@@ -17,6 +18,7 @@ import :manifest.language;
 import :manifest.primitives;
 import :manifest.key_schema;
 import :manifest.convention;
+import :manifest.wire;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
@@ -25,6 +27,7 @@ using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
 using namespace lito::manifest;
+using DataPath = rstd::serde::DataPath;
 
 auto valid_artifact_name(ref<str> value) -> bool {
     if (value.size() == usize {} || value == "."_str || value == ".."_str) return false;
@@ -221,11 +224,10 @@ auto path_repeated(const Vec<PathBuf>& paths, ref<rstd::path::Path> candidate) -
     return false;
 }
 
-auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source, ref<str> context)
+auto append_attachment_source(TestAttachmentManifest& attachment, PathBuf source, DataPath path)
     -> ManifestSchemaResult<empty> {
     if (path_repeated(attachment.sources, source.as_path())) {
-        return manifest_schema_failure<empty>(
-            rstd::format("{} repeats source '{}'", context, source.as_path()));
+        return manifest_data_failure<empty>(rstd::move(path), "source is repeated"_str);
     }
     attachment.sources.push(rstd::move(source));
     return Ok(empty {});
@@ -252,30 +254,47 @@ auto parse_source_group_names(Option<ref<Toml>> value, ref<str> context, bool re
     return Ok(rstd::move(names));
 }
 
-auto parse_target_source_conditions(Option<ref<Toml>> value, ref<str> owner)
+auto validate_source_group_names(Vec<String> names, const DataPath& path, bool required)
+    -> ManifestSchemaResult<Vec<String>> {
+    if (required && names.is_empty()) {
+        return manifest_data_failure<Vec<String>>(path.clone(), "must not be empty"_str);
+    }
+    auto seen = rstd::collections::BTreeMap<String, empty>::make();
+    for (usize index {}; index < names.len(); ++index) {
+        const auto& name = names[index];
+        auto        item = path.with_index(index);
+        if (! package_name_is_valid(name.as_str())) {
+            return manifest_data_failure<Vec<String>>(rstd::move(item),
+                                                      "invalid source group name"_str);
+        }
+        if (seen.contains_key(name.as_str())) {
+            return manifest_data_failure<Vec<String>>(rstd::move(item),
+                                                      "source group is repeated"_str);
+        }
+        seen.insert(name.clone(), empty {});
+    }
+    return Ok(rstd::move(names));
+}
+
+auto parse_target_source_conditions(Option<ref<Toml>> value, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<ConditionalTargetSources>> {
     auto result = Vec<ConditionalTargetSources>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto entries = (**value).as_array();
-    if (entries.is_none()) {
-        return manifest_schema_failure<Vec<ConditionalTargetSources>>(
-            rstd::format("{}.when must be an array", owner));
-    }
-    for (usize index {}; index < (**entries).len(); ++index) {
-        const auto  context = rstd::format("{}.when[{}]", owner, index);
-        const auto& entry   = (**entries)[index];
-        auto        table   = rstd_try(table_value(entry, context.as_str()));
-        rstd_try(reject_unknown(*table, context.as_str(), target_when_key));
-        auto source    = rstd_try(required_string(entry, "condition"_str, context.as_str()));
-        auto condition = lito::condition::parse(source.as_str());
+    auto path    = owner_path.with_field("when"_str);
+    auto entries = rstd_try(decode_manifest_value<Vec<lito::manifest::wire::TargetSourceCondition>>(
+        **value, path.clone()));
+    for (usize index {}; index < entries.len(); ++index) {
+        auto& entry     = entries[index];
+        auto  item      = path.with_index(index);
+        auto  source    = rstd::move(entry.condition);
+        auto  condition = lito::condition::parse(source.as_str());
         if (condition.is_err()) {
-            return manifest_schema_failure<Vec<ConditionalTargetSources>>(rstd::format(
-                "{} condition '{}': {}", context, source.as_str(), condition.unwrap_err()));
+            auto message = rstd::format("invalid condition: {}", condition.unwrap_err());
+            return manifest_data_failure<Vec<ConditionalTargetSources>>(
+                item.with_field("condition"_str), message.as_str());
         }
-        auto groups =
-            rstd_try(parse_source_group_names(member(entry, "source-groups"_str),
-                                              rstd::format("{}.source-groups", context).as_str(),
-                                              true));
+        auto groups = rstd_try(validate_source_group_names(
+            rstd::move(entry.source_groups), item.with_field("source-groups"_str), true));
         result.push(ConditionalTargetSources {
             .source        = rstd::move(source),
             .condition     = rstd::move(condition).unwrap(),
@@ -285,63 +304,61 @@ auto parse_target_source_conditions(Option<ref<Toml>> value, ref<str> owner)
     return Ok(rstd::move(result));
 }
 
-auto parse_test_attachments(Option<ref<Toml>> value, ref<str> owner_context)
+auto parse_test_attachments(Option<ref<Toml>> value, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<TestAttachmentManifest>> {
     auto result = Vec<TestAttachmentManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto entries = (**value).as_array();
-    if (entries.is_none()) {
-        return manifest_schema_failure<Vec<TestAttachmentManifest>>(
-            rstd::format("{}.attach must be an array", owner_context));
-    }
-    for (usize index {}; index < (**entries).len(); ++index) {
-        const auto context = rstd::format("{}.attach[{}]", owner_context, index);
-        auto       table   = table_value((**entries)[index], context.as_str());
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_unknown(**table, context.as_str(), test_attachment_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto package = required_string((**entries)[index], "package"_str, context.as_str());
-        auto sources = declared_paths(member((**entries)[index], "sources"_str),
-                                      rstd::format("{}.sources", context.as_str()).as_str(),
-                                      false);
-        if (package.is_err()) return Err(rstd::move(package).unwrap_err());
-        if (sources.is_err()) return Err(rstd::move(sources).unwrap_err());
-        if (! package_name_is_valid(package->as_str())) {
-            return manifest_schema_failure<Vec<TestAttachmentManifest>>(
-                rstd::format("{}.package must name a valid package", context.as_str()));
+    auto path    = owner_path.with_field("attach"_str);
+    auto entries = rstd_try(
+        decode_manifest_value<Vec<lito::manifest::wire::TestAttachment>>(**value, path.clone()));
+    for (usize index {}; index < entries.len(); ++index) {
+        auto  item  = path.with_index(index);
+        auto& entry = entries[index];
+        if (! package_name_is_valid(entry.package.as_str())) {
+            return manifest_data_failure<Vec<TestAttachmentManifest>>(
+                item.with_field("package"_str), "must name a valid package"_str);
         }
-        if (sources->is_empty()) {
-            return manifest_schema_failure<Vec<TestAttachmentManifest>>(
-                rstd::format("{} must contain sources", context.as_str()));
+        if (entry.sources.is_empty()) {
+            return manifest_data_failure<Vec<TestAttachmentManifest>>(
+                item.with_field("sources"_str), "must not be empty"_str);
         }
 
         auto position = Option<usize> {};
         for (usize candidate {}; candidate < result.len(); ++candidate) {
-            if (result[candidate].package == package->as_str()) {
+            if (result[candidate].package == entry.package.as_str()) {
                 position = Some(candidate);
                 break;
             }
         }
         if (position.is_none()) {
-            result.push(TestAttachmentManifest { .package = rstd::move(package).unwrap() });
+            result.push(TestAttachmentManifest { .package = rstd::move(entry.package) });
             position = Some(result.len() - usize(1));
         }
         auto& attachment = result[*position];
-        for (auto& source : *sources) {
+        for (usize source_index {}; source_index < entry.sources.len(); ++source_index) {
+            auto source = PathBuf::from(rstd::move(entry.sources[source_index]));
+            if (! source.as_path().is_relative()) {
+                return manifest_data_failure<Vec<TestAttachmentManifest>>(
+                    item.with_field("sources"_str).with_index(source_index),
+                    "must be a relative path"_str);
+            }
             auto appended =
-                append_attachment_source(attachment, rstd::move(source), context.as_str());
+                append_attachment_source(attachment,
+                                         rstd::move(source),
+                                         item.with_field("sources"_str).with_index(source_index));
             if (appended.is_err()) return Err(rstd::move(appended).unwrap_err());
         }
     }
     if (result.is_empty()) {
-        return manifest_schema_failure<Vec<TestAttachmentManifest>>(
-            rstd::format("{}.attach must not be empty", owner_context));
+        return manifest_data_failure<Vec<TestAttachmentManifest>>(rstd::move(path),
+                                                                  "must not be empty"_str);
     }
     return Ok(rstd::move(result));
 }
 
 auto parse_target_source(const Toml&     value,
                          ref<str>        context,
+                         const DataPath& path,
                          bool            module_required,
                          PackageLanguage language) -> ManifestSchemaResult<TargetSourceManifest> {
     auto module = rstd_try(optional_string(value, "module"_str, context));
@@ -355,7 +372,7 @@ auto parse_target_source(const Toml&     value,
         rstd_try(declared_paths(source_value, rstd::format("{}.sources", context).as_str(), false));
     auto groups     = rstd_try(parse_source_group_names(
         group_value, rstd::format("{}.source-groups", context).as_str(), false));
-    auto conditions = rstd_try(parse_target_source_conditions(member(value, "when"_str), context));
+    auto conditions = rstd_try(parse_target_source_conditions(member(value, "when"_str), path));
     const auto module_discovery = source_value.is_none() && group_value.is_none();
     if (language == PackageLanguage::C && module.is_some()) {
         return manifest_schema_failure<TargetSourceManifest>(
@@ -386,46 +403,50 @@ auto parse_source_groups(Option<ref<Toml>> value)
     -> ManifestSchemaResult<Vec<SourceGroupManifest>> {
     auto result = Vec<SourceGroupManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto table = rstd_try(table_value(**value, "manifest.source-groups"_str));
-    auto keys  = table->keys();
-    for (auto key : keys) {
-        const auto& name    = *key;
-        const auto  context = rstd::format("source group '{}'", name.as_str());
+    auto path = DataPath().with_field("source-groups"_str);
+    auto groups =
+        rstd_try(decode_manifest_value<lito::manifest::wire::SourceGroups>(**value, path.clone()));
+    for (auto name_ref : groups.keys()) {
+        const auto& name = *name_ref;
+        auto        item = path.with_map_key(name.as_str());
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<SourceGroupManifest>>(
-                rstd::format("source group name '{}' is invalid", name.as_str()));
+            return manifest_data_failure<Vec<SourceGroupManifest>>(rstd::move(item),
+                                                                   "invalid source group name"_str);
         }
-        const auto& specification = **table->get(name.as_str());
-        auto        fields        = rstd_try(table_value(specification, context.as_str()));
-        rstd_try(reject_unknown(*fields, context.as_str(), source_group_key));
-        auto external =
-            rstd_try(optional_string(specification, "external-source"_str, context.as_str()));
+        auto specification = groups.get_mut(name.as_str()).unwrap_unchecked();
+        auto external      = rstd::move(specification->external_source);
         if (external.is_some() && ! package_name_is_valid(external->as_str())) {
-            return manifest_schema_failure<Vec<SourceGroupManifest>>(
-                rstd::format("{}.external-source must name a package external source", context));
+            return manifest_data_failure<Vec<SourceGroupManifest>>(
+                item.with_field("external-source"_str), "must name a package external source"_str);
         }
         auto root       = SourceGroupRoot::Package;
-        auto root_value = rstd_try(optional_string(specification, "root"_str, context.as_str()));
+        auto root_value = rstd::move(specification->root);
         if (root_value.is_some()) {
             if (root_value->as_str() == "generated"_str) {
                 root = SourceGroupRoot::Generated;
             } else if (root_value->as_str() != "package"_str) {
-                return manifest_schema_failure<Vec<SourceGroupManifest>>(
-                    rstd::format("{}.root must be package or generated", context));
+                return manifest_data_failure<Vec<SourceGroupManifest>>(
+                    item.with_field("root"_str), "must be 'package' or 'generated'"_str);
             }
         }
         if (root == SourceGroupRoot::Generated && external.is_some()) {
-            return manifest_schema_failure<Vec<SourceGroupManifest>>(
-                rstd::format("{}.root generated cannot be combined with external-source", context));
+            return manifest_data_failure<Vec<SourceGroupManifest>>(
+                item.with_field("external-source"_str),
+                "cannot be combined with root 'generated'"_str);
         }
-        auto sources = rstd_try(declared_paths(member(specification, "sources"_str),
-                                               rstd::format("{}.sources", context).as_str(),
-                                               true));
-        for (const auto& source : sources) {
+        if (specification->sources.is_empty()) {
+            return manifest_data_failure<Vec<SourceGroupManifest>>(item.with_field("sources"_str),
+                                                                   "must not be empty"_str);
+        }
+        auto sources = Vec<PathBuf>::with_capacity(specification->sources.len());
+        for (usize index {}; index < specification->sources.len(); ++index) {
+            auto source = PathBuf::from(rstd::move(specification->sources[index]));
             if (! source.as_path().is_safe_relative()) {
-                return manifest_schema_failure<Vec<SourceGroupManifest>>(rstd::format(
-                    "{} source '{}' must be a safe relative path", context, source.as_path()));
+                return manifest_data_failure<Vec<SourceGroupManifest>>(
+                    item.with_field("sources"_str).with_index(index),
+                    "must be a safe relative path"_str);
             }
+            sources.push(rstd::move(source));
         }
         result.push(SourceGroupManifest {
             .name            = name.clone(),
@@ -477,47 +498,48 @@ auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib output must be a safe artifact basename"_str);
     }
-    auto source = rstd_try(parse_target_source(
-        **value, "manifest.lib"_str, language == PackageLanguage::Cpp, language));
+    auto source = rstd_try(parse_target_source(**value,
+                                               "manifest.lib"_str,
+                                               DataPath().with_field("lib"_str),
+                                               language == PackageLanguage::Cpp,
+                                               language));
     return Ok(Some(
         PackageTargetManifest::Library(rstd::move(name), rstd::move(output), rstd::move(source))));
 }
 
-auto parse_runtime_resources(Option<ref<Toml>> value, ref<str> context)
+auto parse_runtime_resources(Option<ref<Toml>> value, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<RuntimeResourceManifest>> {
     auto result = Vec<RuntimeResourceManifest>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto entries = (**value).as_array();
-    if (entries.is_none() || (**entries).is_empty()) {
-        return manifest_schema_failure<Vec<RuntimeResourceManifest>>(
-            rstd::format("{}.resources must be a non-empty array of tables", context));
+    auto path    = owner_path.with_field("resources"_str);
+    auto entries = rstd_try(
+        decode_manifest_value<Vec<lito::manifest::wire::RuntimeResource>>(**value, path.clone()));
+    if (entries.is_empty()) {
+        return manifest_data_failure<Vec<RuntimeResourceManifest>>(rstd::move(path),
+                                                                   "must not be empty"_str);
     }
-    for (usize index {}; index < (**entries).len(); ++index) {
-        const auto  item_context = rstd::format("{}.resources[{}]", context, index);
-        const auto& item         = (**entries)[index];
-        auto        table        = rstd_try(table_value(item, item_context.as_str()));
-        rstd_try(reject_unknown(*table, item_context.as_str(), runtime_resource_key));
-        auto name = rstd_try(required_string(item, "name"_str, item_context.as_str()));
-        auto root = rstd_try(required_string(item, "root"_str, item_context.as_str()));
-        auto path = rstd_try(required_string(item, "path"_str, item_context.as_str()));
+    for (usize index {}; index < entries.len(); ++index) {
+        auto  item_path = path.with_index(index);
+        auto& item      = entries[index];
+        auto& name      = item.name;
         if (! package_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<RuntimeResourceManifest>>(
-                rstd::format("{}.name must be a valid resource name", item_context));
+            return manifest_data_failure<Vec<RuntimeResourceManifest>>(
+                item_path.with_field("name"_str), "must be a valid resource name"_str);
         }
         for (const auto& existing : result) {
             if (existing.name == name.as_str()) {
-                return manifest_schema_failure<Vec<RuntimeResourceManifest>>(
-                    rstd::format("{} repeats resource name '{}'", context, name.as_str()));
+                return manifest_data_failure<Vec<RuntimeResourceManifest>>(
+                    item_path.with_field("name"_str), "resource name is repeated"_str);
             }
         }
-        if (root.as_str() != "generated"_str) {
-            return manifest_schema_failure<Vec<RuntimeResourceManifest>>(
-                rstd::format("{}.root must be 'generated'", item_context));
+        if (item.root.as_str() != "generated"_str) {
+            return manifest_data_failure<Vec<RuntimeResourceManifest>>(
+                item_path.with_field("root"_str), "must be 'generated'"_str);
         }
-        auto relative = PathBuf::from(rstd::move(path));
+        auto relative = PathBuf::from(rstd::move(item.path));
         if (relative.is_empty() || ! relative.as_path().is_safe_relative()) {
-            return manifest_schema_failure<Vec<RuntimeResourceManifest>>(
-                rstd::format("{}.path must be a safe non-empty relative path", item_context));
+            return manifest_data_failure<Vec<RuntimeResourceManifest>>(
+                item_path.with_field("path"_str), "must be a safe non-empty relative path"_str);
         }
         result.push(RuntimeResourceManifest {
             .name = rstd::move(name),
@@ -546,6 +568,7 @@ auto parse_runnable_targets(Option<ref<Toml>>                value,
     for (usize index {}; index < (**entries).len(); ++index) {
         const auto  context = rstd::format("manifest.{}[{}]", key, index);
         const auto& item    = (**entries)[index];
+        auto        path    = DataPath().with_field(key).with_index(index);
         auto        table   = rstd_try(table_value(item, context.as_str()));
         auto        allowed =
             kind == lito::package::PackageTargetKind::Test
@@ -563,8 +586,8 @@ auto parse_runnable_targets(Option<ref<Toml>>                value,
                     rstd::format("manifest.{} repeats target name '{}'", key, name.as_str()));
             }
         }
-        auto source      = rstd_try(parse_target_source(item, context.as_str(), false, language));
-        auto link_stdlib = true;
+        auto source = rstd_try(parse_target_source(item, context.as_str(), path, false, language));
+        auto link_stdlib          = true;
         auto declared_link_stdlib = member(item, "link-stdlib"_str);
         if (declared_link_stdlib.is_some()) {
             auto parsed = (**declared_link_stdlib).as_bool();
@@ -575,16 +598,14 @@ auto parse_runnable_targets(Option<ref<Toml>>                value,
             link_stdlib = *parsed;
         }
         if (kind == lito::package::PackageTargetKind::Binary) {
-            auto resources =
-                rstd_try(parse_runtime_resources(member(item, "resources"_str), context.as_str()));
+            auto resources = rstd_try(parse_runtime_resources(member(item, "resources"_str), path));
             result.push(PackageTargetManifest::Binary(
                 rstd::move(name), rstd::move(source), link_stdlib, rstd::move(resources)));
         } else if (kind == lito::package::PackageTargetKind::Benchmark) {
             result.push(PackageTargetManifest::Benchmark(
                 rstd::move(name), rstd::move(source), link_stdlib));
         } else {
-            auto attachments =
-                rstd_try(parse_test_attachments(member(item, "attach"_str), context.as_str()));
+            auto attachments = rstd_try(parse_test_attachments(member(item, "attach"_str), path));
             result.push(PackageTargetManifest::Test(
                 rstd::move(name), rstd::move(source), link_stdlib, rstd::move(attachments)));
         }
@@ -707,89 +728,65 @@ auto resolve_include_directories(Option<ref<Toml>>     value,
 
 auto parse_compile_tests(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<CompileTestCase>> {
     auto result = Vec<CompileTestCase>::make();
+    auto path   = DataPath().with_field("compile-test"_str).with_field("cases"_str);
     if (value.is_none()) {
-        return manifest_schema_failure<Vec<CompileTestCase>>("compile-test.cases is required"_str);
+        return manifest_data_failure<Vec<CompileTestCase>>(rstd::move(path), "is required"_str);
     }
-    auto cases = (**value).as_array();
-    if (cases.is_none()) {
-        return manifest_schema_failure<Vec<CompileTestCase>>(
-            "compile-test.cases must be an array"_str);
-    }
+    auto cases = rstd_try(
+        decode_manifest_value<Vec<lito::manifest::wire::CompileTestCase>>(**value, path.clone()));
     auto names   = rstd::collections::BTreeMap<String, empty>::make();
     auto sources = rstd::collections::BTreeMap<String, empty>::make();
-    for (usize index {}; index < (**cases).len(); ++index) {
-        const auto  context = rstd::format("compile-test.cases[{}]", index);
-        const auto& value   = (**cases)[index];
-        auto        table   = table_value(value, context.as_str());
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_unknown(**table, context.as_str(), compile_test_case_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto name    = required_string(value, "name"_str, context.as_str());
-        auto source  = required_string(value, "source"_str, context.as_str());
-        auto outcome = required_string(value, "outcome"_str, context.as_str());
-        auto options = string_array(member(value, "options"_str),
-                                    rstd::format("{}.options", context.as_str()).as_str());
-        auto contains =
-            string_array(member(value, "diagnostic-contains"_str),
-                         rstd::format("{}.diagnostic-contains", context.as_str()).as_str());
-        auto contains_any =
-            string_array(member(value, "diagnostic-contains-any"_str),
-                         rstd::format("{}.diagnostic-contains-any", context.as_str()).as_str());
-        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
-        if (source.is_err()) return Err(rstd::move(source).unwrap_err());
-        if (outcome.is_err()) return Err(rstd::move(outcome).unwrap_err());
-        if (options.is_err()) return Err(rstd::move(options).unwrap_err());
-        if (contains.is_err()) return Err(rstd::move(contains).unwrap_err());
-        if (contains_any.is_err()) return Err(rstd::move(contains_any).unwrap_err());
-        if (name->is_empty()) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(
-                rstd::format("{}.name must not be empty", context.as_str()));
+    for (usize index {}; index < cases.len(); ++index) {
+        auto  item = path.with_index(index);
+        auto& wire = cases[index];
+        if (wire.name.is_empty()) {
+            return manifest_data_failure<Vec<CompileTestCase>>(item.with_field("name"_str),
+                                                               "must not be empty"_str);
         }
-        if (names.contains_key(name->as_str())) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(
-                rstd::format("compile-test repeats case name '{}'", name->as_str()));
+        if (names.contains_key(wire.name.as_str())) {
+            return manifest_data_failure<Vec<CompileTestCase>>(item.with_field("name"_str),
+                                                               "case name is repeated"_str);
         }
-        auto relative = relative_path(rstd::move(source).unwrap(),
-                                      rstd::format("{}.source", context.as_str()).as_str());
-        if (relative.is_err()) return Err(rstd::move(relative).unwrap_err());
-        auto source_text = relative->as_path().to_str();
+        auto relative = PathBuf::from(rstd::move(wire.source));
+        if (! relative.as_path().is_relative()) {
+            return manifest_data_failure<Vec<CompileTestCase>>(item.with_field("source"_str),
+                                                               "must be a relative path"_str);
+        }
+        auto source_text = relative.as_path().to_str();
         if (source_text.is_none()) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(
-                rstd::format("{}.source is not valid UTF-8", context.as_str()));
+            return manifest_data_failure<Vec<CompileTestCase>>(item.with_field("source"_str),
+                                                               "must be valid UTF-8"_str);
         }
         if (sources.contains_key(*source_text)) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(rstd::format(
-                "compile-test source '{}' is used by more than one case", relative->as_path()));
+            return manifest_data_failure<Vec<CompileTestCase>>(
+                item.with_field("source"_str), "source is used by more than one case"_str);
         }
         auto expected = CompileTestOutcome::Failure;
-        if (outcome->as_str() == "success"_str) {
+        if (wire.outcome.as_str() == "success"_str) {
             expected = CompileTestOutcome::Success;
-        } else if (outcome->as_str() != "failure"_str) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(
-                rstd::format("{}.outcome must be success or failure", context.as_str()));
+        } else if (wire.outcome.as_str() != "failure"_str) {
+            return manifest_data_failure<Vec<CompileTestCase>>(
+                item.with_field("outcome"_str), "must be 'success' or 'failure'"_str);
         }
-        auto option_values       = rstd::move(options).unwrap();
-        auto contains_values     = rstd::move(contains).unwrap();
-        auto contains_any_values = rstd::move(contains_any).unwrap();
         if (expected == CompileTestOutcome::Success &&
-            (! contains_values.is_empty() || ! contains_any_values.is_empty())) {
-            return manifest_schema_failure<Vec<CompileTestCase>>(rstd::format(
-                "{} cannot require diagnostics for a successful outcome", context.as_str()));
+            (! wire.diagnostic_contains.is_empty() || ! wire.diagnostic_contains_any.is_empty())) {
+            return manifest_data_failure<Vec<CompileTestCase>>(
+                rstd::move(item), "successful outcome cannot require diagnostics"_str);
         }
-        names.insert(name->clone(), empty {});
+        names.insert(wire.name.clone(), empty {});
         sources.insert(String::make(*source_text), empty {});
         result.push(CompileTestCase {
-            .name                    = rstd::move(name).unwrap(),
-            .source                  = rstd::move(relative).unwrap(),
+            .name                    = rstd::move(wire.name),
+            .source                  = rstd::move(relative),
             .outcome                 = expected,
-            .options                 = rstd::move(option_values),
-            .diagnostic_contains     = rstd::move(contains_values),
-            .diagnostic_contains_any = rstd::move(contains_any_values),
+            .options                 = rstd::move(wire.options),
+            .diagnostic_contains     = rstd::move(wire.diagnostic_contains),
+            .diagnostic_contains_any = rstd::move(wire.diagnostic_contains_any),
         });
     }
     if (result.is_empty()) {
-        return manifest_schema_failure<Vec<CompileTestCase>>(
-            "compile-test.cases must not be empty"_str);
+        return manifest_data_failure<Vec<CompileTestCase>>(rstd::move(path),
+                                                           "must not be empty"_str);
     }
     return Ok(rstd::move(result));
 }
@@ -950,52 +947,33 @@ auto macro_name_is_valid(ref<str> value) -> bool {
 auto parse_features(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<FeatureDeclaration>> {
     auto result = Vec<FeatureDeclaration>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto features = table_value(**value, "manifest.features"_str);
-    if (features.is_err()) return Err(rstd::move(features).unwrap_err());
+    auto path = DataPath().with_field("features"_str);
+    auto features =
+        rstd_try(decode_manifest_value<lito::manifest::wire::Features>(**value, path.clone()));
     auto macros = rstd::collections::BTreeMap<String, String>::make();
-    auto keys   = (**features).keys();
-    for (auto key : keys) {
-        const auto& name    = *key;
-        const auto  context = rstd::format("manifest.features.{}", name.as_str());
+    for (auto name_ref : features.keys()) {
+        const auto& name = *name_ref;
+        auto        item = path.with_map_key(name.as_str());
         if (! feature_name_is_valid(name.as_str())) {
-            return manifest_schema_failure<Vec<FeatureDeclaration>>(
-                rstd::format("feature name '{}' is invalid", name.as_str()));
+            return manifest_data_failure<Vec<FeatureDeclaration>>(rstd::move(item),
+                                                                  "invalid feature name"_str);
         }
-        auto specification = (**features).get(name.as_str());
-        auto table         = table_value(**specification, context.as_str());
-        if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-        auto known = reject_unknown(**table, context.as_str(), feature_key);
-        if (known.is_err()) return Err(rstd::move(known).unwrap_err());
-        auto default_enabled = false;
-        auto default_value   = member(**specification, "default"_str);
-        if (default_value.is_some()) {
-            auto parsed = (**default_value).as_bool();
-            if (parsed.is_none()) {
-                return manifest_schema_failure<Vec<FeatureDeclaration>>(
-                    rstd::format("{}.default must be a boolean", context.as_str()));
-            }
-            default_enabled = *parsed;
-        }
-        auto macro = normalized_feature_macro(name.as_str());
+        auto specification = features.get(name.as_str()).unwrap_unchecked();
+        auto macro         = normalized_feature_macro(name.as_str());
         if (! macro_name_is_valid(macro.as_str())) {
-            return manifest_schema_failure<Vec<FeatureDeclaration>>(
-                rstd::format("feature '{}' macro '{}' is not a C/C++ identifier",
-                             name.as_str(),
-                             macro.as_str()));
+            return manifest_data_failure<Vec<FeatureDeclaration>>(
+                rstd::move(item), "macro is not a C/C++ identifier"_str);
         }
         auto existing = macros.get(macro.as_str());
         if (existing.is_some()) {
-            return manifest_schema_failure<Vec<FeatureDeclaration>>(
-                rstd::format("features '{}' and '{}' use the same macro '{}'",
-                             (**existing).as_str(),
-                             name.as_str(),
-                             macro.as_str()));
+            return manifest_data_failure<Vec<FeatureDeclaration>>(
+                rstd::move(item), "normalized macro is repeated"_str);
         }
         macros.insert(macro.clone(), name.clone());
         result.push(FeatureDeclaration {
             .name            = name.clone(),
             .macro_name      = rstd::move(macro),
-            .default_enabled = default_enabled,
+            .default_enabled = specification->default_enabled,
         });
     }
     return Ok(rstd::move(result));

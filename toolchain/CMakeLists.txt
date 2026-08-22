@@ -12,6 +12,7 @@ target_sources(
          src/android/mod.cppm
          src/android/ndk.cppm
          src/android/sdk_catalog.cppm
+         src/android/sdk_catalog_wire.cppm
          src/clang/arguments.cppm
          src/clang/compile_executor.cppm
          src/clang/mod.cppm
@@ -23,6 +24,7 @@ target_sources(
          src/clang/preprocessor_query.cppm
          src/clang/sdk.cppm
          src/clang/sdk_catalog.cppm
+         src/clang/sdk_catalog_wire.cppm
          src/clang/support.cppm
          src/clang/strip.cppm
          src/clang/standard_library_module.cppm
@@ -39,4 +41,4 @@ target_sources(
 target_link_libraries(
   lito.toolchain
   PUBLIC lito.core lito.cpp lito.frontend lito.tools rstd.std
-  PRIVATE rstd.json)
+  PRIVATE rstd.json rstd.serde)

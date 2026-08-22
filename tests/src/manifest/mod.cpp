@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import rstd.serde;
 import rstd.test;
 import lito.core;
 import lito.system;
@@ -675,6 +676,47 @@ TEST_F(Manifest, ManifestSchemaErrorRetainsFileAndNodeOwnership) {
     auto cause_source = (*file_source)->source();
     ASSERT_TRUE(cause_source.is_some());
     EXPECT_TRUE(rstd::error::is<lito::manifest::ManifestSchemaError>(*cause_source));
+}
+
+TEST_F(Manifest, TypedManifestDataKeepsItsStructuralPath) {
+    auto project = manifest("typed-data-path"_str, R"lito([package]
+name = "typed-data-path"
+version = "0.1.0"
+
+[[bin]]
+name = "typed-data-path"
+sources = ["main.cpp"]
+link-stdlib = false
+
+[build-tools.generator]
+version = "1.2.3"
+executable = "bin/generator"
+command = "generator"
+
+[build-tools.generator.archives.linux-x86_64]
+url = "https://example.com/generator.tgz"
+sha256 = "0000000000000000000000000000000000000000000000000000000000000000"
+)lito"_str);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::manifest::load_manifest_document(project->root.as_path());
+    ASSERT_TRUE(loaded.is_err());
+    auto error = rstd::move(loaded).unwrap_err_unchecked();
+    ASSERT_TRUE(error.is_File());
+    const auto& file = error.as_File().source;
+    ASSERT_TRUE(file.cause.is_Schema());
+    const auto& schema = file.cause.as_Schema().source;
+    ASSERT_TRUE(schema.is_Data());
+    const auto& data = schema.as_Data().source;
+    EXPECT_EQ(data.kind(), rstd::serde::ErrorKind::UnknownField);
+    auto path = data.path().segments();
+    ASSERT_EQ(path.len(), usize(3));
+    EXPECT_EQ(path[usize {}].name().unwrap(), "build-tools"_str);
+    EXPECT_EQ(path[usize(1)].name().unwrap(), "generator"_str);
+    EXPECT_EQ(path[usize(2)].name().unwrap(), "command"_str);
+
+    auto source = as<rstd::error::Error>(schema).source();
+    ASSERT_TRUE(source.is_some());
+    EXPECT_TRUE(rstd::error::is<rstd::serde::Error>(*source));
 }
 
 TEST_F(Manifest, PackageManifestOwnsTypedTargetCollection) {

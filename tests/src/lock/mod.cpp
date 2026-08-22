@@ -1,6 +1,7 @@
 #include <rstd/test/gtest.hpp>
 
 import rstd;
+import rstd.serde;
 import rstd.test;
 import lito.core;
 import lito.driver;
@@ -156,6 +157,46 @@ TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
     ASSERT_TRUE(rebuilt.is_ok());
     ASSERT_EQ(rebuilt->packages.len(), usize(1));
     EXPECT_TRUE(rebuilt->packages[usize {}].externals.is_empty());
+    EXPECT_TRUE(lito::lock::load_lock_session(fixture->root.as_path(), true).is_ok());
+}
+
+TEST_F(Lock, InvalidSupportedLockCanBeReplacedButNotUsedAsLocked) {
+    constexpr auto invalid_lock = R"json({
+  "packages": [{
+    "dependencies": [],
+    "externals": [],
+    "manifest": "lito.toml",
+    "name": "fixture-lock",
+    "runtime-dependencies": [],
+    "source": { "kind": "path", "path": "." }
+  }],
+  "unexpected": true,
+  "version": 2
+})json"_str;
+    auto           fixture      = project("replace-invalid"_str, invalid_lock);
+    ASSERT_TRUE(fixture.is_ok());
+
+    auto locked = lito::lock::load_lock_session(fixture->root.as_path(), true);
+    ASSERT_TRUE(locked.is_err());
+    auto locked_error = rstd::move(locked).unwrap_err_unchecked();
+    ASSERT_TRUE(locked_error.is_Data());
+    const auto& data = locked_error.as_Data().source;
+    EXPECT_EQ(data.kind(), rstd::serde::ErrorKind::UnknownField);
+    auto path = data.path().segments();
+    ASSERT_EQ(path.len(), usize(1));
+    EXPECT_EQ(path[usize {}].name().unwrap(), "unexpected"_str);
+
+    auto update = lito::lock::load_lock_session(fixture->root.as_path(),
+                                                false,
+                                                lito::source::GitResolutionMode::ReuseLocked,
+                                                lito::lock::InvalidLockPolicy::Replace);
+    ASSERT_TRUE(update.is_ok());
+    auto options = update->take_resolution_options();
+    auto graph = lito::package::resolve_package_graph(fixture->root.as_path(), rstd::move(options));
+    ASSERT_TRUE(graph.is_ok());
+    auto synchronized = lito::lock::sync_lock(*graph, rstd::move(update).unwrap_unchecked());
+    ASSERT_TRUE(synchronized.is_ok());
+    EXPECT_EQ(*synchronized, lito::lock::LockStatus::Updated);
     EXPECT_TRUE(lito::lock::load_lock_session(fixture->root.as_path(), true).is_ok());
 }
 

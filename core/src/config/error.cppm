@@ -4,6 +4,7 @@ module;
 export module lito.core:config.error;
 
 import rstd;
+import rstd.serde;
 import rstd.toml;
 import lito.system;
 import :parse.error;
@@ -17,6 +18,7 @@ class ConfigError {
     RSTD_ENUM(ConfigError,
               (Schema, (String message;)),
               (Value, (lito::parse::Error source;)),
+              (Data, (rstd::serde::Error source;)),
               (EnvironmentFlags, (String variable; lito::system::SystemError source;)),
               (Input, (String context; rstd::toml::Error source;)),
               (MissingKey, (String key;)),
@@ -47,6 +49,10 @@ struct Impl<fmt::Display, lito::config::ConfigError> : ImplBase<lito::config::Co
         const auto& error = this->self();
         if (error.is_Schema()) return formatter.write_str(error.as_Schema().message.as_str());
         if (error.is_Value()) return as<fmt::Display>(error.as_Value().source).fmt(formatter);
+        if (error.is_Data()) {
+            return formatter.write_raw("configuration data is invalid",
+                                       sizeof("configuration data is invalid") - 1);
+        }
         if (error.is_EnvironmentFlags()) {
             return formatter.write_fmt(fmt::Arguments::make("cannot read compiler flags from {}",
                                                             error.as_EnvironmentFlags().variable));
@@ -90,6 +96,7 @@ struct Impl<error::Error, lito::config::ConfigError> : ImplBase<lito::config::Co
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Value()) return Some(dyn<error::Error>::from_ref(error.as_Value().source));
+        if (error.is_Data()) return Some(dyn<error::Error>::from_ref(error.as_Data().source));
         if (error.is_EnvironmentFlags()) {
             return Some(dyn<error::Error>::from_ref(error.as_EnvironmentFlags().source));
         }

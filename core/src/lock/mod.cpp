@@ -5,7 +5,9 @@ module lito.core;
 
 import rstd;
 import rstd.json;
+import rstd.serde;
 import :lock;
+import :lock.wire;
 import :package.graph;
 import :dependency.source;
 import :manifest;
@@ -19,8 +21,6 @@ using PathBuf = rstd::path::PathBuf;
 using namespace lito::system;
 using namespace rstd::literals;
 using Json      = rstd::json::Value;
-using Map       = rstd::json::Map;
-using Array     = rstd::json::Array;
 using StringSet = rstd::collections::BTreeMap<String, empty>;
 using namespace lito::lock;
 
@@ -35,6 +35,19 @@ auto lock_failure(ref<str> message) -> LockResult<T> {
 }
 
 template<typename T>
+auto lock_data_failure(rstd::serde::DataPath path, ref<str> message) -> LockResult<T> {
+    return Err(LockError::Data(rstd::serde::Error::invalid_value(rstd::move(path), message)));
+}
+
+template<typename T, typename Source>
+    requires Impled<rstd::mtp::rm_cvf<Source>, rstd::error::Error>
+auto lock_data_failure(rstd::serde::DataPath path, ref<str> message, Source source)
+    -> LockResult<T> {
+    return Err(LockError::Data(rstd::serde::Error::invalid_value_with_source(
+        rstd::move(path), message, rstd::move(source))));
+}
+
+template<typename T>
 auto lock_io_failure(ref<str> operation, ref<rstd::path::Path> path, rstd::io::error::Error source)
     -> LockResult<T> {
     return Err(LockError::Io(String::make(operation), PathBuf::from(path), rstd::move(source)));
@@ -46,18 +59,6 @@ auto path_string(ref<rstd::path::Path> path) -> LockResult<String> {
         return lock_failure<String>(rstd::format("lock source path '{}' is not valid UTF-8", path));
     }
     return Ok(String::make(*text));
-}
-
-auto string_json(ref<str> value) -> Json {
-    return Json::String(String::make(value));
-}
-
-auto reference_json(const lito::source::GitReference& value) -> Json {
-    auto reference = Map::make();
-    reference.insert(String::make("kind"_str),
-                     string_json(lito::source::git_reference_kind_name(value.kind)));
-    reference.insert(String::make("value"_str), string_json(value.value.as_str()));
-    return Json::Object(rstd::move(reference));
 }
 
 auto locked_package_source(const lito::source::ResolvedPackageSource& source)
@@ -102,53 +103,6 @@ auto locked_external_source(const lito::dependency::ResolvedExternalSource& sour
                                  source.as_Archive().sha256.clone());
 }
 
-auto locked_source_json(const LockedSource& source) -> LockResult<Json> {
-    auto item = Map::make();
-    if (source.is_Path()) {
-        auto path = rstd_try(path_string(source.as_Path().path.as_path()));
-        item.insert(String::make("kind"_str), string_json("path"_str));
-        item.insert(String::make("path"_str), string_json(path.as_str()));
-    } else if (source.is_Package()) {
-        auto path = rstd_try(path_string(source.as_Package().path.as_path()));
-        item.insert(String::make("kind"_str), string_json("package"_str));
-        item.insert(String::make("path"_str), string_json(path.as_str()));
-    } else if (source.is_Builtin()) {
-        item.insert(String::make("digest"_str), string_json(source.as_Builtin().digest.as_str()));
-        item.insert(String::make("id"_str), string_json(source.as_Builtin().id.as_str()));
-        item.insert(String::make("kind"_str), string_json("builtin"_str));
-    } else if (source.is_Git()) {
-        item.insert(String::make("commit"_str), string_json(source.as_Git().commit.as_str()));
-        item.insert(String::make("kind"_str), string_json("git"_str));
-        item.insert(String::make("reference"_str), reference_json(source.as_Git().reference));
-        item.insert(String::make("url"_str), string_json(source.as_Git().url.as_str()));
-    } else if (source.is_Archive()) {
-        item.insert(String::make("kind"_str), string_json("archive"_str));
-        auto sha256 = source.as_Archive().sha256.to_hex();
-        item.insert(String::make("sha256"_str), string_json(sha256.as_str()));
-        item.insert(String::make("url"_str), string_json(source.as_Archive().url.as_str()));
-    } else {
-        item.insert(String::make("blob"_str),
-                    string_json(source.as_Registry().blob.text().as_str()));
-        item.insert(String::make("blob-size"_str),
-                    string_json(source.as_Registry().blob_size.text().as_str()));
-        item.insert(String::make("format"_str), string_json(source.as_Registry().format.as_str()));
-        item.insert(String::make("kind"_str), string_json("registry"_str));
-        item.insert(String::make("package"_str),
-                    string_json(source.as_Registry().package.name.as_str()));
-        item.insert(String::make("registry"_str),
-                    string_json(source.as_Registry().package.registry.as_str()));
-        item.insert(String::make("release"_str),
-                    string_json(source.as_Registry().release.text().as_str()));
-        item.insert(String::make("manifest"_str),
-                    string_json(source.as_Registry().manifest.text().as_str()));
-        item.insert(String::make("source"_str),
-                    string_json(source.as_Registry().source.text().as_str()));
-        item.insert(String::make("version"_str),
-                    string_json(source.as_Registry().version.text().as_str()));
-    }
-    return Ok(Json::Object(rstd::move(item)));
-}
-
 auto external_order_key(const lito::dependency::ResolvedExternalSourceRecord& external) -> String {
     auto architectures = Vec<String>::with_capacity(external.architectures.len());
     for (const auto& architecture : external.architectures) {
@@ -163,8 +117,61 @@ auto external_order_key(const lito::dependency::ResolvedExternalSourceRecord& ex
     return key;
 }
 
-auto graph_json(const lito::package::ResolvedPackageGraph& graph,
-                u64 format_version = LOCK_FORMAT_VERSION) -> LockResult<Json> {
+auto locked_source_wire(const LockedSource& source) -> LockResult<lito::lock::wire::Source> {
+    if (source.is_Path()) {
+        return Ok(lito::lock::wire::Source {
+            .kind = String::make("path"_str),
+            .path = Some(rstd_try(path_string(source.as_Path().path.as_path()))),
+        });
+    }
+    if (source.is_Package()) {
+        return Ok(lito::lock::wire::Source {
+            .kind = String::make("package"_str),
+            .path = Some(rstd_try(path_string(source.as_Package().path.as_path()))),
+        });
+    }
+    if (source.is_Builtin()) {
+        return Ok(lito::lock::wire::Source {
+            .kind   = String::make("builtin"_str),
+            .id     = Some(source.as_Builtin().id.clone()),
+            .digest = Some(source.as_Builtin().digest.clone()),
+        });
+    }
+    if (source.is_Git()) {
+        return Ok(lito::lock::wire::Source {
+            .kind      = String::make("git"_str),
+            .url       = Some(source.as_Git().url.clone()),
+            .commit    = Some(source.as_Git().commit.clone()),
+            .reference = Some(lito::lock::wire::GitReference {
+                .kind = String::make(
+                    lito::source::git_reference_kind_name(source.as_Git().reference.kind)),
+                .value = source.as_Git().reference.value.clone(),
+            }),
+        });
+    }
+    if (source.is_Archive()) {
+        return Ok(lito::lock::wire::Source {
+            .kind   = String::make("archive"_str),
+            .url    = Some(String::make(source.as_Archive().url.as_str())),
+            .sha256 = Some(source.as_Archive().sha256.to_hex()),
+        });
+    }
+    return Ok(lito::lock::wire::Source {
+        .kind      = String::make("registry"_str),
+        .registry  = Some(String::make(source.as_Registry().package.registry.as_str())),
+        .package   = Some(String::make(source.as_Registry().package.name.as_str())),
+        .version   = Some(String::make(source.as_Registry().version.text().as_str())),
+        .release   = Some(String::make(source.as_Registry().release.text().as_str())),
+        .source    = Some(String::make(source.as_Registry().source.text().as_str())),
+        .manifest  = Some(String::make(source.as_Registry().manifest.text().as_str())),
+        .blob      = Some(String::make(source.as_Registry().blob.text().as_str())),
+        .blob_size = Some(String::make(source.as_Registry().blob_size.text().as_str())),
+        .format    = Some(String::make(source.as_Registry().format.as_str())),
+    });
+}
+
+auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_version)
+    -> LockResult<lito::lock::wire::Document> {
     auto package_ids = rstd::collections::BTreeMap<String, String>::make();
     if (format_version == LOCK_FORMAT_VERSION) {
         for (const auto& package : graph.packages) {
@@ -173,7 +180,7 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph,
                 auto coordinate = lito::package::resolved_package_instance_id(
                     package.source, package.manifest.name.as_str());
                 if (coordinate.is_err()) {
-                    return lock_failure<Json>(
+                    return lock_failure<lito::lock::wire::Document>(
                         rstd::format("cannot construct lock package instance '{}': {}",
                                      package.manifest.name.as_str(),
                                      coordinate.unwrap_err()));
@@ -189,77 +196,55 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph,
         package_indices.as_mut_slice().as_mut_ref(), [&graph](usize left, usize right) {
             return graph.packages[left].manifest.name < graph.packages[right].manifest.name;
         });
-    auto packages = Array::make();
+
+    auto packages = Vec<lito::lock::wire::Package>::with_capacity(graph.packages.len());
     for (const auto index : package_indices) {
         const auto& package = graph.packages[index];
-        auto        dependency_names =
+        auto        dependencies =
             Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
             auto name = resolved_dependency_name(dependency);
             if (format_version == u64(2)) {
-                dependency_names.push(String::make(name));
+                dependencies.push(String::make(name));
             } else {
                 auto id = package_ids.get(name);
                 if (id.is_none()) {
-                    return lock_failure<Json>(
+                    return lock_failure<lito::lock::wire::Document>(
                         rstd::format("resolved dependency '{}' has no package instance", name));
                 }
-                dependency_names.push((**id).clone());
+                dependencies.push((**id).clone());
             }
         }
         for (const auto& dependency : package.dev_dependencies) {
             if (format_version == u64(2)) {
-                dependency_names.push(dependency.name.clone());
+                dependencies.push(dependency.name.clone());
             } else {
                 auto id = package_ids.get(dependency.name.as_str());
                 if (id.is_none()) {
-                    return lock_failure<Json>(rstd::format(
+                    return lock_failure<lito::lock::wire::Document>(rstd::format(
                         "resolved dependency '{}' has no package instance", dependency.name));
                 }
-                dependency_names.push((**id).clone());
+                dependencies.push((**id).clone());
             }
         }
-        rstd::slice_::sort_unstable(dependency_names.as_mut_slice().as_mut_ref());
-        auto dependencies = Array::make();
-        for (const auto& dependency : dependency_names) {
-            dependencies.push(string_json(dependency.as_str()));
-        }
-        auto manifest = path_string(package.source_manifest.as_path());
-        if (manifest.is_err()) return Err(rstd::move(manifest).unwrap_err());
+        rstd::slice_::sort_unstable(dependencies.as_mut_slice().as_mut_ref());
 
-        auto item = Map::make();
-        item.insert(String::make("dependencies"_str), Json::Array(rstd::move(dependencies)));
-        auto runtime_dependency_names =
-            Vec<String>::with_capacity(package.runtime_dependencies.len());
+        auto runtime_dependencies = Vec<String>::with_capacity(package.runtime_dependencies.len());
         for (const auto& dependency : package.runtime_dependencies) {
             if (format_version == u64(2)) {
-                runtime_dependency_names.push(dependency.name.clone());
+                runtime_dependencies.push(dependency.name.clone());
             } else {
                 auto id = package_ids.get(dependency.name.as_str());
                 if (id.is_none()) {
-                    return lock_failure<Json>(
+                    return lock_failure<lito::lock::wire::Document>(
                         rstd::format("resolved runtime dependency '{}' has no package instance",
                                      dependency.name));
                 }
-                runtime_dependency_names.push((**id).clone());
+                runtime_dependencies.push((**id).clone());
             }
         }
-        rstd::slice_::sort_unstable(runtime_dependency_names.as_mut_slice().as_mut_ref());
-        auto runtime_dependencies = Array::make();
-        for (const auto& dependency : runtime_dependency_names) {
-            runtime_dependencies.push(string_json(dependency.as_str()));
-        }
-        item.insert(String::make("runtime-dependencies"_str),
-                    Json::Array(rstd::move(runtime_dependencies)));
-        item.insert(String::make("manifest"_str), string_json(manifest->as_str()));
-        item.insert(String::make("name"_str), string_json(package.manifest.name.as_str()));
-        if (format_version == LOCK_FORMAT_VERSION) {
-            auto id = package_ids.get(package.manifest.name.as_str());
-            item.insert(String::make("id"_str), string_json((**id).as_str()));
-        }
-        auto locked_source = rstd_try(locked_package_source(package.source));
-        auto source        = rstd_try(locked_source_json(locked_source));
-        item.insert(String::make("source"_str), rstd::move(source));
+        rstd::slice_::sort_unstable(runtime_dependencies.as_mut_slice().as_mut_ref());
+
         auto external_indices = Vec<usize>::with_capacity(package.externals.len());
         for (usize external {}; external < package.externals.len(); ++external) {
             external_indices.push(usize(external));
@@ -269,92 +254,63 @@ auto graph_json(const lito::package::ResolvedPackageGraph& graph,
                                            return external_order_key(package.externals[left]) <
                                                   external_order_key(package.externals[right]);
                                        });
-        auto externals = Array::make();
+        auto externals = Vec<lito::lock::wire::External>::with_capacity(package.externals.len());
         for (const auto external_index : external_indices) {
-            const auto& external    = package.externals[external_index];
-            auto architecture_names = Vec<String>::with_capacity(external.architectures.len());
+            const auto& external      = package.externals[external_index];
+            auto        architectures = Vec<String>::with_capacity(external.architectures.len());
             for (const auto& architecture : external.architectures) {
-                architecture_names.push(architecture.name.clone());
+                architectures.push(architecture.name.clone());
             }
-            rstd::slice_::sort_unstable(architecture_names.as_mut_slice().as_mut_ref());
-            auto architectures = Array::make();
-            for (const auto& architecture : architecture_names) {
-                architectures.push(string_json(architecture.as_str()));
-            }
-            auto external_item = Map::make();
+            rstd::slice_::sort_unstable(architectures.as_mut_slice().as_mut_ref());
+            auto optional_architectures = Option<Vec<String>> {};
             if (! architectures.is_empty()) {
-                external_item.insert(String::make("architectures"_str),
-                                     Json::Array(rstd::move(architectures)));
+                optional_architectures = Some(rstd::move(architectures));
             }
-            external_item.insert(String::make("name"_str), string_json(external.name.as_str()));
-            auto external_source =
-                rstd_try(locked_source_json(locked_external_source(external.source)));
-            external_item.insert(String::make("source"_str), rstd::move(external_source));
-            externals.push(Json::Object(rstd::move(external_item)));
+            externals.push(lito::lock::wire::External {
+                .name          = external.name.clone(),
+                .architectures = rstd::move(optional_architectures),
+                .source = rstd_try(locked_source_wire(locked_external_source(external.source))),
+            });
         }
-        item.insert(String::make("externals"_str), Json::Array(rstd::move(externals)));
+
+        auto id = Option<String> {};
+        if (format_version == LOCK_FORMAT_VERSION) {
+            auto value = package_ids.get(package.manifest.name.as_str());
+            id         = Some((**value).clone());
+        }
+        auto version = Option<String> {};
         if (package.manifest.version.value.is_some()) {
-            item.insert(String::make("version"_str),
-                        string_json(package.manifest.version.value->as_str()));
+            version = Some(package.manifest.version.value->clone());
         }
-        packages.push(Json::Object(rstd::move(item)));
+        packages.push(lito::lock::wire::Package {
+            .id      = rstd::move(id),
+            .name    = package.manifest.name.clone(),
+            .version = rstd::move(version),
+            .source = rstd_try(locked_source_wire(rstd_try(locked_package_source(package.source)))),
+            .manifest             = rstd_try(path_string(package.source_manifest.as_path())),
+            .dependencies         = rstd::move(dependencies),
+            .runtime_dependencies = rstd::move(runtime_dependencies),
+            .externals            = rstd::move(externals),
+        });
     }
-
-    auto root = Map::make();
-    root.insert(String::make("packages"_str), Json::Array(rstd::move(packages)));
-    root.insert(String::make("version"_str),
-                Json::Number(rstd::json::Number::from_u64(format_version)));
-    return Ok(Json::Object(rstd::move(root)));
+    return Ok(lito::lock::wire::Document {
+        .version  = format_version,
+        .packages = rstd::move(packages),
+    });
 }
 
-auto lock_package_key(ref<str> key) -> bool {
-    return key == "dependencies"_str || key == "id"_str || key == "manifest"_str ||
-           key == "name"_str || key == "runtime-dependencies"_str || key == "source"_str ||
-           key == "version"_str || key == "externals"_str;
+auto graph_json(const lito::package::ResolvedPackageGraph& graph,
+                u64 format_version = LOCK_FORMAT_VERSION) -> LockResult<Json> {
+    auto document = rstd_try(graph_wire(graph, format_version));
+    auto encoded  = rstd::json::to_value(document);
+    if (encoded.is_err()) {
+        return Err(LockError::Data(rstd::move(encoded).unwrap_err_unchecked()));
+    }
+    return Ok(rstd::move(encoded).unwrap_unchecked());
 }
-
-auto lock_v2_package_key(ref<str> key) -> bool {
-    return key != "id"_str && lock_package_key(key);
-}
-
-auto path_source_key(ref<str> key) -> bool {
-    return key == "kind"_str || key == "path"_str;
-}
-
-auto git_source_key(ref<str> key) -> bool {
-    return key == "commit"_str || key == "kind"_str || key == "reference"_str || key == "url"_str;
-}
-
-auto builtin_source_key(ref<str> key) -> bool {
-    return key == "kind"_str || key == "id"_str || key == "digest"_str;
-}
-
-auto reference_key(ref<str> key) -> bool {
-    return key == "kind"_str || key == "value"_str;
-}
-
 auto valid_source_manifest(ref<str> value) -> bool {
     if (value.is_empty()) return false;
     return PathBuf::from(value).as_path().is_safe_relative();
-}
-
-auto root_key(ref<str> key) -> bool {
-    return key == "packages"_str || key == "version"_str;
-}
-
-auto external_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "architectures"_str || key == "source"_str;
-}
-
-auto archive_source_key(ref<str> key) -> bool {
-    return key == "kind"_str || key == "sha256"_str || key == "url"_str;
-}
-
-auto registry_source_key(ref<str> key) -> bool {
-    return key == "blob"_str || key == "blob-size"_str || key == "format"_str ||
-           key == "kind"_str || key == "manifest"_str || key == "package"_str ||
-           key == "registry"_str || key == "release"_str || key == "source"_str ||
-           key == "version"_str;
 }
 
 auto valid_fetch_url(ref<str> value) -> bool {
@@ -371,161 +327,214 @@ auto valid_lock_source_path(ref<str> value) -> bool {
     return ! PathBuf::from(value).as_path().is_absolute();
 }
 
-auto parse_reference(const Json& value, const lito::parse::NodePath& path, ref<str> commit)
-    -> LockResult<lito::source::GitReference> {
-    rstd_try(lito::parse::json::reject_unknown(value, path, reference_key));
-    auto       kind = rstd_try(lito::parse::json::required_string(value, "kind"_str, path));
-    auto       text = rstd_try(lito::parse::json::required_string(value, "value"_str, path));
-    const auto default_reference = kind == "default"_str;
-    const auto named_reference =
-        kind == "branch"_str || kind == "tag"_str || kind == "rev"_str || kind == "commit"_str;
+auto parse_reference(lito::lock::wire::GitReference value,
+                     rstd::serde::DataPath          path,
+                     ref<str> commit) -> LockResult<lito::source::GitReference> {
+    const auto default_reference = value.kind == "default"_str;
+    const auto named_reference   = value.kind == "branch"_str || value.kind == "tag"_str ||
+                                   value.kind == "rev"_str || value.kind == "commit"_str;
     if (! default_reference && ! named_reference) {
-        return lock_failure<lito::source::GitReference>(
-            rstd::format("{}.kind must be default, branch, tag, rev, or commit", path));
+        return lock_data_failure<lito::source::GitReference>(path.with_field("kind"_str),
+                                                             "Git reference kind is invalid"_str);
     }
-    if (default_reference != text.is_empty()) {
-        return lock_failure<lito::source::GitReference>(
-            rstd::format("{}.value must be empty only for default", path));
+    if (default_reference != value.value.is_empty()) {
+        return lock_data_failure<lito::source::GitReference>(
+            path.with_field("value"_str),
+            "Git reference value must be empty only for the default branch"_str);
     }
-    if (kind == "commit"_str && text.as_str() != commit) {
-        return lock_failure<lito::source::GitReference>(
-            rstd::format("{} commit reference must match the resolved commit", path));
+    if (value.kind == "commit"_str && value.value.as_str() != commit) {
+        return lock_data_failure<lito::source::GitReference>(
+            path.with_field("value"_str), "Git commit reference does not match commit"_str);
     }
     auto parsed = lito::source::GitReferenceKind::DefaultBranch;
-    if (kind == "branch"_str) parsed = lito::source::GitReferenceKind::Branch;
-    if (kind == "tag"_str) parsed = lito::source::GitReferenceKind::Tag;
-    if (kind == "rev"_str) parsed = lito::source::GitReferenceKind::Rev;
-    if (kind == "commit"_str) parsed = lito::source::GitReferenceKind::Commit;
-    return Ok(lito::source::GitReference { .kind = parsed, .value = rstd::move(text) });
+    if (value.kind == "branch"_str) parsed = lito::source::GitReferenceKind::Branch;
+    if (value.kind == "tag"_str) parsed = lito::source::GitReferenceKind::Tag;
+    if (value.kind == "rev"_str) parsed = lito::source::GitReferenceKind::Rev;
+    if (value.kind == "commit"_str) parsed = lito::source::GitReferenceKind::Commit;
+    return Ok(lito::source::GitReference { .kind = parsed, .value = rstd::move(value.value) });
 }
 
-auto parse_locked_source(const Json& value, const lito::parse::NodePath& path, bool external_source)
-    -> LockResult<LockedSource> {
-    auto kind = rstd_try(lito::parse::json::required_string(value, "kind"_str, path));
-    if (kind == "path"_str) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, path_source_key));
-        auto source_path = rstd_try(lito::parse::json::required_string(value, "path"_str, path));
-        if (! valid_lock_source_path(source_path.as_str())) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.path must be a non-empty relative path", path));
-        }
-        return Ok(LockedSource::Path(PathBuf::from(source_path.as_str())));
+auto source_payload_count(const lito::lock::wire::Source& value) -> usize {
+    return usize(value.path.is_some()) + usize(value.id.is_some()) + usize(value.digest.is_some()) +
+           usize(value.url.is_some()) + usize(value.commit.is_some()) +
+           usize(value.reference.is_some()) + usize(value.sha256.is_some()) +
+           usize(value.registry.is_some()) + usize(value.package.is_some()) +
+           usize(value.version.is_some()) + usize(value.release.is_some()) +
+           usize(value.source.is_some()) + usize(value.manifest.is_some()) +
+           usize(value.blob.is_some()) + usize(value.blob_size.is_some()) +
+           usize(value.format.is_some());
+}
+
+template<typename T>
+auto take_source_field(Option<T>& value, rstd::serde::DataPath path, ref<str> field)
+    -> LockResult<T> {
+    if (value.is_none()) {
+        return lock_data_failure<T>(path.with_field(field), "source field is required"_str);
     }
-    if (kind == "package"_str && external_source) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, path_source_key));
-        auto source_path = rstd_try(lito::parse::json::required_string(value, "path"_str, path));
+    return Ok(rstd::move(value).unwrap_unchecked());
+}
+
+auto require_source_shape(const lito::lock::wire::Source& value,
+                          rstd::serde::DataPath           path,
+                          usize                           fields) -> LockResult<empty> {
+    if (source_payload_count(value) != fields) {
+        return lock_data_failure<empty>(rstd::move(path),
+                                        "source fields do not match its kind"_str);
+    }
+    return Ok(empty {});
+}
+
+auto parse_locked_source(lito::lock::wire::Source value,
+                         rstd::serde::DataPath    path,
+                         bool                     external_source) -> LockResult<LockedSource> {
+    if (value.kind == "path"_str) {
+        rstd_try(require_source_shape(value, path.clone(), usize(1)));
+        auto source_path = rstd_try(take_source_field(value.path, path.clone(), "path"_str));
+        if (! valid_lock_source_path(source_path.as_str())) {
+            return lock_data_failure<LockedSource>(path.with_field("path"_str),
+                                                   "source path must be relative"_str);
+        }
+        return Ok(LockedSource::Path(PathBuf::from(rstd::move(source_path))));
+    }
+    if (value.kind == "package"_str && external_source) {
+        rstd_try(require_source_shape(value, path.clone(), usize(1)));
+        auto source_path = rstd_try(take_source_field(value.path, path.clone(), "path"_str));
         if (source_path.is_empty() ||
             ! PathBuf::from(source_path.as_str()).as_path().is_safe_relative()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.path must be a safe non-empty package-relative path", path));
+            return lock_data_failure<LockedSource>(
+                path.with_field("path"_str), "package source path must be safe and relative"_str);
         }
-        return Ok(LockedSource::Package(PathBuf::from(source_path.as_str())));
+        return Ok(LockedSource::Package(PathBuf::from(rstd::move(source_path))));
     }
-    if (kind == "builtin"_str && ! external_source) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, builtin_source_key));
-        auto id     = rstd_try(lito::parse::json::required_string(value, "id"_str, path));
-        auto digest = rstd_try(lito::parse::json::required_sha256(
-            value, "digest"_str, path, lito::parse::Sha256TextMode::Canonical));
+    if (value.kind == "builtin"_str && ! external_source) {
+        rstd_try(require_source_shape(value, path.clone(), usize(2)));
+        auto id          = rstd_try(take_source_field(value.id, path.clone(), "id"_str));
+        auto digest_text = rstd_try(take_source_field(value.digest, path.clone(), "digest"_str));
         if (! lito::manifest::valid_package_name(id.as_str())) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.id must be a valid package name", path));
+            return lock_data_failure<LockedSource>(path.with_field("id"_str),
+                                                   "builtin id is not a package name"_str);
         }
-        return Ok(LockedSource::Builtin(rstd::move(id), digest.to_hex()));
+        auto digest =
+            lito::parse::parse_sha256(digest_text.as_str(), lito::parse::Sha256TextMode::Canonical);
+        if (digest.is_err()) {
+            return lock_data_failure<LockedSource>(path.with_field("digest"_str),
+                                                   "builtin digest is invalid"_str,
+                                                   rstd::move(digest).unwrap_err_unchecked());
+        }
+        return Ok(
+            LockedSource::Builtin(rstd::move(id), rstd::move(digest).unwrap_unchecked().to_hex()));
     }
-    if (kind == "git"_str) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, git_source_key));
-        auto url       = rstd_try(lito::parse::json::required_string(value, "url"_str, path));
-        auto commit    = rstd_try(lito::parse::json::required_string(value, "commit"_str, path));
-        auto reference = rstd_try(lito::parse::json::required_member(value, "reference"_str, path));
+    if (value.kind == "git"_str) {
+        rstd_try(require_source_shape(value, path.clone(), usize(3)));
+        auto url    = rstd_try(take_source_field(value.url, path.clone(), "url"_str));
+        auto commit = rstd_try(take_source_field(value.commit, path.clone(), "commit"_str));
+        auto reference =
+            rstd_try(take_source_field(value.reference, path.clone(), "reference"_str));
         if (! valid_fetch_url(url.as_str())) {
-            return lock_failure<LockedSource>(rstd::format("{}.url must not be empty", path));
+            return lock_data_failure<LockedSource>(path.with_field("url"_str),
+                                                   "Git URL is invalid"_str);
         }
         if (! lito::source::git_commit_is_valid(commit.as_str())) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.commit must be a full hexadecimal object id", path));
+            return lock_data_failure<LockedSource>(path.with_field("commit"_str),
+                                                   "Git commit is not a full object id"_str);
         }
-        auto parsed_reference =
-            rstd_try(parse_reference(*reference, path.field("reference"_str), commit.as_str()));
+        auto parsed_reference = rstd_try(parse_reference(
+            rstd::move(reference), path.with_field("reference"_str), commit.as_str()));
         return Ok(
             LockedSource::Git(rstd::move(url), rstd::move(parsed_reference), rstd::move(commit)));
     }
-    if (kind == "archive"_str && external_source) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, archive_source_key));
-        auto url    = rstd_try(lito::parse::json::required_fetch_url(value, "url"_str, path));
-        auto sha256 = rstd_try(lito::parse::json::required_sha256(
-            value, "sha256"_str, path, lito::parse::Sha256TextMode::Canonical));
-        return Ok(LockedSource::Archive(rstd::move(url), rstd::move(sha256)));
+    if (value.kind == "archive"_str && external_source) {
+        rstd_try(require_source_shape(value, path.clone(), usize(2)));
+        auto url_text = rstd_try(take_source_field(value.url, path.clone(), "url"_str));
+        auto url      = lito::parse::FetchUrl::parse(url_text.as_str());
+        if (url.is_err()) {
+            return lock_data_failure<LockedSource>(path.with_field("url"_str),
+                                                   "archive URL is invalid"_str,
+                                                   rstd::move(url).unwrap_err_unchecked());
+        }
+        auto sha256_text = rstd_try(take_source_field(value.sha256, path.clone(), "sha256"_str));
+        auto sha256 =
+            lito::parse::parse_sha256(sha256_text.as_str(), lito::parse::Sha256TextMode::Canonical);
+        if (sha256.is_err()) {
+            return lock_data_failure<LockedSource>(path.with_field("sha256"_str),
+                                                   "archive SHA256 is invalid"_str,
+                                                   rstd::move(sha256).unwrap_err_unchecked());
+        }
+        return Ok(LockedSource::Archive(rstd::move(url).unwrap_unchecked(),
+                                        rstd::move(sha256).unwrap_unchecked()));
     }
-    if (kind == "registry"_str && ! external_source) {
-        rstd_try(lito::parse::json::reject_unknown(value, path, registry_source_key));
-        auto registry  = rstd_try(lito::parse::json::required_string(value, "registry"_str, path));
-        auto package   = rstd_try(lito::parse::json::required_string(value, "package"_str, path));
-        auto version   = rstd_try(lito::parse::json::required_string(value, "version"_str, path));
-        auto release   = rstd_try(lito::parse::json::required_string(value, "release"_str, path));
-        auto source    = rstd_try(lito::parse::json::required_string(value, "source"_str, path));
-        auto manifest  = rstd_try(lito::parse::json::required_string(value, "manifest"_str, path));
-        auto blob      = rstd_try(lito::parse::json::required_string(value, "blob"_str, path));
-        auto blob_size = rstd_try(lito::parse::json::required_string(value, "blob-size"_str, path));
-        auto format    = rstd_try(lito::parse::json::required_string(value, "format"_str, path));
+    if (value.kind == "registry"_str && ! external_source) {
+        rstd_try(require_source_shape(value, path.clone(), usize(9)));
+        auto registry = rstd_try(take_source_field(value.registry, path.clone(), "registry"_str));
+        auto package  = rstd_try(take_source_field(value.package, path.clone(), "package"_str));
+        auto version  = rstd_try(take_source_field(value.version, path.clone(), "version"_str));
+        auto release  = rstd_try(take_source_field(value.release, path.clone(), "release"_str));
+        auto source   = rstd_try(take_source_field(value.source, path.clone(), "source"_str));
+        auto manifest = rstd_try(take_source_field(value.manifest, path.clone(), "manifest"_str));
+        auto blob     = rstd_try(take_source_field(value.blob, path.clone(), "blob"_str));
+        auto blob_size =
+            rstd_try(take_source_field(value.blob_size, path.clone(), "blob-size"_str));
+        auto format      = rstd_try(take_source_field(value.format, path.clone(), "format"_str));
         auto registry_id = lito::registry::RegistryId::parse(registry.as_str());
         if (registry_id.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.registry is invalid: {}", path, registry_id.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("registry"_str),
+                                                   "Registry id is invalid"_str);
         }
         auto package_name = lito::registry::RegistryPackageName::parse(package.as_str());
         if (package_name.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.package is invalid: {}", path, package_name.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("package"_str),
+                                                   "Registry package name is invalid"_str);
         }
         auto semantic_version = lito::registry::SemanticVersion::parse(version.as_str());
         if (semantic_version.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.version is invalid: {}", path, semantic_version.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("version"_str),
+                                                   "Registry version is invalid"_str);
         }
         auto release_digest = lito::registry::ReleaseDigest::parse(release.as_str());
         if (release_digest.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.release is invalid: {}", path, release_digest.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("release"_str),
+                                                   "Registry release digest is invalid"_str);
         }
         auto source_digest = lito::registry::SourceDigest::parse(source.as_str());
         if (source_digest.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.source is invalid: {}", path, source_digest.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("source"_str),
+                                                   "Registry source digest is invalid"_str);
         }
         auto manifest_digest = lito::registry::ManifestDigest::parse(manifest.as_str());
         if (manifest_digest.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.manifest is invalid: {}", path, manifest_digest.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("manifest"_str),
+                                                   "Registry manifest digest is invalid"_str);
         }
         auto blob_digest = lito::registry::BlobDigest::parse(blob.as_str());
         if (blob_digest.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.blob is invalid: {}", path, blob_digest.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("blob"_str),
+                                                   "Registry blob digest is invalid"_str);
         }
         auto parsed_blob_size = lito::registry::RegistryBlobSize::parse(blob_size.as_str());
         if (parsed_blob_size.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.blob-size is invalid: {}", path, parsed_blob_size.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("blob-size"_str),
+                                                   "Registry blob size is invalid"_str);
         }
         auto archive_format = lito::registry::RegistryArchiveFormat::parse(format.as_str());
         if (archive_format.is_err()) {
-            return lock_failure<LockedSource>(
-                rstd::format("{}.format is invalid: {}", path, archive_format.unwrap_err()));
+            return lock_data_failure<LockedSource>(path.with_field("format"_str),
+                                                   "Registry archive format is invalid"_str);
         }
         return Ok(LockedSource::Registry(
             lito::registry::RegistryPackageId {
-                .registry = rstd::move(registry_id).unwrap(),
-                .name     = rstd::move(package_name).unwrap(),
+                .registry = rstd::move(registry_id).unwrap_unchecked(),
+                .name     = rstd::move(package_name).unwrap_unchecked(),
             },
-            rstd::move(semantic_version).unwrap(),
-            rstd::move(release_digest).unwrap(),
-            rstd::move(source_digest).unwrap(),
-            rstd::move(manifest_digest).unwrap(),
-            rstd::move(blob_digest).unwrap(),
-            rstd::move(parsed_blob_size).unwrap(),
-            rstd::move(archive_format).unwrap()));
+            rstd::move(semantic_version).unwrap_unchecked(),
+            rstd::move(release_digest).unwrap_unchecked(),
+            rstd::move(source_digest).unwrap_unchecked(),
+            rstd::move(manifest_digest).unwrap_unchecked(),
+            rstd::move(blob_digest).unwrap_unchecked(),
+            rstd::move(parsed_blob_size).unwrap_unchecked(),
+            rstd::move(archive_format).unwrap_unchecked()));
     }
-    return lock_failure<LockedSource>(rstd::format("{} has unsupported kind '{}'", path, kind));
+    return lock_data_failure<LockedSource>(path.with_field("kind"_str),
+                                           "source kind is not allowed here"_str);
 }
 
 auto locked_package_instance(const LockedSource& source, ref<str> package)
@@ -558,244 +567,209 @@ auto locked_package_instance(const LockedSource& source, ref<str> package)
         "lock package source cannot use an external-only source kind"_str);
 }
 
-auto parse_current_lock(const Json& document) -> LockResult<LockedProject> {
-    const auto root_path = lito::parse::NodePath::root("lock"_str);
-    rstd_try(lito::parse::json::reject_unknown(document, root_path, root_key));
-    auto version = rstd_try(lito::parse::json::required_u64(document, "version"_str, root_path));
-    auto packages =
-        rstd_try(lito::parse::json::required_array(document, "packages"_str, root_path));
-    if (version != u64(2) && version != LOCK_FORMAT_VERSION) {
+auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedProject> {
+    auto root = rstd::serde::DataPath();
+    if (document.version != u64(2) && document.version != LOCK_FORMAT_VERSION) {
         return lock_failure<LockedProject>(
             rstd::format("lock.version {} is not supported; this Lito supports version {}",
-                         version,
+                         document.version,
                          LOCK_FORMAT_VERSION));
     }
-    if (packages->is_empty()) {
-        return lock_failure<LockedProject>("lock.packages must be a non-empty array"_str);
+    if (document.packages.is_empty()) {
+        return lock_data_failure<LockedProject>(root.with_field("packages"_str),
+                                                "lock packages must not be empty"_str);
     }
-    const auto legacy_edges = version == u64(2);
+    const auto legacy_edges = document.version == u64(2);
     auto       names        = StringSet::make();
     auto       ids          = StringSet::make();
     auto       name_to_id   = rstd::collections::BTreeMap<String, String>::make();
-    auto result = LockedProject { .packages = Vec<LockedPackage>::with_capacity(packages->len()) };
-    for (usize package_index {}; package_index < packages->len(); ++package_index) {
-        const auto& package      = (*packages)[package_index];
-        const auto  package_path = root_path.field("packages"_str).index(package_index);
-        if (legacy_edges) {
-            rstd_try(lito::parse::json::reject_unknown(package, package_path, lock_v2_package_key));
-        } else {
-            rstd_try(lito::parse::json::reject_unknown(package, package_path, lock_package_key));
+    auto       result =
+        LockedProject { .packages = Vec<LockedPackage>::with_capacity(document.packages.len()) };
+    for (usize package_index {}; package_index < document.packages.len(); ++package_index) {
+        auto package_path = root.with_field("packages"_str).with_index(package_index);
+        auto package      = rstd::move(document.packages[package_index]);
+        if (legacy_edges && package.id.is_some()) {
+            return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
+                                                    "version 2 packages must not contain id"_str);
         }
-        auto name = rstd_try(lito::parse::json::required_string(package, "name"_str, package_path));
-        auto source =
-            rstd_try(lito::parse::json::required_member(package, "source"_str, package_path));
-        auto manifest =
-            rstd_try(lito::parse::json::required_string(package, "manifest"_str, package_path));
-        auto dependencies =
-            rstd_try(lito::parse::json::required_array(package, "dependencies"_str, package_path));
-        auto runtime_dependencies = rstd_try(
-            lito::parse::json::required_array(package, "runtime-dependencies"_str, package_path));
-        auto externals =
-            rstd_try(lito::parse::json::required_array(package, "externals"_str, package_path));
-        if (! lito::manifest::valid_package_name(name.as_str())) {
-            return lock_failure<LockedProject>(
-                rstd::format("lock package name '{}' is invalid", name));
+        if (! lito::manifest::valid_package_name(package.name.as_str())) {
+            return lock_data_failure<LockedProject>(package_path.with_field("name"_str),
+                                                    "lock package name is invalid"_str);
         }
-        if (names.contains_key(name.as_str())) {
-            return lock_failure<LockedProject>(
-                rstd::format("lock repeats package name '{}'", name));
+        if (names.contains_key(package.name.as_str())) {
+            return lock_data_failure<LockedProject>(package_path.with_field("name"_str),
+                                                    "lock package name is repeated"_str);
         }
-        names.insert(name.clone(), empty {});
-        auto package_version = Option<String> {};
-        auto version         = package.get("version"_str);
-        if (version.is_some()) {
-            auto text =
-                rstd_try(lito::parse::json::string(**version, package_path.field("version"_str)));
-            if (text.is_empty()) {
-                return lock_failure<LockedProject>(
-                    rstd::format("lock package '{}' version must be a non-empty string", name));
-            }
-            package_version = Some(String::make(text));
+        names.insert(package.name.clone(), empty {});
+        if (package.version.is_some() && package.version->is_empty()) {
+            return lock_data_failure<LockedProject>(package_path.with_field("version"_str),
+                                                    "package version must not be empty"_str);
         }
-        if (! valid_source_manifest(manifest.as_str())) {
-            return lock_failure<LockedProject>(
-                "lock package manifest must be a relative path without parent components"_str);
+        if (! valid_source_manifest(package.manifest.as_str())) {
+            return lock_data_failure<LockedProject>(
+                package_path.with_field("manifest"_str),
+                "package manifest must be a safe relative path"_str);
         }
-        auto locked_source =
-            rstd_try(parse_locked_source(*source, package_path.field("source"_str), false));
-        auto coordinate = rstd_try(locked_package_instance(locked_source, name.as_str()));
+        auto locked_source = rstd_try(parse_locked_source(
+            rstd::move(package.source), package_path.with_field("source"_str), false));
+        auto coordinate = rstd_try(locked_package_instance(locked_source, package.name.as_str()));
         auto derived_id = lito::package::PackageInstanceKey::from(coordinate);
         auto package_id = String::make(derived_id.as_str());
         if (! legacy_edges) {
-            auto declared_id =
-                rstd_try(lito::parse::json::required_string(package, "id"_str, package_path));
-            if (declared_id.as_str() != package_id.as_str()) {
-                return lock_failure<LockedProject>(rstd::format(
-                    "lock package '{}' id does not match its exact source identity", name));
+            if (package.id.is_none()) {
+                return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
+                                                        "package id is required"_str);
+            }
+            if (package.id->as_str() != package_id.as_str()) {
+                return lock_data_failure<LockedProject>(
+                    package_path.with_field("id"_str),
+                    "package id does not match exact source identity"_str);
             }
         }
         if (ids.contains_key(package_id.as_str())) {
-            return lock_failure<LockedProject>(
-                rstd::format("lock repeats package instance '{}'", package_id));
+            return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
+                                                    "package instance is repeated"_str);
         }
         ids.insert(package_id.clone(), empty {});
-        name_to_id.insert(name.clone(), package_id.clone());
-        if (locked_source.is_Registry()) {
-            if (package_version.is_none() ||
-                package_version->as_str() != locked_source.as_Registry().version.text().as_str()) {
-                return lock_failure<LockedProject>(rstd::format(
-                    "lock Registry package '{}' version must match source.version", name));
-            }
+        name_to_id.insert(package.name.clone(), package_id.clone());
+        if (locked_source.is_Registry() &&
+            (package.version.is_none() ||
+             package.version->as_str() != locked_source.as_Registry().version.text().as_str())) {
+            return lock_data_failure<LockedProject>(
+                package_path.with_field("version"_str),
+                "Registry package version does not match source version"_str);
         }
-        auto locked_externals = Vec<LockedPackageExternalSource>::with_capacity(externals->len());
+
+        auto locked_externals =
+            Vec<LockedPackageExternalSource>::with_capacity(package.externals.len());
         auto external_identities = StringSet::make();
-        for (usize external_index {}; external_index < externals->len(); ++external_index) {
-            const auto& external      = (*externals)[external_index];
-            const auto  external_path = package_path.field("externals"_str).index(external_index);
-            rstd_try(lito::parse::json::reject_unknown(external, external_path, external_key));
-            auto external_name =
-                rstd_try(lito::parse::json::required_string(external, "name"_str, external_path));
-            auto external_source =
-                rstd_try(lito::parse::json::required_member(external, "source"_str, external_path));
-            if (external_name.is_empty()) {
-                return lock_failure<LockedProject>(
-                    "lock package external name must not be empty"_str);
+        for (usize external_index {}; external_index < package.externals.len(); ++external_index) {
+            auto external_path =
+                package_path.with_field("externals"_str).with_index(external_index);
+            auto external = rstd::move(package.externals[external_index]);
+            if (external.name.is_empty()) {
+                return lock_data_failure<LockedProject>(external_path.with_field("name"_str),
+                                                        "external name must not be empty"_str);
             }
             auto architecture_key     = String::make();
             auto locked_architectures = Vec<String>::make();
-            auto architectures        = external.get("architectures"_str);
-            if (architectures.is_some()) {
-                auto values = rstd_try(lito::parse::json::array(
-                    **architectures, external_path.field("architectures"_str)));
-                if (values->is_empty()) {
-                    return lock_failure<LockedProject>(
-                        "lock package external architectures must be a non-empty array when present"_str);
+            if (external.architectures.is_some()) {
+                auto architectures = rstd::move(external.architectures).unwrap_unchecked();
+                if (architectures.is_empty()) {
+                    return lock_data_failure<LockedProject>(
+                        external_path.with_field("architectures"_str),
+                        "external architectures must not be empty when present"_str);
                 }
-                locked_architectures = Vec<String>::with_capacity(values->len());
+                locked_architectures = Vec<String>::with_capacity(architectures.len());
                 auto seen            = StringSet::make();
                 auto previous        = Option<String> {};
-                for (usize architecture_index {}; architecture_index < values->len();
-                     ++architecture_index) {
-                    auto architecture_name = rstd_try(lito::parse::json::string(
-                        (*values)[architecture_index],
-                        external_path.field("architectures"_str).index(architecture_index)));
-                    auto canonical         = canonical_architecture(architecture_name);
-                    if (canonical.is_err() || canonical->as_str() != architecture_name) {
-                        return lock_failure<LockedProject>(rstd::format(
-                            "lock package external architecture '{}' must be canonical",
-                            architecture_name));
+                for (usize index {}; index < architectures.len(); ++index) {
+                    auto architecture_path =
+                        external_path.with_field("architectures"_str).with_index(index);
+                    auto architecture = rstd::move(architectures[index]);
+                    auto canonical    = canonical_architecture(architecture.as_str());
+                    if (canonical.is_err() || canonical->as_str() != architecture.as_str()) {
+                        return lock_data_failure<LockedProject>(
+                            rstd::move(architecture_path),
+                            "external architecture is not canonical"_str);
                     }
-                    if (seen.contains_key(architecture_name)) {
-                        return lock_failure<LockedProject>(rstd::format(
-                            "lock package external repeats architecture '{}'", architecture_name));
+                    if (seen.contains_key(architecture.as_str())) {
+                        return lock_data_failure<LockedProject>(
+                            rstd::move(architecture_path), "external architecture is repeated"_str);
                     }
-                    auto canonical_name = String::make(architecture_name);
-                    if (previous.is_some() && canonical_name < *previous) {
-                        return lock_failure<LockedProject>(
-                            "lock package external architectures must use stable sorted order"_str);
+                    if (previous.is_some() && architecture < *previous) {
+                        return lock_data_failure<LockedProject>(
+                            rstd::move(architecture_path),
+                            "external architectures are not sorted"_str);
                     }
-                    seen.insert(canonical_name.clone(), empty {});
-                    previous = Some(canonical_name.clone());
+                    seen.insert(architecture.clone(), empty {});
+                    previous = Some(architecture.clone());
                     if (! architecture_key.is_empty()) architecture_key.push_ascii(u8(','));
-                    architecture_key.push_str(architecture_name);
-                    locked_architectures.push(rstd::move(canonical_name));
+                    architecture_key.push_str(architecture.as_str());
+                    locked_architectures.push(rstd::move(architecture));
                 }
             }
-            auto identity = rstd::format("{}\n{}", external_name, architecture_key.as_str());
+            auto identity = rstd::format("{}\n{}", external.name, architecture_key.as_str());
             if (external_identities.contains_key(identity.as_str())) {
-                return lock_failure<LockedProject>(
-                    rstd::format("lock package '{}' repeats external '{}' for architectures '{}'",
-                                 name,
-                                 external_name,
-                                 architecture_key.as_str()));
+                return lock_data_failure<LockedProject>(external_path.with_field("name"_str),
+                                                        "package external is repeated"_str);
             }
             external_identities.insert(rstd::move(identity), empty {});
             locked_externals.push(LockedPackageExternalSource {
-                .name          = rstd::move(external_name),
+                .name          = rstd::move(external.name),
                 .architectures = rstd::move(locked_architectures),
-                .source        = rstd_try(
-                    parse_locked_source(*external_source, external_path.field("source"_str), true)),
+                .source        = rstd_try(parse_locked_source(
+                    rstd::move(external.source), external_path.with_field("source"_str), true)),
             });
         }
-        auto dependency_names    = Vec<String>::with_capacity(dependencies->len());
-        auto dependency_name_set = StringSet::make();
-        for (usize dependency_index {}; dependency_index < dependencies->len();
-             ++dependency_index) {
-            auto dependency_name = rstd_try(lito::parse::json::string(
-                (*dependencies)[dependency_index],
-                package_path.field("dependencies"_str).index(dependency_index)));
-            if ((legacy_edges && ! lito::manifest::valid_package_name(dependency_name)) ||
-                (! legacy_edges && dependency_name.is_empty())) {
-                return lock_failure<LockedProject>(
-                    "lock dependency must be a valid package reference"_str);
+
+        auto validate_edges = [&](Vec<String> values, ref<str> field) -> LockResult<Vec<String>> {
+            auto result_values = Vec<String>::with_capacity(values.len());
+            auto seen          = StringSet::make();
+            for (usize index {}; index < values.len(); ++index) {
+                auto edge_path = package_path.with_field(field).with_index(index);
+                auto value     = rstd::move(values[index]);
+                if ((legacy_edges && ! lito::manifest::valid_package_name(value.as_str())) ||
+                    (! legacy_edges && value.is_empty())) {
+                    return lock_data_failure<Vec<String>>(rstd::move(edge_path),
+                                                          "package reference is invalid"_str);
+                }
+                if (seen.contains_key(value.as_str())) {
+                    return lock_data_failure<Vec<String>>(rstd::move(edge_path),
+                                                          "package reference is repeated"_str);
+                }
+                seen.insert(value.clone(), empty {});
+                result_values.push(rstd::move(value));
             }
-            if (dependency_name_set.contains_key(dependency_name)) {
-                return lock_failure<LockedProject>(rstd::format(
-                    "lock package '{}' repeats dependency '{}'", name, dependency_name));
-            }
-            auto parsed_name = String::make(dependency_name);
-            dependency_name_set.insert(parsed_name.clone(), empty {});
-            dependency_names.push(rstd::move(parsed_name));
-        }
-        auto runtime_dependency_names    = Vec<String>::with_capacity(runtime_dependencies->len());
-        auto runtime_dependency_name_set = StringSet::make();
-        for (usize dependency_index {}; dependency_index < runtime_dependencies->len();
-             ++dependency_index) {
-            auto dependency_name = rstd_try(lito::parse::json::string(
-                (*runtime_dependencies)[dependency_index],
-                package_path.field("runtime-dependencies"_str).index(dependency_index)));
-            if ((legacy_edges && ! lito::manifest::valid_package_name(dependency_name)) ||
-                (! legacy_edges && dependency_name.is_empty())) {
-                return lock_failure<LockedProject>(
-                    "lock runtime dependency must be a valid package reference"_str);
-            }
-            if (runtime_dependency_name_set.contains_key(dependency_name)) {
-                return lock_failure<LockedProject>(rstd::format(
-                    "lock package '{}' repeats runtime dependency '{}'", name, dependency_name));
-            }
-            auto parsed_name = String::make(dependency_name);
-            runtime_dependency_name_set.insert(parsed_name.clone(), empty {});
-            runtime_dependency_names.push(rstd::move(parsed_name));
-        }
+            return Ok(rstd::move(result_values));
+        };
+        auto dependencies =
+            rstd_try(validate_edges(rstd::move(package.dependencies), "dependencies"_str));
+        auto runtime_dependencies = rstd_try(
+            validate_edges(rstd::move(package.runtime_dependencies), "runtime-dependencies"_str));
         result.packages.push(LockedPackage {
             .id                   = rstd::move(package_id),
-            .name                 = rstd::move(name),
-            .version              = rstd::move(package_version),
+            .name                 = rstd::move(package.name),
+            .version              = rstd::move(package.version),
             .source               = rstd::move(locked_source),
-            .manifest             = PathBuf::from(manifest.as_str()),
-            .dependencies         = rstd::move(dependency_names),
-            .runtime_dependencies = rstd::move(runtime_dependency_names),
+            .manifest             = PathBuf::from(rstd::move(package.manifest)),
+            .dependencies         = rstd::move(dependencies),
+            .runtime_dependencies = rstd::move(runtime_dependencies),
             .externals            = rstd::move(locked_externals),
         });
     }
-    for (auto& package : result.packages) {
-        for (auto& dependency : package.dependencies) {
-            if (legacy_edges) {
-                auto id = name_to_id.get(dependency.as_str());
-                if (id.is_some()) dependency = (**id).clone();
+    for (usize package_index {}; package_index < result.packages.len(); ++package_index) {
+        auto& package       = result.packages[package_index];
+        auto  resolve_edges = [&](Vec<String>& values, ref<str> field) -> LockResult<empty> {
+            for (usize index {}; index < values.len(); ++index) {
+                auto& value = values[index];
+                if (legacy_edges) {
+                    auto id = name_to_id.get(value.as_str());
+                    if (id.is_some()) value = (**id).clone();
+                }
+                if (! ids.contains_key(value.as_str())) {
+                    return lock_data_failure<empty>(
+                        root.with_field("packages"_str)
+                            .with_index(package_index)
+                            .with_field(field)
+                            .with_index(index),
+                        "package reference does not identify a package"_str);
+                }
             }
-            if (! ids.contains_key(dependency.as_str())) {
-                return lock_failure<LockedProject>(
-                    rstd::format("lock package '{}' dependency '{}' does not identify a package",
-                                 package.name,
-                                 dependency));
-            }
-        }
-        for (auto& dependency : package.runtime_dependencies) {
-            if (legacy_edges) {
-                auto id = name_to_id.get(dependency.as_str());
-                if (id.is_some()) dependency = (**id).clone();
-            }
-            if (! ids.contains_key(dependency.as_str())) {
-                return lock_failure<LockedProject>(rstd::format(
-                    "lock package '{}' runtime dependency '{}' does not identify a package",
-                    package.name,
-                    dependency));
-            }
-        }
+            return Ok(empty {});
+        };
+        rstd_try(resolve_edges(package.dependencies, "dependencies"_str));
+        rstd_try(resolve_edges(package.runtime_dependencies, "runtime-dependencies"_str));
     }
-
     return Ok(rstd::move(result));
+}
+
+auto decode_current_lock(const Json& document) -> LockResult<LockedProject> {
+    auto decoded = rstd::json::decode_value<lito::lock::wire::Document>(document);
+    if (decoded.is_err()) {
+        return Err(LockError::Data(rstd::move(decoded).unwrap_err_unchecked()));
+    }
+    return parse_lock_wire(rstd::move(decoded).unwrap_unchecked());
 }
 
 auto load_existing(ref<rstd::path::Path> path) -> LockResult<Option<Json>> {
@@ -895,7 +869,7 @@ auto lito::lock::load_locked_project(ref<rstd::path::Path> root, const LockConfi
         return lock_failure<LockedProject>(
             rstd::format("lock file '{}' does not exist", destination.as_path()));
     }
-    return parse_current_lock(*loaded);
+    return decode_current_lock(*loaded);
 }
 
 auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
@@ -951,7 +925,7 @@ auto lito::lock::load_lock_session(ref<rstd::path::Path>           root,
         session.options_ = lito::source::SourceResolutionOptions { .locked = false, .git = git };
         return Ok(rstd::move(session));
     }
-    auto parsed_project = parse_current_lock(*existing);
+    auto parsed_project = decode_current_lock(*existing);
     if (parsed_project.is_err()) {
         const auto version = lock_document_version(*existing);
         if (invalid != InvalidLockPolicy::Replace ||

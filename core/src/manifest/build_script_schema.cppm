@@ -4,11 +4,12 @@ module;
 module lito.core:manifest.build_script_schema;
 
 import rstd;
+import rstd.serde;
 import rstd.toml;
 import :manifest.build_script;
 import :manifest.error;
 import :manifest.primitives;
-import :manifest.key_schema;
+import :manifest.wire;
 import :source.tree;
 
 using namespace rstd::prelude;
@@ -55,29 +56,30 @@ auto parse_script_package(Option<ref<Toml>>                     value,
                           Option<ref<lito::source::SourceTree>> embedded)
     -> ManifestSchemaResult<Option<ScriptPackageManifest>> {
     if (value.is_none()) return Ok(Option<ScriptPackageManifest> {});
-    auto script = rstd_try(table_value(**value, "manifest.script"_str));
-    rstd_try(reject_unknown(*script, "manifest.script"_str, script_key));
-    auto raw =
-        rstd_try(string_array(member(**value, "supports"_str), "manifest.script.supports"_str));
-    if (raw.is_empty()) {
-        return manifest_schema_failure<Option<ScriptPackageManifest>>(
-            "manifest.script.supports must not be empty"_str);
+    auto path = rstd::serde::DataPath().with_field("script"_str);
+    auto wire =
+        rstd_try(decode_manifest_value<lito::manifest::wire::Script>(**value, path.clone()));
+    if (wire.supports.is_empty()) {
+        return manifest_data_failure<Option<ScriptPackageManifest>>(path.with_field("supports"_str),
+                                                                    "must not be empty"_str);
     }
-    auto supports = Vec<ScriptHostKind>::with_capacity(raw.len());
-    for (const auto& value : raw) {
-        auto kind = ScriptHostKind::Build;
+    auto supports = Vec<ScriptHostKind>::with_capacity(wire.supports.len());
+    for (usize index {}; index < wire.supports.len(); ++index) {
+        const auto& value = wire.supports[index];
+        auto        kind  = ScriptHostKind::Build;
         if (value == "build"_str) {
             kind = ScriptHostKind::Build;
         } else if (value == "install"_str) {
             kind = ScriptHostKind::Install;
         } else {
-            return manifest_schema_failure<Option<ScriptPackageManifest>>(rstd::format(
-                "manifest.script.supports contains unknown host kind '{}'", value.as_str()));
+            return manifest_data_failure<Option<ScriptPackageManifest>>(
+                path.with_field("supports"_str).with_index(index), "unknown script host kind"_str);
         }
         for (auto existing : supports) {
             if (existing == kind) {
-                return manifest_schema_failure<Option<ScriptPackageManifest>>(rstd::format(
-                    "manifest.script.supports repeats host kind '{}'", value.as_str()));
+                return manifest_data_failure<Option<ScriptPackageManifest>>(
+                    path.with_field("supports"_str).with_index(index),
+                    "script host kind is repeated"_str);
             }
         }
         supports.push(rstd::move(kind));

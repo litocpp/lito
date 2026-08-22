@@ -2,6 +2,7 @@
 
 import rstd;
 import rstd.json;
+import rstd.serde;
 import rstd.test;
 import lito.system;
 import lito.toolchain;
@@ -202,6 +203,30 @@ TEST(LlvmSdkCatalog, StrictSchemaRejectsUntrustedArtifactMetadata) {
                     .is_err());
 }
 
+TEST(LlvmSdkCatalog, ValidationErrorsKeepTheFieldPathAndSource) {
+    auto document = catalog_document();
+    auto target   = document.pointer_mut("/releases/0/artifacts/0/archive/sha256"_str);
+    ASSERT_TRUE(target.is_some());
+    **target =
+        catalog_json_string("DF0E1ECF16CAF3489A272A5EEA4EEC9B0D82878F6477FA309504F918A0006384"_str);
+    auto result = lito::parse_llvm_sdk_catalog(rstd::json::to_string(document).as_str());
+
+    ASSERT_TRUE(result.is_err());
+    auto error = rstd::move(result).unwrap_err_unchecked();
+    ASSERT_TRUE(error.is_Data());
+    const auto& data = error.as_Data().source;
+    EXPECT_EQ(data.kind(), rstd::serde::ErrorKind::InvalidValue);
+    ASSERT_TRUE(data.source().is_some());
+    auto path = data.path().segments();
+    ASSERT_EQ(path.len(), usize(6));
+    EXPECT_EQ(path[usize {}].name().unwrap(), "releases"_str);
+    EXPECT_EQ(path[usize(1)].index(), usize {});
+    EXPECT_EQ(path[usize(2)].name().unwrap(), "artifacts"_str);
+    EXPECT_EQ(path[usize(3)].index(), usize {});
+    EXPECT_EQ(path[usize(4)].name().unwrap(), "archive"_str);
+    EXPECT_EQ(path[usize(5)].name().unwrap(), "sha256"_str);
+}
+
 TEST(AndroidNdkCatalog, EmbeddedCatalogSelectsReviewedR29Archive) {
     auto catalog = lito::load_embedded_android_ndk_catalog();
     ASSERT_TRUE(catalog.is_ok());
@@ -268,4 +293,45 @@ TEST(AndroidNdkCatalog, RevisionAndRepositorySchemaAreStrict) {
     (**artifact_values).push((**artifact_values)[usize {}].clone());
     EXPECT_TRUE(
         lito::parse_android_ndk_catalog(rstd::json::to_string(duplicate_host).as_str()).is_err());
+}
+
+TEST(AndroidNdkCatalog, DecodeErrorsKeepTheUnknownFieldPath) {
+    auto document              = android_catalog_document();
+    document["unexpected"_str] = Json::Bool(true);
+    auto result = lito::parse_android_ndk_catalog(rstd::json::to_string(document).as_str());
+
+    ASSERT_TRUE(result.is_err());
+    auto error = rstd::move(result).unwrap_err_unchecked();
+    ASSERT_TRUE(error.is_Json());
+    auto data_error = error.as_Json().source.data_error();
+    ASSERT_TRUE(data_error.is_some());
+    EXPECT_EQ(data_error->get().kind(), rstd::serde::ErrorKind::UnknownField);
+    auto path = data_error->get().path().segments();
+    ASSERT_EQ(path.len(), usize(1));
+    EXPECT_EQ(path[usize {}].kind(), rstd::serde::PathSegmentKind::Field);
+    EXPECT_EQ(path[usize {}].name().unwrap(), "unexpected"_str);
+}
+
+TEST(AndroidNdkCatalog, ValidationErrorsKeepTheFieldPathAndSource) {
+    auto document = android_catalog_document();
+    auto target   = document.pointer_mut("/releases/0/artifacts/0/archive/sha256"_str);
+    ASSERT_TRUE(target.is_some());
+    **target =
+        catalog_json_string("4ABBBCDC842F3D4879206E9695D52709603E52DD68D3C1FFF04B3B5E7A308ECF"_str);
+    auto result = lito::parse_android_ndk_catalog(rstd::json::to_string(document).as_str());
+
+    ASSERT_TRUE(result.is_err());
+    auto error = rstd::move(result).unwrap_err_unchecked();
+    ASSERT_TRUE(error.is_Data());
+    const auto& data = error.as_Data().source;
+    EXPECT_EQ(data.kind(), rstd::serde::ErrorKind::InvalidValue);
+    ASSERT_TRUE(data.source().is_some());
+    auto path = data.path().segments();
+    ASSERT_EQ(path.len(), usize(6));
+    EXPECT_EQ(path[usize {}].name().unwrap(), "releases"_str);
+    EXPECT_EQ(path[usize(1)].index(), usize {});
+    EXPECT_EQ(path[usize(2)].name().unwrap(), "artifacts"_str);
+    EXPECT_EQ(path[usize(3)].index(), usize {});
+    EXPECT_EQ(path[usize(4)].name().unwrap(), "archive"_str);
+    EXPECT_EQ(path[usize(5)].name().unwrap(), "sha256"_str);
 }

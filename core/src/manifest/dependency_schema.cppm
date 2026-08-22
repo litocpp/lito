@@ -4,6 +4,7 @@ module;
 module lito.core:manifest.dependency_schema;
 
 import rstd;
+import rstd.serde;
 import rstd.toml;
 import :manifest.dependency;
 import :manifest.error;
@@ -20,6 +21,7 @@ import lito.system;
 import :manifest.primitives;
 import :manifest.key_schema;
 import :manifest.target_schema;
+import :manifest.wire;
 import :condition;
 
 using namespace rstd::prelude;
@@ -29,6 +31,7 @@ using namespace rstd::literals;
 using Toml  = rstd::toml::Value;
 using Table = rstd::toml::Table;
 using namespace lito::manifest;
+using DataPath = rstd::serde::DataPath;
 
 auto parse_visibility(ref<str> value, ref<str> context)
     -> ManifestSchemaResult<lito::dependency::DependencyVisibility> {
@@ -787,80 +790,83 @@ auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
     return Ok(rstd::move(result));
 }
 
-auto parse_cmake_targets(const Toml& specification, ref<str> context)
+auto parse_cmake_targets(const Toml& specification, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<lito::dependency::CMakeTargetRequirement>> {
     auto value = member(specification, "targets"_str);
+    auto path  = owner_path.with_field("targets"_str);
     if (value.is_none()) {
-        return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-            rstd::format("{} is missing 'targets'", context));
+        return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+            rstd::move(path), "is required"_str);
     }
-    auto array = (**value).as_array();
-    if (array.is_none() || (**array).is_empty()) {
-        return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-            rstd::format("{}.targets must be a non-empty array", context));
+    auto targets = rstd_try(
+        decode_manifest_value<Vec<lito::manifest::wire::CMakeTarget>>(**value, path.clone()));
+    if (targets.is_empty()) {
+        return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+            rstd::move(path), "must not be empty"_str);
     }
-    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity((**array).len());
+    auto result = Vec<lito::dependency::CMakeTargetRequirement>::with_capacity(targets.len());
     auto names  = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto& item : **array) {
-        auto target = table_value(item, rstd::format("{}.targets item", context).as_str());
-        if (target.is_err()) return Err(rstd::move(target).unwrap_err());
-        rstd_try(reject_unknown(**target, "CMake target"_str, cmake_target_key));
-        auto name       = required_string(item, "name"_str, "CMake target"_str);
-        auto visibility = required_string(item, "visibility"_str, "CMake target"_str);
-        if (name.is_err()) return Err(rstd::move(name).unwrap_err());
-        if (visibility.is_err()) return Err(rstd::move(visibility).unwrap_err());
-        if (! cmake_target_is_valid(name->as_str())) {
-            return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                rstd::format("CMake target '{}' is invalid", name->as_str()));
+    for (usize index {}; index < targets.len(); ++index) {
+        auto  item = path.with_index(index);
+        auto& wire = targets[index];
+        if (! cmake_target_is_valid(wire.name.as_str())) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+                item.with_field("name"_str), "invalid CMake target name"_str);
         }
-        if (names.contains_key(name->as_str())) {
-            return manifest_schema_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
-                rstd::format("{} repeats CMake target '{}'", context, name->as_str()));
+        if (names.contains_key(wire.name.as_str())) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+                item.with_field("name"_str), "CMake target is repeated"_str);
         }
-        names.insert(name->clone(), empty {});
-        auto parsed_visibility =
-            parse_visibility(visibility->as_str(), "CMake target visibility"_str);
-        if (parsed_visibility.is_err()) return Err(rstd::move(parsed_visibility).unwrap_err());
+        auto visibility = lito::dependency::DependencyVisibility::Private;
+        if (wire.visibility.as_str() == "public"_str) {
+            visibility = lito::dependency::DependencyVisibility::Public;
+        } else if (wire.visibility.as_str() == "link"_str) {
+            visibility = lito::dependency::DependencyVisibility::LinkOnly;
+        } else if (wire.visibility.as_str() != "private"_str) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeTargetRequirement>>(
+                item.with_field("visibility"_str), "must be 'public', 'private', or 'link'"_str);
+        }
+        names.insert(wire.name.clone(), empty {});
         result.push(lito::dependency::CMakeTargetRequirement {
-            .name       = rstd::move(name).unwrap(),
-            .visibility = rstd::move(parsed_visibility).unwrap(),
+            .name       = rstd::move(wire.name),
+            .visibility = visibility,
         });
     }
     return Ok(rstd::move(result));
 }
 
-auto parse_cmake_host_tools(const Toml& specification, ref<str> context)
+auto parse_cmake_host_tools(const Toml& specification, const DataPath& owner_path)
     -> ManifestSchemaResult<Vec<lito::dependency::CMakeHostToolRequirement>> {
     auto value  = member(specification, "host-tools"_str);
     auto result = Vec<lito::dependency::CMakeHostToolRequirement>::make();
     if (value.is_none()) return Ok(rstd::move(result));
-    auto array = (**value).as_array();
-    if (array.is_none() || (**array).is_empty()) {
-        return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-            rstd::format("{}.host-tools must be a non-empty array", context));
+    auto path  = owner_path.with_field("host-tools"_str);
+    auto tools = rstd_try(
+        decode_manifest_value<Vec<lito::manifest::wire::CMakeHostTool>>(**value, path.clone()));
+    if (tools.is_empty()) {
+        return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+            rstd::move(path), "must not be empty"_str);
     }
     auto names = rstd::collections::BTreeMap<String, empty>::make();
-    for (const auto& item : **array) {
-        auto tool =
-            rstd_try(table_value(item, rstd::format("{}.host-tools item", context).as_str()));
-        rstd_try(reject_unknown(*tool, "CMake host tool"_str, cmake_host_tool_key));
-        auto name   = rstd_try(required_string(item, "name"_str, "CMake host tool"_str));
-        auto target = rstd_try(required_string(item, "target"_str, "CMake host tool"_str));
-        if (! package_name_is_valid(name.as_str()) || ! cmake_target_is_valid(target.as_str())) {
-            return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-                rstd::format("{}.host-tools contains invalid name '{}' or target '{}'",
-                             context,
-                             name.as_str(),
-                             target.as_str()));
+    for (usize index {}; index < tools.len(); ++index) {
+        auto  item = path.with_index(index);
+        auto& wire = tools[index];
+        if (! package_name_is_valid(wire.name.as_str())) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+                item.with_field("name"_str), "invalid host tool name"_str);
         }
-        if (names.contains_key(name.as_str())) {
-            return manifest_schema_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
-                rstd::format("{}.host-tools repeats name '{}'", context, name.as_str()));
+        if (! cmake_target_is_valid(wire.target.as_str())) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+                item.with_field("target"_str), "invalid CMake target name"_str);
         }
-        names.insert(name.clone(), empty {});
+        if (names.contains_key(wire.name.as_str())) {
+            return manifest_data_failure<Vec<lito::dependency::CMakeHostToolRequirement>>(
+                item.with_field("name"_str), "host tool name is repeated"_str);
+        }
+        names.insert(wire.name.clone(), empty {});
         result.push(lito::dependency::CMakeHostToolRequirement {
-            .name   = rstd::move(name),
-            .target = rstd::move(target),
+            .name   = rstd::move(wire.name),
+            .target = rstd::move(wire.target),
         });
     }
     return Ok(rstd::move(result));
@@ -890,16 +896,17 @@ auto parse_cmake_components(const Toml& specification, ref<str> context)
     return Ok(rstd::move(components));
 }
 
-auto parse_cmake_external_dependency_definition(const Toml& specification,
-                                                String      alias,
-                                                ref<str>    context)
+auto parse_cmake_external_dependency_definition(const Toml&     specification,
+                                                String          alias,
+                                                ref<str>        context,
+                                                const DataPath& path)
     -> ManifestSchemaResult<WorkspaceCMakeExternalDependencyDefinition> {
     auto package          = required_string(specification, "package"_str, context);
     auto components       = parse_cmake_components(specification, context);
     auto source           = optional_string(specification, "source"_str, context);
     auto adapter          = optional_string(specification, "adapter"_str, context);
     auto config_directory = optional_string(specification, "config-directory"_str, context);
-    auto host_tools       = parse_cmake_host_tools(specification, context);
+    auto host_tools       = parse_cmake_host_tools(specification, path);
     if (package.is_err()) return Err(rstd::move(package).unwrap_err());
     if (components.is_err()) return Err(rstd::move(components).unwrap_err());
     if (source.is_err()) return Err(rstd::move(source).unwrap_err());
@@ -968,6 +975,10 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
     for (auto key : keys) {
         const auto& alias   = *key;
         auto        context = rstd::format("CMake external dependency '{}'", alias.as_str());
+        auto        path    = DataPath()
+                                  .with_field("external-dependencies"_str)
+                                  .with_field("cmake"_str)
+                                  .with_map_key(alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
             return manifest_schema_failure<ParsedCMakeExternalDependencies>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
@@ -978,7 +989,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
         rstd_try(reject_unknown(**fields, context.as_str(), cmake_external_key));
         auto inherited = workspace_reference_enabled(**specification, context.as_str());
         if (inherited.is_err()) return Err(rstd::move(inherited).unwrap_err());
-        auto targets = parse_cmake_targets(**specification, context.as_str());
+        auto targets = parse_cmake_targets(**specification, path);
         if (targets.is_err()) return Err(rstd::move(targets).unwrap_err());
         auto condition =
             rstd_try(parse_external_dependency_condition(**specification, context.as_str()));
@@ -993,7 +1004,7 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
             continue;
         }
         auto definition = parse_cmake_external_dependency_definition(
-            **specification, alias.clone(), context.as_str());
+            **specification, alias.clone(), context.as_str(), path);
         if (definition.is_err()) return Err(rstd::move(definition).unwrap_err());
         auto value = rstd::move(definition).unwrap();
         result.explicit_dependencies.push(lito::dependency::CMakeDependencyRequirement {
@@ -1022,6 +1033,11 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
     for (auto key : keys) {
         const auto& alias = *key;
         auto context = rstd::format("workspace CMake external dependency '{}'", alias.as_str());
+        auto path    = DataPath()
+                           .with_field("workspace"_str)
+                           .with_field("external-dependencies"_str)
+                           .with_field("cmake"_str)
+                           .with_map_key(alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
             return manifest_schema_failure<Vec<WorkspaceCMakeExternalDependencyDefinition>>(
                 rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
@@ -1031,7 +1047,7 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
         if (fields.is_err()) return Err(rstd::move(fields).unwrap_err());
         rstd_try(reject_unknown(**fields, context.as_str(), workspace_cmake_external_key));
         auto definition = parse_cmake_external_dependency_definition(
-            **specification, alias.clone(), context.as_str());
+            **specification, alias.clone(), context.as_str(), path);
         if (definition.is_err()) return Err(rstd::move(definition).unwrap_err());
         result.push(rstd::move(definition).unwrap());
     }

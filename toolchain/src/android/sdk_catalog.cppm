@@ -7,22 +7,21 @@ export module lito.toolchain.android:sdk_catalog;
 import rstd;
 import lito.crypto;
 import rstd.json;
+import rstd.serde;
 import lito.core;
 import :ndk;
+import :sdk_catalog_wire;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
-using Json = rstd::json::Value;
 
 export namespace lito
 {
 
 class AndroidNdkCatalogError {
     RSTD_ENUM(AndroidNdkCatalogError,
-              (Json, (rstd::json::Error source;)),
-              (Parse, (lito::parse::Error source;)),
-              (Ndk, (AndroidNdkError source;)),
-              (Message, (String message;)))
+              (Json, (rstd::json::DecodeError source;)),
+              (Data, (rstd::serde::Error source;)))
 };
 
 template<typename T>
@@ -107,9 +106,8 @@ struct Impl<fmt::Display, lito::AndroidNdkCatalogError> : ImplBase<lito::Android
             return formatter.write_raw("cannot parse Android NDK catalog",
                                        sizeof("cannot parse Android NDK catalog") - 1);
         }
-        if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
-        if (error.is_Ndk()) return as<fmt::Display>(error.as_Ndk().source).fmt(formatter);
-        return formatter.write_str(error.as_Message().message.as_str());
+        return formatter.write_raw("Android NDK catalog is invalid",
+                                   sizeof("Android NDK catalog is invalid") - 1);
     }
 };
 
@@ -125,16 +123,21 @@ struct Impl<error::Error, lito::AndroidNdkCatalogError> : ImplBase<lito::Android
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& error = this->self();
         if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
-        if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
-        if (error.is_Ndk()) return Some(dyn<error::Error>::from_ref(error.as_Ndk().source));
-        return None();
+        return Some(dyn<error::Error>::from_ref(error.as_Data().source));
     }
 };
 
 template<>
-struct Impl<convert::From<lito::parse::Error>, lito::AndroidNdkCatalogError> {
-    static auto from(lito::parse::Error error) -> lito::AndroidNdkCatalogError {
-        return lito::AndroidNdkCatalogError::Parse(rstd::move(error));
+struct Impl<convert::From<rstd::json::DecodeError>, lito::AndroidNdkCatalogError> {
+    static auto from(rstd::json::DecodeError error) -> lito::AndroidNdkCatalogError {
+        return lito::AndroidNdkCatalogError::Json(rstd::move(error));
+    }
+};
+
+template<>
+struct Impl<convert::From<rstd::serde::Error>, lito::AndroidNdkCatalogError> {
+    static auto from(rstd::serde::Error error) -> lito::AndroidNdkCatalogError {
+        return lito::AndroidNdkCatalogError::Data(rstd::move(error));
     }
 };
 
@@ -144,98 +147,93 @@ namespace lito
 {
 
 template<typename T>
-auto android_catalog_failure(String message) -> AndroidNdkCatalogResult<T> {
-    return Err(AndroidNdkCatalogError::Message(rstd::move(message)));
+auto android_catalog_failure(rstd::serde::DataPath path, ref<str> message)
+    -> AndroidNdkCatalogResult<T> {
+    return Err(
+        AndroidNdkCatalogError::Data(rstd::serde::Error::invalid_value(rstd::move(path), message)));
 }
 
-template<typename T>
-auto android_catalog_failure(ref<str> message) -> AndroidNdkCatalogResult<T> {
-    return android_catalog_failure<T>(String::make(message));
+template<typename T, typename Source>
+    requires Impled<rstd::mtp::rm_cvf<Source>, rstd::error::Error>
+auto android_catalog_failure(rstd::serde::DataPath path, ref<str> message, Source source)
+    -> AndroidNdkCatalogResult<T> {
+    return Err(AndroidNdkCatalogError::Data(rstd::serde::Error::invalid_value_with_source(
+        rstd::move(path), message, rstd::move(source))));
 }
 
-auto catalog_known_fields(const Json& value, ref<str> context, initializer_list<ref<str>> names)
-    -> AndroidNdkCatalogResult<empty> {
-    return Ok(rstd_try(
-        lito::parse::json::reject_unknown(value, lito::parse::NodePath::root(context), names)));
-}
-
-auto catalog_member(const Json& value, ref<str> key, ref<str> context)
-    -> AndroidNdkCatalogResult<ref<Json>> {
-    return Ok(rstd_try(
-        lito::parse::json::required_member(value, key, lito::parse::NodePath::root(context))));
-}
-
-auto catalog_string(const Json& value, ref<str> key, ref<str> context)
-    -> AndroidNdkCatalogResult<String> {
-    return Ok(rstd_try(lito::parse::json::required_non_empty_string(
-        value, key, lito::parse::NodePath::root(context))));
-}
-
-auto catalog_u64(const Json& value, ref<str> key, ref<str> context)
-    -> AndroidNdkCatalogResult<u64> {
-    return Ok(rstd_try(
-        lito::parse::json::required_u64(value, key, lito::parse::NodePath::root(context))));
-}
-
-auto catalog_array(const Json& value, ref<str> key, ref<str> context)
-    -> AndroidNdkCatalogResult<ref<rstd::json::Array>> {
-    return Ok(rstd_try(
-        lito::parse::json::required_array(value, key, lito::parse::NodePath::root(context))));
-}
-
-auto parse_catalog_host(const Json& value, ref<str> context)
+auto parse_catalog_host(android_catalog_wire::Host value, rstd::serde::DataPath path)
     -> AndroidNdkCatalogResult<lito::system::HostInfo> {
-    rstd_try(catalog_known_fields(value, context, { "os"_str, "architecture"_str }));
-    auto os   = rstd_try(catalog_string(value, "os"_str, context));
-    auto arch = rstd_try(catalog_string(value, "architecture"_str, context));
-    if (os != "linux"_str) {
+    if (value.os.is_empty()) {
         return android_catalog_failure<lito::system::HostInfo>(
-            rstd::format("{}.os '{}' is not certified", context, os));
+            path.with_field("os"_str), "host operating system must not be empty"_str);
     }
-    auto canonical = lito::system::canonical_architecture(arch.as_str());
+    if (value.architecture.is_empty()) {
+        return android_catalog_failure<lito::system::HostInfo>(
+            path.with_field("architecture"_str), "host architecture must not be empty"_str);
+    }
+    if (value.os != "linux"_str) {
+        return android_catalog_failure<lito::system::HostInfo>(
+            path.with_field("os"_str), "host operating system is not certified"_str);
+    }
+    auto canonical = lito::system::canonical_architecture(value.architecture.as_str());
     if (canonical.is_err()) {
         return android_catalog_failure<lito::system::HostInfo>(
-            rstd::format("{}.architecture '{}' is invalid", context, arch));
+            path.with_field("architecture"_str),
+            "host architecture is invalid"_str,
+            rstd::move(canonical).unwrap_err_unchecked());
     }
-    if (canonical->as_str() != "x86_64"_str || arch != "x86_64"_str) {
+    auto architecture = rstd::move(canonical).unwrap_unchecked();
+    if (architecture.as_str() != "x86_64"_str || value.architecture != "x86_64"_str) {
         return android_catalog_failure<lito::system::HostInfo>(
-            rstd::format("{}.architecture '{}' is not certified", context, arch));
+            path.with_field("architecture"_str), "host architecture is not certified"_str);
     }
     return Ok(lito::system::HostInfo {
-        .architecture = rstd::move(canonical).unwrap(),
-        .os           = rstd::move(os),
+        .architecture = rstd::move(architecture),
+        .os           = rstd::move(value.os),
     });
 }
 
-auto parse_catalog_archive(const Json& value, ref<str> context)
+auto parse_catalog_archive(android_catalog_wire::Archive value, rstd::serde::DataPath path)
     -> AndroidNdkCatalogResult<AndroidNdkArchive> {
-    rstd_try(catalog_known_fields(
-        value, context, { "format"_str, "url"_str, "sha256"_str, "size"_str, "root"_str }));
-    auto path   = lito::parse::NodePath::root(context);
-    auto format = rstd_try(catalog_string(value, "format"_str, context));
-    auto url    = rstd_try(lito::parse::json::required_https_url(value, "url"_str, path));
-    auto sha256 = rstd_try(lito::parse::json::required_sha256(
-        value, "sha256"_str, path, lito::parse::Sha256TextMode::Canonical));
-    auto size   = rstd_try(catalog_u64(value, "size"_str, context));
-    auto root   = rstd_try(lito::parse::json::required_path_component(value, "root"_str, path));
-    if (format != "zip"_str) {
-        return android_catalog_failure<AndroidNdkArchive>(
-            rstd::format("{}.format must be 'zip'", context));
+    if (value.format != "zip"_str) {
+        return android_catalog_failure<AndroidNdkArchive>(path.with_field("format"_str),
+                                                          "archive format must be 'zip'"_str);
     }
-    if (! url.as_str().starts_with("https://dl.google.com/android/repository/"_str)) {
-        return android_catalog_failure<AndroidNdkArchive>(
-            rstd::format("{}.url must be an official Android repository HTTPS URL", context));
+    auto url = lito::parse::HttpsUrl::parse(value.url.as_str());
+    if (url.is_err()) {
+        return android_catalog_failure<AndroidNdkArchive>(path.with_field("url"_str),
+                                                          "archive URL is invalid"_str,
+                                                          rstd::move(url).unwrap_err_unchecked());
     }
-    if (size == u64 {}) {
+    auto sha256 =
+        lito::parse::parse_sha256(value.sha256.as_str(), lito::parse::Sha256TextMode::Canonical);
+    if (sha256.is_err()) {
         return android_catalog_failure<AndroidNdkArchive>(
-            rstd::format("{}.sha256 and size must identify a non-empty archive", context));
+            path.with_field("sha256"_str),
+            "archive SHA256 is invalid"_str,
+            rstd::move(sha256).unwrap_err_unchecked());
+    }
+    auto root = lito::parse::PathComponent::parse(value.root.as_str());
+    if (root.is_err()) {
+        return android_catalog_failure<AndroidNdkArchive>(path.with_field("root"_str),
+                                                          "archive root is invalid"_str,
+                                                          rstd::move(root).unwrap_err_unchecked());
+    }
+    auto parsed_url = rstd::move(url).unwrap_unchecked();
+    if (! parsed_url.as_str().starts_with("https://dl.google.com/android/repository/"_str)) {
+        return android_catalog_failure<AndroidNdkArchive>(
+            path.with_field("url"_str), "archive URL must use the official Android repository"_str);
+    }
+    if (value.size == u64 {}) {
+        return android_catalog_failure<AndroidNdkArchive>(path.with_field("size"_str),
+                                                          "archive size must be non-zero"_str);
     }
     return Ok(AndroidNdkArchive {
-        .format = rstd::move(format),
-        .url    = rstd::move(url),
-        .sha256 = rstd::move(sha256),
-        .size   = size,
-        .root   = rstd::move(root),
+        .format = rstd::move(value.format),
+        .url    = rstd::move(parsed_url),
+        .sha256 = rstd::move(sha256).unwrap_unchecked(),
+        .size   = value.size,
+        .root   = rstd::move(root).unwrap_unchecked(),
     });
 }
 
@@ -256,103 +254,104 @@ export namespace lito
 {
 
 auto parse_android_ndk_catalog(ref<str> text) -> AndroidNdkCatalogResult<AndroidNdkCatalog> {
-    auto parsed = rstd::json::from_str(text);
-    if (parsed.is_err()) return Err(AndroidNdkCatalogError::Json(rstd::move(parsed).unwrap_err()));
-    auto document = rstd::move(parsed).unwrap();
-    rstd_try(catalog_known_fields(document,
-                                  "Android NDK catalog root"_str,
-                                  { "schema"_str, "kind"_str, "license"_str, "releases"_str }));
-    if (rstd_try(catalog_u64(document, "schema"_str, "Android NDK catalog root"_str)) != u64(1)) {
+    auto document = rstd_try(rstd::json::decode<android_catalog_wire::Catalog>(text));
+    auto root     = rstd::serde::DataPath();
+    if (document.schema != u64(1)) {
         return android_catalog_failure<AndroidNdkCatalog>(
-            "Android NDK catalog schema must be 1"_str);
+            root.with_field("schema"_str), "Android NDK catalog schema must be 1"_str);
     }
-    auto kind = rstd_try(catalog_string(document, "kind"_str, "Android NDK catalog root"_str));
-    if (kind != "lito-android-ndk-repository"_str) {
+    if (document.kind != "lito-android-ndk-repository"_str) {
         return android_catalog_failure<AndroidNdkCatalog>(
-            "Android NDK catalog kind is invalid"_str);
+            root.with_field("kind"_str), "Android NDK catalog kind is invalid"_str);
     }
-    auto license_value =
-        rstd_try(catalog_member(document, "license"_str, "Android NDK catalog root"_str));
-    rstd_try(catalog_known_fields(
-        *license_value, "Android NDK catalog license"_str, { "id"_str, "url"_str, "sha256"_str }));
-    auto license_id =
-        rstd_try(catalog_string(*license_value, "id"_str, "Android NDK catalog license"_str));
-    auto license_path = lito::parse::NodePath::root("Android NDK catalog license"_str);
-    auto license_url =
-        rstd_try(lito::parse::json::required_https_url(*license_value, "url"_str, license_path));
-    auto license_sha256 = rstd_try(lito::parse::json::required_sha256(
-        *license_value, "sha256"_str, license_path, lito::parse::Sha256TextMode::Canonical));
-    if (license_id != "android-sdk-license"_str ||
-        ! license_url.as_str().starts_with("https://developer.android.com/"_str)) {
+    auto license_path = root.with_field("license"_str);
+    auto license_url  = lito::parse::HttpsUrl::parse(document.license.url.as_str());
+    if (license_url.is_err()) {
         return android_catalog_failure<AndroidNdkCatalog>(
-            "Android NDK catalog license identity is invalid"_str);
+            license_path.with_field("url"_str),
+            "license URL is invalid"_str,
+            rstd::move(license_url).unwrap_err_unchecked());
+    }
+    auto license_sha256 = lito::parse::parse_sha256(document.license.sha256.as_str(),
+                                                    lito::parse::Sha256TextMode::Canonical);
+    if (license_sha256.is_err()) {
+        return android_catalog_failure<AndroidNdkCatalog>(
+            license_path.with_field("sha256"_str),
+            "license SHA256 is invalid"_str,
+            rstd::move(license_sha256).unwrap_err_unchecked());
+    }
+    if (document.license.id != "android-sdk-license"_str) {
+        return android_catalog_failure<AndroidNdkCatalog>(
+            license_path.with_field("id"_str), "Android NDK license identifier is invalid"_str);
+    }
+    auto parsed_license_url = rstd::move(license_url).unwrap_unchecked();
+    if (! parsed_license_url.as_str().starts_with("https://developer.android.com/"_str)) {
+        return android_catalog_failure<AndroidNdkCatalog>(
+            license_path.with_field("url"_str),
+            "license URL must use the official Android developer site"_str);
     }
     auto license = AndroidNdkLicense {
-        .id     = rstd::move(license_id),
-        .url    = rstd::move(license_url),
-        .sha256 = rstd::move(license_sha256),
+        .id     = rstd::move(document.license.id),
+        .url    = rstd::move(parsed_license_url),
+        .sha256 = rstd::move(license_sha256).unwrap_unchecked(),
     };
-    auto values = rstd_try(catalog_array(document, "releases"_str, "Android NDK catalog root"_str));
-    if (values->is_empty()) {
+    if (document.releases.is_empty()) {
         return android_catalog_failure<AndroidNdkCatalog>(
-            "Android NDK catalog releases must not be empty"_str);
+            root.with_field("releases"_str), "Android NDK catalog releases must not be empty"_str);
     }
-    auto releases = Vec<AndroidNdkRelease>::with_capacity(values->len());
-    for (usize index {}; index < values->len(); ++index) {
-        const auto  context = rstd::format("Android NDK catalog release {}", index);
-        const auto& value   = (*values)[index];
-        rstd_try(catalog_known_fields(
-            value, context.as_str(), { "revision"_str, "release-name"_str, "artifacts"_str }));
-        auto revision_text = rstd_try(catalog_string(value, "revision"_str, context.as_str()));
-        auto revision      = parse_android_ndk_revision(revision_text.as_str());
+    auto releases = Vec<AndroidNdkRelease>::with_capacity(document.releases.len());
+    for (usize index {}; index < document.releases.len(); ++index) {
+        auto release_path = root.with_field("releases"_str).with_index(index);
+        auto value        = rstd::move(document.releases[index]);
+        auto revision     = parse_android_ndk_revision(value.revision.as_str());
         if (revision.is_err()) {
-            return Err(AndroidNdkCatalogError::Ndk(rstd::move(revision).unwrap_err()));
-        }
-        auto release_name = rstd_try(catalog_string(value, "release-name"_str, context.as_str()));
-        auto artifacts_value = rstd_try(catalog_array(value, "artifacts"_str, context.as_str()));
-        if (artifacts_value->is_empty()) {
             return android_catalog_failure<AndroidNdkCatalog>(
-                rstd::format("{}.artifacts must not be empty", context.as_str()));
+                release_path.with_field("revision"_str),
+                "Android NDK revision is invalid"_str,
+                rstd::move(revision).unwrap_err_unchecked());
         }
-        auto artifacts = Vec<AndroidNdkArtifact>::with_capacity(artifacts_value->len());
-        for (usize artifact_index {}; artifact_index < artifacts_value->len(); ++artifact_index) {
-            const auto artifact_context =
-                rstd::format("{}.artifacts[{}]", context.as_str(), artifact_index);
-            const auto& artifact_value = (*artifacts_value)[artifact_index];
-            rstd_try(catalog_known_fields(
-                artifact_value, artifact_context.as_str(), { "host"_str, "archive"_str }));
-            auto host_value =
-                rstd_try(catalog_member(artifact_value, "host"_str, artifact_context.as_str()));
-            auto archive_value =
-                rstd_try(catalog_member(artifact_value, "archive"_str, artifact_context.as_str()));
-            auto artifact = AndroidNdkArtifact {
-                .host    = rstd_try(parse_catalog_host(
-                    *host_value, rstd::format("{}.host", artifact_context.as_str()).as_str())),
-                .archive = rstd_try(parse_catalog_archive(
-                    *archive_value,
-                    rstd::format("{}.archive", artifact_context.as_str()).as_str())),
+        if (value.release_name.is_empty()) {
+            return android_catalog_failure<AndroidNdkCatalog>(
+                release_path.with_field("release-name"_str),
+                "Android NDK release name must not be empty"_str);
+        }
+        if (value.artifacts.is_empty()) {
+            return android_catalog_failure<AndroidNdkCatalog>(
+                release_path.with_field("artifacts"_str),
+                "Android NDK release artifacts must not be empty"_str);
+        }
+        auto artifacts = Vec<AndroidNdkArtifact>::with_capacity(value.artifacts.len());
+        for (usize artifact_index {}; artifact_index < value.artifacts.len(); ++artifact_index) {
+            auto artifact_path =
+                release_path.with_field("artifacts"_str).with_index(artifact_index);
+            auto artifact_value = rstd::move(value.artifacts[artifact_index]);
+            auto artifact       = AndroidNdkArtifact {
+                .host    = rstd_try(parse_catalog_host(rstd::move(artifact_value.host),
+                                                       artifact_path.with_field("host"_str))),
+                .archive = rstd_try(parse_catalog_archive(rstd::move(artifact_value.archive),
+                                                          artifact_path.with_field("archive"_str))),
             };
             for (const auto& existing : artifacts) {
                 if (existing.host.os == artifact.host.os.as_str() &&
                     existing.host.architecture == artifact.host.architecture) {
                     return android_catalog_failure<AndroidNdkCatalog>(
-                        rstd::format("{} repeats host {}-{}",
-                                     context.as_str(),
-                                     artifact.host.os.as_str(),
-                                     artifact.host.architecture.as_str()));
+                        artifact_path.with_field("host"_str),
+                        "Android NDK release repeats a host artifact"_str);
                 }
             }
             artifacts.push(rstd::move(artifact));
         }
+        auto parsed_revision = rstd::move(revision).unwrap_unchecked();
         for (const auto& existing : releases) {
-            if (existing.revision.text == revision->text.as_str()) {
+            if (existing.revision.text == parsed_revision.text.as_str()) {
                 return android_catalog_failure<AndroidNdkCatalog>(
-                    rstd::format("Android NDK catalog repeats revision '{}'", revision->text));
+                    release_path.with_field("revision"_str),
+                    "Android NDK catalog repeats a revision"_str);
             }
         }
         releases.push(AndroidNdkRelease {
-            .revision     = rstd::move(revision).unwrap(),
-            .release_name = rstd::move(release_name),
+            .revision     = rstd::move(parsed_revision),
+            .release_name = rstd::move(value.release_name),
             .artifacts    = rstd::move(artifacts),
         });
     }

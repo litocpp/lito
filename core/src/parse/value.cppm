@@ -269,7 +269,8 @@ struct Impl<fmt::Debug, lito::parse::UrlError> : ImplBase<lito::parse::UrlError>
 };
 
 template<>
-struct Impl<error::Error, lito::parse::UrlError> : ImplBase<lito::parse::UrlError> {};
+struct Impl<error::Error, lito::parse::UrlError>
+    : DefaultInImpl<error::Error, lito::parse::UrlError> {};
 
 template<>
 struct Impl<fmt::Display, lito::parse::PathValueError> : ImplBase<lito::parse::PathValueError> {
@@ -282,7 +283,8 @@ struct Impl<fmt::Debug, lito::parse::PathValueError> : ImplBase<lito::parse::Pat
 };
 
 template<>
-struct Impl<error::Error, lito::parse::PathValueError> : ImplBase<lito::parse::PathValueError> {};
+struct Impl<error::Error, lito::parse::PathValueError>
+    : DefaultInImpl<error::Error, lito::parse::PathValueError> {};
 
 template<>
 struct Impl<fmt::Display, lito::parse::DecimalError> : ImplBase<lito::parse::DecimalError> {
@@ -295,7 +297,8 @@ struct Impl<fmt::Debug, lito::parse::DecimalError> : ImplBase<lito::parse::Decim
 };
 
 template<>
-struct Impl<error::Error, lito::parse::DecimalError> : ImplBase<lito::parse::DecimalError> {};
+struct Impl<error::Error, lito::parse::DecimalError>
+    : DefaultInImpl<error::Error, lito::parse::DecimalError> {};
 
 template<>
 struct Impl<hash::Hash, lito::parse::Url> : ImplBase<lito::parse::Url> {

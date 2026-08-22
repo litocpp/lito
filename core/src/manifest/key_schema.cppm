@@ -33,20 +33,8 @@ auto runnable_key(ref<str> key) -> bool {
            key == "source-groups"_str || key == "when"_str || key == "link-stdlib"_str;
 }
 
-auto source_group_key(ref<str> key) -> bool {
-    return key == "root"_str || key == "external-source"_str || key == "sources"_str;
-}
-
-auto target_when_key(ref<str> key) -> bool {
-    return key == "condition"_str || key == "source-groups"_str;
-}
-
 auto binary_key(ref<str> key) -> bool {
     return runnable_key(key) || key == "resources"_str;
-}
-
-auto runtime_resource_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "root"_str || key == "path"_str;
 }
 
 auto build_tool_key(ref<str> key) -> bool {
@@ -73,16 +61,6 @@ auto target_predicate_key(ref<str> key) -> bool {
     return key == "family"_str || key == "os"_str || key == "not-family"_str || key == "not-os"_str;
 }
 
-auto test_attachment_key(ref<str> key) -> bool {
-    return key == "package"_str || key == "sources"_str;
-}
-
-auto compile_test_case_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "source"_str || key == "outcome"_str ||
-           key == "options"_str || key == "diagnostic-contains"_str ||
-           key == "diagnostic-contains-any"_str;
-}
-
 auto usage_key(ref<str> key) -> bool {
     return key == "public-include-directories"_str || key == "private-include-directories"_str ||
            key == "public-definitions"_str || key == "private-definitions"_str ||
@@ -92,10 +70,6 @@ auto usage_key(ref<str> key) -> bool {
 
 auto when_key(ref<str> key) -> bool {
     return key == "condition"_str || key == "usage"_str;
-}
-
-auto feature_key(ref<str> key) -> bool {
-    return key == "default"_str;
 }
 
 auto include_directory_key(ref<str> key) -> bool {
@@ -173,14 +147,6 @@ auto workspace_external_source_reference_key(ref<str> key) -> bool {
 
 auto workspace_cmake_external_reference_key(ref<str> key) -> bool {
     return key == "workspace"_str || key == "targets"_str || key == "condition"_str;
-}
-
-auto cmake_target_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "visibility"_str;
-}
-
-auto cmake_host_tool_key(ref<str> key) -> bool {
-    return key == "name"_str || key == "target"_str;
 }
 
 auto pkg_config_external_key(ref<str> key) -> bool {

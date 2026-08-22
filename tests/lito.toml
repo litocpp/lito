@@ -110,6 +110,10 @@ visibility = "private"
 workspace = true
 visibility = "private"
 
+[dependencies.rstd-serde]
+workspace = true
+visibility = "private"
+
 [dependencies.rstd-toml]
 workspace = true
 visibility = "private"

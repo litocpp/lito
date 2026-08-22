@@ -5,6 +5,7 @@ module lito.core:manifest.primitives;
 
 import rstd;
 import lito.crypto;
+import rstd.serde;
 import rstd.toml;
 import :manifest.error;
 import :parse;
@@ -25,6 +26,31 @@ auto manifest_schema_failure(ref<str> message) -> ManifestSchemaResult<T> {
 template<typename T>
 auto manifest_schema_failure(String message) -> ManifestSchemaResult<T> {
     return Err(ManifestSchemaError::Domain(rstd::move(message)));
+}
+
+template<typename T>
+auto manifest_data_failure(rstd::serde::DataPath path, ref<str> message)
+    -> ManifestSchemaResult<T> {
+    return Err(
+        ManifestSchemaError::Data(rstd::serde::Error::invalid_value(rstd::move(path), message)));
+}
+
+template<typename T, typename Source>
+    requires Impled<rstd::mtp::rm_cvf<Source>, rstd::error::Error>
+auto manifest_data_failure(rstd::serde::DataPath path, ref<str> message, Source source)
+    -> ManifestSchemaResult<T> {
+    return Err(ManifestSchemaError::Data(rstd::serde::Error::invalid_value_with_source(
+        rstd::move(path), message, rstd::move(source))));
+}
+
+template<typename T>
+auto decode_manifest_value(const Toml& value, rstd::serde::DataPath path)
+    -> ManifestSchemaResult<T> {
+    auto decoded = rstd::toml::decode_value<T>(value, rstd::move(path));
+    if (decoded.is_err()) {
+        return Err(ManifestSchemaError::Data(rstd::move(decoded).unwrap_err_unchecked()));
+    }
+    return Ok(rstd::move(decoded).unwrap_unchecked());
 }
 
 template<typename T>

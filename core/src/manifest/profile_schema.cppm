@@ -5,9 +5,11 @@ module lito.core:manifest.profile_schema;
 
 import rstd;
 import :artifact;
+import rstd.serde;
 import rstd.toml;
 import :manifest.profile;
 import :manifest.primitives;
+import :manifest.wire;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -17,10 +19,6 @@ using namespace lito::manifest;
 auto build_profile_key(ref<str> key) -> bool {
     return key == "inherits"_str || key == "opt-level"_str || key == "debug"_str ||
            key == "strip"_str || key == "lto"_str || key == "exceptions"_str || key == "rtti"_str;
-}
-
-auto base_profile_key(ref<str> key) -> bool {
-    return key == "exceptions"_str || key == "rtti"_str;
 }
 
 auto parse_profile_bool(const Toml& value, ref<str> context) -> ManifestSchemaResult<bool> {
@@ -167,25 +165,13 @@ auto parse_build_profile(ref<str> name, const Toml& value)
 }
 
 auto parse_base_profile(const Toml& value) -> ManifestSchemaResult<BaseProfileDefinition> {
-    auto table = table_value(value, "manifest.profile.base"_str);
-    if (table.is_err()) return Err(rstd::move(table).unwrap_err());
-    if (member(value, "inherits"_str).is_some()) {
-        return manifest_schema_failure<BaseProfileDefinition>(
-            "manifest.profile.base cannot declare inherits"_str);
-    }
-    rstd_try(reject_unknown(**table, "manifest.profile.base"_str, base_profile_key));
-
-    auto result     = BaseProfileDefinition {};
-    auto exceptions = member(value, "exceptions"_str);
-    if (exceptions.is_some()) {
-        result.exceptions = Some(
-            rstd_try(parse_profile_bool(**exceptions, "manifest.profile.base.exceptions"_str)));
-    }
-    auto rtti = member(value, "rtti"_str);
-    if (rtti.is_some()) {
-        result.rtti = Some(rstd_try(parse_profile_bool(**rtti, "manifest.profile.base.rtti"_str)));
-    }
-    return Ok(result);
+    auto path = rstd::serde::DataPath().with_field("profile"_str).with_field("base"_str);
+    auto wire =
+        rstd_try(decode_manifest_value<lito::manifest::wire::BaseProfile>(value, rstd::move(path)));
+    return Ok(BaseProfileDefinition {
+        .exceptions = rstd::move(wire.exceptions),
+        .rtti       = rstd::move(wire.rtti),
+    });
 }
 
 auto parse_project_profile(Option<ref<Toml>> value)

@@ -4,6 +4,7 @@ module;
 export module lito.core:manifest.error;
 
 import rstd;
+import rstd.serde;
 import rstd.toml;
 import :manifest.profile;
 import :parse.error;
@@ -28,6 +29,7 @@ class ManifestSchemaError {
     RSTD_ENUM(ManifestSchemaError,
               (Domain, (String message;)),
               (Parse, (lito::parse::Error source;)),
+              (Data, (rstd::serde::Error source;)),
               (Io, (String node; String operation; PathBuf path; rstd::io::error::Error source;)),
               (Locate, (ManifestLocatorError source;)),
               (Profile, (BuildProfileError source;)))
@@ -154,6 +156,10 @@ struct Impl<fmt::Display, lito::manifest::ManifestSchemaError>
         const auto& error = this->self();
         if (error.is_Domain()) return formatter.write_str(error.as_Domain().message.as_str());
         if (error.is_Parse()) return as<fmt::Display>(error.as_Parse().source).fmt(formatter);
+        if (error.is_Data()) {
+            return formatter.write_raw("manifest data is invalid",
+                                       sizeof("manifest data is invalid") - 1);
+        }
         if (error.is_Io()) {
             const auto& value = error.as_Io();
             return formatter.write_fmt(fmt::Arguments::make(
@@ -182,6 +188,7 @@ struct Impl<error::Error, lito::manifest::ManifestSchemaError>
     auto source() const noexcept -> Option<error::ErrorRef> {
         const auto& value = this->self();
         if (value.is_Parse()) return Some(dyn<error::Error>::from_ref(value.as_Parse().source));
+        if (value.is_Data()) return Some(dyn<error::Error>::from_ref(value.as_Data().source));
         if (value.is_Io()) return Some(dyn<error::Error>::from_ref(value.as_Io().source));
         if (value.is_Locate()) return Some(dyn<error::Error>::from_ref(value.as_Locate().source));
         if (value.is_Profile()) {

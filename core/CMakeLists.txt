@@ -36,6 +36,7 @@ target_sources(
          src/lock/document.cppm
          src/lock/mod.cppm
          src/lock/session.cppm
+         src/lock/wire.cppm
          src/manifest/build_tool.cppm
          src/manifest/build_tool_schema.cppm
          src/manifest/build_script.cppm
@@ -58,6 +59,7 @@ target_sources(
          src/manifest/target.cppm
          src/manifest/target_schema.cppm
          src/manifest/workspace.cppm
+         src/manifest/wire.cppm
          src/package/error.cppm
          src/package/features.cppm
          src/package/graph.cppm
@@ -109,7 +111,7 @@ target_sources(
 target_link_libraries(
   lito.core
   PUBLIC rstd.std
-  PRIVATE rstd.json rstd.toml utf8proc)
+  PRIVATE rstd.json rstd.serde rstd.toml utf8proc)
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LITO_SODIUM REQUIRED IMPORTED_TARGET libsodium)
