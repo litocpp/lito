@@ -4,8 +4,8 @@ module;
 export module lito.core:lock.error;
 
 import rstd;
-import rstd.json;
 import rstd.serde;
+import rstd.toml;
 import :parse.error;
 
 using namespace rstd::prelude;
@@ -19,7 +19,7 @@ class LockError {
               (Parse, (lito::parse::Error source;)),
               (Data, (rstd::serde::Error source;)),
               (Io, (String operation; rstd::path::PathBuf path; rstd::io::error::Error source;)),
-              (Json, (rstd::path::PathBuf path; rstd::json::Error source;)))
+              (Toml, (rstd::path::PathBuf path; rstd::toml::Error source;)))
 };
 
 template<typename T>
@@ -52,7 +52,7 @@ struct Impl<fmt::Display, lito::lock::LockError> : ImplBase<lito::lock::LockErro
                 fmt::Arguments::make("cannot {} lock '{}'", value.operation, value.path.as_path()));
         }
         return formatter.write_fmt(
-            fmt::Arguments::make("cannot parse lock '{}'", error.as_Json().path.as_path()));
+            fmt::Arguments::make("cannot parse lock '{}'", error.as_Toml().path.as_path()));
     }
 };
 
@@ -70,7 +70,7 @@ struct Impl<error::Error, lito::lock::LockError> : ImplBase<lito::lock::LockErro
         if (error.is_Parse()) return Some(dyn<error::Error>::from_ref(error.as_Parse().source));
         if (error.is_Data()) return Some(dyn<error::Error>::from_ref(error.as_Data().source));
         if (error.is_Io()) return Some(dyn<error::Error>::from_ref(error.as_Io().source));
-        if (error.is_Json()) return Some(dyn<error::Error>::from_ref(error.as_Json().source));
+        if (error.is_Toml()) return Some(dyn<error::Error>::from_ref(error.as_Toml().source));
         return None();
     }
 };

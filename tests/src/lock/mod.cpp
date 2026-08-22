@@ -103,7 +103,7 @@ sources = ["lib.cppm"]
     }
 };
 
-TEST_F(Lock, VersionThreeUsesPackageNames) {
+TEST_F(Lock, VersionOneUsesPackageNames) {
     auto fixture = project_with_dependency("package-names"_str);
     ASSERT_TRUE(fixture.is_ok());
     auto session = lito::lock::load_lock_session(fixture->root.as_path(), false);
@@ -117,10 +117,16 @@ TEST_F(Lock, VersionThreeUsesPackageNames) {
     auto lock = rstd::fs::read_to_string(
         fixture->root.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
     ASSERT_TRUE(lock.is_ok());
-    EXPECT_TRUE(lock->as_str().contains("\"version\": 3"_str));
+    EXPECT_TRUE(lock->as_str().contains("version = 1"_str));
     EXPECT_TRUE(lock->as_str().contains("\"fixture-lock-dependency\""_str));
+    EXPECT_TRUE(lock->as_str().contains(
+        "name = \"fixture-lock\"\nversion = \"1.0.0\"\ndependencies = ["_str));
     EXPECT_FALSE(lock->as_str().contains("lito-pkg-"_str));
-    EXPECT_FALSE(lock->as_str().contains("\"id\":"_str));
+    EXPECT_FALSE(lock->as_str().contains("id = "_str));
+    EXPECT_FALSE(lock->as_str().contains("source = "_str));
+    EXPECT_FALSE(lock->as_str().contains("manifest = "_str));
+    EXPECT_FALSE(lock->as_str().contains("[[packages.externals]]"_str));
+    EXPECT_FALSE(lock->as_str().contains("runtime-dependencies = "_str));
 
     auto loaded = lito::lock::load_locked_project(fixture->root.as_path());
     ASSERT_TRUE(loaded.is_ok());
@@ -133,21 +139,14 @@ TEST_F(Lock, VersionThreeUsesPackageNames) {
     EXPECT_EQ(root->dependencies[usize {}].as_str(), "fixture-lock-dependency"_str);
 }
 
-TEST_F(Lock, ExperimentalVersionThreePackageIdIsRejected) {
-    constexpr auto old_lock = R"json({
-  "packages": [{
-    "dependencies": [],
-    "externals": [],
-    "id": "lito-pkg-2e9a5795046686573e28687402dff421efb01ddbb84b85ff00f26ea66732e2f6",
-    "manifest": "lito.toml",
-    "name": "fixture-lock",
-    "runtime-dependencies": [],
-    "source": { "kind": "path", "path": "." },
-    "version": "1.0.0"
-  }],
-  "version": 3
-})json"_str;
-    auto           fixture  = project("experimental-version-three"_str, old_lock);
+TEST_F(Lock, PackageIdIsRejected) {
+    constexpr auto old_lock = R"toml(version = 1
+
+[[packages]]
+name = "fixture-lock"
+id = "lito-pkg-2e9a5795046686573e28687402dff421efb01ddbb84b85ff00f26ea66732e2f6"
+)toml"_str;
+    auto           fixture  = project("package-id"_str, old_lock);
     ASSERT_TRUE(fixture.is_ok());
     auto loaded = lito::lock::load_lock_session(fixture->root.as_path(), false);
     ASSERT_TRUE(loaded.is_err());
@@ -156,22 +155,33 @@ TEST_F(Lock, ExperimentalVersionThreePackageIdIsRejected) {
     EXPECT_EQ(error.as_Data().source.kind(), rstd::serde::ErrorKind::UnknownField);
 }
 
-TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
-    constexpr auto current_lock = R"json({
-  "packages": [{
-    "dependencies": [],
-    "externals": [],
-    "manifest": "lito.toml",
-    "name": "fixture-lock",
-    "runtime-dependencies": [],
-    "source": { "kind": "path", "path": "." },
-    "version": "1.0.0"
-  }],
-  "version": 2
-})json"_str;
+TEST_F(Lock, VersionOneValidatesResolvedSources) {
+    constexpr auto current_lock = R"toml(version = 1
+
+[[packages]]
+name = "fixture-lock"
+version = "1.0.0"
+)toml"_str;
     auto           valid        = project("current"_str, current_lock);
     ASSERT_TRUE(valid.is_ok());
     EXPECT_TRUE(current(valid->root.as_path()));
+
+    constexpr auto registry_lock = R"toml(version = 1
+
+[[packages]]
+name = "fixture-lock"
+version = "1.0.0"
+source = "registry+https://registry.example/fixture-lock@1.0.0"
+checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+)toml"_str;
+    auto           registry      = project("registry-source"_str, registry_lock);
+    ASSERT_TRUE(registry.is_ok());
+    auto loaded_registry = lito::lock::load_locked_project(registry->root.as_path());
+    ASSERT_TRUE(loaded_registry.is_ok());
+    ASSERT_TRUE(loaded_registry->packages[usize {}].source.is_some());
+    ASSERT_TRUE(loaded_registry->packages[usize {}].source->is_Registry());
+    EXPECT_EQ(loaded_registry->packages[usize {}].source->as_Registry().package.name.as_str(),
+              "fixture-lock"_str);
 
     struct InvalidLockCase {
         ref<str> name;
@@ -180,19 +190,39 @@ TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
     constexpr InvalidLockCase invalid[] = {
         { "invalid"_str, "{"_str },
         { "stale"_str,
-          R"json({"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock-outdated","runtime-dependencies":[],"source":{"kind":"path","path":"."},"version":"1.0.0"}],"version":2})json"_str },
-        { "future-version"_str, R"json({"packages":[],"version":4})json"_str },
-        { "git-reference-mismatch"_str,
-          R"json({"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"commit":"0000000000000000000000000000000000000001","kind":"git","reference":{"kind":"commit","value":"1111111111111111111111111111111111111111"},"url":"https://example.invalid/repository.git"}}],"version":2})json"_str },
+          "version = 1\n[[packages]]\nname = \"fixture-lock-outdated\"\nversion = \"1.0.0\"\n"_str },
+        { "future-version"_str, "version = 2\npackages = []\n"_str },
+        { "invalid-git-source"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nsource = \"git+https://example.invalid/repository.git#short\"\n"_str },
         { "dangling-dependency"_str,
-          R"json({"packages":[{"dependencies":["missing-package"],"externals":[],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"."}}],"version":2})json"_str },
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\ndependencies = [\"missing-package\"]\n"_str },
         { "duplicate-package"_str,
-          R"json({"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"."}},{"dependencies":[],"externals":[],"manifest":"other/lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"other"}}],"version":2})json"_str },
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages]]\nname = \"fixture-lock\"\n"_str },
         { "duplicate-external"_str,
-          R"json({"packages":[{"dependencies":[],"externals":[{"name":"archive","source":{"kind":"archive","sha256":"0000000000000000000000000000000000000000000000000000000000000000","url":"https://example.invalid/archive.tar.gz"}},{"name":"archive","source":{"kind":"archive","sha256":"1111111111111111111111111111111111111111111111111111111111111111","url":"https://example.invalid/other.tar.gz"}}],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"."}}],"version":2})json"_str },
-        { "unsafe-package-external"_str,
-          R"json({"packages":[{"dependencies":[],"externals":[{"name":"shader","source":{"kind":"package","path":"../shaders"}}],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"."}}],"version":2})json"_str },
-        { "root-externals"_str, R"json({"externals":[],"packages":[{"dependencies":[],"externals":[],"manifest":"lito.toml","name":"fixture-lock","runtime-dependencies":[],"source":{"kind":"path","path":"."}}],"version":2})json"_str },
+          R"toml(version = 1
+[[packages]]
+name = "fixture-lock"
+[[packages.externals]]
+name = "archive"
+source = "archive+https://example.invalid/archive.tar.gz"
+checksum = "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+[[packages.externals]]
+name = "archive"
+source = "archive+https://example.invalid/other.tar.gz"
+checksum = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+)toml"_str },
+        { "archive-without-checksum"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\n"_str },
+        { "archive-checksum-without-prefix"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\n[[packages.externals]]\nname = \"archive\"\nsource = \"archive+https://example.invalid/archive.tar.gz\"\nchecksum = \"0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
+        { "registry-without-checksum"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nversion = \"1.0.0\"\nsource = \"registry+https://registry.example/fixture-lock@1.0.0\"\n"_str },
+        { "git-with-checksum"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nsource = \"git+https://example.invalid/repository.git#0000000000000000000000000000000000000000\"\nchecksum = \"sha256:0000000000000000000000000000000000000000000000000000000000000000\"\n"_str },
+        { "package-manifest"_str,
+          "version = 1\n[[packages]]\nname = \"fixture-lock\"\nmanifest = \"lito.toml\"\n"_str },
+        { "root-externals"_str,
+          "version = 1\nexternals = []\n[[packages]]\nname = \"fixture-lock\"\n"_str },
     };
     for (const auto& item : invalid) {
         SCOPED_TRACE(item.name);
@@ -211,11 +241,11 @@ TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
     ASSERT_TRUE(loaded.is_err());
     auto version_error = rstd::move(loaded).unwrap_err();
     ASSERT_TRUE(version_error.is_Schema());
-    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("supports version 3"_str));
+    EXPECT_TRUE(version_error.as_Schema().message.as_str().contains("supports version 1"_str));
 }
 
-TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
-    constexpr auto version_one = R"json({
+TEST_F(Lock, JsonLockIsRebuiltUnlessLockIsRequired) {
+    constexpr auto json_lock = R"json({
   "externals": [],
   "packages": [{
     "dependencies": [],
@@ -225,18 +255,20 @@ TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
     "source": { "kind": "path", "path": "." },
     "version": "1.0.0"
   }],
-  "version": 1
+  "version": 3
 })json"_str;
-    auto           fixture     = project("version-one"_str, version_one);
+    auto           fixture   = project("json-lock"_str, json_lock);
     ASSERT_TRUE(fixture.is_ok());
 
     auto strict = lito::lock::load_lock_session(fixture->root.as_path(), true);
     ASSERT_TRUE(strict.is_err());
     auto strict_error = rstd::move(strict).unwrap_err();
-    ASSERT_TRUE(strict_error.is_Schema());
-    EXPECT_TRUE(strict_error.as_Schema().message.as_str().contains("run 'lito update'"_str));
+    ASSERT_TRUE(strict_error.is_Toml());
 
-    auto session = lito::lock::load_lock_session(fixture->root.as_path(), false);
+    auto session = lito::lock::load_lock_session(fixture->root.as_path(),
+                                                 false,
+                                                 lito::source::GitResolutionMode::ReuseLocked,
+                                                 lito::lock::InvalidLockPolicy::Replace);
     ASSERT_TRUE(session.is_ok());
     auto options = session->take_resolution_options();
     EXPECT_TRUE(options.git_sources.is_empty());
@@ -253,18 +285,12 @@ TEST_F(Lock, VersionOneIsRebuiltUnlessLockIsRequired) {
 }
 
 TEST_F(Lock, InvalidSupportedLockCanBeReplacedButNotUsedAsLocked) {
-    constexpr auto invalid_lock = R"json({
-  "packages": [{
-    "dependencies": [],
-    "externals": [],
-    "manifest": "lito.toml",
-    "name": "fixture-lock",
-    "runtime-dependencies": [],
-    "source": { "kind": "path", "path": "." }
-  }],
-  "unexpected": true,
-  "version": 2
-})json"_str;
+    constexpr auto invalid_lock = R"toml(version = 1
+unexpected = true
+
+[[packages]]
+name = "fixture-lock"
+)toml"_str;
     auto           fixture      = project("replace-invalid"_str, invalid_lock);
     ASSERT_TRUE(fixture.is_ok());
 
@@ -293,7 +319,7 @@ TEST_F(Lock, InvalidSupportedLockCanBeReplacedButNotUsedAsLocked) {
 }
 
 TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
-    constexpr auto future_lock = R"json({"packages":[],"version":4})json"_str;
+    constexpr auto future_lock = "version = 2\npackages = []\n"_str;
     auto           fixture     = project("future-version"_str, future_lock);
     ASSERT_TRUE(fixture.is_ok());
     auto loading = lito::lock::load_lock_session(fixture->root.as_path(), false);
@@ -308,11 +334,11 @@ TEST_F(Lock, FutureLockCannotBeDowngradedByUpdate) {
     ASSERT_TRUE(locked.is_err());
     auto loading_error = rstd::move(loading).unwrap_err();
     ASSERT_TRUE(loading_error.is_Schema());
-    EXPECT_TRUE(loading_error.as_Schema().message.as_str().contains("supports version 3"_str));
+    EXPECT_TRUE(loading_error.as_Schema().message.as_str().contains("supports version 1"_str));
     auto update_error = rstd::move(update).unwrap_err();
     ASSERT_TRUE(update_error.is_Schema());
-    EXPECT_TRUE(update_error.as_Schema().message.as_str().contains("supports version 3"_str));
+    EXPECT_TRUE(update_error.as_Schema().message.as_str().contains("supports version 1"_str));
     auto locked_error = rstd::move(locked).unwrap_err();
     ASSERT_TRUE(locked_error.is_Schema());
-    EXPECT_TRUE(locked_error.as_Schema().message.as_str().contains("supports version 3"_str));
+    EXPECT_TRUE(locked_error.as_Schema().message.as_str().contains("supports version 1"_str));
 }

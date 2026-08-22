@@ -125,15 +125,23 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
         if (package.name.as_str() == "owned-fixture"_str) owner = rstd::addressof(package);
     }
     ASSERT_NE(owner, nullptr);
-    ASSERT_EQ(owner->externals.len(), usize(1));
-    const auto& external = owner->externals[usize {}];
-    EXPECT_EQ(external.name.as_str(), "shaders"_str);
-    ASSERT_TRUE(external.source.is_Package());
-    EXPECT_EQ(external.source.as_Package().path.as_path(),
-              PathBuf::from("pkg/shaders"_str).as_path());
+    ASSERT_TRUE(owner->source.is_some());
+    ASSERT_TRUE(owner->source->is_Git());
+    EXPECT_EQ(owner->source->as_Git().url.as_str(), *url);
+    EXPECT_EQ(owner->source->as_Git().commit.as_str(), commit->as_str());
+    EXPECT_TRUE(owner->externals.is_empty());
     auto lock_text =
         rstd::fs::read_to_string(project.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
     ASSERT_TRUE(lock_text.is_ok());
+    auto locked_git     = rstd::format("git+{}#{}", *url, commit->as_str());
+    auto ordered_source = rstd::format("name = \"owned-fixture\"\n"
+                                       "version = \"0.1.0\"\n"
+                                       "source = \"{}\"",
+                                       locked_git.as_str());
+    EXPECT_TRUE(lock_text->as_str().contains(ordered_source.as_str()));
+    EXPECT_FALSE(lock_text->as_str().contains("url = "_str));
+    EXPECT_FALSE(lock_text->as_str().contains("reference = "_str));
+    EXPECT_FALSE(lock_text->as_str().contains("[[packages.externals]]"_str));
     EXPECT_FALSE(lock_text->as_str().contains("git/checkouts"_str));
 
     auto cached_session = lito::lock::load_lock_session(project.as_path(), true);
@@ -318,6 +326,14 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
     ASSERT_TRUE(owner->externals[usize {}].source.is_Archive());
     EXPECT_EQ(owner->externals[usize {}].source.as_Archive().url.as_str(),
               "https://example.invalid/changed.tar.gz"_str);
+    auto lock_text = rstd::fs::read_to_string(configured_lock.as_path());
+    ASSERT_TRUE(lock_text.is_ok());
+    EXPECT_TRUE(lock_text->as_str().contains(
+        "name = \"changed\"\n"
+        "source = \"archive+https://example.invalid/changed.tar.gz\"\n"
+        "checksum = "
+        "\"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\""_str));
+    EXPECT_FALSE(lock_text->as_str().contains("url = "_str));
     auto default_lock = project.join(PathBuf::from("lito.lock"_str).as_path());
     auto exists       = rstd::fs::exists(default_lock.as_path());
     ASSERT_TRUE(exists.is_ok());
@@ -326,22 +342,12 @@ TEST_F(GitSource, GitPatchManifestChangesConfiguredLock) {
 
 TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
     constexpr ProjectFile update_files[] = {
-        { "lito.lock"_str, R"({
-  "packages": [{
-    "dependencies": [],
-    "externals": [],
-    "manifest": "lito.toml",
-    "name": "fixture-git-update",
-    "runtime-dependencies": [],
-    "source": {
-      "commit": "0000000000000000000000000000000000000001",
-      "kind": "git",
-      "reference": { "kind": "branch", "value": "main" },
-      "url": "https://example.invalid/repository.git"
-    }
-  }],
-  "version": 2
-})"_str },
+        { "lito.lock"_str, R"toml(version = 1
+
+[[packages]]
+name = "fixture-git-update"
+source = "git+https://example.invalid/repository.git#0000000000000000000000000000000000000001"
+)toml"_str },
     };
     auto update_project = materialize("git-update-lock"_str, update_files);
     ASSERT_TRUE(update_project.is_ok());
@@ -362,7 +368,7 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
     auto updating_options = updating->take_resolution_options();
     EXPECT_FALSE(updating_options.locked);
     EXPECT_EQ(updating_options.git, lito::source::GitResolutionMode::Refresh);
-    ASSERT_EQ(updating_options.git_sources.len(), usize(1));
+    EXPECT_TRUE(updating_options.git_sources.is_empty());
 
     auto locked = lito::lock::load_lock_session(directory.as_path(), true);
     ASSERT_TRUE(locked.is_ok());
@@ -373,25 +379,12 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
               "0000000000000000000000000000000000000001"_str);
 
     constexpr ProjectFile pinned_files[] = {
-        { "lito.lock"_str, R"({
-  "packages": [{
-    "dependencies": [],
-    "externals": [],
-    "manifest": "lito.toml",
-    "name": "fixture-git-commit",
-    "runtime-dependencies": [],
-    "source": {
-      "commit": "1111111111111111111111111111111111111111",
-      "kind": "git",
-      "reference": {
-        "kind": "commit",
-        "value": "1111111111111111111111111111111111111111"
-      },
-      "url": "https://example.invalid/repository.git"
-    }
-  }],
-  "version": 2
-})"_str },
+        { "lito.lock"_str, R"toml(version = 1
+
+[[packages]]
+name = "fixture-git-commit"
+source = "git+https://example.invalid/repository.git#1111111111111111111111111111111111111111"
+)toml"_str },
     };
     auto pinned_project = materialize("git-pinned-lock"_str, pinned_files);
     ASSERT_TRUE(pinned_project.is_ok());
@@ -399,9 +392,7 @@ TEST_F(GitSource, BuildResolutionReusesGitSourcePins) {
     ASSERT_TRUE(pinned.is_ok());
     auto pinned_options = pinned->take_resolution_options();
     ASSERT_EQ(pinned_options.git_sources.len(), usize(1));
-    EXPECT_EQ(pinned_options.git_sources[usize()].reference.kind,
-              lito::source::GitReferenceKind::Commit);
-    EXPECT_EQ(pinned_options.git_sources[usize()].reference.value.as_str(),
+    EXPECT_EQ(pinned_options.git_sources[usize()].commit.as_str(),
               "1111111111111111111111111111111111111111"_str);
 }
 
@@ -443,9 +434,8 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
 
     auto locked_sources = Vec<lito::source::GitSourcePin>::make();
     locked_sources.push(lito::source::GitSourcePin {
-        .git       = String::make(*url),
-        .reference = lito::source::GitReference {},
-        .commit    = previous->clone(),
+        .git    = String::make(*url),
+        .commit = previous->clone(),
     });
     auto reuse_graph =
         external_git_graph(*url, repository.as_path(), lito::source::GitReference {});
@@ -471,9 +461,8 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
     EXPECT_EQ(*reused_commit, previous->as_str());
 
     locked_sources.push(lito::source::GitSourcePin {
-        .git       = String::make(*url),
-        .reference = lito::source::GitReference {},
-        .commit    = previous->clone(),
+        .git    = String::make(*url),
+        .commit = previous->clone(),
     });
     auto update_graph =
         external_git_graph(*url, repository.as_path(), lito::source::GitReference {});

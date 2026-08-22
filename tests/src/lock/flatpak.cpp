@@ -14,7 +14,6 @@ using namespace rstd::prelude;
 using namespace lito::system;
 using namespace rstd::literals;
 using namespace lito_test;
-using PathBuf = rstd::path::PathBuf;
 
 TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     auto format = lito::lock::parse_lock_export_format("flatpak-sources"_str);
@@ -35,26 +34,22 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     project.packages.push(lito::lock::LockedPackage {
         .name         = String::make("app"_str),
         .version      = Some(String::make("0.1.0"_str)),
-        .source       = lito::lock::LockedSource::Path(PathBuf::from("."_str)),
-        .manifest     = PathBuf::from("lito.toml"_str),
+        .source       = None(),
         .dependencies = Vec<String>::make(),
     });
-    auto reference         = lito::source::GitReference {};
     auto x86_architectures = Vec<String>::make();
     x86_architectures.push(String::make("x86_64"_str));
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("shared-x86"_str),
         .architectures = rstd::move(x86_architectures),
-        .source        = lito::lock::LockedSource::Git(
-            String::make(git_url), rstd::move(reference), String::make(commit)),
+        .source        = lito::lock::LockedSource::Git(String::make(git_url), String::make(commit)),
     });
     auto arm_architectures = Vec<String>::make();
     arm_architectures.push(String::make("aarch64"_str));
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("shared-arm"_str),
         .architectures = rstd::move(arm_architectures),
-        .source        = lito::lock::LockedSource::Git(
-            String::make(git_url), lito::source::GitReference {}, String::make(commit)),
+        .source        = lito::lock::LockedSource::Git(String::make(git_url), String::make(commit)),
     });
     project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
         .name          = String::make("archive"_str),
@@ -78,21 +73,14 @@ TEST(Lock, FetchIdentityAndFlatpakProjectionAreStableAndDeduplicated) {
     EXPECT_TRUE(first->as_str().contains("\"type\": \"inline\""_str));
 }
 
-TEST(Lock, PackageOwnedExternalReusesItsPackageGitFetch) {
+TEST(Lock, PackageGitSourceExportsWithoutLocalExternalEntries) {
     auto project = lito::lock::LockedProject {};
     project.packages.push(lito::lock::LockedPackage {
         .name    = String::make("wavsen"_str),
         .version = Some(String::make("0.1.0"_str)),
-        .source  = lito::lock::LockedSource::Git(
+        .source  = Some(lito::lock::LockedSource::Git(
             String::make("https://example.invalid/wavsen.git"_str),
-            lito::source::GitReference {},
-            String::make("0123456789abcdef0123456789abcdef01234567"_str)),
-        .manifest = PathBuf::from("lito.toml"_str),
-    });
-    project.packages[usize {}].externals.push(lito::lock::LockedPackageExternalSource {
-        .name          = String::make("wavsen-shader"_str),
-        .architectures = Vec<String>::make(),
-        .source        = lito::lock::LockedSource::Package(PathBuf::from("shaders"_str)),
+            String::make("0123456789abcdef0123456789abcdef01234567"_str))),
     });
 
     auto exported = lito::lock::flatpak_sources_json(project);

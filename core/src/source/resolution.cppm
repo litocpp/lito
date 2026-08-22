@@ -27,12 +27,7 @@ struct SourceResolutionOptions {
         auto pins = Vec<GitSourcePin>::with_capacity(git_sources.len());
         for (const auto& source : git_sources) {
             pins.push(GitSourcePin {
-                .git = source.git.clone(),
-                .reference =
-                    GitReference {
-                        .kind  = source.reference.kind,
-                        .value = source.reference.value.clone(),
-                    },
+                .git    = source.git.clone(),
                 .commit = source.commit.clone(),
             });
         }
@@ -57,12 +52,13 @@ auto select_git_source(const SourceResolutionOptions& options,
     auto matched = Option<usize> {};
     for (usize index {}; index < options.git_sources.len(); ++index) {
         const auto& source = options.git_sources[index];
-        if (source.git.as_str() != url || ! git_references_equal(source.reference, reference)) {
+        if (source.git.as_str() != url) continue;
+        if (reference.kind == GitReferenceKind::Commit &&
+            source.commit.as_str() != reference.value.as_str())
             continue;
-        }
         if (matched.is_some()) {
             return source_failure<GitSourceSelection>(
-                rstd::format("lock contains more than one Git source for '{}'", url));
+                rstd::format("lock contains more than one Git commit for '{}'", url));
         }
         matched = Some(index);
     }

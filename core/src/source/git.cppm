@@ -60,9 +60,8 @@ enum class GitResolutionMode
 };
 
 struct GitSourcePin {
-    String       git;
-    GitReference reference;
-    String       commit;
+    String git;
+    String commit;
 };
 
 } // namespace lito::source

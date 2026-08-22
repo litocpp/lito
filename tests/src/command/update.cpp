@@ -17,7 +17,7 @@ using PathBuf = rstd::path::PathBuf;
 
 class Update : public ProjectFixture {};
 
-TEST_F(Update, DependencyUpdateOwnsExplicitLockRefresh) {
+TEST_F(Update, DependencyUpdateReplacesJsonLock) {
     const ProjectFile files[] = {
         {
             "lito.toml"_str,
@@ -44,7 +44,7 @@ sources = ["main.cpp"]
     "source": { "kind": "path", "path": "." },
     "version": "1.0.0"
   }],
-  "version": 1
+  "version": 3
 })json"_str,
         },
     };
@@ -65,21 +65,15 @@ TEST_F(Update, DependencyUpdateReplacesInvalidCurrentLock) {
     constexpr InvalidLockCase invalid[] = {
         {
             "unknown-field"_str,
-            R"json({
-  "packages": [{
-    "build-dependencies": [],
-    "dependencies": [],
-    "externals": [],
-    "manifest": "lito.toml",
-    "name": "fixture-invalid-update",
-    "runtime-dependencies": [],
-    "source": { "kind": "path", "path": "." },
-    "version": "1.0.0"
-  }],
-  "version": 2
-})json"_str,
+            R"toml(version = 1
+
+[[packages]]
+name = "fixture-invalid-update"
+version = "1.0.0"
+unexpected = true
+)toml"_str,
         },
-        { "malformed-json"_str, "{"_str },
+        { "malformed-toml"_str, "{"_str },
     };
     for (const auto& item : invalid) {
         SCOPED_TRACE(item.name);

@@ -1,7 +1,7 @@
 export module lito.core:lock.session;
 
 import rstd;
-import rstd.json;
+import rstd.toml;
 import :lock.error;
 import :lock.config;
 import :lock.document;
@@ -11,7 +11,7 @@ import :package.graph;
 
 using namespace rstd::prelude;
 using PathBuf = rstd::path::PathBuf;
-using Json    = rstd::json::Value;
+using Toml    = rstd::toml::Value;
 
 export namespace lito::lock
 {
@@ -32,8 +32,8 @@ class LockSession {
     bool                                  locked_ { false };
     PathBuf                               root_;
     PathBuf                               destination_;
-    Option<Json>                          existing_;
-    Option<LockedProject>                 project_;
+    Option<Toml>                          existing_;
+    Option<String>                        existing_text_;
     lito::source::SourceResolutionOptions options_;
 
 public:

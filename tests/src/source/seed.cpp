@@ -86,9 +86,8 @@ TEST_F(SourceSeed, OfflineGitResolutionUsesLockedAndExactCommitSeedsWithoutFetch
     auto resolver = lito::tools::ToolResolver(*environment);
     auto pins     = Vec<lito::source::GitSourcePin>::make();
     pins.push(lito::source::GitSourcePin {
-        .git       = String::make("https://example.invalid/seed-only.git"_str),
-        .reference = lito::source::GitReference {},
-        .commit    = commit->clone(),
+        .git    = String::make("https://example.invalid/seed-only.git"_str),
+        .commit = commit->clone(),
     });
     auto seeds = Vec<PathBuf>::make();
     seeds.push(directory.clone());

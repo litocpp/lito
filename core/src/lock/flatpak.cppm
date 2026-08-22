@@ -142,14 +142,6 @@ auto add_candidate(rstd::collections::BTreeMap<String, FlatpakCandidate>& candid
     return Ok(empty {});
 }
 
-auto validate_export_path(ref<rstd::path::Path> path, ref<str> owner) -> LockResult<empty> {
-    if (! path.is_safe_relative()) {
-        return flatpak_failure<empty>(rstd::format(
-            "Flatpak source export cannot represent out-of-tree path source owned by '{}'", owner));
-    }
-    return Ok(empty {});
-}
-
 auto architecture_json(const FlatpakCandidate& candidate) -> Option<Json> {
     if (candidate.all_architectures || candidate.architectures.is_empty()) return None();
     auto architectures = Array::make();
@@ -163,11 +155,8 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
     auto candidates = rstd::collections::BTreeMap<String, FlatpakCandidate>::make();
     for (usize index {}; index < project.packages.len(); ++index) {
         const auto& package = project.packages[index];
-        if (package.source.is_Path()) {
-            rstd_try(validate_export_path(package.source.as_Path().path.as_path(),
-                                          package.name.as_str()));
-        } else if (package.source.is_Git()) {
-            const auto& source        = package.source.as_Git();
+        if (package.source.is_some() && package.source->is_Git()) {
+            const auto& source        = package.source->as_Git();
             auto        architectures = Vec<String>::make();
             rstd_try(add_candidate(
                 candidates,
@@ -177,32 +166,6 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
         }
         for (const auto& external : package.externals) {
             auto owner = rstd::format("{}:{}", package.name.as_str(), external.name.as_str());
-            if (external.source.is_Path()) {
-                rstd_try(
-                    validate_export_path(external.source.as_Path().path.as_path(), owner.as_str()));
-                continue;
-            }
-            if (external.source.is_Package()) {
-                const auto& path = external.source.as_Package().path;
-                if (! path.as_path().is_safe_relative()) {
-                    return flatpak_failure<Json>(rstd::format(
-                        "Flatpak source export found unsafe package-relative source '{}' for '{}'",
-                        path.as_path(),
-                        owner.as_str()));
-                }
-                if (package.source.is_Path()) {
-                    auto joined = package.source.as_Path().path.join(path.as_path());
-                    rstd_try(validate_export_path(joined.as_path(), owner.as_str()));
-                    continue;
-                }
-                const auto& source = package.source.as_Git();
-                rstd_try(add_candidate(
-                    candidates,
-                    lito::source::git_fetch_identity(source.url.as_str(), source.commit.as_str()),
-                    external.architectures,
-                    rstd::format("external '{}'", owner.as_str())));
-                continue;
-            }
             if (external.source.is_Git()) {
                 const auto& source = external.source.as_Git();
                 rstd_try(add_candidate(

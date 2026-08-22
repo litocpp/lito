@@ -221,9 +221,8 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
         .locked = true,
     };
     options.git_sources.push(lito::source::GitSourcePin {
-        .git       = String::make("https://example.invalid/fixture.git"_str),
-        .reference = rstd::move(reference),
-        .commit    = String::make("0123456789abcdef0123456789abcdef01234567"_str),
+        .git    = String::make("https://example.invalid/fixture.git"_str),
+        .commit = String::make("0123456789abcdef0123456789abcdef01234567"_str),
     });
     auto environment = ResolvedProcessEnvironment::resolve(ProcessEnvironmentSpec {});
     ASSERT_TRUE(environment.is_ok());

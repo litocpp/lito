@@ -18,35 +18,24 @@ namespace lito
 
 auto append_locked_git_source(lito::source::SourceResolutionOptions& options,
                               ref<str>                               url,
-                              const lito::source::GitReference&      reference,
                               ref<str> commit) -> lito::dependency::DependencyResult<empty> {
     for (auto& existing : options.git_sources) {
-        if (existing.git.as_str() != url ||
-            ! lito::source::git_references_equal(existing.reference, reference)) {
-            continue;
-        }
+        if (existing.git.as_str() != url) continue;
         if (existing.commit.as_str() != commit) {
-            if (options.git == lito::source::GitResolutionMode::Refresh &&
-                reference.kind != lito::source::GitReferenceKind::Commit) {
+            if (options.git == lito::source::GitResolutionMode::Refresh) {
                 existing.commit = String::make(commit);
                 return Ok(empty {});
             }
             return lito::dependency::dependency_failure<empty>(
-                rstd::format("Git requirement '{}#{}' resolves to both '{}' and '{}'",
+                rstd::format("Git source '{}' resolves to both '{}' and '{}'",
                              url,
-                             reference.value.as_str(),
                              existing.commit.as_str(),
                              commit));
         }
         return Ok(empty {});
     }
     options.git_sources.push(lito::source::GitSourcePin {
-        .git = String::make(url),
-        .reference =
-            lito::source::GitReference {
-                .kind  = reference.kind,
-                .value = reference.value.clone(),
-            },
+        .git    = String::make(url),
         .commit = String::make(commit),
     });
     return Ok(empty {});
@@ -130,10 +119,8 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
         if (package.source.kind != lito::source::PackageSourceKind::Git ||
             package.source.git.is_empty())
             continue;
-        rstd_try(append_locked_git_source(options,
-                                          package.source.git.as_str(),
-                                          package.source.reference,
-                                          package.source.commit.as_str()));
+        rstd_try(append_locked_git_source(
+            options, package.source.git.as_str(), package.source.commit.as_str()));
     }
 
     auto source_manager = lito::source::SourceManager(
@@ -268,8 +255,7 @@ auto resolve_declared_external_dependency_sources(lito::package::ResolvedPackage
                 git_indices.insert(rstd::move(key), git_sources.len());
                 git_sources.push(clone_resolved_package_source(resolved));
             }
-            rstd_try(append_locked_git_source(
-                options, git.url.as_str(), git.reference, resolved.commit.as_str()));
+            rstd_try(append_locked_git_source(options, git.url.as_str(), resolved.commit.as_str()));
             make_record(lito::dependency::ResolvedExternalSource::Git(
                             git.url.clone(), git.reference.clone(), rstd::move(resolved.commit)),
                         {});

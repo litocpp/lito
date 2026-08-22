@@ -13,28 +13,19 @@ import :registry.identity;
 import :registry.version;
 
 using namespace rstd::prelude;
-using PathBuf = rstd::path::PathBuf;
 
 export namespace lito::lock
 {
 
-inline constexpr auto LOCK_FORMAT_VERSION = u64(3);
+inline constexpr auto LOCK_FORMAT_VERSION = u64(1);
 
 class LockedSource {
     RSTD_ENUM(LockedSource,
-              (Path, (PathBuf path;)),
-              (Package, (PathBuf path;)),
-              (Builtin, (String id; String digest;)),
-              (Git, (String url; lito::source::GitReference reference; String commit;)),
+              (Git, (String url; String commit;)),
               (Archive, (lito::parse::FetchUrl url; lito::crypto::Sha256Digest sha256;)),
               (Registry,
                (lito::registry::RegistryPackageId package; lito::registry::SemanticVersion version;
-                lito::registry::ReleaseDigest                                              release;
-                lito::registry::SourceDigest                                               source;
-                lito::registry::ManifestDigest                                             manifest;
-                lito::registry::BlobDigest                                                 blob;
-                lito::registry::RegistryBlobSize      blob_size;
-                lito::registry::RegistryArchiveFormat format;)))
+                lito::registry::ReleaseDigest release;)))
 };
 
 struct LockedPackageExternalSource {
@@ -46,8 +37,7 @@ struct LockedPackageExternalSource {
 struct LockedPackage {
     String                           name;
     Option<String>                   version;
-    LockedSource                     source;
-    PathBuf                          manifest;
+    Option<LockedSource>             source;
     Vec<String>                      dependencies;
     Vec<String>                      runtime_dependencies;
     Vec<LockedPackageExternalSource> externals;

@@ -632,7 +632,7 @@ set_property(TARGET LitoOverrideFixture::fixture PROPERTY
     ASSERT_TRUE(lock.is_ok());
     EXPECT_TRUE(lock->as_str().contains("https://example.invalid/lito-override-fixture.git"_str));
     EXPECT_TRUE(lock->as_str().contains("0123456789abcdef0123456789abcdef01234567"_str));
-    EXPECT_FALSE(lock->as_str().contains("\"kind\": \"installed\""_str));
+    EXPECT_FALSE(lock->as_str().contains("kind = \"installed\""_str));
 
     auto locked_contents    = lock->clone();
     request.locked          = true;
