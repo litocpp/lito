@@ -907,6 +907,7 @@ linker-options = ["-Wl,--pop-state"]
     ASSERT_TRUE(project.is_ok());
     auto graph = lito::package::resolve_package_graph(project->root.as_path());
     ASSERT_TRUE(graph.is_ok());
+    ASSERT_EQ(graph->packages.len(), usize(1));
     auto parser = lito::make_clang_cpp_argument_parser();
     ASSERT_TRUE(parser.is_ok());
     auto build_configuration = configuration();
@@ -924,9 +925,10 @@ linker-options = ["-Wl,--pop-state"]
     auto packages = strings("fixture-linker-option-order"_str);
     auto targets  = Vec<lito::package::PackageTargetId>::make();
     targets.push(lito::package::PackageTargetId {
-        .package = String::make("fixture-linker-option-order"_str),
-        .kind    = lito::package::PackageTargetKind::Binary,
-        .name    = String::make("linker-option-order"_str),
+        .package_instance = graph->packages[usize {}].instance.clone(),
+        .package          = String::make("fixture-linker-option-order"_str),
+        .kind             = lito::package::PackageTargetKind::Binary,
+        .name             = String::make("linker-option-order"_str),
     });
     auto external_usage = lito::cpp::ExternalUsageCatalog {};
     external_usage.packages.push(lito::cpp::ExternalPackageUsage {

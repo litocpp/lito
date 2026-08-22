@@ -2724,6 +2724,7 @@ auto transform_callback(ToolActionSession& session, luato::CallFrame& frame)
 }
 
 auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
+                                  cpp::ResolvedNativeTargetPlan&    target_plan,
                                   const BuildLayout&                layout,
                                   const cpp::SourceTargetSelection& selection)
     -> BuildScriptResult<empty> {
@@ -2773,8 +2774,10 @@ auto materialize_generated_inputs(cpp::PackageMetadata&             metadata,
             for (const auto& include : target.usage.private_include_directories) {
                 if (include.as_path() == canonical->as_path()) repeated = true;
             }
-            if (! repeated)
-                target.usage.private_include_directories.push(rstd::move(canonical).unwrap());
+            auto include = rstd::move(canonical).unwrap();
+            if (! repeated) target.usage.private_include_directories.push(include.clone());
+            cpp::add_private_include_directory(target_plan.contexts[target_id],
+                                               rstd::move(include));
         }
         target.usage.private_include_directory_requirements.clear();
     }
@@ -3203,7 +3206,7 @@ auto execute_build_script(cpp::PackageMetadata&                    metadata,
         if (result.is_err()) return Err(rstd::move(result).unwrap_err());
         merge_build_script_report(report, rstd::move(result).unwrap());
     }
-    auto materialized = materialize_generated_inputs(metadata, layout, selection);
+    auto materialized = materialize_generated_inputs(metadata, target_plan, layout, selection);
     if (materialized.is_err()) return Err(rstd::move(materialized).unwrap_err());
     return Ok(rstd::move(report));
 }

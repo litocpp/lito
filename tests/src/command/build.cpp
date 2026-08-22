@@ -243,7 +243,9 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     auto normal = lito::build(rstd::move(normal_request));
     ASSERT_TRUE(normal.is_ok());
     ASSERT_EQ(normal->product.artifacts.len(), usize(1));
+    ASSERT_EQ(normal->product.selected_targets.len(), usize(1));
     EXPECT_TRUE(normal->product.artifacts[usize {}].install_link.is_none());
+    auto selected_target = normal->product.selected_targets[usize {}].clone();
 
     auto origin = lito::artifact::make_origin_relative_runtime_path(PathBuf::from("."_str));
     ASSERT_TRUE(origin.is_ok());
@@ -253,9 +255,9 @@ linker-options = ["-Wl,-rpath,/tmp/lito-build-only"]
     ASSERT_TRUE(runpath.is_ok());
     auto install_request = build_request(
         project->root.as_path(), output.as_path(), strings("fixture-install-link"_str));
-    install_request.exact_targets.push(target.clone());
+    install_request.exact_targets.push(selected_target.clone());
     install_request.artifact_link_variants.push(lito::RequestedArtifactLinkVariant {
-        .target = target.clone(),
+        .target = rstd::move(selected_target),
         .policy =
             lito::InstallArtifactLinkPolicy {
                 .runtime_search = rstd::move(runpath).unwrap(),
