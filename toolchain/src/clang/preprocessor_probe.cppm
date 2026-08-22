@@ -192,10 +192,9 @@ auto parse_command_line_macros(const Vec<PreprocessorMacroDirective>& macros)
     auto states  = command_line_macro_states(macros);
     auto seeds   = Vec<preprocessor::MacroSeed>::make();
     auto entries = Vec<CommandLineMacroEntry>::with_capacity(states.len());
-    auto values  = states.into_iter();
-    while (auto value = values.next()) {
-        auto name    = rstd::move((*value).template get<0>());
-        auto state   = rstd::move((*value).template get<1>());
+    for (auto value : rstd::move(states).into_iter()) {
+        auto name    = rstd::move(value.template get<0>());
+        auto state   = rstd::move(value.template get<1>());
         auto defined = state.is_some();
         if (defined) seeds.push(rstd::move(state).unwrap());
         entries.push(CommandLineMacroEntry {

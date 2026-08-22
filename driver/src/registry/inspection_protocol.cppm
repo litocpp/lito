@@ -78,10 +78,10 @@ auto reject_unknown(const Json& value, ref<str> context, initializer_list<ref<st
     -> RegistryInspectionProtocolResult<empty> {
     auto members = rstd_try(object(value, context));
     auto keys    = members->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! known_field((**key).as_str(), allowed)) {
+    for (auto key : keys) {
+        if (! known_field((*key).as_str(), allowed)) {
             return protocol_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+                rstd::format("{} contains unknown field '{}'", context, (*key).as_str()));
         }
     }
     return Ok(empty {});

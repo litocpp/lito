@@ -68,10 +68,10 @@ auto reject_seed_unknown(const Json& value, ref<str> context, bool (*allowed)(re
         return source_failure<empty>(rstd::format("{} must be an object", context));
     }
     auto keys = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! allowed((**key).as_str())) {
+    for (auto key : keys) {
+        if (! allowed((*key).as_str())) {
             return source_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+                rstd::format("{} contains unknown field '{}'", context, (*key).as_str()));
         }
     }
     return Ok(empty {});

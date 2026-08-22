@@ -87,16 +87,16 @@ auto install_relative_path(String text, ref<str> context) -> ManifestSchemaResul
     auto path = relative_path(rstd::move(text), context);
     if (path.is_err()) return path;
     auto components = path->as_path().components();
-    auto component  = components.next();
-    if (component.is_none()) {
-        return manifest_schema_failure<PathBuf>(rstd::format("{} must not be empty", context));
-    }
-    while (component.is_some()) {
-        if (! component->is_normal()) {
+    auto found      = false;
+    for (auto component : components) {
+        found = true;
+        if (! component.is_normal()) {
             return manifest_schema_failure<PathBuf>(
                 rstd::format("{} must stay within the CMake install prefix", context));
         }
-        component = components.next();
+    }
+    if (! found) {
+        return manifest_schema_failure<PathBuf>(rstd::format("{} must not be empty", context));
     }
     return path;
 }
@@ -388,8 +388,8 @@ auto parse_source_groups(Option<ref<Toml>> value)
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = rstd_try(table_value(**value, "manifest.source-groups"_str));
     auto keys  = table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         const auto  context = rstd::format("source group '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return manifest_schema_failure<Vec<SourceGroupManifest>>(
@@ -954,8 +954,8 @@ auto parse_features(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Feature
     if (features.is_err()) return Err(rstd::move(features).unwrap_err());
     auto macros = rstd::collections::BTreeMap<String, String>::make();
     auto keys   = (**features).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         const auto  context = rstd::format("manifest.features.{}", name.as_str());
         if (! feature_name_is_valid(name.as_str())) {
             return manifest_schema_failure<Vec<FeatureDeclaration>>(

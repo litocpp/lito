@@ -217,13 +217,13 @@ auto parse_project_profile(Option<ref<Toml>> value)
         profile.base.rtti = Some(rstd_try(parse_profile_bool(**rtti, "manifest.profile.rtti"_str)));
     }
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if ((**key).as_str() == "base"_str || (**key).as_str() == "exceptions"_str ||
-            (**key).as_str() == "rtti"_str) {
+    for (auto key : keys) {
+        if ((*key).as_str() == "base"_str || (*key).as_str() == "exceptions"_str ||
+            (*key).as_str() == "rtti"_str) {
             continue;
         }
-        auto item = (**table).get((**key).as_str());
-        profile.build_profiles.push(rstd_try(parse_build_profile((**key).as_str(), **item)));
+        auto item = (**table).get((*key).as_str());
+        profile.build_profiles.push(rstd_try(parse_build_profile((*key).as_str(), **item)));
     }
     rstd_try(validate_build_profiles(profile));
     return Ok(Some<ProjectProfile>(rstd::move(profile)));

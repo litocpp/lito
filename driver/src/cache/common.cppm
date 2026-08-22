@@ -189,8 +189,7 @@ auto collect_stale_records(ref<rstd::path::Path>                             dir
             "enumerate directory"_str, directory, rstd::move(opened).unwrap_err());
     }
     auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : entries) {
         if (item.is_err()) {
             return cache_io_failure<empty>(
                 "enumerate directory"_str, directory, rstd::move(item).unwrap_err());

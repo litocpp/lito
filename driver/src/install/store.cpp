@@ -83,8 +83,8 @@ auto validate_parent_tree(ref<rstd::path::Path> root, ref<rstd::path::Path> rela
     if (parent.is_none() || parent->is_empty()) return Ok(empty {});
     auto current    = PathBuf::from(root);
     auto components = parent->components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        current.push(PathBuf::from(component->as_os_str()).as_path());
+    for (auto component : components) {
+        current.push(PathBuf::from(component.as_os_str()).as_path());
         auto metadata = rstd_try(path_metadata(current.as_path()));
         if (metadata.is_none()) return Ok(empty {});
         if (! metadata->is_dir() || metadata->is_symlink()) {
@@ -102,8 +102,8 @@ auto ensure_parent_tree(ref<rstd::path::Path> root,
     if (parent.is_none() || parent->is_empty()) return Ok(empty {});
     auto current    = PathBuf::from(root);
     auto components = parent->components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        current.push(PathBuf::from(component->as_os_str()).as_path());
+    for (auto component : components) {
+        current.push(PathBuf::from(component.as_os_str()).as_path());
         auto metadata = rstd_try(path_metadata(current.as_path()));
         if (metadata.is_some()) {
             if (! metadata->is_dir() || metadata->is_symlink()) {
@@ -537,8 +537,7 @@ auto recover_managed_transactions(const InstallLayout& layout) -> InstallStoreRe
                                        rstd::move(opened).unwrap_err());
     }
     auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : entries) {
         if (item.is_err()) {
             return store_io_failure<empty>("read install transaction entry"_str,
                                            layout.transactions.as_path(),

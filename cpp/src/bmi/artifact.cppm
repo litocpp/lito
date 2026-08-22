@@ -171,9 +171,7 @@ auto make_bmi_artifact_key(const BmiRecipe& recipe) -> BmiArtifactKey {
     for (const auto& dependency : recipe.direct_dependencies) {
         dependencies.insert(dependency.logical_name.clone(), dependency.artifact_key.clone());
     }
-    auto values = dependencies.into_iter();
-    while (auto value = values.next()) {
-        auto entry = rstd::move(value).unwrap();
+    for (auto entry : rstd::move(dependencies).into_iter()) {
         append_bmi_identity_value(
             identity,
             rstd::format("dependency:{}", entry.template get<0>().as_str()).as_str(),

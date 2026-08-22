@@ -132,8 +132,8 @@ auto required_string(const Json& value, ref<str> field) -> Option<ref<str>> {
 
 auto cache_fields_are_known(const JsonMap& object) -> bool {
     auto keys = object.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto value = (**key).as_str();
+    for (auto key : keys) {
+        auto value = (*key).as_str();
         if (value == "schema"_str || value == "registry"_str || value == "package"_str ||
             value == "revision"_str || value == "sequence"_str || value == "key-id"_str ||
             value == "etag"_str || value == "fetched-at-unix-seconds"_str || value == "body"_str) {

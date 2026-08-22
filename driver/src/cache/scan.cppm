@@ -658,9 +658,9 @@ class ScanCacheSession {
         cache::add_text(hash, input.source_origin_identity.as_str());
         cache::add_text(hash, source.fingerprint.as_str());
         auto iter = files.iter();
-        for (auto item = iter.next(); item.is_some(); item = iter.next()) {
-            cache::add_text(hash, (*(*item).template get<0>()).as_str());
-            cache::add_text(hash, (*(*item).template get<1>()).fingerprint.as_str());
+        for (auto item : iter) {
+            cache::add_text(hash, (*item.template get<0>()).as_str());
+            cache::add_text(hash, (*item.template get<1>()).fingerprint.as_str());
         }
         for (const auto& lookup : lookups) {
             cache::add_text(hash, include_kind_name(lookup.kind));
@@ -963,8 +963,8 @@ private:
             if (working.is_err()) return Err(rstd::move(working).unwrap_err());
             auto files_json = JsonArray::make();
             auto iter       = files.iter();
-            for (auto item = iter.next(); item.is_some(); item = iter.next()) {
-                auto encoded = file_json(*(*item).template get<1>());
+            for (auto item : iter) {
+                auto encoded = file_json(*item.template get<1>());
                 if (encoded.is_err()) return Err(rstd::move(encoded).unwrap_err());
                 files_json.push(rstd::move(encoded).unwrap());
             }

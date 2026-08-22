@@ -22,13 +22,13 @@ using namespace lito::source;
 auto path_components(ref<rstd::path::Path> path) -> SourceResult<Vec<String>> {
     auto result     = Vec<String>::make();
     auto components = path.components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (component->is_root_dir() || component->is_cur_dir()) continue;
-        if (component->is_parent_dir()) {
+    for (auto component : components) {
+        if (component.is_root_dir() || component.is_cur_dir()) continue;
+        if (component.is_parent_dir()) {
             return source_failure<Vec<String>>(
                 rstd::format("canonical path '{}' contains a parent component", path));
         }
-        auto text = component->as_os_str().to_str();
+        auto text = component.as_os_str().to_str();
         if (text.is_none()) {
             return source_failure<Vec<String>>(
                 rstd::format("canonical path '{}' contains a non-UTF-8 component", path));

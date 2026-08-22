@@ -33,12 +33,11 @@ auto validated_relative_text(ref<rstd::path::Path> relative) -> BuildLayoutResul
         return layout_failure<String>(
             rstd::format("source artifact path '{}' is not relative", relative));
     }
-    auto components = relative.components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) {
-            return layout_failure<String>(rstd::format(
-                "source artifact path '{}' contains a non-normal component", relative));
-        }
+    if (! relative.components().all([](auto component) {
+            return component.is_normal();
+        })) {
+        return layout_failure<String>(
+            rstd::format("source artifact path '{}' contains a non-normal component", relative));
     }
     auto text = relative.to_str();
     if (text.is_none()) {

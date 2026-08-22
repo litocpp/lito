@@ -110,10 +110,10 @@ auto reject_source_fields(const Json& source, bool (*allowed)(ref<str>))
     -> InstallSourceResult<empty> {
     auto object = source.as_object();
     auto keys   = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! allowed((**key).as_str())) {
+    for (auto key : keys) {
+        if (! allowed((*key).as_str())) {
             return install_source_failure<empty>(rstd::format(
-                "installed package source contains unknown field '{}'", (**key).as_str()));
+                "installed package source contains unknown field '{}'", (*key).as_str()));
         }
     }
     return Ok(empty {});

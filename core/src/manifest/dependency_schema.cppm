@@ -128,12 +128,12 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
     auto table = table_value(**value, context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! cmake_cache_key_is_valid((**key).as_str())) {
+    for (auto key : keys) {
+        if (! cmake_cache_key_is_valid((*key).as_str())) {
             return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(rstd::format(
-                "{} key '{}' must contain only ASCII letters, digits, or '_'", context, **key));
+                "{} key '{}' must contain only ASCII letters, digits, or '_'", context, *key));
         }
-        auto item       = (**table).get((**key).as_str());
+        auto item       = (**table).get((*key).as_str());
         auto text       = (**item).as_str();
         auto boolean    = (**item).as_bool();
         auto integer    = (**item).as_integer();
@@ -145,10 +145,10 @@ auto parse_cmake_cache(Option<ref<Toml>> value, ref<str> context)
         else if (integer.is_some())
             cache_text = rstd::format("{}", *integer);
         else
-            return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(rstd::format(
-                "{} value '{}' must be a string, boolean, or integer", context, **key));
+            return manifest_schema_failure<Vec<lito::dependency::CMakeCacheEntry>>(
+                rstd::format("{} value '{}' must be a string, boolean, or integer", context, *key));
         result.push(lito::dependency::CMakeCacheEntry {
-            .name  = (**key).clone(),
+            .name  = (*key).clone(),
             .value = rstd::move(cache_text),
         });
     }
@@ -225,8 +225,8 @@ auto parse_external_archive_variants(Option<ref<Toml>> value, ref<str> context)
     }
     auto variants = Vec<lito::dependency::ExternalArchiveVariant>::with_capacity((**table).len());
     auto keys     = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name          = **key;
+    for (auto key : keys) {
+        const auto& name          = *key;
         auto        entry_context = rstd::format("{}.archives.{}", context, name.as_str());
         auto        entry         = (**table).get(name.as_str());
         auto        fields        = table_value(**entry, entry_context.as_str());
@@ -321,8 +321,8 @@ auto parse_package_external_sources(Option<ref<Toml>> value, ref<rstd::path::Pat
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = rstd_try(table_value(**value, "manifest.external-sources"_str));
     auto keys  = table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         const auto  context = rstd::format("external source '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return manifest_schema_failure<ParsedExternalSources>(
@@ -356,8 +356,8 @@ auto parse_workspace_external_sources(Option<ref<Toml>> value)
     if (value.is_none()) return Ok(rstd::move(result));
     auto table = rstd_try(table_value(**value, "workspace.external-sources"_str));
     auto keys  = table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         const auto  context = rstd::format("workspace external source '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return manifest_schema_failure<Vec<WorkspaceExternalSourceDefinition>>(
@@ -491,8 +491,8 @@ auto parse_dependencies(Option<ref<Toml>> value, bool development = false)
     auto table = table_value(**value, table_context);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         auto        context = rstd::format(
             "{} dependency '{}'", development ? "development"_str : "normal"_str, name.as_str());
         if (! package_name_is_valid(name.as_str())) {
@@ -583,8 +583,8 @@ auto parse_runtime_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "manifest.runtime-dependencies"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         auto        context = rstd::format("runtime dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return manifest_schema_failure<ParsedRuntimeDependencies>(rstd::format(
@@ -620,8 +620,8 @@ auto parse_workspace_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "workspace.dependencies"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& name    = **key;
+    for (auto key : keys) {
+        const auto& name    = *key;
         auto        context = rstd::format("workspace dependency '{}'", name.as_str());
         if (! package_name_is_valid(name.as_str())) {
             return manifest_schema_failure<Vec<WorkspaceDependencyDefinition>>(
@@ -714,8 +714,8 @@ auto parse_pkg_config_external_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "external-dependencies.pkg-config"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& alias   = **key;
+    for (auto key : keys) {
+        const auto& alias   = *key;
         auto        context = rstd::format("pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
             return manifest_schema_failure<ParsedPkgConfigExternalDependencies>(
@@ -765,8 +765,8 @@ auto parse_workspace_pkg_config_external_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "workspace.external-dependencies.pkg-config"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& alias = **key;
+    for (auto key : keys) {
+        const auto& alias = *key;
         auto        context =
             rstd::format("workspace pkg-config external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
@@ -965,8 +965,8 @@ auto parse_cmake_external_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "external-dependencies.cmake"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& alias   = **key;
+    for (auto key : keys) {
+        const auto& alias   = *key;
         auto        context = rstd::format("CMake external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
             return manifest_schema_failure<ParsedCMakeExternalDependencies>(
@@ -1019,8 +1019,8 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
     auto table = table_value(**value, "workspace.external-dependencies.cmake"_str);
     if (table.is_err()) return Err(rstd::move(table).unwrap_err());
     auto keys = (**table).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& alias = **key;
+    for (auto key : keys) {
+        const auto& alias = *key;
         auto context = rstd::format("workspace CMake external dependency '{}'", alias.as_str());
         if (! package_name_is_valid(alias.as_str())) {
             return manifest_schema_failure<Vec<WorkspaceCMakeExternalDependencyDefinition>>(

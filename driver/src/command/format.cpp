@@ -54,8 +54,8 @@ auto format(const FormatRequest& request) -> CommandResult<FormatSummary> {
     auto selected = StringSet::make();
     if (request.packages.is_empty()) {
         auto keys = available.keys();
-        for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-            selected.insert((**key).clone(), empty {});
+        for (auto key : keys) {
+            selected.insert((*key).clone(), empty {});
         }
     } else {
         for (const auto& name : request.packages) {

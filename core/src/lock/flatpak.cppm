@@ -224,8 +224,8 @@ auto flatpak_sources_document(const LockedProject& project) -> LockResult<Json> 
     auto sources         = Array::make();
     auto catalog_sources = Array::make();
     auto values          = candidates.values();
-    for (auto value = values.next(); value.is_some(); value = values.next()) {
-        const auto& candidate    = **value;
+    for (auto value : values) {
+        const auto& candidate    = *value;
         auto        stable_key   = lito::source::fetch_identity_stable_key(candidate.identity);
         auto        flatpak      = Map::make();
         auto        catalog      = Map::make();

@@ -153,16 +153,16 @@ auto merge_config_value(Toml& destination, const Toml& source) -> void {
     }
     auto source_table = source.as_table().unwrap();
     auto keys         = source_table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto source_value      = source_table->get((**key).as_str()).unwrap();
-        auto destination_value = destination.get_mut((**key).as_str());
+    for (auto key : keys) {
+        auto source_value      = source_table->get((*key).as_str()).unwrap();
+        auto destination_value = destination.get_mut((*key).as_str());
         if (destination_value.is_some() && (**destination_value).is_table() &&
             source_value->is_table()) {
             merge_config_value(**destination_value, *source_value);
             continue;
         }
         auto destination_table = destination.as_table_mut().unwrap();
-        destination_table->insert((**key).clone(), source_value->clone());
+        destination_table->insert((*key).clone(), source_value->clone());
     }
 }
 

@@ -157,17 +157,17 @@ auto valid_registry_config_name(ref<str> value) -> bool {
 auto reject_unknown(const Table& value, ref<str> context, initializer_list<ref<str>> allowed)
     -> lito::config::ConfigResult<empty> {
     auto keys = value.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+    for (auto key : keys) {
         auto known = false;
         for (auto candidate : allowed) {
-            if ((**key).as_str() == candidate) {
+            if ((*key).as_str() == candidate) {
                 known = true;
                 break;
             }
         }
         if (! known) {
             return registry_config_failure<empty>(
-                rstd::format("{} contains unknown field '{}'", context, (**key).as_str()));
+                rstd::format("{} contains unknown field '{}'", context, (*key).as_str()));
         }
     }
     return Ok(empty {});
@@ -314,9 +314,9 @@ auto parse_bootstrap_document(const Toml& document)
     if (registry_value.is_some()) {
         auto registry_table = rstd_try(table(**registry_value, "registries"_str));
         auto keys           = registry_table->keys();
-        for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-            auto value = registry_table->get((**key).as_str()).unwrap();
-            registries.push(rstd_try(parse_named_registry((**key).as_str(), *value)));
+        for (auto key : keys) {
+            auto value = registry_table->get((*key).as_str()).unwrap();
+            registries.push(rstd_try(parse_named_registry((*key).as_str(), *value)));
         }
     }
     auto default_registry = Option<String> {};
@@ -490,8 +490,8 @@ auto lito::config::load_registry_credentials(Option<PathBuf> requested_path)
     if (registries.is_none()) return Ok(RegistryCredentials(rstd::move(entries)));
     auto registry_table = rstd_try(table(**registries, "registry credentials.registries"_str));
     auto keys           = registry_table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto name = (**key).as_str();
+    for (auto key : keys) {
+        auto name = (*key).as_str();
         if (! valid_registry_config_name(name)) {
             return registry_config_failure<RegistryCredentials>(
                 rstd::format("registry credential name '{}' is invalid", name));

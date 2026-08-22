@@ -92,8 +92,7 @@ auto collect_format_directory(ref<rstd::path::Path> source_root,
             "enumerate"_str, directory, rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
-    for (auto next = stream.next(); next.is_some(); next = stream.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : stream) {
         if (item.is_err()) {
             return discovery_io_failure<empty>(
                 "enumerate"_str, directory, rstd::move(item).unwrap_err());

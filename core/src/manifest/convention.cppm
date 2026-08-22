@@ -119,8 +119,7 @@ auto collect_conventional_sources(ref<rstd::path::Path>    source_root,
                                           rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
-    for (auto next = stream.next(); next.is_some(); next = stream.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : stream) {
         if (item.is_err()) {
             return manifest_io_failure<empty>("conventional benchmark"_str,
                                               "enumerate directory"_str,
@@ -228,8 +227,7 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
                                                                rstd::move(opened).unwrap_err());
     }
     auto stream = rstd::move(opened).unwrap();
-    for (auto next = stream.next(); next.is_some(); next = stream.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : stream) {
         if (item.is_err()) {
             return manifest_io_failure<Vec<PackageTargetManifest>>("conventional benchmark"_str,
                                                                    "enumerate directory"_str,
@@ -286,9 +284,7 @@ auto discover_conventional_benchmarks(ref<rstd::path::Path>             package_
         }
         auto child_stream = rstd::move(child).unwrap();
         auto main_sources = usize {};
-        for (auto child_next = child_stream.next(); child_next.is_some();
-             child_next      = child_stream.next()) {
-            auto child_item = rstd::move(child_next).unwrap();
+        for (auto child_item : child_stream) {
             if (child_item.is_err()) {
                 return manifest_io_failure<Vec<PackageTargetManifest>>(
                     "conventional benchmark"_str,

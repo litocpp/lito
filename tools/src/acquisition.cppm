@@ -669,17 +669,17 @@ auto extract_verified_archive(VerifiedFile                      file,
         }
         auto entries = rstd::move(opened).unwrap();
         auto count   = usize {};
-        for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-            if (next->is_err()) {
+        for (auto next : entries) {
+            if (next.is_err()) {
                 return io_failure<ExtractedArchive>(
-                    "enumerate archive"_str, destination, rstd::move(*next).unwrap_err());
+                    "enumerate archive"_str, destination, rstd::move(next).unwrap_err());
             }
+            auto entry = rstd::move(next).unwrap();
             ++count;
-            if (next->as_ref().unwrap().file_name().as_os_str().as_encoded_bytes() !=
+            if (entry.file_name().as_os_str().as_encoded_bytes() !=
                 PathBuf::from(*expected_root).as_path().as_os_str().as_encoded_bytes()) {
-                return failure<ExtractedArchive>(
-                    rstd::format("archive contains unexpected top-level entry '{}'",
-                                 next->as_ref().unwrap().path().as_path()));
+                return failure<ExtractedArchive>(rstd::format(
+                    "archive contains unexpected top-level entry '{}'", entry.path().as_path()));
             }
         }
         if (count != usize(1)) {
@@ -695,12 +695,12 @@ auto extract_verified_archive(VerifiedFile                      file,
         auto entries = rstd::move(opened).unwrap();
         auto only    = Option<PathBuf> {};
         auto count   = usize {};
-        for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-            if (next->is_err()) {
+        for (auto next : entries) {
+            if (next.is_err()) {
                 return io_failure<ExtractedArchive>(
-                    "enumerate archive"_str, destination, rstd::move(*next).unwrap_err());
+                    "enumerate archive"_str, destination, rstd::move(next).unwrap_err());
             }
-            auto entry = rstd::move(*next).unwrap();
+            auto entry = rstd::move(next).unwrap();
             ++count;
             if (count == usize(1)) {
                 auto type = entry.file_type();

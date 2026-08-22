@@ -29,8 +29,8 @@ struct JcsObjectKey {
 auto utf16_units(ref<str> text) -> Vec<u16> {
     auto result = Vec<u16>::make();
     auto chars  = text.chars();
-    for (auto code_point = chars.next(); code_point.is_some(); code_point = chars.next()) {
-        auto scalar = *code_point;
+    for (auto code_point : chars) {
+        auto scalar = code_point;
         if (scalar <= u32(0xffff)) {
             result.push(as_cast<u16>(scalar));
             continue;
@@ -88,8 +88,8 @@ auto append_canonical_json(String& output, const rstd::json::Value& value)
         RSTD_CASE(Object, object) {
             auto keys = Vec<JcsObjectKey>::with_capacity(object.len());
             auto iter = object.iter();
-            for (auto item = iter.next(); item.is_some(); item = iter.next()) {
-                auto key = (*item).template get<0>();
+            for (auto item : iter) {
+                auto key = item.template get<0>();
                 keys.push(JcsObjectKey {
                     .key   = key,
                     .utf16 = utf16_units(key->as_str()),

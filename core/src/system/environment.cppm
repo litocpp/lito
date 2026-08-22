@@ -129,8 +129,7 @@ public:
         auto directories = Vec<PathBuf>::make();
         if (inherited_path.is_some()) {
             auto paths = rstd::env::split_paths(*inherited_path);
-            for (auto entry = paths.next(); entry.is_some(); entry = paths.next()) {
-                auto path = rstd::move(entry).unwrap();
+            for (auto path : paths) {
                 if (path.is_empty()) {
                     directories.push(cwd->clone());
                 } else if (path.as_path().is_relative()) {
@@ -152,9 +151,9 @@ public:
         auto values =
             executable_extensions.is_some() ? *executable_extensions : defaults.as_os_str();
         auto parsed = rstd::env::split_paths(values);
-        for (auto extension = parsed.next(); extension.is_some(); extension = parsed.next()) {
-            if (! extension->is_empty()) {
-                extensions.push(rstd::ffi::OsString::from(extension->as_path().as_os_str()));
+        for (auto extension : parsed) {
+            if (! extension.is_empty()) {
+                extensions.push(rstd::ffi::OsString::from(extension.as_path().as_os_str()));
             }
         }
 #else

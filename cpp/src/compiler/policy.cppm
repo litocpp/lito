@@ -70,10 +70,8 @@ auto family_map(const Vec<CppFamilyOption>& values) -> PolicyMap<String, String>
 }
 
 auto family_values(PolicyMap<String, String> values) -> Vec<CppFamilyOption> {
-    auto result   = Vec<CppFamilyOption>::with_capacity(values.len());
-    auto iterator = values.into_iter();
-    while (auto value = iterator.next()) {
-        auto entry = rstd::move(value).unwrap();
+    auto result = Vec<CppFamilyOption>::with_capacity(values.len());
+    for (auto entry : rstd::move(values).into_iter()) {
         result.push(CppFamilyOption {
             .family = rstd::move(entry.template get<0>()),
             .value  = rstd::move(entry.template get<1>()),
@@ -246,9 +244,7 @@ auto apply_cpp_option_layer(CppCompileOptions input, CppOptionLayer layer)
     input.target.features = family_values(rstd::move(target_modes));
     input.codegen.modes   = family_values(rstd::move(codegen_modes));
     input.codegen.instrumentation.clear();
-    auto instrumentation_values = instrumentation.into_iter();
-    while (auto value = instrumentation_values.next()) {
-        auto entry = rstd::move(value).unwrap();
+    for (auto entry : rstd::move(instrumentation).into_iter()) {
         input.codegen.instrumentation.push(rstd::move(entry.template get<0>()));
     }
     return Ok(rstd::move(input));

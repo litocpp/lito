@@ -67,11 +67,9 @@ auto required_string(const Json& value, ref<str> key, ref<str> context)
 
 auto relative_link_target_is_valid(ref<rstd::path::Path> path) -> bool {
     if (path.is_empty() || path.is_absolute() || path.has_root()) return false;
-    auto components = path.components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal() && ! component->is_parent_dir()) return false;
-    }
-    return true;
+    return path.components().all([](auto component) {
+        return component.is_normal() || component.is_parent_dir();
+    });
 }
 
 auto production_json(const InstallOwnedProduction& production) -> Json {
@@ -600,8 +598,7 @@ auto load_managed_install_catalog(const InstallLayout& layout)
     }
     auto paths   = Vec<PathBuf>::make();
     auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : entries) {
         if (item.is_err()) {
             return catalog_io_failure<InstallCatalog>("read install package entry"_str,
                                                       layout.packages_directory.as_path(),

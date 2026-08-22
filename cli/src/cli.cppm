@@ -1244,19 +1244,18 @@ auto string_values(const Matches& matches, const ArgKey<String>& key)
     auto result = Vec<String>::make();
     auto parsed = rstd::move(values).unwrap();
     if (parsed.is_none()) return Ok(rstd::move(result));
-    auto iterator = rstd::move(*parsed);
-    for (auto value = iterator.next(); value.is_some(); value = iterator.next()) {
-        result.push((**value).clone());
-    }
-    return Ok(rstd::move(result));
+    return Ok(rstd::move(*parsed).cloned().collect<Vec<String>>());
 }
 
 auto path_values(const Matches& matches, const ArgKey<String>& key)
     -> Result<Vec<PathBuf>, CliDecodeError> {
     auto strings = rstd_try(string_values(matches, key));
-    auto result  = Vec<PathBuf>::with_capacity(strings.len());
-    for (auto& value : strings) result.push(PathBuf::from(rstd::move(value)));
-    return Ok(rstd::move(result));
+    return Ok(rstd::move(strings)
+                  .into_iter()
+                  .map([](auto value) {
+                      return PathBuf::from(rstd::move(value));
+                  })
+                  .collect<Vec<PathBuf>>());
 }
 
 auto flag_value(const Matches& matches, const ArgKey<bool>& key) -> Result<bool, CliDecodeError> {

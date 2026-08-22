@@ -75,13 +75,13 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
     if (value.is_none()) return Ok(rstd::move(result));
     auto tools   = rstd_try(table_value(**value, "manifest.build-tools"_str));
     auto aliases = tools->keys();
-    for (auto alias = aliases.next(); alias.is_some(); alias = aliases.next()) {
-        const auto context = rstd::format("manifest.build-tools.{}", **alias);
-        if (! package_name_is_valid((**alias).as_str())) {
+    for (auto alias : aliases) {
+        const auto context = rstd::format("manifest.build-tools.{}", *alias);
+        if (! package_name_is_valid((*alias).as_str())) {
             return manifest_schema_failure<Vec<BuildToolRequirement>>(
                 rstd::format("{} is not a valid tool alias", context));
         }
-        auto value = tools->get((**alias).as_str());
+        auto value = tools->get((*alias).as_str());
         auto table = rstd_try(table_value(**value, context.as_str()));
         rstd_try(reject_unknown(*table, context.as_str(), build_tool_key));
         auto version    = rstd_try(required_string(**value, "version"_str, context.as_str()));
@@ -104,9 +104,9 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
             rstd_try(table_value(**archives_value, rstd::format("{}.archives", context).as_str()));
         auto archives = Vec<BuildToolArchiveManifest>::make();
         auto hosts    = archives_table->keys();
-        for (auto host = hosts.next(); host.is_some(); host = hosts.next()) {
-            const auto archive_context = rstd::format("{}.archives.{}", context, **host);
-            auto       archive_value   = archives_table->get((**host).as_str());
+        for (auto host : hosts) {
+            const auto archive_context = rstd::format("{}.archives.{}", context, *host);
+            auto       archive_value   = archives_table->get((*host).as_str());
             auto archive_table = rstd_try(table_value(**archive_value, archive_context.as_str()));
             rstd_try(
                 reject_unknown(*archive_table, archive_context.as_str(), build_tool_archive_key));
@@ -118,8 +118,7 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
                                                             "sha256"_str,
                                                             archive_path,
                                                             lito::parse::Sha256TextMode::Flexible));
-            auto parsed_host =
-                rstd_try(parse_host_key((**host).as_str(), archive_context.as_str()));
+            auto parsed_host = rstd_try(parse_host_key((*host).as_str(), archive_context.as_str()));
             for (const auto& existing : archives) {
                 if (existing.host.os == parsed_host.os.as_str() &&
                     existing.host.architecture == parsed_host.architecture) {
@@ -141,7 +140,7 @@ auto parse_build_tools(Option<ref<Toml>> value) -> ManifestSchemaResult<Vec<Buil
                 rstd::format("{}.archives must not be empty", context));
         }
         result.push(BuildToolRequirement {
-            .alias      = (**alias).clone(),
+            .alias      = (*alias).clone(),
             .version    = rstd::move(version),
             .executable = rstd::move(executable_path),
             .archives   = rstd::move(archives),

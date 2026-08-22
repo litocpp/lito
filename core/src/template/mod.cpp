@@ -98,10 +98,10 @@ auto lito::render_configure_template(ref<str>               input,
     if (tail.is_some()) output.push_str(*tail);
 
     auto keys = values.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (used.contains_key((**key).as_str())) continue;
+    for (auto key : keys) {
+        if (used.contains_key((*key).as_str())) continue;
         return Err(TemplateError::Message(
-            rstd::format("template '{}' does not use value '{}'", source, (**key).as_str())));
+            rstd::format("template '{}' does not use value '{}'", source, (*key).as_str())));
     }
     return Ok(rstd::move(output));
 }

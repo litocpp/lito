@@ -282,8 +282,8 @@ auto NormalRelativePath::parse(rstd::path::PathBuf value)
     }
     auto components = value.as_path().components();
     auto count      = usize {};
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) return Err(PathValueError::NonNormalComponent());
+    for (auto component : components) {
+        if (! component.is_normal()) return Err(PathValueError::NonNormalComponent());
         ++count;
     }
     if (count == usize {}) return Err(PathValueError::Empty());
@@ -456,15 +456,15 @@ auto lito::parse::json::reject_unknown(const rstd::json::Map&     value,
                                        const NodePath&            path,
                                        initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     auto keys = value.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+    for (auto key : keys) {
         auto known = false;
         for (const auto candidate : allowed) {
-            if ((**key).as_str() == candidate) {
+            if ((*key).as_str() == candidate) {
                 known = true;
                 break;
             }
         }
-        if (! known) return Err(Error::UnknownField(path.clone(), (**key).clone()));
+        if (! known) return Err(Error::UnknownField(path.clone(), (*key).clone()));
     }
     return Ok(empty {});
 }
@@ -473,9 +473,9 @@ auto lito::parse::json::reject_unknown(const rstd::json::Map& value,
                                        const NodePath&        path,
                                        bool (*allowed)(ref<str>)) -> ParseResult<empty> {
     auto keys = value.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! allowed((**key).as_str())) {
-            return Err(Error::UnknownField(path.clone(), (**key).clone()));
+    for (auto key : keys) {
+        if (! allowed((*key).as_str())) {
+            return Err(Error::UnknownField(path.clone(), (*key).clone()));
         }
     }
     return Ok(empty {});
@@ -669,15 +669,15 @@ auto lito::parse::toml::reject_unknown(const rstd::toml::Table&   value,
                                        const NodePath&            path,
                                        initializer_list<ref<str>> allowed) -> ParseResult<empty> {
     auto keys = value.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
+    for (auto key : keys) {
         auto known = false;
         for (const auto candidate : allowed) {
-            if ((**key).as_str() == candidate) {
+            if ((*key).as_str() == candidate) {
                 known = true;
                 break;
             }
         }
-        if (! known) return Err(Error::UnknownField(path.clone(), (**key).clone()));
+        if (! known) return Err(Error::UnknownField(path.clone(), (*key).clone()));
     }
     return Ok(empty {});
 }
@@ -686,9 +686,9 @@ auto lito::parse::toml::reject_unknown(const rstd::toml::Table& value,
                                        const NodePath&          path,
                                        bool (*allowed)(ref<str>)) -> ParseResult<empty> {
     auto keys = value.keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! allowed((**key).as_str())) {
-            return Err(Error::UnknownField(path.clone(), (**key).clone()));
+    for (auto key : keys) {
+        if (! allowed((*key).as_str())) {
+            return Err(Error::UnknownField(path.clone(), (*key).clone()));
         }
     }
     return Ok(empty {});

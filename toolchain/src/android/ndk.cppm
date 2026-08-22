@@ -459,15 +459,15 @@ auto parse_abis(ref<str> text, ref<rstd::path::Path> path) -> AndroidNdkResult<V
         return android_failure<Vec<AndroidNdkAbi>>("NDK ABI metadata root must be an object"_str);
     auto result = Vec<AndroidNdkAbi>::make();
     auto keys   = (**object).keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        auto value   = document.get((**key).as_str());
-        auto context = rstd::format("NDK ABI '{}'", (**key).as_str());
+    for (auto key : keys) {
+        auto value   = document.get((*key).as_str());
+        auto context = rstd::format("NDK ABI '{}'", (*key).as_str());
         if ((**value).as_object().is_none()) {
             return android_failure<Vec<AndroidNdkAbi>>(
                 rstd::format("{} must be an object", context.as_str()));
         }
         result.push(AndroidNdkAbi {
-            .name        = (**key).clone(),
+            .name        = (*key).clone(),
             .triple      = rstd_try(json_string(**value, "triple"_str, context.as_str())),
             .llvm_triple = rstd_try(json_string(**value, "llvm_triple"_str, context.as_str())),
             .minimum_api = rstd_try(json_u32(**value, "min_os_version"_str, context.as_str())),

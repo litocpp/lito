@@ -458,8 +458,8 @@ auto configured_cmake_build_overrides(const Toml& cmake)
     auto table = rstd_try(
         parse_toml::table(**overrides, NodePath::root("config.tools.cmake.overrides"_str)));
     auto keys = table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& package = **key;
+    for (auto key : keys) {
+        const auto& package = *key;
         auto        context = rstd::format("config.tools.cmake.overrides.'{}'", package.as_str());
         if (! lito::dependency::cmake_package_name_is_valid(package.as_str())) {
             return config_failure<lito::dependency::CMakeBuildOverrideSet>(
@@ -733,8 +733,8 @@ auto configured_sources(const Toml& document, ref<rstd::path::Path> project_root
     auto patch_table =
         rstd_try(parse_toml::table(**patch_value, NodePath::root("config.patch"_str)));
     auto keys = patch_table->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        const auto& url = **key;
+    for (auto key : keys) {
+        const auto& url = *key;
         if (url.is_empty()) {
             return config_failure<lito::source::PackageSourceConfig>(
                 "config.patch Git URL must not be empty"_str);

@@ -73,12 +73,12 @@ auto current_reply_index(ref<rstd::path::Path> reply) -> lito::tools::ToolResult
     auto selected      = Option<PathBuf> {};
     auto selected_name = String::make();
     auto entries       = rstd::move(opened).unwrap();
-    for (auto entry = entries.next(); entry.is_some(); entry = entries.next()) {
-        if (entry->is_err()) {
+    for (auto entry : entries) {
+        if (entry.is_err()) {
             return cmake_io_failure<PathBuf>(
-                "enumerate CMake File API reply"_str, reply, rstd::move(*entry).unwrap_err());
+                "enumerate CMake File API reply"_str, reply, rstd::move(entry).unwrap_err());
         }
-        auto value = rstd::move(*entry).unwrap();
+        auto value = rstd::move(entry).unwrap();
         auto name  = value.file_name().into_string();
         if (name.is_err()) continue;
         auto text = rstd::move(name).unwrap();
@@ -320,11 +320,9 @@ struct CMakeUsageSnapshot {
 auto normal_asset_path(ref<str> value) -> bool {
     auto path = PathBuf::from(value);
     if (path.is_empty() || path.as_path().is_absolute() || path.as_path().has_root()) return false;
-    auto components = path.as_path().components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) return false;
-    }
-    return true;
+    return path.as_path().components().all([](auto component) {
+        return component.is_normal();
+    });
 }
 
 auto asset_source_allowed(const CMakeWorkArea&  area,

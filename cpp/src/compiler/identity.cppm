@@ -44,10 +44,8 @@ auto standard_library_abi_macro(ref<str> name) -> bool {
 auto standard_library_macro_identity(const CppCompileOptions& options, bool abi_only) -> String {
     auto states = macro_states(options.preprocessor.macros);
     auto result = String::make();
-    auto values = states.into_iter();
-    while (auto value = values.next()) {
-        auto entry = rstd::move(value).unwrap();
-        auto name  = entry.template get<0>().as_str();
+    for (auto entry : rstd::move(states).into_iter()) {
+        auto name = entry.template get<0>().as_str();
         if ((abi_only && ! standard_library_abi_macro(name)) ||
             (! abi_only && ! standard_library_mode_macro(name))) {
             continue;
@@ -424,9 +422,7 @@ auto cpp_public_requirements_satisfied(const CppPublicRequirements& requirements
 
     auto required_macros = macro_states(requirements.macros);
     auto consumer_macros = macro_states(consumer.preprocessor.macros);
-    auto values          = required_macros.into_iter();
-    while (auto value = values.next()) {
-        auto entry = rstd::move(value).unwrap();
+    for (auto entry : rstd::move(required_macros).into_iter()) {
         if (standard_library_mode_macro(entry.template get<0>().as_str())) continue;
         auto consumer = consumer_macros.get(entry.template get<0>().as_str());
         if (consumer.is_none() || (**consumer).as_str() != entry.template get<1>().as_str()) {

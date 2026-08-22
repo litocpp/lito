@@ -1615,12 +1615,12 @@ auto scan_installed(const SdkStoreLayout& layout, const lito::system::HostInfo& 
             "read LLVM SDK store"_str, layout.root.as_path(), rstd::move(opened).unwrap_err());
     }
     auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        if (next->is_err()) {
+    for (auto next : entries) {
+        if (next.is_err()) {
             return sdk_io_failure<Vec<lito::SdkListEntry>>(
-                "read LLVM SDK store"_str, layout.root.as_path(), rstd::move(*next).unwrap_err());
+                "read LLVM SDK store"_str, layout.root.as_path(), rstd::move(next).unwrap_err());
         }
-        auto entry = rstd::move(*next).unwrap();
+        auto entry = rstd::move(next).unwrap();
         auto name  = entry.file_name().as_os_str().to_string_lossy();
         if (name.as_str().starts_with("."_str)) continue;
         auto path = entry.path();

@@ -215,10 +215,10 @@ auto reject_unknown(const Json& value, ref<str> context, initializer_list<ref<st
     -> RegistryValueResult<empty> {
     auto object = rstd_try(json_object(value, context));
     auto keys   = object->keys();
-    for (auto key = keys.next(); key.is_some(); key = keys.next()) {
-        if (! known_field((**key).as_str(), allowed)) {
+    for (auto key : keys) {
+        if (! known_field((*key).as_str(), allowed)) {
             return metadata_failure<empty>(
-                context, rstd::format("contains unknown field '{}'", (**key).as_str()));
+                context, rstd::format("contains unknown field '{}'", (*key).as_str()));
         }
     }
     return Ok(empty {});
@@ -724,9 +724,9 @@ auto lito::registry::parse_verified_package_index(slice<u8>                input
     auto tag_values = rstd_try(json_object(*tags_value, "Registry package index.tags"_str));
     auto tags       = Vec<RegistryTagProjection>::with_capacity(tag_values->len());
     auto tag_iter   = tag_values->iter();
-    for (auto item = tag_iter.next(); item.is_some(); item = tag_iter.next()) {
-        auto name   = (*item).template get<0>();
-        auto target = (*item).template get<1>()->as_str();
+    for (auto item : tag_iter) {
+        auto name   = item.template get<0>();
+        auto target = item.template get<1>()->as_str();
         if (! valid_tag_name(name->as_str()) || target.is_none()) {
             return metadata_failure<VerifiedPackageIndex>(
                 "Registry package index.tags"_str,

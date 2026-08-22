@@ -37,8 +37,8 @@ auto recipe_path(String value, ref<str> context) -> luato::Result<PathBuf> {
             luato::Error::binding(rstd::format("{} must be a non-empty relative path", context)));
     }
     auto components = path.as_path().components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (component->is_normal()) continue;
+    for (auto component : components) {
+        if (component.is_normal()) continue;
         return Err(luato::Error::binding(
             rstd::format("{} contains a non-normal path component", context)));
     }

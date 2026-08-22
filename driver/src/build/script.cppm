@@ -86,8 +86,8 @@ auto normal_relative_path(String text, ref<str> context) -> BuildScriptResult<Pa
             rstd::format("{} must be a non-empty relative path", context));
     }
     auto components = path.as_path().components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (component->is_normal()) continue;
+    for (auto component : components) {
+        if (component.is_normal()) continue;
         return script_failure<PathBuf>(
             rstd::format("{} contains a non-normal path component", context));
     }
@@ -824,8 +824,7 @@ auto collect_action_outputs(ref<rstd::path::Path> root,
             "enumerate staged build-tool outputs"_str, directory, rstd::move(opened).unwrap_err());
     }
     auto entries = rstd::move(opened).unwrap();
-    for (auto next = entries.next(); next.is_some(); next = entries.next()) {
-        auto item = rstd::move(next).unwrap();
+    for (auto item : entries) {
         if (item.is_err()) {
             return script_io_failure<empty>("enumerate staged build-tool outputs"_str,
                                             directory,

@@ -1057,12 +1057,11 @@ auto validate_normal_relative_path(ref<rstd::path::Path> path, ref<str> context)
     if (path.is_empty() || path.is_absolute() || path.has_root()) {
         return product_failure<empty>(rstd::format("{} '{}' is not relative", context, path));
     }
-    auto components = path.components();
-    for (auto component = components.next(); component.is_some(); component = components.next()) {
-        if (! component->is_normal()) {
-            return product_failure<empty>(
-                rstd::format("{} '{}' contains a non-normal component", context, path));
-        }
+    if (! path.components().all([](auto component) {
+            return component.is_normal();
+        })) {
+        return product_failure<empty>(
+            rstd::format("{} '{}' contains a non-normal component", context, path));
     }
     return Ok(empty {});
 }
