@@ -44,7 +44,6 @@ struct LockedPackageExternalSource {
 };
 
 struct LockedPackage {
-    String                           id;
     String                           name;
     Option<String>                   version;
     LockedSource                     source;

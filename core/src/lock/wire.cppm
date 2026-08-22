@@ -44,7 +44,6 @@ struct External {
 };
 
 struct Package {
-    Option<String> id;
     String         name;
     Option<String> version;
     Source         source;
@@ -243,11 +242,9 @@ struct Impl<serde::Serialize, lito::lock::wire::Package> {
     template<typename Serializer>
     static auto serialize(Serializer& serializer, const lito::lock::wire::Package& value) ->
         typename Serializer::result_type {
-        auto map = rstd_try(serializer.begin_map(usize(6) + usize(value.id.is_some()) +
-                                                 usize(value.version.is_some())));
+        auto map = rstd_try(serializer.begin_map(usize(6) + usize(value.version.is_some())));
         rstd_try(serde::field(map, "dependencies"_str, value.dependencies));
         rstd_try(serde::field(map, "externals"_str, value.externals));
-        if (value.id.is_some()) rstd_try(serde::field(map, "id"_str, *value.id));
         rstd_try(serde::field(map, "manifest"_str, value.manifest));
         rstd_try(serde::field(map, "name"_str, value.name));
         rstd_try(serde::field(map, "runtime-dependencies"_str, value.runtime_dependencies));
@@ -264,7 +261,6 @@ struct Impl<serde::Deserialize, lito::lock::wire::Package> {
         -> Result<lito::lock::wire::Package, typename Deserializer::error_type> {
         auto dependencies = serde::RequiredField<Vec<String>>("dependencies"_str);
         auto externals    = serde::RequiredField<Vec<lito::lock::wire::External>>("externals"_str);
-        auto id           = serde::OptionalField<String>("id"_str);
         auto manifest     = serde::RequiredField<String>("manifest"_str);
         auto name         = serde::RequiredField<String>("name"_str);
         auto runtime_dependencies = serde::RequiredField<Vec<String>>("runtime-dependencies"_str);
@@ -274,14 +270,12 @@ struct Impl<serde::Deserialize, lito::lock::wire::Package> {
                                            serde::UnknownFieldPolicy::Reject,
                                            dependencies,
                                            externals,
-                                           id,
                                            manifest,
                                            name,
                                            runtime_dependencies,
                                            source,
                                            version));
         return Ok(lito::lock::wire::Package {
-            .id                   = id.take(),
             .name                 = rstd_try(name.take(deserializer)),
             .version              = version.take(),
             .source               = rstd_try(source.take(deserializer)),

@@ -10,6 +10,7 @@ import lito.test.support;
 using namespace rstd::prelude;
 using namespace rstd::literals;
 using namespace lito_test;
+using PathBuf = rstd::path::PathBuf;
 
 class Lock : public ProjectFixture {
 protected:
@@ -54,6 +55,44 @@ sources = ["main.cpp"]
         return materialize(name, files);
     }
 
+    auto project_with_dependency(ref<str> name)
+        -> lito::source::SourceTreeResult<lito::source::SourceMaterialization> {
+        const ProjectFile files[] = {
+            {
+                "lito.toml"_str,
+                R"toml([package]
+name = "fixture-lock"
+version = "1.0.0"
+
+[[bin]]
+link-stdlib = false
+name = "fixture-lock"
+sources = ["main.cpp"]
+
+[dependencies.fixture-lock-dependency]
+path = "dependency"
+visibility = "private"
+)toml"_str,
+            },
+            { "main.cpp"_str, "auto main() -> int { return 0; }\n"_str },
+            {
+                "dependency/lito.toml"_str,
+                R"toml([package]
+name = "fixture-lock-dependency"
+version = "1.0.0"
+
+[lib]
+name = "fixture-lock-dependency"
+module = "fixture.lock.dependency"
+archive = "fixture-lock-dependency"
+sources = ["lib.cppm"]
+)toml"_str,
+            },
+            { "dependency/lib.cppm"_str, "export module fixture.lock.dependency;\n"_str },
+        };
+        return materialize(name, files);
+    }
+
     auto current(ref<rstd::path::Path> directory) -> bool {
         auto session = lito::lock::load_lock_session(directory, true);
         if (session.is_err()) return false;
@@ -63,6 +102,59 @@ sources = ["main.cpp"]
         return lito::lock::sync_lock(*graph, rstd::move(session).unwrap()).is_ok();
     }
 };
+
+TEST_F(Lock, VersionThreeUsesPackageNames) {
+    auto fixture = project_with_dependency("package-names"_str);
+    ASSERT_TRUE(fixture.is_ok());
+    auto session = lito::lock::load_lock_session(fixture->root.as_path(), false);
+    ASSERT_TRUE(session.is_ok());
+    auto options = session->take_resolution_options();
+    auto graph = lito::package::resolve_package_graph(fixture->root.as_path(), rstd::move(options));
+    ASSERT_TRUE(graph.is_ok());
+    auto synchronized = lito::lock::sync_lock(*graph, rstd::move(session).unwrap());
+    ASSERT_TRUE(synchronized.is_ok());
+
+    auto lock = rstd::fs::read_to_string(
+        fixture->root.join(PathBuf::from("lito.lock"_str).as_path()).as_path());
+    ASSERT_TRUE(lock.is_ok());
+    EXPECT_TRUE(lock->as_str().contains("\"version\": 3"_str));
+    EXPECT_TRUE(lock->as_str().contains("\"fixture-lock-dependency\""_str));
+    EXPECT_FALSE(lock->as_str().contains("lito-pkg-"_str));
+    EXPECT_FALSE(lock->as_str().contains("\"id\":"_str));
+
+    auto loaded = lito::lock::load_locked_project(fixture->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    const lito::lock::LockedPackage* root = nullptr;
+    for (const auto& package : loaded->packages) {
+        if (package.name.as_str() == "fixture-lock"_str) root = rstd::addressof(package);
+    }
+    ASSERT_NE(root, nullptr);
+    ASSERT_EQ(root->dependencies.len(), usize(1));
+    EXPECT_EQ(root->dependencies[usize {}].as_str(), "fixture-lock-dependency"_str);
+}
+
+TEST_F(Lock, ExperimentalVersionThreePackageIdIsRejected) {
+    constexpr auto old_lock = R"json({
+  "packages": [{
+    "dependencies": [],
+    "externals": [],
+    "id": "lito-pkg-2e9a5795046686573e28687402dff421efb01ddbb84b85ff00f26ea66732e2f6",
+    "manifest": "lito.toml",
+    "name": "fixture-lock",
+    "runtime-dependencies": [],
+    "source": { "kind": "path", "path": "." },
+    "version": "1.0.0"
+  }],
+  "version": 3
+})json"_str;
+    auto           fixture  = project("experimental-version-three"_str, old_lock);
+    ASSERT_TRUE(fixture.is_ok());
+    auto loaded = lito::lock::load_lock_session(fixture->root.as_path(), false);
+    ASSERT_TRUE(loaded.is_err());
+    auto error = rstd::move(loaded).unwrap_err();
+    ASSERT_TRUE(error.is_Data());
+    EXPECT_EQ(error.as_Data().source.kind(), rstd::serde::ErrorKind::UnknownField);
+}
 
 TEST_F(Lock, VersionTwoUsesPackageOwnedExternalSources) {
     constexpr auto current_lock = R"json({

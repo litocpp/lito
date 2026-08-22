@@ -172,24 +172,6 @@ auto locked_source_wire(const LockedSource& source) -> LockResult<lito::lock::wi
 
 auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_version)
     -> LockResult<lito::lock::wire::Document> {
-    auto package_ids = rstd::collections::BTreeMap<String, String>::make();
-    if (format_version == LOCK_FORMAT_VERSION) {
-        for (const auto& package : graph.packages) {
-            auto key = package.instance.clone();
-            if (key.is_empty()) {
-                auto coordinate = lito::package::resolved_package_instance_id(
-                    package.source, package.manifest.name.as_str());
-                if (coordinate.is_err()) {
-                    return lock_failure<lito::lock::wire::Document>(
-                        rstd::format("cannot construct lock package instance '{}': {}",
-                                     package.manifest.name.as_str(),
-                                     coordinate.unwrap_err()));
-                }
-                key = lito::package::PackageInstanceKey::from(*coordinate);
-            }
-            package_ids.insert(package.manifest.name.clone(), String::make(key.as_str()));
-        }
-    }
     auto package_indices = Vec<usize>::with_capacity(graph.packages.len());
     for (usize index {}; index < graph.packages.len(); ++index) package_indices.push(usize(index));
     rstd::slice_::sort_unstable_by(
@@ -204,44 +186,16 @@ auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_ver
             Vec<String>::with_capacity(package.dependencies.len() + package.dev_dependencies.len());
         for (const auto& dependency : package.dependencies) {
             auto name = resolved_dependency_name(dependency);
-            if (format_version == u64(2)) {
-                dependencies.push(String::make(name));
-            } else {
-                auto id = package_ids.get(name);
-                if (id.is_none()) {
-                    return lock_failure<lito::lock::wire::Document>(
-                        rstd::format("resolved dependency '{}' has no package instance", name));
-                }
-                dependencies.push((**id).clone());
-            }
+            dependencies.push(String::make(name));
         }
         for (const auto& dependency : package.dev_dependencies) {
-            if (format_version == u64(2)) {
-                dependencies.push(dependency.name.clone());
-            } else {
-                auto id = package_ids.get(dependency.name.as_str());
-                if (id.is_none()) {
-                    return lock_failure<lito::lock::wire::Document>(rstd::format(
-                        "resolved dependency '{}' has no package instance", dependency.name));
-                }
-                dependencies.push((**id).clone());
-            }
+            dependencies.push(dependency.name.clone());
         }
         rstd::slice_::sort_unstable(dependencies.as_mut_slice().as_mut_ref());
 
         auto runtime_dependencies = Vec<String>::with_capacity(package.runtime_dependencies.len());
         for (const auto& dependency : package.runtime_dependencies) {
-            if (format_version == u64(2)) {
-                runtime_dependencies.push(dependency.name.clone());
-            } else {
-                auto id = package_ids.get(dependency.name.as_str());
-                if (id.is_none()) {
-                    return lock_failure<lito::lock::wire::Document>(
-                        rstd::format("resolved runtime dependency '{}' has no package instance",
-                                     dependency.name));
-                }
-                runtime_dependencies.push((**id).clone());
-            }
+            runtime_dependencies.push(dependency.name.clone());
         }
         rstd::slice_::sort_unstable(runtime_dependencies.as_mut_slice().as_mut_ref());
 
@@ -273,17 +227,11 @@ auto graph_wire(const lito::package::ResolvedPackageGraph& graph, u64 format_ver
             });
         }
 
-        auto id = Option<String> {};
-        if (format_version == LOCK_FORMAT_VERSION) {
-            auto value = package_ids.get(package.manifest.name.as_str());
-            id         = Some((**value).clone());
-        }
         auto version = Option<String> {};
         if (package.manifest.version.value.is_some()) {
             version = Some(package.manifest.version.value->clone());
         }
         packages.push(lito::lock::wire::Package {
-            .id      = rstd::move(id),
             .name    = package.manifest.name.clone(),
             .version = rstd::move(version),
             .source = rstd_try(locked_source_wire(rstd_try(locked_package_source(package.source)))),
@@ -537,34 +485,15 @@ auto parse_locked_source(lito::lock::wire::Source value,
                                            "source kind is not allowed here"_str);
 }
 
-auto locked_package_instance(const LockedSource& source, ref<str> package)
-    -> LockResult<lito::package::ResolvedPackageInstanceId> {
-    if (source.is_Path()) {
-        return Ok(lito::package::ResolvedPackageInstanceId::Path(source.as_Path().path.clone(),
-                                                                 String::make(package)));
-    }
-    if (source.is_Git()) {
-        return Ok(lito::package::ResolvedPackageInstanceId::Git(
-            source.as_Git().url.clone(), source.as_Git().commit.clone(), String::make(package)));
-    }
-    if (source.is_Builtin()) {
-        return Ok(
-            lito::package::ResolvedPackageInstanceId::Builtin(source.as_Builtin().id.clone(),
-                                                              source.as_Builtin().digest.clone(),
-                                                              String::make(package)));
-    }
+auto validate_locked_package_source(const LockedSource& source, ref<str> package)
+    -> LockResult<empty> {
     if (source.is_Registry()) {
         if (source.as_Registry().package.name.as_str() != package) {
-            return lock_failure<lito::package::ResolvedPackageInstanceId>(
+            return lock_failure<empty>(
                 "lock Registry source package does not match lock package name"_str);
         }
-        return Ok(lito::package::ResolvedPackageInstanceId::Registry(
-            source.as_Registry().package.clone(),
-            source.as_Registry().version.clone(),
-            source.as_Registry().release.clone()));
     }
-    return lock_failure<lito::package::ResolvedPackageInstanceId>(
-        "lock package source cannot use an external-only source kind"_str);
+    return Ok(empty {});
 }
 
 auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedProject> {
@@ -579,19 +508,12 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
         return lock_data_failure<LockedProject>(root.with_field("packages"_str),
                                                 "lock packages must not be empty"_str);
     }
-    const auto legacy_edges = document.version == u64(2);
-    auto       names        = StringSet::make();
-    auto       ids          = StringSet::make();
-    auto       name_to_id   = rstd::collections::BTreeMap<String, String>::make();
-    auto       result =
+    auto names = StringSet::make();
+    auto result =
         LockedProject { .packages = Vec<LockedPackage>::with_capacity(document.packages.len()) };
     for (usize package_index {}; package_index < document.packages.len(); ++package_index) {
         auto package_path = root.with_field("packages"_str).with_index(package_index);
         auto package      = rstd::move(document.packages[package_index]);
-        if (legacy_edges && package.id.is_some()) {
-            return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
-                                                    "version 2 packages must not contain id"_str);
-        }
         if (! lito::manifest::valid_package_name(package.name.as_str())) {
             return lock_data_failure<LockedProject>(package_path.with_field("name"_str),
                                                     "lock package name is invalid"_str);
@@ -612,26 +534,7 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
         }
         auto locked_source = rstd_try(parse_locked_source(
             rstd::move(package.source), package_path.with_field("source"_str), false));
-        auto coordinate = rstd_try(locked_package_instance(locked_source, package.name.as_str()));
-        auto derived_id = lito::package::PackageInstanceKey::from(coordinate);
-        auto package_id = String::make(derived_id.as_str());
-        if (! legacy_edges) {
-            if (package.id.is_none()) {
-                return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
-                                                        "package id is required"_str);
-            }
-            if (package.id->as_str() != package_id.as_str()) {
-                return lock_data_failure<LockedProject>(
-                    package_path.with_field("id"_str),
-                    "package id does not match exact source identity"_str);
-            }
-        }
-        if (ids.contains_key(package_id.as_str())) {
-            return lock_data_failure<LockedProject>(package_path.with_field("id"_str),
-                                                    "package instance is repeated"_str);
-        }
-        ids.insert(package_id.clone(), empty {});
-        name_to_id.insert(package.name.clone(), package_id.clone());
+        rstd_try(validate_locked_package_source(locked_source, package.name.as_str()));
         if (locked_source.is_Registry() &&
             (package.version.is_none() ||
              package.version->as_str() != locked_source.as_Registry().version.text().as_str())) {
@@ -709,8 +612,7 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
             for (usize index {}; index < values.len(); ++index) {
                 auto edge_path = package_path.with_field(field).with_index(index);
                 auto value     = rstd::move(values[index]);
-                if ((legacy_edges && ! lito::manifest::valid_package_name(value.as_str())) ||
-                    (! legacy_edges && value.is_empty())) {
+                if (! lito::manifest::valid_package_name(value.as_str())) {
                     return lock_data_failure<Vec<String>>(rstd::move(edge_path),
                                                           "package reference is invalid"_str);
                 }
@@ -728,7 +630,6 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
         auto runtime_dependencies = rstd_try(
             validate_edges(rstd::move(package.runtime_dependencies), "runtime-dependencies"_str));
         result.packages.push(LockedPackage {
-            .id                   = rstd::move(package_id),
             .name                 = rstd::move(package.name),
             .version              = rstd::move(package.version),
             .source               = rstd::move(locked_source),
@@ -743,11 +644,7 @@ auto parse_lock_wire(lito::lock::wire::Document document) -> LockResult<LockedPr
         auto  resolve_edges = [&](Vec<String>& values, ref<str> field) -> LockResult<empty> {
             for (usize index {}; index < values.len(); ++index) {
                 auto& value = values[index];
-                if (legacy_edges) {
-                    auto id = name_to_id.get(value.as_str());
-                    if (id.is_some()) value = (**id).clone();
-                }
-                if (! ids.contains_key(value.as_str())) {
+                if (! names.contains_key(value.as_str())) {
                     return lock_data_failure<empty>(
                         root.with_field("packages"_str)
                             .with_index(package_index)
