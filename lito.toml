@@ -1,6 +1,6 @@
 [workspace]
 name = "lito"
-members = ["third-party/utf8proc", "frontend", "core", "cpp", "tools", "toolchain", "driver", "cli"]
+members = ["frontend", "core", "cpp", "tools", "toolchain", "driver", "cli"]
 default-members = ["cli"]
 
 [workspace.package]
@@ -24,9 +24,6 @@ path = "toolchain"
 
 [workspace.dependencies.lito-driver]
 path = "driver"
-
-[workspace.dependencies.lito-utf8proc]
-path = "third-party/utf8proc"
 
 [workspace.dependencies.luato]
 git = "https://github.com/litocpp/luato.git"

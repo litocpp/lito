@@ -14,11 +14,11 @@ using namespace rstd::literals;
 export namespace lito::registry
 {
 
-inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v1"_str;
-inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v1"_str;
+inline constexpr auto REGISTRY_INSPECTION_PROTOCOL       = "lito.registry.inspect.v2"_str;
+inline constexpr auto REGISTRY_INSPECTION_REQUEST_SCHEMA = "lito.registry.inspect-request.v2"_str;
 inline constexpr auto REGISTRY_INSPECTION_CANDIDATE_SCHEMA =
-    "lito.registry.verified-publish-candidate.v1"_str;
-inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v1"_str;
+    "lito.registry.verified-publish-candidate.v2"_str;
+inline constexpr auto REGISTRY_INSPECTOR_RECEIPT = "lito.registry.inspector-receipt.v2"_str;
 
 struct RegistryInspectionProtocolError {
     String message;
@@ -172,11 +172,9 @@ auto lito::registry::registry_inspector_capabilities_json() -> String {
     formats.push(string_json(RegistryArchiveFormat::TAR_ZSTD_V1));
     auto root = JsonMap::make();
     root.insert(String::make("schema"_str),
-                string_json("lito.registry.inspector-capabilities.v1"_str));
+                string_json("lito.registry.inspector-capabilities.v2"_str));
     root.insert(String::make("protocols"_str), Json::Array(rstd::move(protocols)));
     root.insert(String::make("archive_formats"_str), Json::Array(rstd::move(formats)));
-    root.insert(String::make("unicode"_str),
-                string_json(lito::source::PORTABLE_SOURCE_PATH_UNICODE_VERSION));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }
 
@@ -301,7 +299,5 @@ auto lito::registry::serialize_verified_publish_candidate(const InspectedRegistr
     root.insert(String::make("unpacked_size"_str),
                 string_json(rstd::format("{}", candidate.unpacked_size).as_str()));
     root.insert(String::make("receipt"_str), string_json(REGISTRY_INSPECTOR_RECEIPT));
-    root.insert(String::make("unicode"_str),
-                string_json(lito::source::PORTABLE_SOURCE_PATH_UNICODE_VERSION));
     return rstd::json::to_string(Json::Object(rstd::move(root)));
 }

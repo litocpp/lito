@@ -1,8 +1,5 @@
 module;
-#include <cstddef>
-#include <cstdlib>
 #include <rstd/enum.hpp>
-#include <utf8proc.h>
 
 export module lito.core:source.tree;
 
@@ -42,10 +39,8 @@ using SourceTreeResult = Result<T, SourceTreeError>;
 
 class SourcePath {
     String value_;
-    String collision_key_;
 
-    SourcePath(String value, String collision_key)
-        : value_(rstd::move(value)), collision_key_(rstd::move(collision_key)) {}
+    explicit SourcePath(String value): value_(rstd::move(value)) {}
 
 public:
     static auto parse(ref<str> value) -> SourceTreeResult<SourcePath>;
@@ -54,12 +49,9 @@ public:
         return ref<rstd::path::Path>(value_.as_str());
     }
     auto as_str() const noexcept -> ref<str> { return value_.as_str(); }
-    auto collision_key() const noexcept -> ref<str> { return collision_key_.as_str(); }
     auto less(const SourcePath& other) const noexcept -> bool { return value_ < other.as_str(); }
-    auto clone() const -> SourcePath { return SourcePath(value_.clone(), collision_key_.clone()); }
+    auto clone() const -> SourcePath { return SourcePath(value_.clone()); }
 };
-
-inline constexpr auto PORTABLE_SOURCE_PATH_UNICODE_VERSION = "16.0.0"_str;
 
 class SourceTreeEntry {
     SourcePath      path_;
@@ -134,26 +126,6 @@ auto invalid_source_path(ref<str> path, String reason) -> SourceTreeResult<Sourc
     return Err(SourceTreeError::InvalidPath(String::make(path), rstd::move(reason)));
 }
 
-auto unicode_mapping(ref<str> value, utf8proc_option_t options) -> SourceTreeResult<String> {
-    utf8proc_uint8_t* output = nullptr;
-    auto              length =
-        utf8proc_map(reinterpret_cast<const utf8proc_uint8_t*>(value.as_bytes().as_raw_ptr()),
-                     static_cast<utf8proc_ssize_t>(value.len().to_primitive()),
-                     &output,
-                     options);
-    if (length < 0 || output == nullptr) {
-        auto message = length < 0 ? utf8proc_errmsg(length) : "utf8proc returned no output";
-        auto text    = rstd::ffi::CStr::from_ptr(message).to_str();
-        return Err(SourceTreeError::Protocol(
-            text.is_ok() ? rstd::format("cannot normalize portable source path: {}", text.unwrap())
-                         : String::make("cannot normalize portable source path"_str)));
-    }
-    auto bytes = Vec<u8>::from(slice<u8>::from_raw_parts(reinterpret_cast<const byte*>(output),
-                                                         usize(static_cast<std::size_t>(length))));
-    std::free(output);
-    return Ok(String::from_utf8_unchecked(rstd::move(bytes)));
-}
-
 auto reserved_windows_component(ref<str> component) noexcept -> bool {
     auto base   = component.split_once("."_str);
     auto name   = base.is_some() ? base->template get<0>() : component;
@@ -173,27 +145,14 @@ auto reserved_windows_component(ref<str> component) noexcept -> bool {
 }
 
 auto validate_unicode_codepoints(ref<str> path) -> SourceTreeResult<empty> {
-    auto remaining = path.as_bytes();
-    while (! remaining.is_empty()) {
-        utf8proc_int32_t codepoint {};
-        auto             width =
-            utf8proc_iterate(reinterpret_cast<const utf8proc_uint8_t*>(remaining.as_raw_ptr()),
-                             static_cast<utf8proc_ssize_t>(remaining.len().to_primitive()),
-                             &codepoint);
-        if (width <= 0) {
-            return Err(SourceTreeError::InvalidPath(String::make(path),
-                                                    String::make("path is not valid UTF-8"_str)));
-        }
-        auto value = static_cast<rstd::uint32_t>(codepoint);
+    for (auto codepoint : path.chars()) {
+        auto value = codepoint.to_primitive();
         if (value <= 0x1f || (value >= 0x7f && value <= 0x9f) ||
             (value >= 0xfdd0 && value <= 0xfdef) || (value & 0xffff) >= 0xfffe) {
             return Err(SourceTreeError::InvalidPath(
                 String::make(path),
                 String::make("path contains a forbidden Unicode codepoint"_str)));
         }
-        auto consumed = usize(static_cast<std::size_t>(width));
-        remaining     = slice<u8>::from_raw_parts(remaining.as_raw_ptr() + consumed.to_primitive(),
-                                                  remaining.len() - consumed);
     }
     return Ok(empty {});
 }
@@ -203,17 +162,7 @@ auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourceP
     if (value.len() > usize(1024)) {
         return invalid_source_path(value, "path must not exceed 1024 UTF-8 bytes"_str);
     }
-    auto linked_unicode = rstd::ffi::CStr::from_ptr(utf8proc_unicode_version()).to_str();
-    if (linked_unicode.is_err() || *linked_unicode != PORTABLE_SOURCE_PATH_UNICODE_VERSION) {
-        return Err(SourceTreeError::Protocol(
-            String::make("portable source path Unicode data version is incompatible"_str)));
-    }
     rstd_try(validate_unicode_codepoints(value));
-    auto normalized = rstd_try(
-        unicode_mapping(value, static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_COMPOSE)));
-    if (normalized.as_str() != value) {
-        return invalid_source_path(value, "path must already be Unicode NFC"_str);
-    }
     if (value.starts_with("/"_str) || value.ends_with("/"_str)) {
         return invalid_source_path(value, "path must be relative without trailing separators"_str);
     }
@@ -257,10 +206,7 @@ auto lito::source::SourcePath::parse(ref<str> value) -> SourceTreeResult<SourceP
     if (! path.as_path().is_safe_relative()) {
         return invalid_source_path(value, "path escapes its materialization root"_str);
     }
-    auto collision_key = rstd_try(unicode_mapping(
-        value,
-        static_cast<utf8proc_option_t>(UTF8PROC_STABLE | UTF8PROC_CASEFOLD | UTF8PROC_COMPOSE)));
-    return Ok(SourcePath(String::make(value), rstd::move(collision_key)));
+    return Ok(SourcePath(String::make(value)));
 }
 
 auto source_tree_conflict(ref<str> path, String reason) -> SourceTreeResult<empty> {
@@ -291,11 +237,6 @@ auto lito::source::SourceTree::add_entry(SourceTreeEntry entry) -> SourceTreeRes
             return source_tree_conflict(
                 entry.path().as_str(),
                 rstd::format("{} already exists", entry_kind_name(existing.kind())));
-        }
-        if (existing.path().collision_key() == entry.path().collision_key()) {
-            return source_tree_conflict(
-                entry.path().as_str(),
-                rstd::format("portable path collides with '{}'", existing.path().as_str()));
         }
         auto existing_is_parent = entry.path().as_path().starts_with(existing.path().as_path());
         if (existing_is_parent && existing.kind() == SourceEntryKind::File) {
@@ -440,6 +381,40 @@ auto cleanup_materialization(ref<rstd::path::Path> destination) noexcept -> void
     }
 }
 
+auto contains_directory(slice<rstd::path::PathBuf> directories, ref<rstd::path::Path> path) noexcept
+    -> bool {
+    for (const auto& directory : directories) {
+        if (directory.as_path() == path) return true;
+    }
+    return false;
+}
+
+auto ensure_directories(ref<rstd::path::Path>     destination,
+                        ref<rstd::path::Path>     relative,
+                        Vec<rstd::path::PathBuf>& directories) -> SourceTreeResult<empty> {
+    auto relative_path = rstd::path::PathBuf::make();
+    auto target_path   = rstd::path::PathBuf::from(destination);
+    auto components    = relative.components();
+    for (auto component : rstd::iter::for_range(components)) {
+        if (! component.is_normal()) {
+            return Err(SourceTreeError::Protocol(
+                String::make("validated source path contains a non-normal component"_str)));
+        }
+        auto part = ref<rstd::path::Path>(component.as_os_str());
+        relative_path.push(part);
+        target_path.push(part);
+        if (contains_directory(directories.as_slice(), relative_path.as_path())) continue;
+        auto created = rstd::fs::create_dir(target_path.as_path());
+        if (created.is_err()) {
+            return Err(source_tree_io_failure("create source directory"_str,
+                                              target_path.as_path(),
+                                              rstd::move(created).unwrap_err()));
+        }
+        directories.push(relative_path.clone());
+    }
+    return Ok(empty {});
+}
+
 auto lito::source::materialize_source_tree(const SourceTree&     tree,
                                            ref<rstd::path::Path> destination)
     -> SourceTreeResult<SourceMaterialization> {
@@ -459,29 +434,35 @@ auto lito::source::materialize_source_tree(const SourceTree&     tree,
                                           rstd::move(created).unwrap_err()));
     }
 
+    auto directories = Vec<rstd::path::PathBuf>::make();
     for (const auto& entry : tree.entries()) {
         auto path = rstd::path::PathBuf::from(destination).join(entry.path().as_path());
         if (entry.kind() == SourceEntryKind::Directory) {
-            auto result = rstd::fs::create_dir_all(path.as_path());
+            auto result = ensure_directories(destination, entry.path().as_path(), directories);
             if (result.is_err()) {
-                auto error = source_tree_io_failure(
-                    "create directory"_str, path.as_path(), rstd::move(result).unwrap_err());
+                auto error = rstd::move(result).unwrap_err();
                 cleanup_materialization(destination);
                 return Err(rstd::move(error));
             }
             continue;
         }
-        auto parent = path.as_path().parent();
+        auto parent = entry.path().as_path().parent();
         if (parent.is_some()) {
-            auto result = rstd::fs::create_dir_all(*parent);
+            auto result = ensure_directories(destination, *parent, directories);
             if (result.is_err()) {
-                auto error = source_tree_io_failure(
-                    "create parent directory"_str, *parent, rstd::move(result).unwrap_err());
+                auto error = rstd::move(result).unwrap_err();
                 cleanup_materialization(destination);
                 return Err(rstd::move(error));
             }
         }
-        auto written = rstd::fs::write(path.as_path(), entry.contents());
+        auto file = rstd::fs::File::create_new(path.as_path());
+        if (file.is_err()) {
+            auto error = source_tree_io_failure(
+                "create source file"_str, path.as_path(), rstd::move(file).unwrap_err());
+            cleanup_materialization(destination);
+            return Err(rstd::move(error));
+        }
+        auto written = rstd::move(file).unwrap().write_all(entry.contents());
         if (written.is_err()) {
             auto error = source_tree_io_failure(
                 "write file"_str, path.as_path(), rstd::move(written).unwrap_err());

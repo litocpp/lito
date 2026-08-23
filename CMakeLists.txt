@@ -67,15 +67,6 @@ FetchContent_Declare(
   GIT_TAG 00d5cfacd85f44f98727d3cd7e2f78ec96689552)
 FetchContent_MakeAvailable(luato)
 
-set(UTF8PROC_INSTALL OFF CACHE BOOL "" FORCE)
-set(UTF8PROC_ENABLE_TESTING OFF CACHE BOOL "" FORCE)
-FetchContent_Declare(
-  utf8proc
-  URL https://github.com/JuliaStrings/utf8proc/archive/refs/tags/v2.10.0.tar.gz
-  URL_HASH SHA256=6f4f1b639daa6dca9f80bc5db1233e9cbaa31a67790887106160b33ef743f136
-  DOWNLOAD_EXTRACT_TIMESTAMP TRUE)
-FetchContent_MakeAvailable(utf8proc)
-
 add_subdirectory(frontend)
 add_subdirectory(core)
 add_subdirectory(cpp)

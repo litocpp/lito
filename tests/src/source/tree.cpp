@@ -115,6 +115,28 @@ TEST(SourceTree, MaterializesForTheExistingManifestOwnerWithoutOverwriting) {
     EXPECT_EQ(rstd::fs::read_to_string(marker.as_path()).unwrap().as_str(), "preserved"_str);
 }
 
+TEST(SourceTree, NeverOverwritesFilesystemEquivalentSpellings) {
+    auto temporary = rstd::test::TempDir::make();
+    ASSERT_TRUE(temporary.is_ok());
+    auto owner = rstd::move(temporary).unwrap();
+
+    auto tree = lito::source::SourceTree::make();
+    ASSERT_TRUE(tree.add_text("Case/File.cpp"_str, "upper"_str).is_ok());
+    ASSERT_TRUE(tree.add_text("case/file.cpp"_str, "lower"_str).is_ok());
+
+    auto root         = PathBuf::from(owner.path()).join(PathBuf::from("variants"_str).as_path());
+    auto materialized = lito::source::materialize_source_tree(tree, root.as_path());
+    if (materialized.is_err()) {
+        EXPECT_FALSE(rstd::fs::exists(root.as_path()).unwrap());
+        return;
+    }
+
+    auto upper = root.join(PathBuf::from("Case/File.cpp"_str).as_path());
+    auto lower = root.join(PathBuf::from("case/file.cpp"_str).as_path());
+    EXPECT_EQ(rstd::fs::read_to_string(upper.as_path()).unwrap().as_str(), "upper"_str);
+    EXPECT_EQ(rstd::fs::read_to_string(lower.as_path()).unwrap().as_str(), "lower"_str);
+}
+
 TEST_F(InlineProjectFixture, OwnsIndependentProjectAndOutputRoots) {
     auto tree = lito::source::SourceTree::make();
     ASSERT_TRUE(tree.add_text("lito.toml"_str,

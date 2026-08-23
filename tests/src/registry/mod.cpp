@@ -1160,19 +1160,29 @@ archive = "sample"
               "registry+https://registry.example/sample@1.5.0"_str);
 }
 
-TEST(RegistrySourcePath, EnforcesUnicodeAndPortableCollisionRules) {
+TEST(RegistrySourcePath, PreservesUtf8SpellingWithoutUnicodeCollisionRules) {
     EXPECT_TRUE(lito::source::SourcePath::parse("caf\u00e9.cpp"_str).is_ok());
-    EXPECT_TRUE(lito::source::SourcePath::parse("cafe\u0301.cpp"_str).is_err());
+    EXPECT_TRUE(lito::source::SourcePath::parse("cafe\u0301.cpp"_str).is_ok());
     EXPECT_TRUE(lito::source::SourcePath::parse("CON.txt"_str).is_err());
     EXPECT_TRUE(lito::source::SourcePath::parse("trailing. "_str).is_err());
+    EXPECT_TRUE(lito::source::SourcePath::parse("control\u0085.cpp"_str).is_err());
+    EXPECT_TRUE(lito::source::SourcePath::parse("noncharacter\ufdd0.cpp"_str).is_err());
 
     auto ascii = lito::source::SourceTree::make();
     ASSERT_TRUE(ascii.add_text("Src/File.cpp"_str, "first"_str).is_ok());
-    EXPECT_TRUE(ascii.add_text("src/file.cpp"_str, "second"_str).is_err());
+    EXPECT_TRUE(ascii.add_text("src/file.cpp"_str, "second"_str).is_ok());
+    EXPECT_TRUE(ascii.add_text("Src/File.cpp"_str, "duplicate"_str).is_err());
 
     auto unicode = lito::source::SourceTree::make();
     ASSERT_TRUE(unicode.add_text("stra\u00dfe.cpp"_str, "first"_str).is_ok());
-    EXPECT_TRUE(unicode.add_text("STRASSE.cpp"_str, "second"_str).is_err());
+    EXPECT_TRUE(unicode.add_text("STRASSE.cpp"_str, "second"_str).is_ok());
+
+    auto composed = lito::source::SourceTree::make();
+    ASSERT_TRUE(composed.add_text("caf\u00e9.cpp"_str, "contents"_str).is_ok());
+    auto decomposed = lito::source::SourceTree::make();
+    ASSERT_TRUE(decomposed.add_text("cafe\u0301.cpp"_str, "contents"_str).is_ok());
+    EXPECT_NE(lito::source::canonical_source_digest(composed).unwrap().text(),
+              lito::source::canonical_source_digest(decomposed).unwrap().text());
 }
 
 TEST(RegistryArchive, BuildsAndInspectsDeterministicTarZstd) {
@@ -1223,5 +1233,14 @@ archive = "sample"
     auto json     = rstd::json::from_str(protocol.as_str()).unwrap();
     EXPECT_EQ(json["schema"_str].as_str().unwrap(),
               lito::registry::REGISTRY_INSPECTION_CANDIDATE_SCHEMA);
-    EXPECT_EQ(json["unicode"_str].as_str().unwrap(), "16.0.0"_str);
+    EXPECT_EQ(json["protocol"_str].as_str().unwrap(), lito::registry::REGISTRY_INSPECTION_PROTOCOL);
+    EXPECT_EQ(json["receipt"_str].as_str().unwrap(), lito::registry::REGISTRY_INSPECTOR_RECEIPT);
+    EXPECT_TRUE(json["unicode"_str].is_null());
+
+    auto capabilities =
+        rstd::json::from_str(lito::registry::registry_inspector_capabilities_json().as_str())
+            .unwrap();
+    EXPECT_EQ(capabilities["schema"_str].as_str().unwrap(),
+              "lito.registry.inspector-capabilities.v2"_str);
+    EXPECT_TRUE(capabilities["unicode"_str].is_null());
 }
