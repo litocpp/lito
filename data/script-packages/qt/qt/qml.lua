@@ -392,6 +392,7 @@ local function generate_static_plugin(request, prefix, registration, cache_enabl
         source = source,
         mode = "separate",
         output = prefix .. "/moc_" .. plugin_name .. ".cpp",
+        plugin_metadata = { uri = request.uri },
       },
     },
   })[1]

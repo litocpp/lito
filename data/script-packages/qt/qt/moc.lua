@@ -33,6 +33,31 @@ local function append_preprocessor_arguments(arguments, environment)
   end
 end
 
+local function append_plugin_metadata(arguments, metadata)
+  if metadata == nil then
+    return
+  end
+  if type(metadata) ~= "table" then
+    error("qt.moc.plugin_metadata must be table")
+  end
+
+  local keys = {}
+  for key, value in pairs(metadata) do
+    if type(key) ~= "string" or key == "" or key:find("=", 1, true) ~= nil or
+        key:find("%c") ~= nil then
+      error("qt.moc.plugin_metadata keys must be non-empty strings without '=' or control characters")
+    end
+    if type(value) ~= "string" or value:find("%c") ~= nil then
+      error("qt.moc.plugin_metadata." .. key .. " must be string without control characters")
+    end
+    append(keys, key)
+  end
+  table.sort(keys)
+  for _, key in ipairs(keys) do
+    append(arguments, "-M" .. key .. "=" .. metadata[key])
+  end
+end
+
 local function depfile_roots(environment)
   local result = {}
   for _, value in ipairs(environment.include_directories) do
@@ -77,6 +102,7 @@ local function generate_one(request, tool, environment, entry)
 
   local arguments = {}
   append_preprocessor_arguments(arguments, environment)
+  append_plugin_metadata(arguments, entry.plugin_metadata)
   if mode == "include" or mode == "module-split" then
     append(arguments, "-i")
   elseif mode ~= "separate" then
