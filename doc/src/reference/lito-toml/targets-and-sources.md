@@ -5,7 +5,10 @@
 A package has at most one library target.
 
 - `name` is required and is a package-style target name.
-- `archive` is required and is a safe artifact basename. `.` and `..` are rejected.
+- Static output uses `archive`; shared output uses `kind = "shared"` and `artifact`. Output basenames
+  are safe names; `.` and `..` are rejected.
+- `linker-options` is an optional array for a shared library's own link action. It is rejected for a
+  static library and never becomes consumer usage.
 - `module` is optional for an explicit source list and required for module convention discovery.
 - `sources` is an optional non-empty array of package-relative paths. Presence selects explicit
   source ownership.

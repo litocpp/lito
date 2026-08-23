@@ -1027,6 +1027,7 @@ name = "fixture-shared-library"
 kind = "shared"
 artifact = "fixture_shared"
 module = "fixture.shared_library"
+linker-options = ["-Wl,--version-script=fixture.map"]
 )toml"_str);
     ASSERT_TRUE(shared_project.is_ok());
     auto shared = lito::manifest::load_package_manifest(shared_project->root.as_path());
@@ -1036,6 +1037,9 @@ module = "fixture.shared_library"
     EXPECT_TRUE(shared->targets[usize {}].as_Library().output.is_Shared());
     EXPECT_EQ(shared->targets[usize {}].as_Library().output.as_Shared().artifact.as_str(),
               "fixture_shared"_str);
+    ASSERT_EQ(shared->targets[usize {}].as_Library().linker_options.len(), usize(1));
+    EXPECT_EQ(shared->targets[usize {}].as_Library().linker_options[usize {}].as_str(),
+              "-Wl,--version-script=fixture.map"_str);
 
     constexpr ref<str> invalid[] = {
         R"toml([package]
@@ -1051,6 +1055,13 @@ name = "fixture-static-artifact"
 name = "fixture-static-artifact"
 kind = "static"
 artifact = "fixture"
+)toml"_str,
+        R"toml([package]
+name = "fixture-static-linker-options"
+[lib]
+name = "fixture-static-linker-options"
+archive = "fixture"
+linker-options = ["-Wl,--as-needed"]
 )toml"_str,
         R"toml([package]
 name = "fixture-two-library-outputs"

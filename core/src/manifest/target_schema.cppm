@@ -468,9 +468,11 @@ auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib.name must be a valid target name"_str);
     }
-    auto kind     = rstd_try(optional_string(**value, "kind"_str, "manifest.lib"_str));
-    auto archive  = rstd_try(optional_string(**value, "archive"_str, "manifest.lib"_str));
-    auto artifact = rstd_try(optional_string(**value, "artifact"_str, "manifest.lib"_str));
+    auto kind           = rstd_try(optional_string(**value, "kind"_str, "manifest.lib"_str));
+    auto archive        = rstd_try(optional_string(**value, "archive"_str, "manifest.lib"_str));
+    auto artifact       = rstd_try(optional_string(**value, "artifact"_str, "manifest.lib"_str));
+    auto linker_options = rstd_try(
+        string_array(member(**value, "linker-options"_str), "manifest.lib.linker-options"_str));
     if (archive.is_some() == artifact.is_some()) {
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib must contain exactly one of 'archive' or 'artifact'"_str);
@@ -498,13 +500,17 @@ auto parse_library_target(Option<ref<Toml>> value, PackageLanguage language)
         return manifest_schema_failure<Option<PackageTargetManifest>>(
             "manifest.lib output must be a safe artifact basename"_str);
     }
+    if (output.is_Static() && ! linker_options.is_empty()) {
+        return manifest_schema_failure<Option<PackageTargetManifest>>(
+            "manifest.lib.linker-options requires kind 'shared'"_str);
+    }
     auto source = rstd_try(parse_target_source(**value,
                                                "manifest.lib"_str,
                                                DataPath().with_field("lib"_str),
                                                language == PackageLanguage::Cpp,
                                                language));
-    return Ok(Some(
-        PackageTargetManifest::Library(rstd::move(name), rstd::move(output), rstd::move(source))));
+    return Ok(Some(PackageTargetManifest::Library(
+        rstd::move(name), rstd::move(output), rstd::move(source), rstd::move(linker_options))));
 }
 
 auto parse_runtime_resources(Option<ref<Toml>> value, const DataPath& owner_path)

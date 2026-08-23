@@ -71,7 +71,9 @@ class LibraryOutput {
 
 class PackageTargetManifest {
     RSTD_ENUM(PackageTargetManifest,
-              (Library, (String name; LibraryOutput output; TargetSourceManifest source;)),
+              (Library,
+               (String name; LibraryOutput output; TargetSourceManifest source;
+                Vec<String>                                             linker_options;)),
               (Binary,
                (String name; TargetSourceManifest source; bool link_stdlib;
                 Vec<RuntimeResourceManifest>                   resources;)),
@@ -122,6 +124,13 @@ auto package_target_artifact_name(const PackageTargetManifest& target) noexcept 
 
 auto package_library_is_shared(const PackageTargetManifest& target) noexcept -> bool {
     return target.is_Library() && target.as_Library().output.is_Shared();
+}
+
+auto package_target_linker_options(const PackageTargetManifest& target) noexcept
+    -> Option<ref<Vec<String>>> {
+    if (! target.is_Library()) return None();
+    return Some(
+        ref<Vec<String>>::from_raw_parts(rstd::addressof(target.as_Library().linker_options)));
 }
 
 auto package_target_links_stdlib(const PackageTargetManifest& target) noexcept -> bool {

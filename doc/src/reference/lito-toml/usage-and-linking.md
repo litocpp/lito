@@ -34,6 +34,10 @@ settings are diagnosed.
 requirement and is never copied to a consuming target. A package without a shared library, binary,
 test, or benchmark cannot declare linker options.
 
+Use `[lib].linker-options` when an option belongs only to the shared library link action, such as an
+ELF symbol version script. Package `[usage].linker-options` remains appropriate only when every link
+action owned by the package requires the option.
+
 A shared library is a native link boundary. Its private and link-only dependencies are consumed
 while producing the shared object, but their link arguments and typed link requirements are not
 replayed when another target links that shared object. Dependencies declared public remain part of

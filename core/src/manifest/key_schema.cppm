@@ -29,7 +29,7 @@ auto package_publish_key(ref<str> key) -> bool {
 auto library_key(ref<str> key) -> bool {
     return key == "name"_str || key == "kind"_str || key == "archive"_str ||
            key == "artifact"_str || key == "module"_str || key == "sources"_str ||
-           key == "source-groups"_str || key == "when"_str;
+           key == "source-groups"_str || key == "when"_str || key == "linker-options"_str;
 }
 
 auto runnable_key(ref<str> key) -> bool {

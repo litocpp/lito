@@ -236,21 +236,33 @@ auto validate_usage(const lito::manifest::PackageManifest& package, bool has_lin
             rstd::format("{} requires a shared library, binary, test, or benchmark target",
                          usage_source(package, "usage.linker-options"_str).as_str()));
     }
-    for (auto index = usize {}; index < usage.linker_options.len(); ++index) {
-        const auto& option = usage.linker_options[index];
-        if (option.as_str() == "-pthread"_str) {
-            return adapter_failure<empty>(
-                rstd::format("{} option '-pthread' must be declared as usage.threads",
-                             usage_source(package, "usage.linker-options"_str).as_str()));
+    const auto validate_linker_options =
+        [&](const Vec<String>& options, ref<str> source) -> lito::package::PackageResult<empty> {
+        for (const auto& option : options) {
+            if (option.as_str() == "-pthread"_str) {
+                return adapter_failure<empty>(
+                    rstd::format("{} option '-pthread' must be declared as usage.threads", source));
+            }
+            if (! option.as_str().starts_with("-stdlib="_str) &&
+                option.as_str() != "-nostdlib++"_str &&
+                ! is_profile_owned_linker_option(option.as_str())) {
+                continue;
+            }
+            return adapter_failure<empty>(rstd::format(
+                "{} option '{}' overrides a Lito-owned setting", source, option.as_str()));
         }
-        if (! option.as_str().starts_with("-stdlib="_str) && option.as_str() != "-nostdlib++"_str &&
-            ! is_profile_owned_linker_option(option.as_str())) {
-            continue;
-        }
-        return adapter_failure<empty>(
-            rstd::format("{} option '{}' overrides a Lito-owned setting",
-                         usage_source(package, "usage.linker-options"_str).as_str(),
-                         option.as_str()));
+        return Ok(empty {});
+    };
+    auto package_linker_source = usage_source(package, "usage.linker-options"_str);
+    rstd_try(validate_linker_options(usage.linker_options, package_linker_source.as_str()));
+    for (const auto& target : package.targets) {
+        auto options = lito::manifest::package_target_linker_options(target);
+        if (options.is_none()) continue;
+        auto source = rstd::format("package '{}' manifest '{}' target '{}' linker-options",
+                                   package.name.as_str(),
+                                   package.manifest_path.as_path(),
+                                   lito::manifest::package_target_name(target));
+        rstd_try(validate_linker_options(**options, source.as_str()));
     }
     return Ok(empty {});
 }
@@ -581,6 +593,41 @@ auto resolve_usage_link(const lito::manifest::PackageManifest& package,
         .requirements = rstd::move(result),
         .options      = rstd::move(normalized->arguments.tokens),
     });
+}
+
+auto resolve_target_link(const lito::manifest::PackageManifest&       package,
+                         const lito::manifest::PackageTargetManifest& target,
+                         const UsageLinkResolution&                   package_link)
+    -> lito::package::PackageResult<UsageLinkResolution> {
+    auto result = UsageLinkResolution {
+        .requirements = package_link.requirements.clone(),
+        .options      = as<Clone>(package_link.options).clone(),
+    };
+    auto declared = lito::manifest::package_target_linker_options(target);
+    if (declared.is_none() || (**declared).is_empty()) return Ok(rstd::move(result));
+    auto source     = rstd::format("package '{}' manifest '{}' target '{}' linker-options",
+                                   package.name.as_str(),
+                                   package.manifest_path.as_path(),
+                                   lito::manifest::package_target_name(target));
+    auto normalized = lito::link::normalize_arguments(lito::link::ArgumentSequence {
+        .tokens   = as<Clone>(**declared).clone(),
+        .source   = source.clone(),
+        .identity = source.clone(),
+    });
+    if (normalized.is_err()) {
+        return adapter_failure<UsageLinkResolution>(
+            rstd::format("{}", rstd::move(normalized).unwrap_err()));
+    }
+    if (! normalized->profile_arguments.is_empty()) {
+        const auto& occurrence = normalized->profile_arguments[usize {}];
+        return adapter_failure<UsageLinkResolution>(
+            rstd::format("{} option '{}' overrides a Lito-owned setting",
+                         source.as_str(),
+                         occurrence.raw_tokens[usize {}].as_str()));
+    }
+    lito::link::append_requirements(result.requirements, normalized->requirements);
+    for (auto& option : normalized->arguments.tokens) result.options.push(rstd::move(option));
+    return Ok(rstd::move(result));
 }
 
 auto materialize_external_include_requirements(usize                            package_index,
@@ -1107,6 +1154,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                     .visibility = lito::dependency::DependencyVisibility::Private,
                 });
             }
+            auto target_link =
+                rstd_try(resolve_target_link(package.manifest, manifest_target, link));
             targets.push(ResolvedTarget {
                 .id                      = rstd::move(id),
                 .package_source_identity = package.source_identity.clone(),
@@ -1119,7 +1168,8 @@ auto adapt_package_graph_metadata(lito::package::ResolvedPackageGraph        gra
                 .source_groups = rstd::move(source_groups),
                 .root          = package.manifest.root.clone(),
                 .source_root   = package.manifest.source_root.clone(),
-                .usage = clone_usage(package.manifest.usage, arguments, interface_arguments, link),
+                .usage         = clone_usage(
+                    package.manifest.usage, arguments, interface_arguments, target_link),
                 .attachments       = rstd::move(attachments),
                 .runtime_resources = rstd::move(runtime_resources),
                 .dependencies      = rstd::move(target_dependencies),
