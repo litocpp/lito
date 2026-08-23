@@ -3,6 +3,7 @@ export module lito.core:manifest.dependency;
 import rstd;
 import :source.requirement;
 import :dependency.visibility;
+import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
 import :dependency.source;
@@ -53,6 +54,11 @@ struct WorkspaceCMakeExternalDependencyReference {
     Option<lito::dependency::ExternalDependencyCondition> condition;
 };
 
+struct WorkspaceCargoExternalDependencyReference {
+    String                                       alias;
+    lito::dependency::CargoDependencyConsumption consumption;
+};
+
 struct WorkspaceDependencyDefinition {
     String                                 name;
     lito::source::PackageSourceRequirement source;
@@ -72,6 +78,11 @@ struct WorkspaceCMakeExternalDependencyDefinition {
     Option<PathBuf>                                 config_directory;
     Vec<lito::dependency::CMakeCacheEntry>          cache;
     Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
+};
+
+struct WorkspaceCargoExternalDependencyDefinition {
+    String                                  alias;
+    lito::dependency::CargoDependencyRecipe recipe;
 };
 
 struct PackageExternalSourceDeclaration {

@@ -169,6 +169,37 @@ auto append_unique(lito::link::Requirements& output, const ResolvedExternalDepen
     }
 }
 
+auto append_external_link_input(Vec<PlannedLinkInput>&                      inputs,
+                                Option<lito::link::RustStaticRuntimeUsage>& rust_runtime,
+                                const ResolvedExternalDependency&           external,
+                                ref<str> target) -> lito::package::PackageResult<empty> {
+    const auto& incoming = external.link_compatibility.rust_static_runtime;
+    if (incoming.is_none()) {
+        if (! external.link_arguments.tokens.is_empty()) {
+            inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
+        }
+        return Ok(empty {});
+    }
+    if (rust_runtime.is_some()) {
+        if (rust_runtime->artifact_identity == incoming->artifact_identity.as_str()) {
+            return Ok(empty {});
+        }
+        return plan_failure<empty>(rstd::format(
+            "Rust static runtime conflict in final target '{}': {} ({}) conflicts with {} ({}); "
+            "aggregate the Rust crates behind one Cargo facade staticlib",
+            target,
+            rust_runtime->source.as_str(),
+            rust_runtime->artifact_identity.as_str(),
+            incoming->source.as_str(),
+            incoming->artifact_identity.as_str()));
+    }
+    rust_runtime = Some(incoming->clone());
+    if (! external.link_arguments.tokens.is_empty()) {
+        inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
+    }
+    return Ok(empty {});
+}
+
 auto append_unique(Vec<TargetId>& output, TargetId value) -> bool {
     for (auto existing : output) {
         if (existing == value) return false;
@@ -906,6 +937,7 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
         if (ordered.is_err()) return Err(rstd::move(ordered).unwrap_err());
         auto& inputs               = link_inputs[target];
         auto& requirements         = link_requirements[target];
+        auto  rust_runtime         = Option<lito::link::RustStaticRuntimeUsage> {};
         requirements.posix_threads = lito::compiler::uses_posix_threads(
             contexts[target].language.is_C() ? contexts[target].language.as_C().options.common
                                              : contexts[target].language.as_Cpp().options.common);
@@ -936,16 +968,17 @@ auto resolve_native_targets(const PackageMetadata& package, SourceTargetSelectio
             inputs.push(PlannedLinkInput::Target(candidate));
             for (const auto& external : package.targets[candidate].external_dependencies) {
                 append_unique(requirements, external);
-                if (! external.link_arguments.tokens.is_empty()) {
-                    inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
-                }
+                rstd_try(
+                    append_external_link_input(inputs,
+                                               rust_runtime,
+                                               external,
+                                               target_text(package.targets[target].id).as_str()));
             }
         }
         for (const auto& external : package.targets[target].external_dependencies) {
             append_unique(requirements, external);
-            if (! external.link_arguments.tokens.is_empty()) {
-                inputs.push(PlannedLinkInput::External(external.link_arguments.clone()));
-            }
+            rstd_try(append_external_link_input(
+                inputs, rust_runtime, external, target_text(package.targets[target].id).as_str()));
         }
     }
 

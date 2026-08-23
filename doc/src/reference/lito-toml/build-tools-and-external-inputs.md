@@ -95,8 +95,39 @@ prefix, or the CMake query build. Set names are unique within one dependency ali
 logical path and canonical source for later selection by `install.lua`; the function does not make
 the files compile or link inputs.
 
+## Cargo external dependencies
+
+`[external-dependencies.cargo.NAME]` requires:
+
+- `source`: a package external source name;
+- `package`: the exact Cargo workspace package name;
+- `crate-type = "staticlib"`;
+- `visibility = "public" | "private" | "link"`.
+
+Optional fields are:
+
+- `manifest-path`, a normal relative path below the external source, defaulting to `Cargo.toml`;
+- `features`, a unique list of Cargo feature names;
+- `default-features`, defaulting to `true`;
+- `profile`, a Cargo profile name;
+- `condition`, evaluated in the consuming Lito package context.
+
+Cargo features are sorted before they enter the request. Without `profile`, Lito debug and release
+families select Cargo `dev` and `release`; the plain family requires an explicit Cargo profile.
+There is no manifest target override: Lito validates Cargo's reported host triple against the
+effective native target.
+
+`[workspace.external-dependencies.cargo.NAME]` owns `source`, `package`, `manifest-path`, and
+`crate-type`. A member reference sets `workspace = true` and owns `features`, `default-features`,
+`profile`, `visibility`, and `condition`. The referenced external source must also be declared by
+the workspace.
+
+The Cargo workspace must already contain `Cargo.lock`. Lito never creates or updates it. The
+provider produces only link usage; headers, C++ wrappers, and include visibility remain normal
+package usage.
+
 ## Owner boundary
 
-External source paths are resolved by the package or workspace that declares them. CMake,
+External source paths are resolved by the package or workspace that declares them. CMake, Cargo,
 source-group, and include-directory consumers receive that resolved source; they do not reinterpret
 the declaration relative to the root application.

@@ -161,3 +161,63 @@ TEST(DependencyUsage, LinkOnlyDependencyStillChecksArtifactAbi) {
     EXPECT_TRUE(error.as_Message().message.as_str().contains("standard library ABI modes"_str));
     EXPECT_TRUE(error.as_Message().message.as_str().contains("_GLIBCXX_DEBUG"_str));
 }
+
+auto rust_runtime_dependency(ref<str> identity, ref<str> source)
+    -> lito::cpp::ResolvedExternalDependency {
+    return lito::cpp::ResolvedExternalDependency {
+        .alias    = String::make(source),
+        .provider = String::make("cargo"_str),
+        .link_arguments =
+            lito::link::ArgumentSequence {
+                .tokens   = strings(rstd::format("/tmp/{}.a", identity).as_str()),
+                .source   = String::make(source),
+                .identity = String::make(identity),
+            },
+        .link_compatibility =
+            lito::link::Compatibility {
+                .rust_static_runtime = Some(lito::link::RustStaticRuntimeUsage {
+                    .artifact_identity = String::make(identity),
+                    .source            = String::make(source),
+                }),
+            },
+        .identity = String::make(identity),
+    };
+}
+
+TEST(DependencyUsage, RustStaticRuntimeDeduplicatesAnIdenticalClosure) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto metadata =
+        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    ASSERT_TRUE(metadata.is_ok());
+    auto& external = metadata->targets[usize {}].external_dependencies;
+    external.clear();
+    external.push(rust_runtime_dependency("rust-runtime-a"_str, "Cargo first"_str));
+    external.push(rust_runtime_dependency("rust-runtime-a"_str, "Cargo second"_str));
+
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_ok());
+    ASSERT_EQ(planned->link_inputs[usize(1)].len(), usize(2));
+    EXPECT_TRUE(planned->link_inputs[usize(1)][usize {}].is_Target());
+    EXPECT_TRUE(planned->link_inputs[usize(1)][usize(1)].is_External());
+}
+
+TEST(DependencyUsage, RustStaticRuntimeRejectsDifferentClosuresInOneFinalTarget) {
+    auto parser = lito::make_clang_cpp_argument_parser();
+    ASSERT_TRUE(parser.is_ok());
+    auto metadata =
+        external_usage_metadata(lito::dependency::DependencyVisibility::Private, *parser);
+    ASSERT_TRUE(metadata.is_ok());
+    auto& external = metadata->targets[usize {}].external_dependencies;
+    external.clear();
+    external.push(rust_runtime_dependency("rust-runtime-a"_str, "Cargo first"_str));
+    external.push(rust_runtime_dependency("rust-runtime-b"_str, "Cargo second"_str));
+
+    auto planned = lito::cpp::resolve_native_targets(*metadata, "debug"_str, Vec<String>::make());
+    ASSERT_TRUE(planned.is_err());
+    auto error = rstd::move(planned).unwrap_err();
+    ASSERT_TRUE(error.is_Message());
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("Rust static runtime conflict"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("Cargo first"_str));
+    EXPECT_TRUE(error.as_Message().message.as_str().contains("Cargo second"_str));
+}

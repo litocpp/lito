@@ -51,6 +51,7 @@ struct PkgConfig {
 };
 
 struct Tools {
+    Option<String>    cargo;
     Option<CMake>     cmake;
     Option<String>    tar;
     Option<String>    bsdtar;
@@ -254,6 +255,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Tools> {
     static auto deserialize(Deserializer& deserializer)
         -> Result<lito::config::wire::Tools, typename Deserializer::error_type> {
         auto cmake        = serde::OptionalField<lito::config::wire::CMake>("cmake"_str);
+        auto cargo        = serde::OptionalField<String>("cargo"_str);
         auto tar          = serde::OptionalField<String>("tar"_str);
         auto bsdtar       = serde::OptionalField<String>("bsdtar"_str);
         auto clang_format = serde::OptionalField<String>("clang-format"_str);
@@ -263,6 +265,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Tools> {
         auto strip        = serde::OptionalField<String>("strip"_str);
         rstd_try(serde::deserialize_record(deserializer,
                                            serde::UnknownFieldPolicy::Reject,
+                                           cargo,
                                            cmake,
                                            tar,
                                            bsdtar,
@@ -272,6 +275,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Tools> {
                                            pkg_config,
                                            strip));
         return Ok(lito::config::wire::Tools {
+            .cargo        = cargo.take(),
             .cmake        = cmake.take(),
             .tar          = tar.take(),
             .bsdtar       = bsdtar.take(),

@@ -120,6 +120,7 @@ struct ExternalDependencyUsage {
     Vec<ExternalHostToolUsage>   host_tools;
     lito::link::ArgumentSequence link_arguments;
     lito::link::Requirements     link_requirements;
+    lito::link::Compatibility    link_compatibility;
     String                       identity;
 
     auto clone() const -> ExternalDependencyUsage {
@@ -128,14 +129,15 @@ struct ExternalDependencyUsage {
         auto copied_tools = Vec<ExternalHostToolUsage>::with_capacity(host_tools.len());
         for (const auto& tool : host_tools) copied_tools.push(tool.clone());
         return ExternalDependencyUsage {
-            .alias             = alias.clone(),
-            .provider          = provider.clone(),
-            .version           = version.clone(),
-            .targets           = rstd::move(copied_targets),
-            .host_tools        = rstd::move(copied_tools),
-            .link_arguments    = link_arguments.clone(),
-            .link_requirements = link_requirements.clone(),
-            .identity          = identity.clone(),
+            .alias              = alias.clone(),
+            .provider           = provider.clone(),
+            .version            = version.clone(),
+            .targets            = rstd::move(copied_targets),
+            .host_tools         = rstd::move(copied_tools),
+            .link_arguments     = link_arguments.clone(),
+            .link_requirements  = link_requirements.clone(),
+            .link_compatibility = link_compatibility.clone(),
+            .identity           = identity.clone(),
         };
     }
 };
@@ -166,6 +168,7 @@ struct ResolvedExternalDependency {
     Vec<ExternalHostToolUsage>       host_tools;
     lito::link::ArgumentSequence     link_arguments;
     lito::link::Requirements         link_requirements;
+    lito::link::Compatibility        link_compatibility;
     String                           identity;
 
     auto clone() const -> ResolvedExternalDependency {
@@ -174,14 +177,15 @@ struct ResolvedExternalDependency {
         auto copied_tools = Vec<ExternalHostToolUsage>::with_capacity(host_tools.len());
         for (const auto& tool : host_tools) copied_tools.push(tool.clone());
         return ResolvedExternalDependency {
-            .alias             = alias.clone(),
-            .provider          = provider.clone(),
-            .version           = version.clone(),
-            .targets           = rstd::move(copied_targets),
-            .host_tools        = rstd::move(copied_tools),
-            .link_arguments    = link_arguments.clone(),
-            .link_requirements = link_requirements.clone(),
-            .identity          = identity.clone(),
+            .alias              = alias.clone(),
+            .provider           = provider.clone(),
+            .version            = version.clone(),
+            .targets            = rstd::move(copied_targets),
+            .host_tools         = rstd::move(copied_tools),
+            .link_arguments     = link_arguments.clone(),
+            .link_requirements  = link_requirements.clone(),
+            .link_compatibility = link_compatibility.clone(),
+            .identity           = identity.clone(),
         };
     }
 };

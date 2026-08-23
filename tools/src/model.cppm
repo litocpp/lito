@@ -11,6 +11,7 @@ export namespace lito::tools
 
 enum class Tool
 {
+    Cargo,
     CMake,
     Tar,
     BsdTar,
@@ -23,6 +24,7 @@ enum class Tool
 
 enum class HostToolCapability
 {
+    CargoBuild,
     CMakeProject,
     PkgConfigQuery,
     GitCheckout,
@@ -35,6 +37,7 @@ enum class HostToolCapability
 
 constexpr auto host_tool_capability_name(HostToolCapability capability) noexcept -> ref<str> {
     switch (capability) {
+    case HostToolCapability::CargoBuild: return "Cargo build"_str;
     case HostToolCapability::CMakeProject: return "CMake project"_str;
     case HostToolCapability::PkgConfigQuery: return "pkg-config query"_str;
     case HostToolCapability::GitCheckout: return "Git checkout"_str;
@@ -191,6 +194,7 @@ struct HostToolResolutionSink {
 
 constexpr auto tool_name(Tool tool) noexcept -> ref<str> {
     switch (tool) {
+    case Tool::Cargo: return "cargo"_str;
     case Tool::CMake: return "cmake"_str;
     case Tool::Tar: return "tar"_str;
     case Tool::BsdTar: return "bsdtar"_str;
@@ -205,6 +209,7 @@ constexpr auto tool_name(Tool tool) noexcept -> ref<str> {
 
 constexpr auto tool_description(Tool tool) noexcept -> ref<str> {
     switch (tool) {
+    case Tool::Cargo: return "Cargo executable"_str;
     case Tool::CMake: return "CMake executable"_str;
     case Tool::Tar: return "tar archive extractor"_str;
     case Tool::BsdTar: return "bsdtar archive extractor"_str;
@@ -218,6 +223,7 @@ constexpr auto tool_description(Tool tool) noexcept -> ref<str> {
 }
 
 struct ToolSpec {
+    PathBuf   cargo { PathBuf::from("cargo"_str) };
     PathBuf   cmake { PathBuf::from("cmake"_str) };
     PathBuf   tar { PathBuf::from("tar"_str) };
     PathBuf   bsdtar { PathBuf::from("bsdtar"_str) };
@@ -230,6 +236,7 @@ struct ToolSpec {
 
     auto requested(Tool tool) const noexcept -> ref<rstd::path::Path> {
         switch (tool) {
+        case Tool::Cargo: return cargo.as_path();
         case Tool::CMake: return cmake.as_path();
         case Tool::Tar: return tar.as_path();
         case Tool::BsdTar: return bsdtar.as_path();
@@ -255,6 +262,7 @@ struct ToolSpec {
 
     auto clone() const -> ToolSpec {
         return ToolSpec {
+            .cargo            = cargo.clone(),
             .cmake            = cmake.clone(),
             .tar              = tar.clone(),
             .bsdtar           = bsdtar.clone(),

@@ -115,7 +115,24 @@ auto workspace_runtime_dependency_reference_key(ref<str> key) -> bool {
 }
 
 auto external_dependencies_key(ref<str> key) -> bool {
-    return key == "cmake"_str || key == "pkg-config"_str;
+    return key == "cmake"_str || key == "pkg-config"_str || key == "cargo"_str;
+}
+
+auto cargo_external_key(ref<str> key) -> bool {
+    return key == "source"_str || key == "package"_str || key == "manifest-path"_str ||
+           key == "crate-type"_str || key == "features"_str || key == "default-features"_str ||
+           key == "profile"_str || key == "visibility"_str || key == "condition"_str ||
+           key == "workspace"_str;
+}
+
+auto workspace_cargo_external_key(ref<str> key) -> bool {
+    return key == "source"_str || key == "package"_str || key == "manifest-path"_str ||
+           key == "crate-type"_str;
+}
+
+auto workspace_cargo_external_reference_key(ref<str> key) -> bool {
+    return key == "workspace"_str || key == "features"_str || key == "default-features"_str ||
+           key == "profile"_str || key == "visibility"_str || key == "condition"_str;
 }
 
 auto cmake_external_key(ref<str> key) -> bool {

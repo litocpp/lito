@@ -28,6 +28,7 @@ struct WorkspaceManifest {
     Vec<WorkspaceExternalSourceDefinition>              external_sources;
     Vec<WorkspacePkgConfigExternalDependencyDefinition> pkg_config_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyDefinition>     cmake_external_dependencies;
+    Vec<WorkspaceCargoExternalDependencyDefinition>     cargo_external_dependencies;
 };
 
 } // namespace lito::manifest

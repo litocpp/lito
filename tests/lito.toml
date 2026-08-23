@@ -38,6 +38,8 @@ sources = [
   "src/dependency/cmake/manifest.cpp",
   "src/dependency/cmake/plan.cpp",
   "src/dependency/cmake/provider.cpp",
+  "src/dependency/cargo/manifest.cpp",
+  "src/dependency/cargo/provider.cpp",
   "src/dependency/pkg_config.cpp",
   "src/dependency/usage.cpp",
   "src/frontend/lexical/token.cpp",

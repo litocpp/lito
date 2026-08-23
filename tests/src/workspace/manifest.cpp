@@ -265,8 +265,8 @@ set(LitoFixture_VERSION "1.2.3")
 
     auto prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(prepared_sources.is_ok());
-    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
-    const auto& resolved = prepared_sources->dependencies[usize {}].requirement;
+    ASSERT_EQ(prepared_sources->cmake_dependencies.len(), usize(1));
+    const auto& resolved = prepared_sources->cmake_dependencies[usize {}].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
     EXPECT_EQ(resolved.source.as_Directory().root.as_path(),
               directory.join(PathBuf::from("cmake-package"_str).as_path()).as_path());

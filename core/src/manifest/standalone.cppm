@@ -396,6 +396,42 @@ auto cmake_dependencies(const PackageManifest& manifest) -> ManifestResult<Optio
     return Ok(Some(Toml::Table(rstd::move(table))));
 }
 
+auto cargo_dependencies(const PackageManifest& manifest) -> ManifestResult<Option<Toml>> {
+    if (manifest.cargo_external_dependencies.is_empty()) return Ok(Option<Toml> {});
+    auto table = Table::make();
+    for (const auto& dependency : manifest.cargo_external_dependencies) {
+        auto manifest_path = dependency.recipe.manifest_path.as_path().to_str();
+        if (manifest_path.is_none()) {
+            return standalone_failure<Option<Toml>>(
+                manifest, "Cargo external manifest-path is not valid UTF-8"_str);
+        }
+        auto value = Table::make();
+        value.insert(String::make("source"_str), string_value(dependency.recipe.source.as_str()));
+        value.insert(String::make("package"_str), string_value(dependency.recipe.package.as_str()));
+        value.insert(String::make("manifest-path"_str), string_value(*manifest_path));
+        value.insert(String::make("crate-type"_str), string_value("staticlib"_str));
+        if (! dependency.consumption.features.is_empty()) {
+            value.insert(String::make("features"_str),
+                         string_array(dependency.consumption.features));
+        }
+        if (! dependency.consumption.default_features) {
+            value.insert(String::make("default-features"_str), Toml::Boolean(false));
+        }
+        if (dependency.consumption.profile.is_some()) {
+            value.insert(String::make("profile"_str),
+                         string_value(dependency.consumption.profile->as_str()));
+        }
+        value.insert(String::make("visibility"_str),
+                     string_value(visibility_text(dependency.consumption.visibility)));
+        if (dependency.consumption.condition.is_some()) {
+            value.insert(String::make("condition"_str),
+                         string_value(dependency.consumption.condition->source.as_str()));
+        }
+        table.insert(dependency.alias.clone(), Toml::Table(rstd::move(value)));
+    }
+    return Ok(Some(Toml::Table(rstd::move(table))));
+}
+
 auto replace_optional(Table& root, ref<str> key, Option<Toml> value) -> void {
     if (value.is_some())
         root.insert(String::make(key), rstd::move(value).unwrap());
@@ -469,6 +505,10 @@ auto lito::manifest::serialize_standalone_package_manifest(const PackageManifest
     auto cmake = rstd_try(cmake_dependencies(manifest));
     if (cmake.is_some()) {
         external.insert(String::make("cmake"_str), rstd::move(cmake).unwrap());
+    }
+    auto cargo = rstd_try(cargo_dependencies(manifest));
+    if (cargo.is_some()) {
+        external.insert(String::make("cargo"_str), rstd::move(cargo).unwrap());
     }
     replace_optional(*root,
                      "external-dependencies"_str,

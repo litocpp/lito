@@ -27,6 +27,7 @@ stdlib = "libstdc++"
 stdlib-runtime = "dynamic"
 
 [tools]
+cargo = "custom-cargo"
 cmake = "custom-cmake"
 tar = "custom-tar"
 bsdtar = "custom-bsdtar"
@@ -134,6 +135,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->toolchain.cxx.as_path(), PathBuf::from("custom-cxx"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ld.as_path(), PathBuf::from("custom-ld"_str).as_path());
     EXPECT_EQ(loaded->toolchain.ar.as_path(), PathBuf::from("custom-ar"_str).as_path());
+    EXPECT_EQ(loaded->tools.cargo.as_path(), PathBuf::from("custom-cargo"_str).as_path());
     EXPECT_EQ(loaded->tools.cmake.as_path(), PathBuf::from("custom-cmake"_str).as_path());
     EXPECT_EQ(loaded->tools.tar.as_path(), PathBuf::from("custom-tar"_str).as_path());
     EXPECT_EQ(loaded->tools.bsdtar.as_path(), PathBuf::from("custom-bsdtar"_str).as_path());
@@ -142,6 +144,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(loaded->tools.git.as_path(), PathBuf::from("custom-git"_str).as_path());
     EXPECT_EQ(loaded->tools.pkg_config.as_path(), PathBuf::from("custom-pkg-config"_str).as_path());
     EXPECT_EQ(loaded->tools.strip.as_path(), PathBuf::from("custom-strip"_str).as_path());
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Cargo));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
     EXPECT_EQ(loaded->standard_library, lito::config::StandardLibrarySelection::Libstdcxx);
@@ -158,9 +161,11 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     ASSERT_TRUE(defaults.is_ok());
     EXPECT_EQ(defaults->standard_library, lito::config::StandardLibrarySelection::Auto);
     EXPECT_EQ(defaults->standard_library_runtime, lito::config::StandardLibraryRuntime::Dynamic);
+    EXPECT_EQ(defaults->tools.cargo.as_path(), PathBuf::from("cargo"_str).as_path());
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
     EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
+    EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::Cargo));
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::PkgConfig));
 

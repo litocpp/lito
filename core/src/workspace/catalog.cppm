@@ -104,7 +104,8 @@ public:
             ! manifest.workspace_dev_dependencies.is_empty() ||
             ! manifest.workspace_runtime_dependencies.is_empty() ||
             ! manifest.workspace_pkg_config_external_dependencies.is_empty() ||
-            ! manifest.workspace_cmake_external_dependencies.is_empty()) {
+            ! manifest.workspace_cmake_external_dependencies.is_empty() ||
+            ! manifest.workspace_cargo_external_dependencies.is_empty()) {
             return catalog_failure<WorkspaceCatalog>(rstd::format(
                 "package '{}' inherits workspace dependencies but is not a member of a "
                 "containing workspace",

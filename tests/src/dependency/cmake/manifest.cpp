@@ -108,11 +108,12 @@ targets = [
     ASSERT_EQ(graph->packages.len(), usize(1));
     auto external = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
-    ASSERT_EQ(external->dependencies.len(), usize(2));
+    ASSERT_EQ(external->cmake_dependencies.len(), usize(2));
     const auto resolved_index =
-        external->dependencies[usize {}].requirement.alias.as_str() == "fixture"_str ? usize {}
-                                                                                     : usize(1);
-    const auto& resolved = external->dependencies[resolved_index].requirement;
+        external->cmake_dependencies[usize {}].requirement.alias.as_str() == "fixture"_str
+            ? usize {}
+            : usize(1);
+    const auto& resolved = external->cmake_dependencies[resolved_index].requirement;
     ASSERT_TRUE(resolved.source.is_Directory());
     EXPECT_FALSE(resolved.source.as_Directory().identity.is_empty());
     EXPECT_FALSE(resolved.source.as_Directory().root.as_path().to_str().unwrap().is_empty());
@@ -156,8 +157,8 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     ASSERT_TRUE(graph.is_ok());
     auto external = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(external.is_ok());
-    ASSERT_EQ(external->dependencies.len(), usize(1));
-    const auto& resolved = external->dependencies[usize {}].requirement;
+    ASSERT_EQ(external->cmake_dependencies.len(), usize(1));
+    const auto& resolved = external->cmake_dependencies[usize {}].requirement;
     EXPECT_TRUE(resolved.source.is_Directory());
     ASSERT_TRUE(resolved.adapter.is_some());
     EXPECT_TRUE(resolved.adapter->as_path().starts_with(directory.as_path()));
@@ -196,8 +197,8 @@ targets = [{ name = "FixtureShader::shader", visibility = "private" }]
     ASSERT_TRUE(external.source.is_Package());
     EXPECT_EQ(external.source.as_Package().path.as_path().to_str().unwrap(), "shaders"_str);
 
-    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
-    const auto& prepared = prepared_sources->dependencies[usize {}].requirement;
+    ASSERT_EQ(prepared_sources->cmake_dependencies.len(), usize(1));
+    const auto& prepared = prepared_sources->cmake_dependencies[usize {}].requirement;
     ASSERT_TRUE(prepared.source.is_Directory());
     EXPECT_TRUE(prepared.source.as_Directory().identity.as_str().starts_with(
         "lito-package-external-v1\n"_str));
@@ -243,9 +244,9 @@ TEST_F(CMakeManifest, InstalledOverridePreservesLockedGitProvenanceWithoutFetchi
     auto prepared = lito::prepare_external_dependency_sources(
         graph, selected, rstd::move(declared).unwrap(), overrides, resolver, *environment);
     ASSERT_TRUE(prepared.is_ok());
-    ASSERT_EQ(prepared->dependencies.len(), usize(1));
-    EXPECT_TRUE(prepared->dependencies[usize {}].requirement.source.is_Find());
-    EXPECT_TRUE(prepared->dependencies[usize {}].requirement.source_name.is_none());
+    ASSERT_EQ(prepared->cmake_dependencies.len(), usize(1));
+    EXPECT_TRUE(prepared->cmake_dependencies[usize {}].requirement.source.is_Find());
+    EXPECT_TRUE(prepared->cmake_dependencies[usize {}].requirement.source_name.is_none());
 }
 
 TEST_F(CMakeManifest, InstalledOverrideRejectsMissesAndRetainsAdapter) {
@@ -285,7 +286,7 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     auto unselected = lito::prepare_external_dependency_sources(
         *graph, {}, rstd::move(unselected_declared).unwrap(), overrides, resolver, *environment);
     ASSERT_TRUE(unselected.is_ok());
-    EXPECT_TRUE(unselected->dependencies.is_empty());
+    EXPECT_TRUE(unselected->cmake_dependencies.is_empty());
 
     auto declared = lito::resolve_external_dependency_sources(*graph, {}, resolver, *environment);
     ASSERT_TRUE(declared.is_ok());
@@ -308,8 +309,8 @@ targets = [{ name = "LitoSourceAdapter::fixture", visibility = "private" }]
     auto override_result = lito::prepare_external_dependency_sources(
         *graph, selected, rstd::move(declared_again).unwrap(), overrides, resolver, *environment);
     ASSERT_TRUE(override_result.is_ok());
-    ASSERT_EQ(override_result->dependencies.len(), usize(1));
-    const auto& overridden = override_result->dependencies[usize {}];
+    ASSERT_EQ(override_result->cmake_dependencies.len(), usize(1));
+    const auto& overridden = override_result->cmake_dependencies[usize {}];
     EXPECT_TRUE(overridden.installed_override);
     EXPECT_TRUE(overridden.requirement.source.is_Find());
     EXPECT_TRUE(overridden.requirement.source_name.is_none());
@@ -657,8 +658,8 @@ targets = [{ name = "Fixture::fixture", visibility = "private" }]
     const auto source_count     = graph->sources.len();
     auto       prepared_sources = lito::prepare_external_dependency_sources(*graph, {});
     ASSERT_TRUE(prepared_sources.is_ok());
-    ASSERT_EQ(prepared_sources->dependencies.len(), usize(1));
-    const auto& prepared = prepared_sources->dependencies[usize {}].requirement;
+    ASSERT_EQ(prepared_sources->cmake_dependencies.len(), usize(1));
+    const auto& prepared = prepared_sources->cmake_dependencies[usize {}].requirement;
     ASSERT_TRUE(prepared.source.is_ArchitectureArchives());
     EXPECT_EQ(prepared.source.as_ArchitectureArchives().variants.len(), usize(2));
     EXPECT_EQ(graph->sources.len(), source_count);

@@ -6,6 +6,7 @@ export module lito.driver:dependency.catalog;
 import rstd;
 import lito.crypto;
 import lito.tools;
+import lito.tools.cargo;
 import lito.core;
 import lito.cpp;
 import :build.event;
@@ -13,6 +14,7 @@ import :build.layout;
 import lito.system;
 import lito.toolchain;
 import :dependency.cmake;
+import :dependency.cargo;
 import :dependency.external_source;
 import :dependency.preparation;
 import :dependency.pkg_config;
@@ -108,7 +110,7 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
         catalog_indices[package_index] = Some(catalog_index);
     }
     while (catalog_indices.len() < graph.packages.len()) catalog_indices.push(None());
-    for (const auto& declaration : external_sources.dependencies) {
+    for (const auto& declaration : external_sources.cmake_dependencies) {
         if (declaration.package >= graph.packages.len() ||
             catalog_indices[declaration.package].is_none()) {
             continue;
@@ -136,28 +138,6 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                                        return left.requirement.package < right.requirement.package;
                                    });
 
-    auto needs_archive_source = false;
-    for (const auto& source : external_sources.sources) {
-        if (source.acquired.is_none()) needs_archive_source = true;
-    }
-    if (bindings.is_empty() && ! needs_archive_source) {
-        auto source_catalog = cpp::ExternalSourceRootCatalog {};
-        for (const auto& source : external_sources.sources) {
-            if (source.acquired.is_none()) continue;
-            source_catalog.sources.push(cpp::ExternalSourceRoot {
-                .package  = source.package,
-                .name     = source.name.clone(),
-                .root     = source.acquired->root.clone(),
-                .identity = source.acquired->identity.clone(),
-            });
-        }
-        auto provenance = rstd_try(project_external_source_provenance(graph, source_catalog));
-        return Ok(PreparedExternalCatalog {
-            .usage      = rstd::move(result),
-            .sources    = rstd::move(source_catalog),
-            .provenance = rstd::move(provenance),
-        });
-    }
     auto source_catalog  = cpp::ExternalSourceRootCatalog {};
     auto archive_sources = Vec<usize>::make();
     auto source_archives = Vec<lito::source::ArchiveSourceFetchRequest>::make();
@@ -284,6 +264,27 @@ auto resolve_external_usage_catalog(const lito::package::ResolvedPackageGraph& g
                 SelectedCMakeDependencySource::Directory(
                     rstd::move(acquired.root), rstd::move(acquired.identity), true);
         }
+    }
+
+    auto cargo_provider = Option<lito::tools::cargo::Provider> {};
+    for (usize package_index {}; package_index < graph.packages.len(); ++package_index) {
+        if (catalog_indices[package_index].is_none()) continue;
+        const auto& package = graph.packages[package_index];
+        auto dependencies = resolve_cargo_dependencies(package.manifest.cargo_external_dependencies,
+                                                       package_index,
+                                                       package.manifest.name.as_str(),
+                                                       source_catalog,
+                                                       profile,
+                                                       platform,
+                                                       layout,
+                                                       tool_resolver,
+                                                       process_environment,
+                                                       jobs,
+                                                       cargo_provider,
+                                                       observer);
+        if (dependencies.is_err()) return Err(rstd::move(dependencies).unwrap_err());
+        auto& destination = result.packages[*catalog_indices[package_index]].dependencies;
+        for (auto& dependency : *dependencies) destination.push(rstd::move(dependency));
     }
 
     if (bindings.is_empty()) {

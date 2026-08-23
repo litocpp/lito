@@ -343,6 +343,52 @@ auto resolve_workspace_member_dependencies(lito::manifest::PackageManifest&     
                 dependency.source->as_str()));
         }
     }
+    for (const auto& reference : manifest.workspace_cargo_external_dependencies) {
+        const lito::manifest::WorkspaceCargoExternalDependencyDefinition* definition = nullptr;
+        for (const auto& candidate : workspace.cargo_external_dependencies) {
+            if (candidate.alias == reference.alias) {
+                definition = rstd::addressof(candidate);
+                break;
+            }
+        }
+        if (definition == nullptr) {
+            return workspace_failure<empty>(
+                rstd::format("workspace member '{}' inherits Cargo dependency '{}' but "
+                             "workspace.external-dependencies.cargo has no matching definition",
+                             manifest.name.as_str(),
+                             reference.alias.as_str()));
+        }
+        if (! inherit_workspace_external_source(
+                manifest, workspace, definition->recipe.source.as_str())) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' inherits Cargo dependency '{}' whose external source "
+                "'{}' has no matching workspace.external-sources definition",
+                manifest.name.as_str(),
+                reference.alias.as_str(),
+                definition->recipe.source.as_str()));
+        }
+        manifest.cargo_external_dependencies.push(lito::dependency::CargoDependencyRequirement {
+            .alias            = reference.alias.clone(),
+            .recipe           = definition->recipe.clone(),
+            .consumption      = reference.consumption.clone(),
+            .declaration_root = Some(workspace.root.clone()),
+        });
+    }
+    manifest.workspace_cargo_external_dependencies.clear();
+    for (const auto& dependency : manifest.cargo_external_dependencies) {
+        auto found = false;
+        for (const auto& source : manifest.external_sources) {
+            if (source.name == dependency.recipe.source.as_str()) found = true;
+        }
+        if (! found) {
+            return workspace_failure<empty>(rstd::format(
+                "workspace member '{}' Cargo dependency '{}' references unknown external source "
+                "'{}'",
+                manifest.name.as_str(),
+                dependency.alias.as_str(),
+                dependency.recipe.source.as_str()));
+        }
+    }
     return Ok(empty {});
 }
 

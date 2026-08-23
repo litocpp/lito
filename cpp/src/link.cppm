@@ -26,6 +26,31 @@ struct ArgumentSequence {
     }
 };
 
+struct RustStaticRuntimeUsage {
+    String artifact_identity;
+    String source;
+
+    auto clone() const -> RustStaticRuntimeUsage {
+        return RustStaticRuntimeUsage {
+            .artifact_identity = artifact_identity.clone(),
+            .source            = source.clone(),
+        };
+    }
+};
+
+struct Compatibility {
+    Option<RustStaticRuntimeUsage> rust_static_runtime;
+
+    auto clone() const -> Compatibility {
+        return Compatibility {
+            .rust_static_runtime =
+                rust_static_runtime.as_ref().map([](const RustStaticRuntimeUsage& usage) {
+                    return usage.clone();
+                }),
+        };
+    }
+};
+
 struct SystemLibraryRequirement : DefaultInClass<SystemLibraryRequirement, Clone> {
     String name;
     String source;

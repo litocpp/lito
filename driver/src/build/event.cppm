@@ -2,6 +2,7 @@ export module lito.driver:build.event;
 
 import rstd;
 import lito.tools.cmake;
+import lito.tools.cargo;
 import lito.core;
 import lito.toolchain;
 
@@ -37,6 +38,9 @@ enum class BuildEventKind
     CMakeQueryBuild,
     CMakeSnapshot,
     CMakeReuse,
+    CargoMetadata,
+    CargoBuild,
+    CargoReuse,
 };
 
 struct BuildProgress {
@@ -94,6 +98,9 @@ struct Impl<fmt::Display, lito::BuildEventKind> : ImplBase<lito::BuildEventKind>
         case lito::BuildEventKind::CMakeQueryBuild: name = "cmake-query-build"_str; break;
         case lito::BuildEventKind::CMakeSnapshot: name = "cmake-snapshot"_str; break;
         case lito::BuildEventKind::CMakeReuse: name = "cmake-reuse"_str; break;
+        case lito::BuildEventKind::CargoMetadata: name = "cargo-metadata"_str; break;
+        case lito::BuildEventKind::CargoBuild: name = "cargo-build"_str; break;
+        case lito::BuildEventKind::CargoReuse: name = "cargo-reuse"_str; break;
         }
         return formatter.write_str(name);
     }
@@ -109,4 +116,6 @@ auto source_observer(const Option<BuildEventSink>& observer) noexcept
     -> lito::source::SourceEventSink;
 auto cmake_observer(const Option<BuildEventSink>& observer) noexcept
     -> Option<lito::tools::cmake::EventSink>;
+auto cargo_observer(const Option<BuildEventSink>& observer) noexcept
+    -> Option<lito::tools::cargo::EventSink>;
 } // namespace lito

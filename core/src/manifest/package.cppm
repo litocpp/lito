@@ -10,6 +10,7 @@ import :manifest.build_tool;
 import :manifest.build_script;
 import :manifest.conditional;
 import :dependency.usage;
+import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
 
@@ -94,6 +95,8 @@ struct PackageManifest {
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config_external_dependencies;
     Vec<lito::dependency::CMakeDependencyRequirement>  cmake_external_dependencies;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake_external_dependencies;
+    Vec<lito::dependency::CargoDependencyRequirement>  cargo_external_dependencies;
+    Vec<WorkspaceCargoExternalDependencyReference>     workspace_cargo_external_dependencies;
 };
 
 } // namespace lito::manifest

@@ -10,6 +10,7 @@ import :manifest.dependency;
 import :manifest.error;
 import :package.identity;
 import :dependency.visibility;
+import :dependency.cargo;
 import :dependency.cmake;
 import :dependency.pkg_config;
 import :dependency.source;
@@ -646,6 +647,8 @@ struct ParsedExternalDependencies {
     Vec<WorkspacePkgConfigExternalDependencyReference> workspace_pkg_config;
     Vec<lito::dependency::CMakeDependencyRequirement>  cmake;
     Vec<WorkspaceCMakeExternalDependencyReference>     workspace_cmake;
+    Vec<lito::dependency::CargoDependencyRequirement>  cargo;
+    Vec<WorkspaceCargoExternalDependencyReference>     workspace_cargo;
 };
 
 auto parse_pkg_config_requirement(const Toml& specification, ref<str> context)
@@ -1050,6 +1053,181 @@ auto parse_workspace_cmake_external_dependencies(Option<ref<Toml>> value)
     return Ok(rstd::move(result));
 }
 
+auto cargo_feature_is_valid(ref<str> value) -> bool {
+    if (value.is_empty() || value.starts_with("-"_str)) return false;
+    for (auto byte : value.as_bytes()) {
+        const auto character = byte.to_primitive();
+        const auto alpha =
+            (character >= 'a' && character <= 'z') || (character >= 'A' && character <= 'Z');
+        const auto digit = character >= '0' && character <= '9';
+        if (! (alpha || digit || character == '_' || character == '-' || character == '+' ||
+               character == '.' || character == '/' || character == ':')) {
+            return false;
+        }
+    }
+    return true;
+}
+
+auto parse_cargo_features(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<Vec<String>> {
+    auto features = rstd_try(string_array(member(specification, "features"_str),
+                                          rstd::format("{}.features", context).as_str()));
+    auto seen     = rstd::collections::BTreeMap<String, empty>::make();
+    for (const auto& feature : features) {
+        if (! cargo_feature_is_valid(feature.as_str())) {
+            return manifest_schema_failure<Vec<String>>(rstd::format(
+                "{}.features contains invalid Cargo feature '{}'", context, feature.as_str()));
+        }
+        if (seen.contains_key(feature.as_str())) {
+            return manifest_schema_failure<Vec<String>>(
+                rstd::format("{}.features repeats Cargo feature '{}'", context, feature.as_str()));
+        }
+        seen.insert(feature.clone(), empty {});
+    }
+    rstd::slice_::sort_unstable(features.as_mut_slice().as_mut_ref());
+    return Ok(rstd::move(features));
+}
+
+auto parse_cargo_manifest_path(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<PathBuf> {
+    auto declared = rstd_try(optional_string(specification, "manifest-path"_str, context));
+    auto path     = declared.is_some() ? PathBuf::from(rstd::move(declared).unwrap())
+                                       : PathBuf::from("Cargo.toml"_str);
+    if (! path.as_path().is_relative()) {
+        return manifest_schema_failure<PathBuf>(
+            rstd::format("{}.manifest-path must be a relative path", context));
+    }
+    auto found = false;
+    for (auto component : path.as_path().components()) {
+        found = true;
+        if (! component.is_normal()) {
+            return manifest_schema_failure<PathBuf>(
+                rstd::format("{}.manifest-path must stay within the external source", context));
+        }
+    }
+    if (! found) {
+        return manifest_schema_failure<PathBuf>(
+            rstd::format("{}.manifest-path must not be empty", context));
+    }
+    return Ok(rstd::move(path));
+}
+
+auto parse_cargo_recipe(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<lito::dependency::CargoDependencyRecipe> {
+    auto source     = rstd_try(required_string(specification, "source"_str, context));
+    auto package    = rstd_try(required_string(specification, "package"_str, context));
+    auto crate_type = rstd_try(required_string(specification, "crate-type"_str, context));
+    if (! package_name_is_valid(source.as_str())) {
+        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
+            rstd::format("{}.source must name a package external source", context));
+    }
+    if (! package_name_is_valid(package.as_str())) {
+        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
+            rstd::format("{}.package must be a valid Cargo package name", context));
+    }
+    if (crate_type.as_str() != "staticlib"_str) {
+        return manifest_schema_failure<lito::dependency::CargoDependencyRecipe>(
+            rstd::format("{}.crate-type must be 'staticlib'", context));
+    }
+    return Ok(lito::dependency::CargoDependencyRecipe {
+        .package       = rstd::move(package),
+        .source        = rstd::move(source),
+        .manifest_path = rstd_try(parse_cargo_manifest_path(specification, context)),
+        .crate_type    = lito::dependency::CargoCrateType::StaticLibrary,
+    });
+}
+
+auto parse_cargo_consumption(const Toml& specification, ref<str> context)
+    -> ManifestSchemaResult<lito::dependency::CargoDependencyConsumption> {
+    auto features         = rstd_try(parse_cargo_features(specification, context));
+    auto default_features = true;
+    auto default_value    = member(specification, "default-features"_str);
+    if (default_value.is_some()) {
+        auto parsed = (**default_value).as_bool();
+        if (parsed.is_none()) {
+            return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+                rstd::format("{}.default-features must be a boolean", context));
+        }
+        default_features = *parsed;
+    }
+    auto profile = rstd_try(optional_string(specification, "profile"_str, context));
+    if (profile.is_some() && ! package_name_is_valid(profile->as_str())) {
+        return manifest_schema_failure<lito::dependency::CargoDependencyConsumption>(
+            rstd::format("{}.profile must be a valid Cargo profile name", context));
+    }
+    auto visibility = rstd_try(required_string(specification, "visibility"_str, context));
+    return Ok(lito::dependency::CargoDependencyConsumption {
+        .features         = rstd::move(features),
+        .default_features = default_features,
+        .profile          = rstd::move(profile),
+        .visibility =
+            rstd_try(parse_visibility(visibility.as_str(), "external Cargo visibility"_str)),
+        .condition = rstd_try(parse_external_dependency_condition(specification, context)),
+    });
+}
+
+struct ParsedCargoExternalDependencies {
+    Vec<lito::dependency::CargoDependencyRequirement> explicit_dependencies;
+    Vec<WorkspaceCargoExternalDependencyReference>    workspace_dependencies;
+};
+
+auto parse_cargo_external_dependencies(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<ParsedCargoExternalDependencies> {
+    auto result = ParsedCargoExternalDependencies {};
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = rstd_try(table_value(**value, "external-dependencies.cargo"_str));
+    for (auto key : table->keys()) {
+        const auto& alias   = *key;
+        auto        context = rstd::format("Cargo external dependency '{}'", alias.as_str());
+        if (! package_name_is_valid(alias.as_str())) {
+            return manifest_schema_failure<ParsedCargoExternalDependencies>(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+        }
+        auto specification = table->get(alias.as_str());
+        auto fields        = rstd_try(table_value(**specification, context.as_str()));
+        rstd_try(reject_unknown(*fields, context.as_str(), cargo_external_key));
+        auto inherited = rstd_try(workspace_reference_enabled(**specification, context.as_str()));
+        if (inherited) {
+            rstd_try(
+                reject_unknown(*fields, context.as_str(), workspace_cargo_external_reference_key));
+            result.workspace_dependencies.push(WorkspaceCargoExternalDependencyReference {
+                .alias       = alias.clone(),
+                .consumption = rstd_try(parse_cargo_consumption(**specification, context.as_str())),
+            });
+            continue;
+        }
+        result.explicit_dependencies.push(lito::dependency::CargoDependencyRequirement {
+            .alias       = alias.clone(),
+            .recipe      = rstd_try(parse_cargo_recipe(**specification, context.as_str())),
+            .consumption = rstd_try(parse_cargo_consumption(**specification, context.as_str())),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
+auto parse_workspace_cargo_external_dependencies(Option<ref<Toml>> value)
+    -> ManifestSchemaResult<Vec<WorkspaceCargoExternalDependencyDefinition>> {
+    auto result = Vec<WorkspaceCargoExternalDependencyDefinition>::make();
+    if (value.is_none()) return Ok(rstd::move(result));
+    auto table = rstd_try(table_value(**value, "workspace.external-dependencies.cargo"_str));
+    for (auto key : table->keys()) {
+        const auto& alias = *key;
+        auto context = rstd::format("workspace Cargo external dependency '{}'", alias.as_str());
+        if (! package_name_is_valid(alias.as_str())) {
+            return manifest_schema_failure<Vec<WorkspaceCargoExternalDependencyDefinition>>(
+                rstd::format("external dependency alias '{}' is invalid", alias.as_str()));
+        }
+        auto specification = table->get(alias.as_str());
+        auto fields        = rstd_try(table_value(**specification, context.as_str()));
+        rstd_try(reject_unknown(*fields, context.as_str(), workspace_cargo_external_key));
+        result.push(WorkspaceCargoExternalDependencyDefinition {
+            .alias  = alias.clone(),
+            .recipe = rstd_try(parse_cargo_recipe(**specification, context.as_str())),
+        });
+    }
+    return Ok(rstd::move(result));
+}
+
 auto parse_external_dependencies(Option<ref<Toml>> value)
     -> ManifestSchemaResult<ParsedExternalDependencies> {
     auto result = ParsedExternalDependencies {};
@@ -1060,20 +1238,26 @@ auto parse_external_dependencies(Option<ref<Toml>> value)
         reject_unknown(**table, "manifest.external-dependencies"_str, external_dependencies_key));
     auto pkg_config = parse_pkg_config_external_dependencies(member(**value, "pkg-config"_str));
     auto cmake      = parse_cmake_external_dependencies(member(**value, "cmake"_str));
+    auto cargo      = parse_cargo_external_dependencies(member(**value, "cargo"_str));
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
+    if (cargo.is_err()) return Err(rstd::move(cargo).unwrap_err());
     auto parsed_pkg_config      = rstd::move(pkg_config).unwrap();
     auto parsed_cmake           = rstd::move(cmake).unwrap();
+    auto parsed_cargo           = rstd::move(cargo).unwrap();
     result.pkg_config           = rstd::move(parsed_pkg_config.explicit_dependencies);
     result.workspace_pkg_config = rstd::move(parsed_pkg_config.workspace_dependencies);
     result.cmake                = rstd::move(parsed_cmake.explicit_dependencies);
     result.workspace_cmake      = rstd::move(parsed_cmake.workspace_dependencies);
+    result.cargo                = rstd::move(parsed_cargo.explicit_dependencies);
+    result.workspace_cargo      = rstd::move(parsed_cargo.workspace_dependencies);
     return Ok(rstd::move(result));
 }
 
 struct ParsedWorkspaceExternalDependencies {
     Vec<WorkspacePkgConfigExternalDependencyDefinition> pkg_config;
     Vec<WorkspaceCMakeExternalDependencyDefinition>     cmake;
+    Vec<WorkspaceCargoExternalDependencyDefinition>     cargo;
 };
 
 auto parse_workspace_external_dependencies(Option<ref<Toml>> value)
@@ -1087,9 +1271,12 @@ auto parse_workspace_external_dependencies(Option<ref<Toml>> value)
     auto pkg_config =
         parse_workspace_pkg_config_external_dependencies(member(**value, "pkg-config"_str));
     auto cmake = parse_workspace_cmake_external_dependencies(member(**value, "cmake"_str));
+    auto cargo = parse_workspace_cargo_external_dependencies(member(**value, "cargo"_str));
     if (pkg_config.is_err()) return Err(rstd::move(pkg_config).unwrap_err());
     if (cmake.is_err()) return Err(rstd::move(cmake).unwrap_err());
+    if (cargo.is_err()) return Err(rstd::move(cargo).unwrap_err());
     result.pkg_config = rstd::move(pkg_config).unwrap();
     result.cmake      = rstd::move(cmake).unwrap();
+    result.cargo      = rstd::move(cargo).unwrap();
     return Ok(rstd::move(result));
 }

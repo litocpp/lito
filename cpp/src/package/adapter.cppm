@@ -132,6 +132,28 @@ auto resolve_external_dependency_conditions(lito::package::ResolvedPackage& pack
         cmake.push(rstd::move(dependency));
     }
     package.manifest.cmake_external_dependencies = rstd::move(cmake);
+
+    auto cargo = Vec<lito::dependency::CargoDependencyRequirement>::with_capacity(
+        package.manifest.cargo_external_dependencies.len());
+    for (auto& dependency : package.manifest.cargo_external_dependencies) {
+        if (dependency.consumption.condition.is_some()) {
+            auto matched =
+                lito::condition::evaluate(dependency.consumption.condition->expression, context);
+            if (matched.is_err()) {
+                return Err(lito::package::PackageError::Message(rstd::format(
+                    "package '{}' manifest '{}' Cargo external dependency '{}' condition '{}' "
+                    "is invalid: {}",
+                    package.manifest.name.as_str(),
+                    package.manifest.manifest_path.as_path(),
+                    dependency.alias.as_str(),
+                    dependency.consumption.condition->source.as_str(),
+                    rstd::move(matched).unwrap_err())));
+            }
+            if (! *matched) continue;
+        }
+        cargo.push(rstd::move(dependency));
+    }
+    package.manifest.cargo_external_dependencies = rstd::move(cargo);
     return Ok(empty {});
 }
 
@@ -841,14 +863,15 @@ auto resolve_external_usage(Vec<ExternalDependencyUsage>    dependencies,
             });
         }
         result.push(ResolvedExternalDependency {
-            .alias             = rstd::move(dependency.alias),
-            .provider          = rstd::move(dependency.provider),
-            .version           = rstd::move(dependency.version),
-            .targets           = rstd::move(targets),
-            .host_tools        = rstd::move(dependency.host_tools),
-            .link_arguments    = rstd::move(dependency.link_arguments),
-            .link_requirements = rstd::move(dependency.link_requirements),
-            .identity          = rstd::move(dependency.identity),
+            .alias              = rstd::move(dependency.alias),
+            .provider           = rstd::move(dependency.provider),
+            .version            = rstd::move(dependency.version),
+            .targets            = rstd::move(targets),
+            .host_tools         = rstd::move(dependency.host_tools),
+            .link_arguments     = rstd::move(dependency.link_arguments),
+            .link_requirements  = rstd::move(dependency.link_requirements),
+            .link_compatibility = rstd::move(dependency.link_compatibility),
+            .identity           = rstd::move(dependency.identity),
         });
     }
     return Ok(rstd::move(result));

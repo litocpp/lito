@@ -28,7 +28,7 @@ struct AcquiredExternalDependencySource {
 };
 
 struct AcquiredExternalDependencySources {
-    Vec<AcquiredExternalDependencySource> dependencies;
+    Vec<AcquiredExternalDependencySource> cmake_dependencies;
     struct AcquiredPackageExternalSource {
         usize                                package {};
         usize                                declaration {};
@@ -216,8 +216,8 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                                         source_observer(observer));
     if (acquired.is_err()) return Err(rstd::move(acquired).unwrap_err());
 
-    auto tasks = Vec<ExternalSourceTask>::with_capacity(acquired->dependencies.len());
-    for (auto& source : acquired->dependencies) {
+    auto tasks = Vec<ExternalSourceTask>::with_capacity(acquired->cmake_dependencies.len());
+    for (auto& source : acquired->cmake_dependencies) {
         auto& package     = graph.packages[source.package];
         auto& declaration = package.manifest.cmake_external_dependencies[source.declaration];
         tasks.push(ExternalSourceTask {
@@ -273,7 +273,7 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
         }
     }
     auto outcomes = rstd::move(group).join();
-    result.dependencies.reserve(outcomes.len());
+    result.cmake_dependencies.reserve(outcomes.len());
     for (auto& outcome : outcomes) {
         auto value = rstd::move(outcome).into_value();
         if (value.is_none()) {
@@ -283,15 +283,15 @@ auto prepare_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
         auto prepared = rstd::move(value).unwrap_unchecked();
         if (prepared.is_err()) return Err(rstd::move(prepared).unwrap_err());
         auto task = rstd::move(prepared).unwrap();
-        result.dependencies.push(PreparedExternalDependency {
+        result.cmake_dependencies.push(PreparedCMakeDependency {
             .package            = task.package,
             .installed_override = task.installed_override,
             .requirement        = rstd::move(task.requirement),
         });
     }
     rstd::slice_::sort_unstable_by(
-        result.dependencies.as_mut_slice().as_mut_ref(),
-        [](const PreparedExternalDependency& left, const PreparedExternalDependency& right) {
+        result.cmake_dependencies.as_mut_slice().as_mut_ref(),
+        [](const PreparedCMakeDependency& left, const PreparedCMakeDependency& right) {
             if (left.package != right.package) return left.package < right.package;
             if (left.requirement.alias != right.requirement.alias) {
                 return left.requirement.alias < right.requirement.alias;

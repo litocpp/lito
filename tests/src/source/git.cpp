@@ -202,7 +202,7 @@ TEST_F(GitSource, PackageOwnedExternalKeepsGitProvenanceAndSourceRelativePath) {
     ASSERT_TRUE(prepared.is_ok());
     EXPECT_EQ(offline_events.count, usize {});
     auto found_package = false;
-    for (const auto& dependency : prepared->dependencies) {
+    for (const auto& dependency : prepared->cmake_dependencies) {
         if (graph->packages[dependency.package].manifest.name.as_str() != "owned-fixture"_str)
             continue;
         found_package      = true;
@@ -453,9 +453,9 @@ TEST_F(GitSource, GitUpdateRefreshesFloatingReferencesButKeepsCommitPins) {
                                                   usize(2));
     ASSERT_TRUE(reused.is_ok());
     ASSERT_EQ(reuse_graph.packages[usize {}].externals.len(), usize(1));
-    ASSERT_EQ(reused->dependencies.len(), usize(2));
-    EXPECT_EQ(reused->dependencies[usize {}].requirement.source.as_Directory().identity,
-              reused->dependencies[usize(1)].requirement.source.as_Directory().identity);
+    ASSERT_EQ(reused->cmake_dependencies.len(), usize(2));
+    EXPECT_EQ(reused->cmake_dependencies[usize {}].requirement.source.as_Directory().identity,
+              reused->cmake_dependencies[usize(1)].requirement.source.as_Directory().identity);
     auto reused_commit = resolved_git_commit(reuse_graph);
     ASSERT_TRUE(reused_commit.is_some());
     EXPECT_EQ(*reused_commit, previous->as_str());

@@ -216,6 +216,14 @@ public:
         return join(cmake_work_root().as_path(), recipe_identity);
     }
 
+    auto cargo_work_root() const -> PathBuf {
+        return join(dependency_work_root().as_path(), "cargo"_str);
+    }
+
+    auto cargo_work_root(ref<str> request_identity) const -> PathBuf {
+        return join(cargo_work_root().as_path(), request_identity);
+    }
+
     auto scan_cache_directory() const -> PathBuf {
         return join(output_.as_path(), "lito-scan-cache"_str);
     }

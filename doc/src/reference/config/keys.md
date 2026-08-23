@@ -48,6 +48,7 @@ stdlib = "auto"
 
 Simple host tool fields accept a searchable name or an absolute path:
 
+- `cargo`, default `cargo`;
 - `tar`, default `tar`;
 - `bsdtar`, default `bsdtar`;
 - `clang-format`, default `clang-format`;
@@ -57,6 +58,7 @@ Simple host tool fields accept a searchable name or an absolute path:
 
 ```toml
 [tools]
+cargo = "/opt/rust/bin/cargo"
 clang-format = "clang-format"
 git = "/opt/git/bin/git"
 ```
@@ -94,6 +96,11 @@ The tools namespace declares executable requests and provider settings; it does 
 a prerequisite. Lito resolves a role only when the selected command, package, external input,
 profile, or install entry produces an action that needs it. A configured executable may therefore
 be absent when the current invocation does not use its capability.
+
+`tools.cargo` is a scalar executable request. Lito resolves it only when a selected package has an
+active Cargo external dependency, then obtains the provider identity and host target from
+`cargo --version --verbose`. Cargo project configuration and registry credentials remain owned by
+Cargo; Lito has no Cargo argument or environment escape table.
 
 Archive extraction selects the first available provider. An explicitly configured `bsdtar` or
 `tar` is considered first, followed by the other archive tool and `cmake -E tar`. A valid

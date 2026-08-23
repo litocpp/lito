@@ -83,6 +83,17 @@ produce a mixed C/C++ graph.
 Do not hand-edit a high-version or incompatible lock into acceptance. Lito validates the lock
 format and uses the current manifest to compute the desired graph.
 
+Cargo external dependencies have a separate source-owned `Cargo.lock`. Lito always passes
+`--locked`; a missing lock or a dependency resolution that would change it is a Cargo provider
+failure and Lito does not fall back to inspecting Cargo's internal cache. Run the appropriate Cargo
+update command in the external project, review and commit that lock, then retry Lito.
+
+If Cargo reports that its host target does not match the Lito target, use a native Cargo toolchain
+for the selected Linux, macOS, or Windows MSVC build. Cross-target linker and SDK projection is not
+part of the Cargo staticlib contract. A `Rust static runtime conflict` means two different Cargo
+static libraries reached one final native target; expose both Rust subsystems through one façade
+crate and link its single `staticlib`.
+
 ## Performance and compiler failures
 
 Use `--verbose` for exact build events and `--timing-file FILE` for detailed scan, compile, archive,

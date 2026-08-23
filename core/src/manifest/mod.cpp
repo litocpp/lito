@@ -144,6 +144,7 @@ auto assemble_manifest_document(PathBuf                               root,
                 .external_sources                 = rstd::move(workspace_external_sources),
                 .pkg_config_external_dependencies = rstd::move(external_dependencies.pkg_config),
                 .cmake_external_dependencies      = rstd::move(external_dependencies.cmake),
+                .cargo_external_dependencies      = rstd::move(external_dependencies.cargo),
             }),
         });
     }
@@ -400,6 +401,15 @@ auto assemble_manifest_document(PathBuf                               root,
                 dependency.source->as_str()));
         }
     }
+    for (auto& dependency : external_dependencies.cargo) {
+        if (! has_external_source(dependency.recipe.source.as_str())) {
+            return manifest_schema_failure<ManifestDocument>(rstd::format(
+                "Cargo external dependency '{}' references unknown external source '{}'",
+                dependency.alias.as_str(),
+                dependency.recipe.source.as_str()));
+        }
+        dependency.declaration_root = Some(root.clone());
+    }
     auto profile = rstd_try(parse_project_profile(member(document, "profile"_str)));
 
     return Ok(ManifestDocument {
@@ -441,6 +451,9 @@ auto assemble_manifest_document(PathBuf                               root,
             .cmake_external_dependencies = rstd::move(external_dependencies.cmake),
             .workspace_cmake_external_dependencies =
                 rstd::move(external_dependencies.workspace_cmake),
+            .cargo_external_dependencies = rstd::move(external_dependencies.cargo),
+            .workspace_cargo_external_dependencies =
+                rstd::move(external_dependencies.workspace_cargo),
         }),
     });
 }

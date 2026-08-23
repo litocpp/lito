@@ -36,7 +36,7 @@ struct PreparedCMakeDependencyRequirement {
     Vec<lito::dependency::CMakeHostToolRequirement> host_tools;
 };
 
-struct PreparedExternalDependency {
+struct PreparedCMakeDependency {
     usize                              package {};
     bool                               installed_override { false };
     PreparedCMakeDependencyRequirement requirement;
@@ -50,7 +50,7 @@ struct PreparedPackageExternalSource {
 };
 
 struct PreparedExternalDependencySources {
-    Vec<PreparedExternalDependency>    dependencies;
+    Vec<PreparedCMakeDependency>       cmake_dependencies;
     Vec<PreparedPackageExternalSource> sources;
 };
 

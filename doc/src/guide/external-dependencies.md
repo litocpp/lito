@@ -82,6 +82,45 @@ endif()
 set under the CMake dependency alias. A package `install.lua` can materialize that set and use its
 destination to derive an install-only Linux `RUNPATH`; exporting it does not copy files by itself.
 
+## Cargo static libraries
+
+A Cargo dependency builds one library package as a Rust `staticlib` and links its C ABI into the
+consuming C or C++ target:
+
+```toml
+[external-sources.rust-math]
+path = "../rust-math"
+
+[external-dependencies.cargo.rust-math]
+source = "rust-math"
+package = "rust-math-ffi"
+crate-type = "staticlib"
+features = ["simd"]
+default-features = false
+visibility = "private"
+```
+
+`manifest-path` is relative to the external source and defaults to `Cargo.toml`. `profile` can
+select a Cargo profile; otherwise Lito debug and release profiles map to Cargo `dev` and `release`.
+A Lito plain profile must declare `profile` explicitly. Cargo dependencies require an existing
+workspace `Cargo.lock`, and Lito invokes Cargo with `--locked` and a Lito-owned target directory.
+
+The Cargo package owns its foreign ABI. Export stable `extern "C"` symbols, use C-compatible data
+representations, keep allocation and deallocation under one owner, and do not let Rust panic or C++
+exceptions cross an ordinary C ABI boundary. Lito does not generate headers or validate Rust ABI;
+declare headers through normal package usage, including an external-source include directory when
+appropriate.
+
+Lito obtains the exact archive and ordered native library closure from Cargo and rustc's public JSON
+and `native-static-libs` output. One final native link may contain only one distinct Rust static
+runtime closure. If several Rust crates are needed, aggregate them behind one Cargo façade crate
+that produces the single `staticlib`.
+
+Cargo source and build scripts are trusted build inputs. Lito fixes the package, features, profile,
+native target, lock policy, and output location, but it does not sandbox `build.rs`, proc macros, or
+Cargo registry access. Native Linux, macOS, and Windows MSVC builds are supported; cross targets,
+Android, Windows GNU, `rlib`, `dylib`, and `cdylib` are rejected in this contract.
+
 ## External source roots
 
 An external source has exactly one recipe:
@@ -91,8 +130,8 @@ An external source has exactly one recipe:
 - `archive` plus `sha256`;
 - architecture-specific `archives` with a digest for each canonical architecture.
 
-The same prepared source can back a CMake dependency, source group, or include directory. The
-package owner resolves it once and passes typed roots to each consumer.
+The same prepared source can back a CMake dependency, Cargo dependency, source group, or include
+directory. The package owner resolves it once and passes typed roots to each consumer.
 
 Archive acquisition checks an existing materialization, read-only fetch seeds, and the global file
 cache before resolving download or extraction tools. Fresh downloads use `tools.curl`; extraction

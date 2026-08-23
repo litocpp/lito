@@ -87,7 +87,8 @@ auto lito::package::load_builtin_package(ref<str> id) -> PackageResult<BuiltinPa
         package.script.is_none() || ! package.build_tools.is_empty() ||
         ! package.external_sources.is_empty() ||
         ! package.pkg_config_external_dependencies.is_empty() ||
-        ! package.cmake_external_dependencies.is_empty()) {
+        ! package.cmake_external_dependencies.is_empty() ||
+        ! package.cargo_external_dependencies.is_empty()) {
         return builtin_failure<BuiltinPackage>(
             rstd::format("builtin package '{}' must contain only a script contract", id));
     }

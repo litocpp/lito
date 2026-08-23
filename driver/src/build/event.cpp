@@ -3,6 +3,7 @@ module lito.driver;
 import rstd;
 import lito.core;
 import lito.tools.cmake;
+import lito.tools.cargo;
 
 using namespace rstd::prelude;
 using namespace rstd::literals;
@@ -69,6 +70,35 @@ auto cmake_observer(const Option<BuildEventSink>& observer) noexcept
     return Some(lito::tools::cmake::EventSink {
         .context = const_cast<BuildEventSink*>(rstd::addressof(*observer)),
         .notify  = forward_cmake_event,
+    });
+}
+
+auto build_event_kind(lito::tools::cargo::EventKind kind) noexcept -> BuildEventKind {
+    switch (kind) {
+    case lito::tools::cargo::EventKind::Metadata: return BuildEventKind::CargoMetadata;
+    case lito::tools::cargo::EventKind::Build: return BuildEventKind::CargoBuild;
+    case lito::tools::cargo::EventKind::Reuse: return BuildEventKind::CargoReuse;
+    }
+    return BuildEventKind::CargoBuild;
+}
+
+void forward_cargo_event(void* context, const lito::tools::cargo::Event& event) noexcept {
+    auto* observer = static_cast<const BuildEventSink*>(context);
+    if (observer == nullptr || observer->notify == nullptr) return;
+    observer->notify(observer->context,
+                     BuildEvent { build_event_kind(event.kind),
+                                  event.alias,
+                                  event.path,
+                                  event.elapsed,
+                                  event.completed });
+}
+
+auto cargo_observer(const Option<BuildEventSink>& observer) noexcept
+    -> Option<lito::tools::cargo::EventSink> {
+    if (observer.is_none() || observer->notify == nullptr) return None();
+    return Some(lito::tools::cargo::EventSink {
+        .context = const_cast<BuildEventSink*>(rstd::addressof(*observer)),
+        .notify  = forward_cargo_event,
     });
 }
 

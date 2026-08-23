@@ -65,7 +65,7 @@ auto resolve_package_owned_external(
     auto canonical = rstd::fs::canonicalize(requested.as_path());
     if (canonical.is_err()) {
         return Err(
-            lito::dependency::DependencyError::Io(String::make("resolve CMake external source"_str),
+            lito::dependency::DependencyError::Io(String::make("resolve external source"_str),
                                                   rstd::move(requested),
                                                   rstd::move(canonical).unwrap_err()));
     }
@@ -76,7 +76,7 @@ auto resolve_package_owned_external(
     auto normalized = relative->is_empty() ? PathBuf::from("."_str) : PathBuf::from(*relative);
     if (! normalized.as_path().is_safe_relative()) {
         return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
-            rstd::format("CMake external dependency '{}:{}' has unsafe package source path '{}'",
+            rstd::format("external source '{}:{}' has unsafe package source path '{}'",
                          package.manifest.name.as_str(),
                          declaration.name.as_str(),
                          normalized.as_path()));
@@ -84,13 +84,13 @@ auto resolve_package_owned_external(
     auto metadata = rstd::fs::metadata(physical.as_path());
     if (metadata.is_err()) {
         return Err(
-            lito::dependency::DependencyError::Io(String::make("inspect CMake external source"_str),
+            lito::dependency::DependencyError::Io(String::make("inspect external source"_str),
                                                   physical.clone(),
                                                   rstd::move(metadata).unwrap_err()));
     }
     if (! metadata->is_dir()) {
         return lito::dependency::dependency_failure<Option<PackageOwnedExternalSourceResolution>>(
-            rstd::format("CMake external dependency '{}:{}' source '{}' is not a directory",
+            rstd::format("external source '{}:{}' path '{}' is not a directory",
                          package.manifest.name.as_str(),
                          declaration.name.as_str(),
                          physical.as_path()));
@@ -429,6 +429,9 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                 .active_source      = rstd::move(active_source),
             });
         }
+        for (const auto& declaration : package.manifest.cargo_external_dependencies) {
+            rstd_try(activate_source(package_index, declaration.recipe.source.as_str()));
+        }
         for (const auto& target : package.manifest.targets) {
             for (const auto& group_name :
                  lito::manifest::package_target_source(target).source_groups) {
@@ -487,14 +490,14 @@ auto acquire_external_dependency_sources(lito::package::ResolvedPackageGraph& gr
                                    });
 
     auto result = AcquiredExternalDependencySources {};
-    result.dependencies.reserve(tasks.len());
+    result.cmake_dependencies.reserve(tasks.len());
     for (auto& task : tasks) {
         auto acquired = Option<lito::source::AcquiredSource> {};
         if (task.active_source.is_some() &&
             active_sources[*task.active_source].acquired.is_some()) {
             acquired = Some(clone_acquired_source(*active_sources[*task.active_source].acquired));
         }
-        result.dependencies.push(AcquiredExternalDependencySource {
+        result.cmake_dependencies.push(AcquiredExternalDependencySource {
             .package            = task.package,
             .declaration        = task.declaration,
             .installed_override = task.installed_override,

@@ -447,6 +447,7 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
             rstd_try(configured_executable(configured->as_str(), root.with_field(tool_name(tool))));
         switch (tool) {
         case lito::tools::Tool::Tar: result.executables.tar = rstd::move(executable); break;
+        case lito::tools::Tool::Cargo: result.executables.cargo = rstd::move(executable); break;
         case lito::tools::Tool::BsdTar: result.executables.bsdtar = rstd::move(executable); break;
         case lito::tools::Tool::ClangFormat:
             result.executables.clang_format = rstd::move(executable);
@@ -461,6 +462,7 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
         result.executables.mark_configured(tool);
         return Ok(empty {});
     };
+    rstd_try(apply(value->cargo, lito::tools::Tool::Cargo));
     rstd_try(apply(value->tar, lito::tools::Tool::Tar));
     rstd_try(apply(value->bsdtar, lito::tools::Tool::BsdTar));
     rstd_try(apply(value->clang_format, lito::tools::Tool::ClangFormat));
