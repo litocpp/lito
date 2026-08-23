@@ -53,6 +53,32 @@ auto inventory_base_path(String value) -> luato::Result<PathBuf> {
     return recipe_path(rstd::move(value), "inventory relative_to"_str);
 }
 
+auto pkg_config_module_is_valid(ref<str> value) -> bool {
+    if (value.is_empty() || value[usize {}] == u8('.')) return false;
+    for (auto byte : value.as_bytes()) {
+        const auto alpha =
+            (byte >= u8('a') && byte <= u8('z')) || (byte >= u8('A') && byte <= u8('Z'));
+        const auto digit = byte >= u8('0') && byte <= u8('9');
+        if (! alpha && ! digit && byte != u8('-') && byte != u8('_') && byte != u8('.') &&
+            byte != u8('+'))
+            return false;
+    }
+    return true;
+}
+
+auto pkg_config_line(String value, ref<str> context) -> luato::Result<String> {
+    if (value.is_empty()) {
+        return Err(luato::Error::binding(rstd::format("{} must not be empty", context)));
+    }
+    for (auto byte : value.as_str().as_bytes()) {
+        if (byte == u8('\n') || byte == u8('\r')) {
+            return Err(
+                luato::Error::binding(rstd::format("{} must not contain a line break", context)));
+        }
+    }
+    return Ok(rstd::move(value));
+}
+
 auto strip_mode(String value, ref<str> path) -> luato::Result<lito::artifact::StripMode> {
     if (value == "debuginfo"_str) return Ok(lito::artifact::StripMode::DebugInfo);
     if (value == "symbols"_str) return Ok(lito::artifact::StripMode::Symbols);
@@ -131,6 +157,38 @@ auto configure_values(luato::Table table) -> luato::Result<ConfigureValues> {
     return Ok(rstd::move(values));
 }
 
+auto string_array(const luato::Table& root, ref<str> field) -> luato::Result<Vec<String>> {
+    auto result = Vec<String>::make();
+    if (! root.contains(field)) return Ok(rstd::move(result));
+    auto array = root.required<luato::Array>(field);
+    if (array.is_err()) return Err(rstd::move(array).unwrap_err_unchecked());
+    if (array->is_empty()) {
+        return Err(
+            luato::Error::binding(rstd::format("{}.{} must not be empty", root.path(), field)));
+    }
+    result.reserve(array->len());
+    for (usize index {}; index < array->len(); ++index) {
+        const auto& value = array->values()[index];
+        if (! value.is_String()) {
+            return Err(luato::Error::binding(
+                rstd::format("{}.{}[{}] must be a string", root.path(), field, index + usize(1))));
+        }
+        auto item = value.as_String().value.clone();
+        if (item.is_empty()) {
+            return Err(luato::Error::binding(
+                rstd::format("{}.{}[{}] must not be empty", root.path(), field, index + usize(1))));
+        }
+        for (const auto& prior : result) {
+            if (prior == item.as_str()) {
+                return Err(luato::Error::binding(rstd::format(
+                    "{}.{}[{}] repeats '{}'", root.path(), field, index + usize(1), item)));
+            }
+        }
+        result.push(rstd::move(item));
+    }
+    return Ok(rstd::move(result));
+}
+
 auto environment_value(String name) -> luato::Result<Option<String>> {
     if (name.is_empty()) {
         return Err(
@@ -178,6 +236,7 @@ public:
                                 "external_assets"_str,
                                 "files"_str,
                                 "templates"_str,
+                                "pkg_config"_str,
                                 "inventories"_str }));
         auto recipe = InstallRecipe {
             .owner   = package_.name.clone(),
@@ -323,6 +382,66 @@ public:
                                              "install template destination"_str)),
                     .values = rstd_try(
                         configure_values(rstd_try(item.required<luato::Table>("values"_str)))),
+                });
+                return Ok(empty {});
+            }));
+        rstd_try(parse_array(
+            table, "pkg_config"_str, [&](luato::Table item, usize) -> luato::Result<empty> {
+                rstd_try(known_fields(item,
+                                      { "target"_str,
+                                        "module"_str,
+                                        "name"_str,
+                                        "description"_str,
+                                        "destination"_str,
+                                        "include_directory"_str,
+                                        "dependencies"_str }));
+                auto target = rstd_try(item.required<luato::Table>("target"_str));
+                rstd_try(known_fields(target, { "kind"_str, "name"_str }));
+                auto kind = rstd_try(target.required<String>("kind"_str));
+                if (kind != "lib"_str) {
+                    return Err(luato::Error::binding(
+                        String::make("pkg_config target.kind must be 'lib'"_str)));
+                }
+                auto module = String::make();
+                if (item.contains("module"_str)) {
+                    module = rstd_try(item.required<String>("module"_str));
+                    if (! pkg_config_module_is_valid(module.as_str())) {
+                        return Err(luato::Error::binding(rstd::format(
+                            "{}.module is not a valid pkg-config module name", item.path())));
+                    }
+                }
+                auto name = String::make();
+                if (item.contains("name"_str)) {
+                    name = rstd_try(pkg_config_line(rstd_try(item.required<String>("name"_str)),
+                                                    "pkg_config name"_str));
+                }
+                auto destination = Option<PathBuf> {};
+                if (item.contains("destination"_str)) {
+                    destination = Some(
+                        rstd_try(recipe_path(rstd_try(item.required<String>("destination"_str)),
+                                             "pkg_config destination"_str)));
+                }
+                auto include_directory = Option<PathBuf> {};
+                if (item.contains("include_directory"_str)) {
+                    include_directory = Some(rstd_try(
+                        recipe_path(rstd_try(item.required<String>("include_directory"_str)),
+                                    "pkg_config include_directory"_str)));
+                }
+                recipe.pkg_config.push(InstallPkgConfigRecipe {
+                    .target =
+                        lito::package::PackageTargetId {
+                            .package = package_.name.clone(),
+                            .kind    = lito::package::PackageTargetKind::Library,
+                            .name    = rstd_try(target.required<String>("name"_str)),
+                        },
+                    .module = rstd::move(module),
+                    .name   = rstd::move(name),
+                    .description =
+                        rstd_try(pkg_config_line(rstd_try(item.required<String>("description"_str)),
+                                                 "pkg_config description"_str)),
+                    .destination       = rstd::move(destination),
+                    .include_directory = rstd::move(include_directory),
+                    .dependencies      = rstd_try(string_array(item, "dependencies"_str)),
                 });
                 return Ok(empty {});
             }));

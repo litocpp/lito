@@ -66,12 +66,12 @@ configure-template name rules. Template inputs are regular non-symlink files ins
 
 ## Recipe fields
 
-The top-level recipe accepts only `artifacts`, `external_assets`, `files`, `templates`, and
-`inventories`. Each is an optional array of tables.
+The top-level recipe accepts only `artifacts`, `target_runtimes`, `external_assets`, `files`,
+`templates`, `pkg_config`, and `inventories`. Each is an optional array of tables.
 
 ### Artifacts
 
-An artifact selects a binary owned by the recipe package:
+An artifact selects a binary or shared library owned by the recipe package:
 
 ```lua
 artifacts = {{
@@ -80,8 +80,8 @@ artifacts = {{
 }}
 ```
 
-`kind` currently accepts only `bin`. Targets and destinations cannot be repeated within the
-recipe. Only selected artifact targets are built.
+`kind` accepts `bin` or `lib`. Library artifacts must be shared libraries. Targets and
+destinations cannot be repeated within the recipe. Only selected artifact targets are built.
 
 On Linux, an artifact may request an install-specific ELF `RUNPATH` through declared external
 asset sets:
@@ -137,6 +137,34 @@ templates = {{
   values = { package = lito.package_name, version = lito.package_version },
 }}
 ```
+
+### pkg-config files
+
+A `pkg_config` entry generates a relocatable `.pc` file for a shared library selected by the same
+recipe:
+
+```lua
+pkg_config = {{
+  target = { kind = "lib", name = "viewer" },
+  description = "Viewer integration library",
+  include_directory = "include",
+  dependencies = { "graphics" },
+}}
+```
+
+The target must also appear in `artifacts`. Lito derives `Version` from the package, `Libs` from
+the target artifact name and installed library directory, and the default destination as
+`LIBRARY_DIRECTORY/pkgconfig/ARTIFACT.pc`. `include_directory` is optional and adds the
+relocatable `includedir` variable and `Cflags` entry.
+
+`dependencies` is an optional non-empty list of aliases declared by the package under
+`external-dependencies.pkg-config`. Lito reuses each declaration's module and version requirement.
+Public dependencies are emitted as `Requires`; private and link-only dependencies are emitted as
+`Requires.private`.
+
+The optional `module`, `name`, and `destination` fields override the `.pc` module filename, its
+display name, and its install destination. `description` is required. Generated paths remain
+relative to `${pcfiledir}`, so prefix installs can be relocated without regenerating the file.
 
 ### Inventories
 

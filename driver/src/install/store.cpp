@@ -213,6 +213,11 @@ auto install_entry_origin_text(const InstallEntryOrigin& origin) -> String {
     if (origin.is_Template()) {
         return rstd::format("template:{}", origin.as_Template().input.as_path());
     }
+    if (origin.is_PkgConfig()) {
+        return rstd::format("pkg-config:{}:{}",
+                            lito::package::package_target_id_text(origin.as_PkgConfig().target),
+                            origin.as_PkgConfig().module.as_str());
+    }
     return String::make("inventory"_str);
 }
 

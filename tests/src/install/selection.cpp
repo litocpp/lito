@@ -331,3 +331,76 @@ sources = ["main.cpp"]
     ASSERT_TRUE(lito::resolve_install_artifact_link_variants(*provided, provided_assets).is_ok());
     EXPECT_TRUE(provided->artifact_link_variants.is_empty());
 }
+
+TEST_F(InstallSelection, PkgConfigFilesResolveLibraryAndDeclaredDependencies) {
+    constexpr ProjectFile files[] = {
+        { "lito.toml"_str, R"toml([package]
+name = "fixture-pkg-config-export"
+version = "2.3.4"
+standard = "c99"
+
+[lib]
+name = "fixture-pkg-config-export"
+kind = "shared"
+artifact = "fixture-export"
+sources = ["library.c"]
+
+[external-dependencies.pkg-config.public-api]
+module = "fixture-public"
+version = ">= 1.2"
+visibility = "public"
+
+[external-dependencies.pkg-config.private-api]
+module = "fixture-private"
+visibility = "private"
+)toml"_str },
+        { "install.lua"_str, "lito.install({})\n"_str },
+        { "library.c"_str, "int fixture_export(void) { return 0; }\n"_str },
+    };
+    auto project = materialize("pkg-config-export-selection"_str, files);
+    ASSERT_TRUE(project.is_ok());
+    auto selection = lito::package::resolve_package_selection(
+        lito::package::PackageSelection { .root = project->root.clone() },
+        lito::package::PackageSelectionPurpose::Install);
+    ASSERT_TRUE(selection.is_ok());
+    ASSERT_EQ(selection->graph.packages.len(), usize(1));
+    const auto& owner = selection->graph.packages[usize {}];
+
+    auto target = lito::package::PackageTargetId {
+        .package = String::make("fixture-pkg-config-export"_str),
+        .kind    = lito::package::PackageTargetKind::Library,
+        .name    = String::make("fixture-pkg-config-export"_str),
+    };
+    auto recipe = lito::InstallRecipe {
+        .owner   = owner.manifest.name.clone(),
+        .version = owner.manifest.version.value->clone(),
+        .root    = owner.manifest.root.clone(),
+        .source  = owner.source.clone(),
+    };
+    recipe.artifacts.push(lito::InstallArtifactRecipe {
+        .target      = target.clone(),
+        .destination = PathBuf::from("lib64/libfixture-export.so"_str),
+    });
+    recipe.pkg_config.push(lito::InstallPkgConfigRecipe {
+        .target            = rstd::move(target),
+        .description       = String::make("Fixture exported library"_str),
+        .include_directory = Some(PathBuf::from("include"_str)),
+        .dependencies      = strings("public-api"_str, "private-api"_str),
+    });
+    auto recipes = Vec<lito::InstallRecipe>::make();
+    recipes.push(rstd::move(recipe));
+    auto requirements =
+        lito::resolve_install_build_requirements(*selection, recipes, pkg_config_target());
+    ASSERT_TRUE(requirements.is_ok());
+    ASSERT_EQ(requirements->pkg_config.len(), usize(1));
+    const auto& resolved = requirements->pkg_config[usize {}];
+    EXPECT_EQ(resolved.module.as_str(), "fixture-export"_str);
+    EXPECT_EQ(resolved.destination.as_path(),
+              PathBuf::from("lib64/pkgconfig/fixture-export.pc"_str).as_path());
+    EXPECT_EQ(resolved.library_directory.as_path(), PathBuf::from("lib64"_str).as_path());
+    EXPECT_EQ(resolved.library_name.as_str(), "fixture-export"_str);
+    ASSERT_EQ(resolved.public_dependencies.len(), usize(1));
+    EXPECT_EQ(resolved.public_dependencies[usize {}].as_str(), "fixture-public >= 1.2"_str);
+    ASSERT_EQ(resolved.private_dependencies.len(), usize(1));
+    EXPECT_EQ(resolved.private_dependencies[usize {}].as_str(), "fixture-private"_str);
+}

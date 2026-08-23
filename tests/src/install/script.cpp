@@ -87,6 +87,15 @@ lito.install({
             ENVIRONMENT_UNSET_COUNT = select("#", lito.env("LITO_TEST_INSTALL_ENVIRONMENT_UNSET")),
         },
     }},
+    pkg_config = {{
+        target = { kind = "lib", name = "fixture-library" },
+        module = "fixture-module",
+        name = "Fixture module",
+        description = "Fixture install metadata",
+        destination = "lib/pkgconfig/fixture-module.pc",
+        include_directory = "include",
+        dependencies = { "fixture-public", "fixture-private" },
+    }},
     inventories = {{ destination = "share/fixture/files.txt",
                      relative_to = lito.env("LITO_TEST_INSTALL_ENVIRONMENT_EMPTY") or "" }},
 })
@@ -123,6 +132,13 @@ lito.install({
     ASSERT_EQ(recipe->external_assets[usize {}].strip->files.len(), usize(1));
     ASSERT_EQ(recipe->files.len(), usize(1));
     ASSERT_EQ(recipe->templates.len(), usize(1));
+    ASSERT_EQ(recipe->pkg_config.len(), usize(1));
+    EXPECT_EQ(recipe->pkg_config[usize {}].target.name.as_str(), "fixture-library"_str);
+    EXPECT_EQ(recipe->pkg_config[usize {}].module.as_str(), "fixture-module"_str);
+    EXPECT_EQ(recipe->pkg_config[usize {}].name.as_str(), "Fixture module"_str);
+    EXPECT_EQ(recipe->pkg_config[usize {}].destination->as_path(),
+              PathBuf::from("lib/pkgconfig/fixture-module.pc"_str).as_path());
+    ASSERT_EQ(recipe->pkg_config[usize {}].dependencies.len(), usize(2));
     ASSERT_EQ(recipe->inventories.len(), usize(1));
     EXPECT_TRUE(recipe->inventories[usize {}].relative_to.is_empty());
     auto fragment = recipe->templates[usize {}].values.get("FRAGMENT"_str);
@@ -180,6 +196,26 @@ lito.install({
           R"lua(lito.install({ external_assets = {{
     dependency = "runtime", set = "files", destination = "lib/runtime",
     strip = { mode = "symbols", files = { "../runtime.so" } },
+}} })
+)lua"_str },
+        { "invalid-pkg-config-target"_str,
+          R"lua(lito.install({ pkg_config = {{
+    target = { kind = "bin", name = "tool" },
+    description = "Tool",
+}} })
+)lua"_str },
+        { "invalid-pkg-config-module"_str,
+          R"lua(lito.install({ pkg_config = {{
+    target = { kind = "lib", name = "library" },
+    module = "../library",
+    description = "Library",
+}} })
+)lua"_str },
+        { "empty-pkg-config-dependencies"_str,
+          R"lua(lito.install({ pkg_config = {{
+    target = { kind = "lib", name = "library" },
+    description = "Library",
+    dependencies = {},
 }} })
 )lua"_str },
     };

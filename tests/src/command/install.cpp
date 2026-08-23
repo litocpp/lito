@@ -234,8 +234,18 @@ sources = ["library.c"]
             destination = "lib/libfixture-install-library.so",
         },
     },
+    files = {{
+        source = "include/fixture/library.h",
+        destination = "include/fixture/library.h",
+    }},
+    pkg_config = {{
+        target = { kind = "lib", name = "fixture-install-library" },
+        description = "Fixture install library",
+        include_directory = "include",
+    }},
 })
 )lua"_str },
+        { "include/fixture/library.h"_str, "int fixture_install_library(void);\n"_str },
         { "library.c"_str, "int fixture_install_library(void) { return 42; }\n"_str },
     };
     auto project = materialize("install-library-artifact"_str, files);
@@ -266,6 +276,23 @@ sources = ["library.c"]
         rstd::fs::exists(
             prefix.join(PathBuf::from("lib/libfixture-install-library.so"_str).as_path()).as_path())
             .unwrap());
+    EXPECT_TRUE(rstd::fs::exists(
+                    prefix.join(PathBuf::from("include/fixture/library.h"_str).as_path()).as_path())
+                    .unwrap());
+    auto pkg_config = rstd::fs::read_to_string(
+        prefix.join(PathBuf::from("lib/pkgconfig/fixture-install-library.pc"_str).as_path())
+            .as_path());
+    ASSERT_TRUE(pkg_config.is_ok());
+    EXPECT_EQ(pkg_config->as_str(), R"pc(prefix=${pcfiledir}/../..
+libdir=${prefix}/lib
+includedir=${prefix}/include
+
+Name: fixture-install-library
+Description: Fixture install library
+Version: 1.0.0
+Libs: -L${libdir} -lfixture-install-library
+Cflags: -I${includedir}
+)pc"_str);
 }
 
 TEST_F(InstallCommand, NoBuildInstallsPublishedProductWithoutCompilerTools) {

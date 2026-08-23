@@ -148,6 +148,80 @@ auto validate_product_file(const CompletedBuildProduct& product,
     return Ok(empty {});
 }
 
+auto pkg_config_path_value(ref<rstd::path::Path> path, ref<str> context)
+    -> InstallMaterializeResult<String> {
+    auto value = path.to_string_lossy();
+    for (auto byte : value.as_str().as_bytes()) {
+        if (byte == u8('\n') || byte == u8('\r')) {
+            return materialize_failure<String>(
+                rstd::format("{} '{}' contains a line break", context, path));
+        }
+    }
+    return Ok(rstd::move(value));
+}
+
+auto pkg_config_variable_path(ref<rstd::path::Path> path) -> InstallMaterializeResult<String> {
+    auto result = String::make("${prefix}"_str);
+    if (path.is_empty()) return Ok(rstd::move(result));
+    result.push_ascii('/');
+    result.push_str(rstd_try(pkg_config_path_value(path, "pkg-config install path"_str)).as_str());
+    return Ok(rstd::move(result));
+}
+
+auto pkg_config_prefix(ref<rstd::path::Path> destination) -> String {
+    auto result = String::make("${pcfiledir}"_str);
+    auto parent = destination.parent();
+    if (parent.is_none()) return result;
+    for (auto component : parent->components()) {
+        if (! component.is_normal()) continue;
+        result.push_str("/.."_str);
+    }
+    return result;
+}
+
+auto append_pkg_config_requirements(String& output, ref<str> field, const Vec<String>& requirements)
+    -> void {
+    if (requirements.is_empty()) return;
+    output.push_str(field);
+    output.push_str(": "_str);
+    for (usize index {}; index < requirements.len(); ++index) {
+        if (index != usize {}) output.push_str(", "_str);
+        output.push_str(requirements[index].as_str());
+    }
+    output.push_ascii('\n');
+}
+
+auto render_pkg_config(const ResolvedInstallPkgConfigFile& file, ref<str> version)
+    -> InstallMaterializeResult<Vec<u8>> {
+    auto output = String::make("prefix="_str);
+    output.push_str(pkg_config_prefix(file.destination.as_path()).as_str());
+    output.push_str("\nlibdir="_str);
+    auto library_directory = rstd_try(pkg_config_variable_path(file.library_directory.as_path()));
+    output.push_str(library_directory.as_str());
+    if (file.include_directory.is_some()) {
+        output.push_str("\nincludedir="_str);
+        auto include_directory =
+            rstd_try(pkg_config_variable_path(file.include_directory->as_path()));
+        output.push_str(include_directory.as_str());
+    }
+    output.push_str("\n\nName: "_str);
+    output.push_str(file.name.as_str());
+    output.push_str("\nDescription: "_str);
+    output.push_str(file.description.as_str());
+    output.push_str("\nVersion: "_str);
+    output.push_str(version);
+    output.push_ascii('\n');
+    append_pkg_config_requirements(output, "Requires"_str, file.public_dependencies);
+    append_pkg_config_requirements(output, "Requires.private"_str, file.private_dependencies);
+    output.push_str("Libs: -L${libdir} -l"_str);
+    output.push_str(file.library_name.as_str());
+    output.push_ascii('\n');
+    if (file.include_directory.is_some()) output.push_str("Cflags: -I${includedir}\n"_str);
+    auto bytes = Vec<u8>::with_capacity(output.len());
+    for (auto byte : output.as_str().as_bytes()) bytes.push(rstd::move(byte));
+    return Ok(rstd::move(bytes));
+}
+
 } // namespace lito
 
 export namespace lito
@@ -295,6 +369,19 @@ auto materialize_install_plan(Vec<InstallRecipe>              recipes,
                     .origin  = InstallEntryOrigin::Template(configured.input.clone()),
                     .payload = InstallEntryPayload::Bytes(rstd::move(bytes), u32(0644)),
                     .relative_destination = configured.destination.clone(),
+                }));
+        }
+        for (const auto& pkg_config : requirements.pkg_config) {
+            if (pkg_config.owner != recipe.owner.as_str()) continue;
+            rstd_try(append_entry(
+                entries,
+                InstallEntry {
+                    .origin  = InstallEntryOrigin::PkgConfig(pkg_config.target.clone(),
+                                                             pkg_config.module.clone()),
+                    .payload = InstallEntryPayload::Bytes(
+                        rstd_try(render_pkg_config(pkg_config, recipe.version.as_str())),
+                        u32(0644)),
+                    .relative_destination = pkg_config.destination.clone(),
                 }));
         }
         sort_entries(entries);

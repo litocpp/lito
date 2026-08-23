@@ -32,6 +32,7 @@ class InstallEntryOrigin {
               (TargetRuntime, (String name; String identity;)),
               (ExternalAsset, (String dependency; String set; PathBuf path;)),
               (Template, (PathBuf input;)),
+              (PkgConfig, (lito::package::PackageTargetId target; String module;)),
               (Inventory))
 };
 

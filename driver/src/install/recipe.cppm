@@ -74,6 +74,30 @@ struct InstallTemplateRecipe {
     ConfigureValues values;
 };
 
+struct InstallPkgConfigRecipe {
+    lito::package::PackageTargetId target;
+    String                         module;
+    String                         name;
+    String                         description;
+    Option<PathBuf>                destination;
+    Option<PathBuf>                include_directory;
+    Vec<String>                    dependencies;
+};
+
+struct ResolvedInstallPkgConfigFile {
+    String                         owner;
+    lito::package::PackageTargetId target;
+    String                         module;
+    String                         name;
+    String                         description;
+    PathBuf                        destination;
+    PathBuf                        library_directory;
+    String                         library_name;
+    Option<PathBuf>                include_directory;
+    Vec<String>                    public_dependencies;
+    Vec<String>                    private_dependencies;
+};
+
 struct InstallInventoryRecipe {
     PathBuf destination;
     PathBuf relative_to;
@@ -88,6 +112,7 @@ struct InstallRecipe {
     Vec<InstallExternalAssetRecipe>     external_assets;
     Vec<InstallFileRecipe>              files;
     Vec<InstallTemplateRecipe>          templates;
+    Vec<InstallPkgConfigRecipe>         pkg_config;
     Vec<InstallInventoryRecipe>         inventories;
     lito::source::ResolvedPackageSource source;
     Vec<InstallRuntimeDependency>       runtime_dependencies;
@@ -110,6 +135,7 @@ struct InstallBuildRequirements {
     Vec<lito::package::PackageTargetId>          targets;
     Vec<InstallArtifactRuntimeSearchRequirement> runtime_search;
     Vec<RequestedArtifactLinkVariant>            artifact_link_variants;
+    Vec<ResolvedInstallPkgConfigFile>            pkg_config;
 };
 
 struct InstallScriptContext {
