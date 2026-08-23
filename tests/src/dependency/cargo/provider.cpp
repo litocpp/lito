@@ -97,6 +97,7 @@ pub extern "C" fn lito_cargo_provider_answer(value: i32) -> i32 {
             .source_root = project->root.clone(),
             .manifest    = manifest.clone(),
             .package     = String::make("lito-cargo-provider-fixture"_str),
+            .offline     = true,
         },
         *environment);
     ASSERT_TRUE(metadata.is_ok());
@@ -121,6 +122,7 @@ pub extern "C" fn lito_cargo_provider_answer(value: i32) -> i32 {
         .work_root        = work.clone(),
         .target_directory = target.clone(),
         .jobs             = usize(1),
+        .offline          = true,
     };
 #if RSTD_OS_WINDOWS
     constexpr auto archive_suffix = ".lib"_str;
@@ -188,6 +190,7 @@ version = "0.1.0"
             .source_root = project->root.clone(),
             .manifest    = project->root.join(PathBuf::from("Cargo.toml"_str).as_path()),
             .package     = String::make("lito-cargo-runtime-fixture"_str),
+            .offline     = true,
         },
         *environment);
     ASSERT_TRUE(metadata.is_ok());
@@ -209,6 +212,7 @@ version = "0.1.0"
         .work_root        = work.clone(),
         .target_directory = target.clone(),
         .jobs             = usize(1),
+        .offline          = true,
     };
     auto built = lito::tools::cargo::build_binaries(*provider, *metadata, request, *environment);
     ASSERT_TRUE(built.is_ok());

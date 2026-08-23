@@ -307,6 +307,7 @@ auto install(InstallRequest request) -> InstallResult<InstallSummary> {
                                        profile_name,
                                        request.build.build_directory.as_path(),
                                        request.build.sources,
+                                       request.build.cargo,
                                        request.build.pkg_config,
                                        request.build.cmake,
                                        rstd::move(resolved.toolchain),

@@ -175,6 +175,7 @@ auto build_with_environment_impl(const BuildRequest&                       reque
                     request.build_directory.as_path(),
                     request.sources,
                     request.lock,
+                    request.cargo,
                     request.pkg_config,
                     request.cmake,
                     request.cmake_build_overrides,

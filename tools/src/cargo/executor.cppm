@@ -84,23 +84,19 @@ auto cargo_environment() -> CommandEnvironment {
 auto invoke_cargo(const Vec<String>&                arguments,
                   const ResolvedProcessEnvironment& environment,
                   Option<ref<rstd::path::Path>>     working_directory = None(),
-                  bool stream_output = false) -> lito::tools::ToolResult<CommandOutput> {
+                  bool forward_diagnostics = false) -> lito::tools::ToolResult<CommandOutput> {
     auto overrides    = cargo_environment();
     auto override_ref = Some(ref<CommandEnvironment>::from_raw_parts(rstd::addressof(overrides)));
     auto output       = [&]() {
-        if (! stream_output) {
+        if (! forward_diagnostics) {
             return run_command(arguments, environment, working_directory, override_ref);
         }
         auto observer = rstd::process::OutputObserver {
             .notify =
                 +[](void*, rstd::process::OutputStream stream, slice<u8> chunk) noexcept {
-                    if (stream == rstd::process::OutputStream::Stdout) {
-                        auto output = rstd::io::stdout();
-                        (void)rstd::io::write_all(output, chunk);
-                    } else {
-                        auto output = rstd::io::stderr();
-                        (void)rstd::io::write_all(output, chunk);
-                    }
+                    if (stream != rstd::process::OutputStream::Stderr) return;
+                    auto output = rstd::io::stderr();
+                    (void)rstd::io::write_all(output, chunk);
                 },
         };
         return run_command_observed(
@@ -284,6 +280,7 @@ auto query_metadata(const Provider&                   provider,
     arguments.push(String::make("--manifest-path"_str));
     arguments.push(rstd_try(cargo_path_text(manifest.as_path(), "Cargo manifest"_str)));
     arguments.push(String::make("--locked"_str));
+    if (request.offline) arguments.push(String::make("--offline"_str));
     emit_cargo(observer, EventKind::Metadata, request.package.as_str(), manifest.as_path());
     auto output = rstd_try(invoke_cargo(arguments, environment, Some(source_root.as_path())));
     emit_cargo(observer,
@@ -398,7 +395,6 @@ struct ParsedBuildMessages {
     Vec<String>     native_arguments;
     bool            artifact_fresh { false };
     bool            found_artifact { false };
-    bool            found_native { false };
     bool            found_finished { false };
 };
 
@@ -465,6 +461,31 @@ auto parse_native_arguments(ref<str> message) -> lito::tools::ToolResult<Vec<Str
     return Ok(rstd::move(parsed).unwrap());
 }
 
+auto parse_rendered_native_arguments(ref<str> output) -> lito::tools::ToolResult<Vec<String>> {
+    auto result    = Option<Vec<String>> {};
+    auto remaining = output;
+    while (! remaining.is_empty()) {
+        auto split  = remaining.split_once("\n"_str);
+        auto line   = (split.is_some() ? split->template get<0>() : remaining).trim_ascii();
+        auto native = line.split_once("native-static-libs:"_str);
+        if (native.is_some()) {
+            if (result.is_some()) {
+                return cargo_failure<Vec<String>>(
+                    "Cargo emitted duplicate native-static-libs notes"_str);
+            }
+            auto message = String::make("native-static-libs:"_str);
+            message.push_str(native->template get<1>());
+            result = Some(rstd_try(parse_native_arguments(message.as_str())));
+        }
+        if (split.is_none()) break;
+        remaining = split->template get<1>();
+    }
+    if (result.is_none()) {
+        return cargo_failure<Vec<String>>("Cargo emitted no native-static-libs note"_str);
+    }
+    return Ok(rstd::move(result).unwrap());
+}
+
 auto parse_build_message(const Json&            message,
                          const PackageMetadata& metadata,
                          const BuildRequest&    request,
@@ -514,29 +535,6 @@ auto parse_build_message(const Json&            message,
         result.found_artifact = true;
         return Ok(empty {});
     }
-    if (reason == "compiler-message"_str) {
-        auto package =
-            rstd_try(required_string(message, "package_id"_str, "Cargo compiler-message"_str));
-        if (package != metadata.id.as_str()) return Ok(empty {});
-        auto target =
-            rstd_try(required_member(message, "target"_str, "Cargo compiler-message"_str));
-        auto name = rstd_try(required_string(*target, "name"_str, "Cargo message target"_str));
-        if (metadata.library.is_none() || name != metadata.library->name.as_str())
-            return Ok(empty {});
-        auto diagnostic =
-            rstd_try(required_member(message, "message"_str, "Cargo compiler-message"_str));
-        auto level = rstd_try(required_string(*diagnostic, "level"_str, "Cargo diagnostic"_str));
-        auto text  = rstd_try(required_string(*diagnostic, "message"_str, "Cargo diagnostic"_str));
-        if (level != "note"_str || ! text.starts_with("native-static-libs:"_str)) {
-            return Ok(empty {});
-        }
-        if (result.found_native) {
-            return cargo_failure<empty>("Cargo emitted duplicate native-static-libs notes"_str);
-        }
-        result.native_arguments = rstd_try(parse_native_arguments(text));
-        result.found_native     = true;
-        return Ok(empty {});
-    }
     if (reason == "build-finished"_str) {
         if (result.found_finished) {
             return cargo_failure<empty>("Cargo emitted duplicate build-finished messages"_str);
@@ -550,6 +548,7 @@ auto parse_build_message(const Json&            message,
 }
 
 auto parse_build_messages(ref<str>               output,
+                          ref<str>               diagnostics,
                           const PackageMetadata& metadata,
                           const BuildRequest&    request,
                           ref<str> archive_suffix) -> lito::tools::ToolResult<ParsedBuildMessages> {
@@ -575,9 +574,7 @@ auto parse_build_messages(ref<str>               output,
     if (! result.found_artifact) {
         return cargo_failure<ParsedBuildMessages>("Cargo emitted no root staticlib artifact"_str);
     }
-    if (! result.found_native) {
-        return cargo_failure<ParsedBuildMessages>("Cargo emitted no native-static-libs note"_str);
-    }
+    result.native_arguments = rstd_try(parse_rendered_native_arguments(diagnostics));
     if (! result.found_finished) {
         return cargo_failure<ParsedBuildMessages>("Cargo emitted no build-finished message"_str);
     }
@@ -647,8 +644,9 @@ auto build_static_library(const Provider&                   provider,
     arguments.push(String::make("--jobs"_str));
     arguments.push(rstd::format("{}", request.jobs));
     arguments.push(String::make("--message-format"_str));
-    arguments.push(String::make("json"_str));
+    arguments.push(String::make("json-render-diagnostics"_str));
     arguments.push(String::make("--locked"_str));
+    if (request.offline) arguments.push(String::make("--offline"_str));
     if (! request.features.is_empty()) {
         auto features = String::make();
         for (usize index {}; index < request.features.len(); ++index) {
@@ -674,8 +672,11 @@ auto build_static_library(const Provider&                   provider,
             rstd::move(output.standard_output),
             rstd::move(output.standard_error)));
     }
-    auto messages = rstd_try(
-        parse_build_messages(output.standard_output.as_str(), metadata, request, archive_suffix));
+    auto messages = rstd_try(parse_build_messages(output.standard_output.as_str(),
+                                                  output.standard_error.as_str(),
+                                                  metadata,
+                                                  request,
+                                                  archive_suffix));
     auto archive  = rstd_try(canonical_owned_path(messages.archive->as_path(),
                                                   request.target_directory.as_path(),
                                                   "Cargo staticlib artifact"_str,
@@ -869,8 +870,9 @@ auto build_binaries(const Provider&                   provider,
     arguments.push(String::make("--jobs"_str));
     arguments.push(rstd::format("{}", request.jobs));
     arguments.push(String::make("--message-format"_str));
-    arguments.push(String::make("json"_str));
+    arguments.push(String::make("json-render-diagnostics"_str));
     arguments.push(String::make("--locked"_str));
+    if (request.offline) arguments.push(String::make("--offline"_str));
     if (! request.features.is_empty()) {
         auto features = String::make();
         for (usize index {}; index < request.features.len(); ++index) {

@@ -146,6 +146,7 @@ auto resolve_cargo_dependencies(
     const cpp::ProfileSpec&                                  profile,
     const BuildPlatform&                                     platform,
     const BuildLayout&                                       layout,
+    const lito::tools::cargo::Configuration&                 configuration,
     lito::tools::ToolResolver&                               tool_resolver,
     const ResolvedProcessEnvironment&                        environment,
     usize                                                    jobs,
@@ -185,6 +186,7 @@ auto resolve_cargo_dependencies(
                                                    .source_root = source->root.clone(),
                                                    .manifest    = rstd::move(manifest),
                                                    .package = declaration.recipe.package.clone(),
+                                                   .offline = configuration.offline,
                                                },
                                                environment,
                                                cargo_observer(observer));
@@ -217,6 +219,7 @@ auto resolve_cargo_dependencies(
             .work_root        = rstd::move(work_root),
             .target_directory = rstd::move(target_directory),
             .jobs             = jobs,
+            .offline          = configuration.offline,
         };
         if (declaration.consumption.usage == lito::dependency::CargoDependencyUsage::Runtime) {
             auto snapshot = lito::tools::cargo::build_binaries(

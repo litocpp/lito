@@ -48,6 +48,10 @@ search-path = ["."]
 library-path = ["."]
 sysroot = "."
 )toml"_str;
+constexpr auto cargo_config                  = R"toml([tools.cargo]
+executable = "custom-cargo"
+offline = true
+)toml"_str;
 constexpr auto pkg_config_search_only_config = "[tools.pkg-config]\nsearch-path = [\".\"]\n"_str;
 constexpr auto cmake_config                  = R"toml([tools.cmake]
 executable = "custom-cmake"
@@ -114,6 +118,9 @@ TEST_F(Config, InvalidHostToolProviderConfigurationReportsTheNestedKey) {
         { "unknown-pkg-config-field"_str,
           "[tools.pkg-config]\nargs = []\n"_str,
           "unknown field: args at $.tools.pkg-config.args"_str },
+        { "invalid-cargo-offline"_str,
+          "[tools.cargo]\noffline = \"yes\"\n"_str,
+          "type mismatch: expected boolean, found string at $.tools.cargo.offline"_str },
     };
     for (const auto& item : cases) {
         SCOPED_TRACE(item.name);
@@ -124,6 +131,25 @@ TEST_F(Config, InvalidHostToolProviderConfigurationReportsTheNestedKey) {
         auto error = rstd::move(loaded).unwrap_err();
         EXPECT_TRUE(error_chain_text(error).as_str().contains(item.expected));
     }
+}
+
+TEST_F(Config, CargoProviderConfigurationControlsOfflineMode) {
+    auto project = config("cargo-provider"_str, cargo_config);
+    ASSERT_TRUE(project.is_ok());
+    auto loaded = lito::config::load_project_config(project->root.as_path());
+    ASSERT_TRUE(loaded.is_ok());
+    EXPECT_EQ(loaded->tools.cargo.as_path(), PathBuf::from("custom-cargo"_str).as_path());
+    EXPECT_TRUE(loaded->tools.explicitly_configured(lito::tools::Tool::Cargo));
+    EXPECT_TRUE(loaded->cargo.offline);
+
+    auto shorthand =
+        config("cargo-provider-shorthand"_str, "[tools]\ncargo = \"shorthand-cargo\"\n"_str);
+    ASSERT_TRUE(shorthand.is_ok());
+    auto shorthand_loaded = lito::config::load_project_config(shorthand->root.as_path());
+    ASSERT_TRUE(shorthand_loaded.is_ok());
+    EXPECT_EQ(shorthand_loaded->tools.cargo.as_path(),
+              PathBuf::from("shorthand-cargo"_str).as_path());
+    EXPECT_FALSE(shorthand_loaded->cargo.offline);
 }
 
 TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
@@ -165,6 +191,7 @@ TEST_F(Config, ToolchainAndToolsConfigurationUseCommandLineNames) {
     EXPECT_EQ(defaults->tools.cmake.as_path(), PathBuf::from("cmake"_str).as_path());
     EXPECT_EQ(defaults->tools.pkg_config.as_path(), PathBuf::from("pkg-config"_str).as_path());
     EXPECT_EQ(defaults->cmake.generator.as_str(), "Ninja"_str);
+    EXPECT_FALSE(defaults->cargo.offline);
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::Cargo));
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::CMake));
     EXPECT_FALSE(defaults->tools.explicitly_configured(lito::tools::Tool::PkgConfig));

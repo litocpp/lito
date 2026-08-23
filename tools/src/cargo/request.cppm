@@ -8,6 +8,10 @@ using PathBuf = rstd::path::PathBuf;
 export namespace lito::tools::cargo
 {
 
+struct Configuration {
+    bool offline { false };
+};
+
 struct Provider {
     PathBuf executable;
     String  identity;
@@ -26,6 +30,7 @@ struct MetadataRequest {
     PathBuf source_root;
     PathBuf manifest;
     String  package;
+    bool    offline { false };
 };
 
 struct BuildRequest {
@@ -41,6 +46,7 @@ struct BuildRequest {
     PathBuf     work_root;
     PathBuf     target_directory;
     usize       jobs { usize(1) };
+    bool        offline { false };
 };
 
 enum class EventKind

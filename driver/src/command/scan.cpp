@@ -116,6 +116,7 @@ auto scan(const ScanRequest& request) -> CommandResult<ScanReport> {
         requested_output.as_path(),
         request.sources,
         request.lock,
+        request.cargo,
         request.pkg_config,
         request.cmake,
         request.cmake_build_overrides,

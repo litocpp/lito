@@ -473,6 +473,7 @@ auto resolve_doc_tool(const BuildRequest&               request,
     tool_request.lock.path           = tool_root->join(PathBuf::from("lito.lock"_str).as_path());
     tool_request.sources.network     = request.sources.network;
     tool_request.sources.fetch_seeds = as<Clone>(request.sources.fetch_seeds).clone();
+    tool_request.cargo               = request.cargo;
     tool_request.pkg_config          = request.pkg_config.clone();
     tool_request.cmake               = request.cmake.clone();
     append_unique_path(tool_request.cmake.search_paths, sdk->cmake_search_path.as_path());

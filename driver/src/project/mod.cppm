@@ -5,6 +5,7 @@ module lito.driver:project;
 
 import rstd;
 import lito.tools;
+import lito.tools.cargo;
 import lito.core;
 import :config.project;
 import :config.registry;
@@ -585,6 +586,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
                               const lito::manifest::BuildProfileName&          profile,
                               ref<rstd::path::Path>                            requested_output,
                               const lito::source::PackageSourceConfig&         sources,
+                              const lito::tools::cargo::Configuration&         cargo,
                               const lito::dependency::PkgConfigProviderConfig& pkg_config,
                               const lito::dependency::CMakeProviderConfig&     cmake,
                               const ClangToolchain&                            toolchain,
@@ -745,6 +747,7 @@ auto resolve_project_metadata(ResolvedProjectSession                           s
     auto external_usage = rstd_try(resolve_external_usage_catalog(project.graph,
                                                                   project.selected_package_names,
                                                                   *prepared_external_sources,
+                                                                  cargo,
                                                                   pkg_config,
                                                                   cmake,
                                                                   resolved_configuration,
@@ -787,6 +790,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                     const lito::manifest::BuildProfileName&  profile,
                                     ref<rstd::path::Path>                    requested_output,
                                     const lito::source::PackageSourceConfig& sources,
+                                    const lito::tools::cargo::Configuration& cargo,
                                     const lito::dependency::PkgConfigProviderConfig& pkg_config,
                                     const lito::dependency::CMakeProviderConfig&     cmake,
                                     ClangToolchain                                   toolchain,
@@ -801,6 +805,7 @@ auto prepare_resolved_build_project(ResolvedProjectSession                   ses
                                              profile,
                                              requested_output,
                                              sources,
+                                             cargo,
                                              pkg_config,
                                              cmake,
                                              toolchain,
@@ -831,6 +836,7 @@ auto resolve_project_metadata(
     ref<rstd::path::Path>                            requested_output,
     const lito::source::PackageSourceConfig&         sources,
     const lito::lock::LockConfig&                    lock,
+    const lito::tools::cargo::Configuration&         cargo,
     const lito::dependency::PkgConfigProviderConfig& pkg_config,
     const lito::dependency::CMakeProviderConfig&     cmake,
     const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
@@ -862,6 +868,7 @@ auto resolve_project_metadata(
                                     profile,
                                     requested_output,
                                     sources,
+                                    cargo,
                                     pkg_config,
                                     cmake,
                                     toolchain,
@@ -963,6 +970,7 @@ auto prepare_build_project(
     ref<rstd::path::Path>                            requested_output,
     const lito::source::PackageSourceConfig&         sources,
     const lito::lock::LockConfig&                    lock,
+    const lito::tools::cargo::Configuration&         cargo,
     const lito::dependency::PkgConfigProviderConfig& pkg_config,
     const lito::dependency::CMakeProviderConfig&     cmake,
     const lito::dependency::CMakeBuildOverrideSet&   cmake_build_overrides,
@@ -994,6 +1002,7 @@ auto prepare_build_project(
                                                    profile,
                                                    requested_output,
                                                    sources,
+                                                   cargo,
                                                    pkg_config,
                                                    cmake,
                                                    rstd::move(resolved.toolchain),

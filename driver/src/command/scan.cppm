@@ -2,6 +2,7 @@ export module lito.driver:command.scan;
 
 import rstd;
 import lito.tools;
+import lito.tools.cargo;
 import lito.core;
 import :config.project;
 import :config.registry;
@@ -29,6 +30,7 @@ struct ScanRequest {
     lito::lock::LockConfig                      lock;
     Option<lito::manifest::BuildProfileName>    profile;
     lito::source::PackageSourceConfig           sources;
+    lito::tools::cargo::Configuration           cargo;
     lito::dependency::PkgConfigProviderConfig   pkg_config;
     lito::dependency::CMakeProviderConfig       cmake;
     lito::dependency::CMakeBuildOverrideSet     cmake_build_overrides;

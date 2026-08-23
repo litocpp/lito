@@ -8,6 +8,7 @@ import rstd.serde;
 import rstd.toml;
 import lito.core;
 import lito.tools;
+import lito.tools.cargo;
 import :config.project;
 import :config.wire;
 import lito.system;
@@ -48,6 +49,7 @@ auto normalize_host_tool_provider_shorthand(Toml& document) -> void {
     auto table = (**tools).as_table_mut();
     if (table.is_none()) return;
     constexpr ref<str> providers[] = {
+        "cargo"_str,
         "cmake"_str,
         "pkg-config"_str,
     };
@@ -423,6 +425,7 @@ auto configured_toolchain(const Option<lito::config::wire::Toolchain>& value,
 
 struct DecodedHostTools {
     lito::tools::ToolSpec                     executables;
+    lito::tools::cargo::Configuration         cargo;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;
@@ -447,7 +450,6 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
             rstd_try(configured_executable(configured->as_str(), root.with_field(tool_name(tool))));
         switch (tool) {
         case lito::tools::Tool::Tar: result.executables.tar = rstd::move(executable); break;
-        case lito::tools::Tool::Cargo: result.executables.cargo = rstd::move(executable); break;
         case lito::tools::Tool::BsdTar: result.executables.bsdtar = rstd::move(executable); break;
         case lito::tools::Tool::ClangFormat:
             result.executables.clang_format = rstd::move(executable);
@@ -455,6 +457,7 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
         case lito::tools::Tool::Curl: result.executables.curl = rstd::move(executable); break;
         case lito::tools::Tool::Git: result.executables.git = rstd::move(executable); break;
         case lito::tools::Tool::Strip: result.executables.strip = rstd::move(executable); break;
+        case lito::tools::Tool::Cargo:
         case lito::tools::Tool::CMake:
         case lito::tools::Tool::PkgConfig:
             return config_failure<empty>("provider tools require table configuration"_str);
@@ -462,13 +465,22 @@ auto configured_host_tools(const Option<lito::config::wire::Tools>& value,
         result.executables.mark_configured(tool);
         return Ok(empty {});
     };
-    rstd_try(apply(value->cargo, lito::tools::Tool::Cargo));
     rstd_try(apply(value->tar, lito::tools::Tool::Tar));
     rstd_try(apply(value->bsdtar, lito::tools::Tool::BsdTar));
     rstd_try(apply(value->clang_format, lito::tools::Tool::ClangFormat));
     rstd_try(apply(value->curl, lito::tools::Tool::Curl));
     rstd_try(apply(value->git, lito::tools::Tool::Git));
     rstd_try(apply(value->strip, lito::tools::Tool::Strip));
+
+    if (value->cargo.is_some()) {
+        result.cargo.offline = value->cargo->offline.is_some() && *value->cargo->offline;
+        if (value->cargo->executable.is_some()) {
+            result.executables.cargo = rstd_try(
+                configured_executable(value->cargo->executable->as_str(),
+                                      root.with_field("cargo"_str).with_field("executable"_str)));
+            result.executables.mark_configured(lito::tools::Tool::Cargo);
+        }
+    }
 
     if (value->cmake.is_some()) {
         result.cmake = rstd_try(configured_cmake(*value->cmake, project_root));
@@ -680,6 +692,7 @@ auto decode_project_config(PathBuf               root,
         .build_options            = rstd::move(build_options),
         .build_target             = rstd::move(build_target),
         .sources                  = rstd::move(sources),
+        .cargo                    = tools.cargo,
         .pkg_config               = rstd::move(tools.pkg_config),
         .cmake                    = rstd::move(tools.cmake),
         .cmake_build_overrides    = rstd::move(tools.cmake_build_overrides),

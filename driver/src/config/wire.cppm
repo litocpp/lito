@@ -32,6 +32,11 @@ struct Toolchain {
     Option<Sdk>    sdk;
 };
 
+struct Cargo {
+    Option<String> executable;
+    Option<bool>   offline;
+};
+
 struct CMakeOverride {
     String source;
 };
@@ -51,7 +56,7 @@ struct PkgConfig {
 };
 
 struct Tools {
-    Option<String>    cargo;
+    Option<Cargo>     cargo;
     Option<CMake>     cmake;
     Option<String>    tar;
     Option<String>    bsdtar;
@@ -200,6 +205,22 @@ struct Impl<serde::Deserialize, lito::config::wire::CMakeOverride> {
 };
 
 template<>
+struct Impl<serde::Deserialize, lito::config::wire::Cargo> {
+    template<typename Deserializer>
+    static auto deserialize(Deserializer& deserializer)
+        -> Result<lito::config::wire::Cargo, typename Deserializer::error_type> {
+        auto executable = serde::OptionalField<String>("executable"_str);
+        auto offline    = serde::OptionalField<bool>("offline"_str);
+        rstd_try(serde::deserialize_record(
+            deserializer, serde::UnknownFieldPolicy::Reject, executable, offline));
+        return Ok(lito::config::wire::Cargo {
+            .executable = executable.take(),
+            .offline    = offline.take(),
+        });
+    }
+};
+
+template<>
 struct Impl<serde::Deserialize, lito::config::wire::CMake> {
     template<typename Deserializer>
     static auto deserialize(Deserializer& deserializer)
@@ -255,7 +276,7 @@ struct Impl<serde::Deserialize, lito::config::wire::Tools> {
     static auto deserialize(Deserializer& deserializer)
         -> Result<lito::config::wire::Tools, typename Deserializer::error_type> {
         auto cmake        = serde::OptionalField<lito::config::wire::CMake>("cmake"_str);
-        auto cargo        = serde::OptionalField<String>("cargo"_str);
+        auto cargo        = serde::OptionalField<lito::config::wire::Cargo>("cargo"_str);
         auto tar          = serde::OptionalField<String>("tar"_str);
         auto bsdtar       = serde::OptionalField<String>("bsdtar"_str);
         auto clang_format = serde::OptionalField<String>("clang-format"_str);

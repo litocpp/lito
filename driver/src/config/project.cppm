@@ -4,6 +4,7 @@ import rstd;
 import lito.core;
 import lito.cpp;
 import lito.tools;
+import lito.tools.cargo;
 import lito.system;
 
 using namespace rstd::prelude;
@@ -92,6 +93,7 @@ struct ProjectConfig {
     ProjectBuildOptions               build_options;
     BuildTargetRequest                build_target;
     lito::source::PackageSourceConfig sources;
+    lito::tools::cargo::Configuration cargo;
     lito::dependency::PkgConfigProviderConfig pkg_config;
     lito::dependency::CMakeProviderConfig     cmake;
     lito::dependency::CMakeBuildOverrideSet   cmake_build_overrides;

@@ -448,11 +448,15 @@ auto make_timing_output(ref<rstd::path::Path>       root,
 }
 
 void apply_source_options(lito::source::PackageSourceConfig& sources,
+                          bool&                              cargo_offline,
                           ref<rstd::path::Path>              root,
                           bool                               offline,
                           bool                               frozen,
                           Vec<rstd::path::PathBuf>           seeds) {
-    if (offline || frozen) sources.network = lito::source::NetworkPolicy::Offline;
+    if (offline || frozen) {
+        sources.network = lito::source::NetworkPolicy::Offline;
+        cargo_offline   = true;
+    }
     for (auto& seed : seeds) {
         if (seed.as_path().is_relative()) {
             seed = rstd::path::PathBuf::from(root).join(seed.as_path());
@@ -1231,6 +1235,7 @@ extern "C++" int main() {
     if (invocation.command.is_Install()) {
         auto options = rstd::move(invocation.command).as_Install().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline || options.no_build,
                              options.frozen || options.no_build,
@@ -1268,6 +1273,7 @@ extern "C++" int main() {
                                                            rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
+        request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
@@ -1354,6 +1360,7 @@ extern "C++" int main() {
     if (invocation.command.is_Update()) {
         auto options = rstd::move(invocation.command).as_Update().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline,
                              false,
@@ -1423,6 +1430,7 @@ extern "C++" int main() {
     if (invocation.command.is_Scan()) {
         auto options = rstd::move(invocation.command).as_Scan().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
@@ -1439,6 +1447,7 @@ extern "C++" int main() {
                                                             rstd::move(project.build_target));
         request.lock                  = rstd::move(project.lock);
         request.sources               = rstd::move(project.sources);
+        request.cargo                 = project.cargo;
         request.pkg_config            = rstd::move(project.pkg_config);
         request.cmake                 = rstd::move(project.cmake);
         request.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
@@ -1481,6 +1490,7 @@ extern "C++" int main() {
     if (invocation.command.is_Doc()) {
         auto options = rstd::move(invocation.command).as_Doc().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
@@ -1500,6 +1510,7 @@ extern "C++" int main() {
                                                            rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
+        request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
@@ -1570,6 +1581,7 @@ extern "C++" int main() {
     if (invocation.command.is_Test()) {
         auto options = rstd::move(invocation.command).as_Test().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
@@ -1589,6 +1601,7 @@ extern "C++" int main() {
                                                            rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
+        request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
@@ -1699,6 +1712,7 @@ extern "C++" int main() {
     if (invocation.command.is_Bench()) {
         auto options = rstd::move(invocation.command).as_Bench().options;
         apply_source_options(project.sources,
+                             project.cargo.offline,
                              project.root.as_path(),
                              options.offline,
                              options.frozen,
@@ -1718,6 +1732,7 @@ extern "C++" int main() {
                                                            rstd::move(project.build_target));
         request.build.lock           = rstd::move(project.lock);
         request.build.sources        = rstd::move(project.sources);
+        request.build.cargo          = project.cargo;
         request.build.pkg_config     = rstd::move(project.pkg_config);
         request.build.cmake          = rstd::move(project.cmake);
         request.build.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
@@ -1802,6 +1817,7 @@ extern "C++" int main() {
 
     auto options = rstd::move(invocation.command).as_Build().options;
     apply_source_options(project.sources,
+                         project.cargo.offline,
                          project.root.as_path(),
                          options.offline,
                          options.frozen,
@@ -1821,6 +1837,7 @@ extern "C++" int main() {
                                                         rstd::move(project.build_target));
     request.lock                  = rstd::move(project.lock);
     request.sources               = rstd::move(project.sources);
+    request.cargo                 = project.cargo;
     request.pkg_config            = rstd::move(project.pkg_config);
     request.cmake                 = rstd::move(project.cmake);
     request.cmake_build_overrides = rstd::move(project.cmake_build_overrides);
